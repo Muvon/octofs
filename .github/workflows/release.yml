@@ -1,0 +1,260 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (semver format, e.g., 0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
+      version: ${{ steps.get_version.outputs.VERSION }}
+      changelog: ${{ steps.changelog.outputs.CHANGELOG }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get version from tag
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.tag }}"
+        else
+          VERSION="${GITHUB_REF#refs/tags/}"
+        fi
+        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+    - name: Validate semver format
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        case "$VERSION" in
+          [0-9]*.[0-9]*.[0-9]*) ;;
+          *)
+            echo "Error: Tag '$VERSION' is not a valid semver format"
+            exit 1
+            ;;
+        esac
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -z "$PREV_TAG" ]; then
+          CHANGELOG="Initial release"
+        else
+          CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges | head -20)
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="- No changes since last release"
+          fi
+        fi
+        CHANGELOG=$(printf '%s\n' "$CHANGELOG" | sed 's/%/%25/g; s/\r/%0D/g' | awk '{printf "%s%0A", $0}' | sed 's/%0A$//')
+        echo "CHANGELOG=$CHANGELOG" >> $GITHUB_OUTPUT
+
+    - name: Check if release exists
+      id: check_release
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        if gh release view "$VERSION" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create Release
+      id: create_release
+      if: steps.check_release.outputs.exists == 'false'
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        IS_PRERELEASE="false"
+        case "$VERSION" in
+          *-*|0.*) IS_PRERELEASE="true" ;;
+        esac
+        if [ "$IS_PRERELEASE" = "true" ]; then
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --notes "${{ steps.changelog.outputs.CHANGELOG }}" \
+            --draft --prerelease
+        else
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --notes "${{ steps.changelog.outputs.CHANGELOG }}" \
+            --draft
+        fi
+        RELEASE_INFO=$(gh release view "$VERSION" --json id,uploadUrl)
+        echo "id=$(echo "$RELEASE_INFO" | jq -r '.id')" >> $GITHUB_OUTPUT
+        echo "upload_url=$(echo "$RELEASE_INFO" | jq -r '.uploadUrl')" >> $GITHUB_OUTPUT
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - target: x86_64-unknown-linux-musl
+          os: ubuntu-latest
+          archive: tar.gz
+        - target: aarch64-unknown-linux-musl
+          os: ubuntu-22.04-arm
+          archive: tar.gz
+        - target: x86_64-pc-windows-msvc
+          os: windows-latest
+          archive: zip
+        - target: aarch64-pc-windows-msvc
+          os: windows-11-arm
+          archive: zip
+        - target: x86_64-apple-darwin
+          os: macos-14
+          archive: tar.gz
+        - target: aarch64-apple-darwin
+          os: macos-15
+          archive: tar.gz
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@1.82.0
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ endsWith(matrix.target, '-unknown-linux-musl') && 'docker-alpine' || runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ endsWith(matrix.target, '-unknown-linux-musl') && 'docker-alpine' || runner.os }}-${{ matrix.target }}-cargo-
+
+    - name: Build binary
+      shell: sh
+      run: |
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          docker run --rm \
+            -v "$(pwd):/workspace" \
+            -w /workspace \
+            rust:1.82.0-alpine3.21 \
+            sh -c "
+              apk add --no-cache git perl musl-dev pkgconfig gcc g++ && \
+              rustup target add ${{ matrix.target }} && \
+              cargo build --release --target ${{ matrix.target }}
+            "
+        else
+          cargo build --release --target ${{ matrix.target }}
+        fi
+
+    - name: Create archive directory
+      shell: sh
+      run: mkdir -p dist
+
+    - name: Create archive (Unix)
+      if: matrix.archive == 'tar.gz'
+      shell: sh
+      run: |
+        cd target/${{ matrix.target }}/release
+        case "${{ matrix.target }}" in
+          *windows*)
+            tar czf ../../../dist/octofs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz octofs.exe
+            ;;
+          *)
+            tar czf ../../../dist/octofs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz octofs
+            ;;
+        esac
+
+    - name: Create archive (Windows)
+      if: matrix.archive == 'zip'
+      shell: sh
+      run: |
+        cd target/${{ matrix.target }}/release
+        7z a ../../../dist/octofs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip octofs.exe
+
+    - name: Upload release asset
+      shell: sh
+      run: |
+        gh release upload "${{ needs.create-release.outputs.version }}" \
+          "./dist/octofs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.${{ matrix.archive }}" \
+          --clobber
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crate:
+    name: Publish to Crates.io
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@1.82.0
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Validate version matches tag
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+        if [ "$VERSION" != "$CARGO_VERSION" ]; then
+          echo "❌ Version mismatch: tag=$VERSION Cargo.toml=$CARGO_VERSION"
+          exit 1
+        fi
+        echo "✅ Version $VERSION"
+
+    - name: Check if already published
+      id: check_published
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        if cargo search octofs --limit 1 | grep -q "octofs = \"$VERSION\""; then
+          echo "already_published=true" >> $GITHUB_OUTPUT
+        else
+          echo "already_published=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Publish to crates.io
+      if: steps.check_published.outputs.already_published == 'false'
+      run: cargo publish
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  finalize-release:
+    name: Finalize Release
+    needs: [create-release, build, publish-crate]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Publish release
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        gh release edit "$VERSION" --draft=false
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
