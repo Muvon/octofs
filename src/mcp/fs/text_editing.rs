@@ -787,8 +787,18 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Range(s, e) => (s, e),
 					LineRange::Single(line) => (line, line),
 				};
-				if let Err(e) = check_replace_duplicates(&content_lines, &original_lines, start, end, op.operation_index) {
-					return Ok(McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), e));
+				if let Err(e) = check_replace_duplicates(
+					&content_lines,
+					&original_lines,
+					start,
+					end,
+					op.operation_index,
+				) {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						e,
+					));
 				}
 			}
 			OperationType::Insert => {
@@ -818,7 +828,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					let available = original_lines.len().saturating_sub(insert_after);
 					let check_len = content_lines.len().min(available);
 					if check_len >= 2
-						&& content_lines[..check_len] == original_lines[insert_after..insert_after + check_len]
+						&& content_lines[..check_len]
+							== original_lines[insert_after..insert_after + check_len]
 					{
 						return Ok(McpToolResult::error(
 							call.tool_name.clone(),
@@ -833,7 +844,6 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			}
 		}
 	}
-
 
 	// Apply all operations to the original content
 	let final_content = match apply_batch_operations(&original_content, &batch_operations).await {
