@@ -1,0 +1,273 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Muvon/octofs",
+  "description": "Standalone MCP filesystem tools server — view, edit, shell, ast-grep, workdir.",
+  "name_for_human": "Octofs",
+  "name_for_model": "octofs",
+  "version": "0.1.0",
+  "repositories": [
+    {
+      "type": "github",
+      "owner": "Muvon",
+      "repo": "octofs"
+    }
+  ],
+  "homepage": "https://github.com/muvon/octofs",
+  "pricing": "free",
+  "modes": {
+    "stdio": {
+      "command": "octofs",
+      "args": ["mcp"],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "view",
+      "description": "Read files, view directories, and search file content. Unified read-only tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path, directory path, or glob pattern. Required unless `paths` is provided."
+          },
+          "paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 50,
+            "description": "Array of file paths for multi-file viewing. Max 50 files."
+          },
+          "lines": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Line range [start, end] for single file viewing (1-indexed, inclusive). Supports negative indexing: -1 for last line."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Filename glob filter for directory listing (e.g. '*.rs'). Only used when path is a directory."
+          },
+          "content": {
+            "type": "string",
+            "description": "Content search string (ripgrep). Only used when path is a directory."
+          },
+          "max_depth": {
+            "type": "integer",
+            "description": "Maximum directory traversal depth (default: no limit). Only used when path is a directory."
+          },
+          "include_hidden": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include hidden files/directories starting with '.' (default: false)."
+          },
+          "line_numbers": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show line numbers in content search results (default: true)."
+          },
+          "context": {
+            "type": "integer",
+            "default": 0,
+            "description": "Context lines around content search matches (default: 0)."
+          }
+        }
+      }
+    },
+    {
+      "name": "text_editor",
+      "description": "Perform text editing operations on files: create new files, replace exact string matches, or undo the last edit.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["command", "path"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": ["create", "str_replace", "undo_edit"],
+            "description": "The operation to perform: create, str_replace, undo_edit"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to the file to operate on."
+          },
+          "content": {
+            "type": "string",
+            "description": "Content for create operation."
+          },
+          "old_text": {
+            "type": "string",
+            "description": "Text to find and replace (must match exactly) — for str_replace command."
+          },
+          "new_text": {
+            "type": "string",
+            "description": "Replacement text — for str_replace command."
+          }
+        }
+      }
+    },
+    {
+      "name": "batch_edit",
+      "description": "Perform multiple insert/replace operations on a single file atomically, using original line numbers. Returns a diff of all changes.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["path", "operations"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the file to edit."
+          },
+          "operations": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Array of insert/replace operations. All line_range values reference original file content.",
+            "items": {
+              "type": "object",
+              "required": ["operation", "line_range", "content"],
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "enum": ["insert", "replace"],
+                  "description": "Type of operation: 'insert' (after line) or 'replace' (line range)"
+                },
+                "line_range": {
+                  "oneOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Single line number for insert (0=beginning, N=after line N)"
+                    },
+                    {
+                      "type": "array",
+                      "items": { "type": "integer", "minimum": 1 },
+                      "minItems": 1,
+                      "maxItems": 2,
+                      "description": "Line range [start, end] for replace (1-indexed, inclusive)"
+                    }
+                  ],
+                  "description": "Line number(s) referencing original file content."
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Content to insert or replace with."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "extract_lines",
+      "description": "Copy lines from a source file and append them into a target file. Source is not modified.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["from_path", "from_range", "append_path", "append_line"],
+        "properties": {
+          "from_path": {
+            "type": "string",
+            "description": "Path to the source file to extract lines from."
+          },
+          "from_range": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Two-element array [start, end] with 1-indexed line numbers (inclusive)."
+          },
+          "append_path": {
+            "type": "string",
+            "description": "Path to the target file where extracted lines will be appended (auto-created if doesn't exist)."
+          },
+          "append_line": {
+            "type": "integer",
+            "description": "Position where to append: 0=beginning, -1=end, N=after line N (1-indexed)."
+          }
+        }
+      }
+    },
+    {
+      "name": "ast_grep",
+      "description": "Search and refactor code using AST patterns with ast-grep. Understands code structure — superior to regex for code transformations.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["pattern"],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "The AST pattern to search for. Use metavariables ($NAME, $$$) to match code structure."
+          },
+          "paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional array of file paths or glob patterns to search within (default: current directory)."
+          },
+          "language": {
+            "type": "string",
+            "description": "Optional language of the code (e.g., 'rust', 'javascript', 'python', 'typescript', 'go', 'java', 'c', 'cpp', 'php')."
+          },
+          "rewrite": {
+            "type": "string",
+            "description": "Optional rewrite pattern to apply for refactoring transformations."
+          },
+          "json_output": {
+            "type": "boolean",
+            "default": false,
+            "description": "Optional boolean to get output in JSON format (default: false)."
+          },
+          "context": {
+            "type": "integer",
+            "default": 0,
+            "description": "Optional number of lines of context to show around matches (default: 0)."
+          },
+          "update_all": {
+            "type": "boolean",
+            "default": false,
+            "description": "Optional boolean to apply rewrites to all matches without confirmation (default: false)."
+          }
+        }
+      }
+    },
+    {
+      "name": "shell",
+      "description": "Execute a command in the shell. Returns stdout+stderr combined, with success/failure indication. Each command runs in its own process — state does not persist between calls.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to execute (runs from current working directory)."
+          },
+          "background": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run command in background and return PID instead of waiting for completion."
+          }
+        }
+      }
+    },
+    {
+      "name": "workdir",
+      "description": "Get or set the working directory used by all MCP tools (shell, text_editor, etc.). Changes apply to the current thread only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Optional path to set as new working directory. Can be absolute or relative to current working directory."
+          },
+          "reset": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, reset to original project directory (ignores 'path' parameter)."
+          }
+        }
+      }
+    }
+  ],
+  "categories": ["developer-tools", "filesystem"],
+  "tags": ["filesystem", "mcp", "ai-tools", "ast-grep", "shell", "file-editing"]
+}
