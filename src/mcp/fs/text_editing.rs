@@ -290,229 +290,6 @@ pub async fn insert_text_spec(
 	})
 }
 
-// Replace content within a specific line range following text editor specifications
-pub async fn line_replace_spec(
-	call: &McpToolCall,
-	path: &Path,
-	lines: (usize, usize),
-	content: &str,
-) -> Result<McpToolResult> {
-	if !path.exists() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"File not found".to_string(),
-		));
-	}
-
-	if !path.is_file() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"Path is not a file".to_string(),
-		));
-	}
-
-	let (start_line, end_line) = lines;
-
-	// Validate line numbers
-	if start_line == 0 || end_line == 0 {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"Line numbers must be 1-indexed (start from 1)".to_string(),
-		));
-	}
-
-	if start_line > end_line {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"start_line ({}) must be less than or equal to end_line ({})",
-				start_line, end_line
-			),
-		));
-	}
-
-	// Acquire file lock to prevent concurrent writes
-	let file_lock = acquire_file_lock(path).await?;
-	let _lock_guard = file_lock.lock().await;
-
-	// Read the file content
-	let file_content = tokio_fs::read_to_string(path)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
-	let lines: Vec<&str> = file_content.lines().collect();
-
-	// Validate line ranges exist in file BEFORE accessing the array
-	if start_line > lines.len() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"start_line ({}) exceeds file length ({} lines)",
-				start_line,
-				lines.len()
-			),
-		));
-	}
-
-	if end_line > lines.len() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"end_line ({}) exceeds file length ({} lines)",
-				end_line,
-				lines.len()
-			),
-		));
-	}
-
-	// Capture the original lines that will be replaced for the snippet
-	// Ensure end_line doesn't exceed the actual file length to prevent panic
-	let safe_end_line = end_line.min(lines.len());
-	let original_lines: Vec<String> = lines[start_line - 1..safe_end_line]
-		.iter()
-		.map(|&line| line.to_string())
-		.collect();
-
-	// DUPLICATE DETECTION: block writes where content duplicates an adjacent line —
-	// this is the #1 cause of AI-introduced line duplication.
-	let content_lines: Vec<&str> = content.lines().collect();
-
-	if !content_lines.is_empty() {
-		// First line of new content matches the line immediately before the range → AI included a surrounding line it shouldn't have
-		if start_line > 1 {
-			let line_before = lines[start_line - 2];
-			if content_lines[0].trim() == line_before.trim() && !line_before.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Duplicate line detected: your content's first line matches line {} (just before the replacement range). \
-						Do NOT include surrounding unchanged lines in content — only provide the lines that replace [{}-{}].",
-						start_line - 1, start_line, end_line
-					),
-				));
-			}
-		}
-
-		// Last line of new content matches the line immediately after the range → same problem on the other side
-		if end_line < lines.len() {
-			let line_after = lines[end_line];
-			let last_content_line = content_lines[content_lines.len() - 1];
-			if last_content_line.trim() == line_after.trim() && !line_after.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Duplicate line detected: your content's last line matches line {} (just after the replacement range). \
-						Do NOT include surrounding unchanged lines in content — only provide the lines that replace [{}-{}].",
-						end_line + 1, start_line, end_line
-					),
-				));
-			}
-		}
-	}
-
-	// Save the current content for undo
-	save_file_history(path).await?;
-
-	// Simple and correct approach: use the lines array we already have
-	// but reconstruct the content properly preserving line endings
-	let mut result_parts: Vec<&str> = Vec::new();
-
-	// Add lines before target range
-	for line in lines.iter().take(start_line - 1) {
-		result_parts.push(*line);
-	}
-
-	// Add the replacement content
-	result_parts.push(content);
-
-	// Add lines after target range
-	for line in lines.iter().skip(end_line) {
-		result_parts.push(*line);
-	}
-
-	// Detect original line ending style
-	let line_ending = if file_content.contains("\r\n") {
-		"\r\n"
-	} else {
-		"\n"
-	};
-
-	// Reconstruct content
-	let new_content = result_parts.join(line_ending);
-
-	// Preserve final line ending behavior
-	let final_content = if file_content.ends_with(line_ending) {
-		format!("{}{}", new_content, line_ending)
-	} else {
-		new_content
-	};
-
-	// Write the new content
-	tokio_fs::write(path, &final_content)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
-
-	// Build an annotated diff view so the AI can verify the edit landed correctly.
-	// Format:
-	//   context lines:  "  NNN: <line>"
-	//   removed lines:  "- NNN: <line>"
-	//   added lines:    "+ NNN: <line>"  (NNN = new line number after edit)
-	//   skipped gap:    "  ..."
-	const CONTEXT: usize = 3;
-
-	let new_lines: Vec<&str> = final_content.lines().collect();
-	let new_lines_count = content_lines.len();
-
-	let mut diff: Vec<String> = Vec::new();
-
-	// --- context before ---
-	let ctx_before_start = start_line.saturating_sub(CONTEXT).max(1); // 1-indexed, inclusive, never 0
-	if ctx_before_start > 1 {
-		diff.push("...".to_string());
-	}
-	for i in ctx_before_start..start_line {
-		diff.push(format!("{}: {}", i, lines[i - 1]));
-	}
-
-	// --- removed lines (what was there before) ---
-	for (i, old_line) in original_lines.iter().enumerate() {
-		diff.push(format!("-{}: {}", start_line + i, old_line));
-	}
-
-	// --- added lines (what is there now) ---
-	// New line numbers start at start_line in the post-edit file
-	for (i, new_line) in content_lines.iter().enumerate() {
-		diff.push(format!("+{}: {}", start_line + i, new_line));
-	}
-
-	// --- context after ---
-	// In the new file, lines after the edit start at: start_line + new_lines_count
-	let new_after_start = start_line + new_lines_count; // 1-indexed in new file
-	let new_after_end = (new_after_start + CONTEXT - 1).min(new_lines.len());
-	for new_i in new_after_start..=new_after_end {
-		diff.push(format!("{}: {}", new_i, new_lines[new_i - 1]));
-	}
-	if new_after_end < new_lines.len() {
-		diff.push("...".to_string());
-	}
-	diff.push(format!("[{} lines total]", new_lines.len()));
-
-	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"diff": diff.join("\n"),
-		}),
-	})
-}
-
 // Returns true for lines that are pure structural punctuation (e.g. `}`, `]`, `}`).
 // These are exempt from duplicate-line detection because they legitimately appear
 // at range boundaries without indicating the AI included surrounding context.
@@ -530,6 +307,65 @@ fn is_structural_noise(line: &str) -> bool {
 	let core = trimmed.trim_end_matches([',', ';']);
 	// Must be exactly one closing bracket/brace/paren after stripping the trailer
 	matches!(core, "}" | "]" | ")")
+}
+
+// Check whether `content` (the replacement) duplicates the line immediately
+// before or after the range [start_line, end_line] (1-indexed) in `file_lines`.
+//
+// Returns an error string if duplication is detected, Ok(()) otherwise.
+// Structural noise lines are exempt — they legitimately appear at boundaries.
+fn check_replace_duplicates(
+	content_lines: &[&str],
+	file_lines: &[&str],
+	start_line: usize,
+	end_line: usize,
+	operation_index: usize,
+) -> Result<(), String> {
+	if content_lines.is_empty() {
+		return Ok(());
+	}
+	// First content line matches the line immediately before the range
+	if start_line > 1 {
+		let line_before = file_lines[start_line - 2];
+		if content_lines[0] == line_before && !is_structural_noise(line_before) {
+			return Err(format!(
+				"Duplicate line detected in operation {}: content's first line matches line {} \
+				(just before the replacement range [{}-{}]). \
+				Line {}: {:?}. Do NOT include surrounding unchanged lines — \
+				only provide the lines that replace [{}-{}].",
+				operation_index,
+				start_line - 1,
+				start_line,
+				end_line,
+				start_line - 1,
+				line_before,
+				start_line,
+				end_line
+			));
+		}
+	}
+	// Last content line matches the line immediately after the range
+	if end_line < file_lines.len() {
+		let line_after = file_lines[end_line];
+		let last = content_lines[content_lines.len() - 1];
+		if last == line_after && !is_structural_noise(line_after) {
+			return Err(format!(
+				"Duplicate line detected in operation {}: content's last line matches line {} \
+				(just after the replacement range [{}-{}]). \
+				Line {}: {:?}. Do NOT include surrounding unchanged lines — \
+				only provide the lines that replace [{}-{}].",
+				operation_index,
+				end_line + 1,
+				start_line,
+				end_line,
+				end_line + 1,
+				line_after,
+				start_line,
+				end_line
+			));
+		}
+	}
+	Ok(())
 }
 
 // Check for conflicting operations on the same lines
