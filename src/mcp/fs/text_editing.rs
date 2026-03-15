@@ -937,54 +937,110 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		));
 	}
 
-	// Duplicate-line detection: validate Replace operations against original content
-	// before applying anything. Catches the #1 AI mistake of including surrounding lines.
+	// Duplicate-line detection: validate operations against original content before applying.
+	// Catches the #1 AI mistake of including surrounding/already-existing lines.
 	//
 	// Uses exact (non-trimmed) comparison so that lines differing only in indentation
 	// (e.g. "\t\t]," vs "\t\t\t],") are correctly treated as distinct and not flagged.
-	// Structural noise lines (}, ], );, etc.) are exempt — they legitimately appear at boundaries.
+	// Structural noise lines (}, ], );, etc.) are exempt from single-line checks — they
+	// legitimately appear at boundaries. Multi-line blocks (≥2 lines) are always checked
+	// since a full block match is unambiguous duplication regardless of content.
 	let original_lines: Vec<&str> = original_content.lines().collect();
 	for op in &batch_operations {
-		if op.operation_type != OperationType::Replace {
-			continue;
-		}
-		let (start, end) = match op.line_range {
-			LineRange::Range(s, e) => (s, e),
-			LineRange::Single(line) => (line, line),
-		};
 		let content_lines: Vec<&str> = op.content.lines().collect();
 		if content_lines.is_empty() {
 			continue;
 		}
-		// First content line exactly matches the line immediately before the range
-		if start > 1 {
-			let line_before = original_lines[start - 2];
-			if content_lines[0] == line_before && !is_structural_noise(line_before) {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Duplicate line detected in operation {}: content's first line matches line {} (just before the replacement range [{}-{}]). \
-						Line {}: {:?}. Do NOT include surrounding unchanged lines — only provide the lines that replace [{}-{}].",
-						op.operation_index, start - 1, start, end, start - 1, line_before, start, end
-					),
-				));
+
+		match op.operation_type {
+			OperationType::Replace => {
+				let (start, end) = match op.line_range {
+					LineRange::Range(s, e) => (s, e),
+					LineRange::Single(line) => (line, line),
+				};
+				// First content line exactly matches the line immediately before the range
+				if start > 1 {
+					let line_before = original_lines[start - 2];
+					if content_lines[0] == line_before && !is_structural_noise(line_before) {
+						return Ok(McpToolResult::error(
+							call.tool_name.clone(),
+							call.tool_id.clone(),
+							format!(
+								"Duplicate line detected in operation {}: content's first line matches line {} (just before the replacement range [{}-{}]). \
+								Line {}: {:?}. Do NOT include surrounding unchanged lines — only provide the lines that replace [{}-{}].",
+								op.operation_index, start - 1, start, end, start - 1, line_before, start, end
+							),
+						));
+					}
+				}
+				// Last content line exactly matches the line immediately after the range
+				if end < original_lines.len() {
+					let line_after = original_lines[end];
+					let last = content_lines[content_lines.len() - 1];
+					if last == line_after && !is_structural_noise(line_after) {
+						return Ok(McpToolResult::error(
+							call.tool_name.clone(),
+							call.tool_id.clone(),
+							format!(
+								"Duplicate line detected in operation {}: content's last line matches line {} (just after the replacement range [{}-{}]). \
+								Line {}: {:?}. Do NOT include surrounding unchanged lines — only provide the lines that replace [{}-{}].",
+								op.operation_index, end + 1, start, end, end + 1, line_after, start, end
+							),
+						));
+					}
+				}
 			}
-		}
-		// Last content line exactly matches the line immediately after the range
-		if end < original_lines.len() {
-			let line_after = original_lines[end];
-			let last = content_lines[content_lines.len() - 1];
-			if last == line_after && !is_structural_noise(line_after) {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Duplicate line detected in operation {}: content's last line matches line {} (just after the replacement range [{}-{}]). \
-						Line {}: {:?}. Do NOT include surrounding unchanged lines — only provide the lines that replace [{}-{}].",
-						op.operation_index, end + 1, start, end, end + 1, line_after, start, end
-					),
-				));
+			OperationType::Insert => {
+				// insert_after=N means content goes between line N and line N+1.
+				// The line immediately following the insert point is original_lines[insert_after]
+				// (0-indexed), i.e. the 1-indexed line N+1.
+				let insert_after = match op.line_range {
+					LineRange::Single(line) => line,
+					_ => continue, // malformed; apply_batch_operations will catch it
+				};
+
+				// Single-line insert: content[0] must not duplicate the line right after
+				// the insert point, unless it is structural noise.
+				if content_lines.len() == 1 {
+					if insert_after < original_lines.len() {
+						let line_after = original_lines[insert_after];
+						if content_lines[0] == line_after && !is_structural_noise(line_after) {
+							return Ok(McpToolResult::error(
+								call.tool_name.clone(),
+								call.tool_id.clone(),
+								format!(
+									"Duplicate line detected in operation {}: inserting after line {} would duplicate line {} which already reads {:?}. \
+									Do NOT re-insert content that already exists in the file.",
+									op.operation_index, insert_after, insert_after + 1, line_after
+								),
+							));
+						}
+					}
+				} else {
+					// Multi-line insert (≥2 lines): check whether the entire inserted block
+					// matches the lines immediately following the insert point.
+					// A full block match is unambiguous duplication — no noise exemption.
+					let available = original_lines.len().saturating_sub(insert_after);
+					let check_len = content_lines.len().min(available);
+					if check_len >= 2
+						&& content_lines[..check_len]
+							== original_lines[insert_after..insert_after + check_len]
+					{
+						return Ok(McpToolResult::error(
+							call.tool_name.clone(),
+							call.tool_id.clone(),
+							format!(
+								"Duplicate block detected in operation {}: the {} inserted lines starting after line {} already exist verbatim at lines {}-{}. \
+								Do NOT re-insert content that already exists in the file.",
+								op.operation_index,
+								check_len,
+								insert_after,
+								insert_after + 1,
+								insert_after + check_len
+							),
+						));
+					}
+				}
 			}
 		}
 	}

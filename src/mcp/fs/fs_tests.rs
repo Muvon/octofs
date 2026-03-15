@@ -358,6 +358,169 @@ mod tests {
 		assert!(result.result["content"][0]["text"].as_str().is_some());
 	}
 
+	// ── Insert duplicate-detection tests ────────────────────────────────────────
+
+	#[tokio::test]
+	async fn test_insert_single_line_duplicate_blocked() {
+		// Inserting a single non-noise line that already exists immediately after
+		// the insert point must be rejected.
+		// File: line 1 / line 2 / line 3
+		// Insert after line 1: "line 2"  →  would duplicate existing line 2.
+		let content = "line 1\nline 2\nline 3\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "insert",
+					"line_range": 1,
+					"content": "line 2"
+				}]
+			}),
+		};
+		let result = execute_batch_edit(&call).await.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"single-line insert duplicate must be blocked: {:?}",
+			result.result
+		);
+		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(error_msg.contains("Duplicate line detected"));
+		// File must be unchanged
+		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, content);
+	}
+
+	#[tokio::test]
+	async fn test_insert_single_line_noise_allowed() {
+		// A single structural-noise line (}) inserted where } already follows
+		// must NOT be blocked — noise is exempt from single-line checks.
+		let content = "fn foo() {\n\tlet x = 1;\n}\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "insert",
+					"line_range": 2,
+					"content": "}"
+				}]
+			}),
+		};
+		let result = execute_batch_edit(&call).await.unwrap();
+		assert_eq!(
+			result.result["isError"], false,
+			"structural-noise single-line insert must be allowed: {:?}",
+			result.result
+		);
+	}
+
+	#[tokio::test]
+	async fn test_insert_multi_line_duplicate_blocked() {
+		// Inserting ≥2 lines that already exist verbatim immediately after the
+		// insert point must be rejected — no noise exemption for multi-line blocks.
+		// File: line 1 / line 2 / line 3 / line 4
+		// Insert after line 1: "line 2\nline 3"  →  duplicates lines 2-3.
+		let content = "line 1\nline 2\nline 3\nline 4\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "insert",
+					"line_range": 1,
+					"content": "line 2\nline 3"
+				}]
+			}),
+		};
+		let result = execute_batch_edit(&call).await.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"multi-line insert duplicate must be blocked: {:?}",
+			result.result
+		);
+		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(error_msg.contains("Duplicate block detected"));
+		// File must be unchanged
+		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, content);
+	}
+
+	#[tokio::test]
+	async fn test_insert_multi_line_noise_block_blocked() {
+		// Even a block of pure structural noise (≥2 lines) that already exists
+		// verbatim must be blocked — no noise exemption for multi-line blocks.
+		// File: fn foo() { / } / } / end
+		// Insert after line 1: "}\n}"  →  duplicates lines 2-3.
+		let content = "fn foo() {\n}\n}\nend\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "insert",
+					"line_range": 1,
+					"content": "}\n}"
+				}]
+			}),
+		};
+		let result = execute_batch_edit(&call).await.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"multi-line noise block insert duplicate must be blocked: {:?}",
+			result.result
+		);
+		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(error_msg.contains("Duplicate block detected"));
+		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, content);
+	}
+
+	#[tokio::test]
+	async fn test_insert_multi_line_new_content_allowed() {
+		// A multi-line insert with genuinely new content must succeed.
+		let content = "line 1\nline 3\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "insert",
+					"line_range": 1,
+					"content": "line 2a\nline 2b"
+				}]
+			}),
+		};
+		let result = execute_batch_edit(&call).await.unwrap();
+		assert_eq!(
+			result.result["isError"], false,
+			"new multi-line insert must be allowed: {:?}",
+			result.result
+		);
+		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2a\nline 2b\nline 3\n");
+	}
+
+	// ── End insert duplicate-detection tests ─────────────────────────────────
+
 	#[tokio::test]
 	async fn test_replace_diff_output_present() {
 		// batch_edit must return a diff field so the AI can verify the edit
