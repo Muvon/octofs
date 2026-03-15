@@ -513,19 +513,23 @@ pub async fn line_replace_spec(
 	})
 }
 
-// Returns true for lines that are pure structural punctuation (e.g. `}`, `]`, `);`).
+// Returns true for lines that are pure structural punctuation (e.g. `}`, `]`, `}`).
 // These are exempt from duplicate-line detection because they legitimately appear
 // at range boundaries without indicating the AI included surrounding context.
+//
+// Only SINGLE closing tokens (optionally trailed by one `,` or `;`) qualify.
+// Compound closers like `});` or `}),` are NOT noise — they carry real semantic
+// meaning and duplicating them breaks code.
 fn is_structural_noise(line: &str) -> bool {
 	let trimmed = line.trim();
 	// Empty or only whitespace
 	if trimmed.is_empty() {
 		return true;
 	}
-	// Lines consisting entirely of closing brackets/braces/parens with optional trailing punctuation
-	trimmed
-		.chars()
-		.all(|c| matches!(c, '}' | '{' | ']' | '[' | ')' | '(' | ';' | ',' | '.'))
+	// Strip one optional trailing `,` or `;`
+	let core = trimmed.trim_end_matches([',', ';']);
+	// Must be exactly one closing bracket/brace/paren after stripping the trailer
+	matches!(core, "}" | "]" | ")")
 }
 
 // Check for conflicting operations on the same lines

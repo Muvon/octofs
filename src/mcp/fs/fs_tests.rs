@@ -247,6 +247,40 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_replace_compound_closer_is_not_noise() {
+		// `});` is a compound closer — NOT structural noise.
+		// Duplicate detection must fire when it appears at a range boundary.
+		let content = "foo(\n\tbar(),\n});\nbaz();\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"line_range": [4, 4],
+					// Last content line is `});` — same as line 3 (just before range end+1).
+					// Must be BLOCKED because `});` is NOT structural noise.
+					"content": "});\nnew_baz();"
+				}]
+			}),
+		};
+		let result = execute_batch_edit(&call).await.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"compound closer at boundary must trigger duplicate detection: {:?}",
+			result.result
+		);
+		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(error_msg.contains("Duplicate line detected"));
+		// File must be unchanged
+		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, content);
+	}
+	#[tokio::test]
 	async fn test_replace_duplicate_detection_before() {
 		// Blocks write when first content line duplicates the line just before the range
 		let temp_file = create_test_file("line 1\nline 2\nline 3\nline 4\n").await;
