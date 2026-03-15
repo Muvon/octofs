@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@1.82.0
+      uses: dtolnay/rust-toolchain@1.92.0
       with:
         components: rustfmt, clippy
 
@@ -48,7 +48,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@1.82.0
+      uses: dtolnay/rust-toolchain@1.92.0
       with:
         components: rustfmt
 
@@ -62,7 +62,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@1.82.0
+      uses: dtolnay/rust-toolchain@1.92.0
       with:
         components: clippy
 
@@ -91,7 +91,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [1.82.0]
+        rust: [1.92.0]
         include:
           - os: ubuntu-latest
             rust: beta
@@ -146,7 +146,7 @@ jobs:
         docker run --rm \
           -v "$(pwd):/workspace" \
           -w /workspace \
-          rust:1.82.0-alpine3.21 \
+          rust:1.92.0-alpine3.21 \
           sh -c "
             apk add --no-cache git perl musl-dev pkgconfig gcc g++ && \
             rustup target add ${{ matrix.target }} && \
@@ -160,7 +160,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@1.82.0
+      uses: dtolnay/rust-toolchain@1.92.0
 
     - name: Install cargo-audit
       run: cargo install cargo-audit --locked
