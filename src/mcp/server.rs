@@ -25,6 +25,7 @@ use crate::mcp::{self, McpFunction, McpToolCall};
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
+	#[serde(rename = "jsonrpc")]
 	pub _jsonrpc: String,
 	pub id: Option<Value>,
 	pub method: String,
