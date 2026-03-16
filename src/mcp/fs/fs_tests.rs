@@ -1570,11 +1570,12 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_batch_edit_conflict_detection() {
+	async fn test_batch_edit_insert_and_replace_same_line_no_conflict() {
+		// Insert after line N and replace line N are NOT conflicting:
+		// insert operates on the gap after line N, replace changes line N's content.
 		let temp_file = create_test_file("line 1\nline 2\nline 3\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
-		// Conflicting operations: insert after line 2 AND replace line 2
 		let operations = json!([
 			{
 				"operation": "insert",
@@ -1593,21 +1594,19 @@ mod tests {
 			.await
 			.unwrap();
 
-		// Check that it failed due to conflict
+		// Should succeed — insert and replace at same line are independent
 		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content"
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert after 2 + replace [2,2] should NOT conflict: {:?}",
+			result.result
 		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("Conflicting operations"),
-			"Should detect conflict"
-		);
-		assert!(
-			content.contains("both affect line 2"),
-			"Should specify conflicting line"
+
+		// Replace line 2 first, then insert after it
+		// line 1 / replaced line 2 / inserted after line 2 / line 3
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(
+			actual,
+			"line 1\nreplaced line 2\ninserted after line 2\nline 3\n"
 		);
 	}
 
@@ -1644,12 +1643,9 @@ mod tests {
 			.as_str()
 			.unwrap();
 		assert!(
-			content.contains("Conflicting operations"),
-			"Should detect overlap"
-		);
-		assert!(
-			content.contains("both affect line 3"),
-			"Should specify overlapping line"
+			content.contains("overlapping ranges"),
+			"Should detect overlap: {}",
+			content
 		);
 	}
 
@@ -1861,6 +1857,1254 @@ mod tests {
 		);
 	}
 
+	// ===== BATCH_EDIT EDGE CASE & PROTECTION TESTS =====
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_at_beginning() {
+		// line_range=0 inserts before the first line
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "insert", "line_range": 0, "content": "line 0"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"insert at 0 should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 0\nline 1\nline 2\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_at_end() {
+		// line_range=N (last line) appends after the last line
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "insert", "line_range": 2, "content": "line 3"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"insert at end should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\nline 3\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_negative_index() {
+		// line_range=-1 inserts after the last line (same as N)
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "insert", "line_range": -1, "content": "appended"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"negative insert should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\nappended\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_out_of_bounds() {
+		// Replacing a line beyond the file length must return an error, not corrupt the file
+		let temp_file = create_test_file("line 1\nline 2\nline 3\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [99, 99], "content": "oops"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"out-of-bounds replace must error: {:?}",
+			result.result
+		);
+		// File must be unchanged
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\nline 3\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_start_greater_than_end() {
+		// start > end is invalid and must be rejected before touching the file
+		let temp_file = create_test_file("line 1\nline 2\nline 3\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [3, 1], "content": "bad"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"start > end must error: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\nline 3\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_empty_operations_array() {
+		// An empty operations array should return an error (nothing to do)
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(&path, json!([])).await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"empty operations must error: {:?}",
+			result.result
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_file_not_found() {
+		// Non-existent file must return a clear error without panicking
+		let call = create_batch_edit_call(
+			"/tmp/octofs_nonexistent_file_xyz_12345.txt",
+			json!([{"operation": "insert", "line_range": 1, "content": "test"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"missing file must error: {:?}",
+			result.result
+		);
+		let msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(
+			msg.contains("not found") || msg.contains("No such file"),
+			"error should mention file not found: {}",
+			msg
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_multiple_non_overlapping_replaces() {
+		// Multiple replace ops on non-overlapping ranges must all apply correctly
+		// using ORIGINAL line numbers
+		let temp_file = create_test_file("a\nb\nc\nd\ne\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "A"},
+				{"operation": "replace", "line_range": [3, 3], "content": "C"},
+				{"operation": "replace", "line_range": [5, 5], "content": "E"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"non-overlapping replaces should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nb\nC\nd\nE\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_expand_lines() {
+		// Replace 1 line with 3 lines (file grows)
+		let temp_file = create_test_file("before\nTARGET\nafter\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [2, 2], "content": "new1\nnew2\nnew3"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"expand replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "before\nnew1\nnew2\nnew3\nafter\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_shrink_lines() {
+		// Replace 3 lines with 1 line (file shrinks)
+		let temp_file = create_test_file("before\nA\nB\nC\nafter\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [2, 4], "content": "SINGLE"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"shrink replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "before\nSINGLE\nafter\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_empty_deletes_lines() {
+		// Empty content in replace removes the targeted lines entirely
+		let temp_file = create_test_file("keep\ndelete me\nalso keep\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [2, 2], "content": ""}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"empty-content replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "keep\nalso keep\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_negative_line_range() {
+		// Negative indices in replace: [-1, -1] targets the last line
+		let temp_file = create_test_file("line 1\nline 2\nline 3\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [-1, -1], "content": "LAST"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"negative replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\nLAST\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_concurrent_writes_atomicity() {
+		// Concurrent batch_edits on the same file must not interleave or corrupt.
+		// The file lock ensures only one write happens at a time.
+		let temp_file = create_test_file("line 1\nline 2\nline 3\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// Fire 10 concurrent inserts — each appends a unique marker after line 1.
+		// The file lock guarantees they serialize; the file must not be corrupted.
+		let mut handles = Vec::new();
+		for i in 0..10 {
+			let p = path.clone();
+			handles.push(tokio::spawn(async move {
+				let call = McpToolCall {
+					tool_id: format!("concurrent_{}", i),
+					tool_name: "batch_edit".to_string(),
+					parameters: json!({
+						"path": p,
+						"operations": [{"operation": "insert", "line_range": 0, "content": format!("marker_{}", i)}]
+					}),
+				};
+				crate::mcp::fs::core::execute_batch_edit(&call)
+					.await
+					.unwrap()
+			}));
+		}
+		for handle in handles {
+			let result = handle.await.unwrap();
+			// Each individual call must succeed (no internal errors)
+			assert!(
+				result
+					.result
+					.get("isError")
+					.map(|v| v == &serde_json::json!(false))
+					.unwrap_or(true),
+				"concurrent write should not error: {:?}",
+				result.result
+			);
+		}
+		// File must be valid UTF-8 and contain all original lines
+		let final_content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert!(
+			final_content.contains("line 1"),
+			"original content must survive concurrent writes"
+		);
+		assert!(
+			final_content.contains("line 2"),
+			"original content must survive concurrent writes"
+		);
+		assert!(
+			final_content.contains("line 3"),
+			"original content must survive concurrent writes"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_diff_shows_removed_and_added() {
+		// The diff output must contain both -N: (removed) and +N: (added) markers
+		let temp_file = create_test_file("alpha\nbeta\ngamma\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [2, 2], "content": "BETA_NEW"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result["isError"], false,
+			"should succeed: {:?}",
+			result.result
+		);
+		let diff = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(
+			diff.contains("-2:"),
+			"diff must show removed line: {}",
+			diff
+		);
+		assert!(diff.contains("+2:"), "diff must show added line: {}", diff);
+		assert!(
+			diff.contains("beta"),
+			"diff must show old content: {}",
+			diff
+		);
+		assert!(
+			diff.contains("BETA_NEW"),
+			"diff must show new content: {}",
+			diff
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_and_replace_combined() {
+		// Mix insert + replace in one call using original line numbers
+		let temp_file = create_test_file("fn foo() {\n    old_body();\n}\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 0, "content": "// generated"},
+				{"operation": "replace", "line_range": [2, 2], "content": "    new_body();"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"mixed ops should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "// generated\nfn foo() {\n    new_body();\n}\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_preserves_no_trailing_newline() {
+		// Files without a trailing newline must stay that way after editing
+		let temp_file = create_test_file("line 1\nline 2").await; // no trailing \n
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [1, 1], "content": "LINE ONE"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("error").is_none(),
+			"should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "LINE ONE\nline 2"); // no trailing newline preserved
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_line_zero_is_invalid() {
+		// Line 0 is not valid for replace (1-indexed); must return a clear error
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [0, 1], "content": "bad"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"line 0 replace must error: {:?}",
+			result.result
+		);
+		// File must be unchanged
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\n");
+	}
+
+	// ===== MULTI-OPERATION LINE OFFSET CORRECTNESS TESTS =====
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_1_with_10_then_replace_later_line() {
+		// Replace line 2 (1 line) with 10 lines, then replace line 5 (original).
+		// Operation 2 must still target original line 5, NOT shifted line 14.
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [2, 2], "content": "N1\nN2\nN3\nN4\nN5\nN6\nN7\nN8\nN9\nN10"},
+				{"operation": "replace", "line_range": [5, 5], "content": "REPLACED_L5"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		// Line 5 (original) replaced, line 2 expanded to 10 lines
+		assert_eq!(
+			actual,
+			"L1\nN1\nN2\nN3\nN4\nN5\nN6\nN7\nN8\nN9\nN10\nL3\nL4\nREPLACED_L5\nL6\n"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_shrink_3_to_1_then_replace_later_line() {
+		// Replace lines 2-4 (3 lines) with 1 line, then replace line 6 (original).
+		// Operation 2 must still target original line 6.
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\nL7\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [2, 4], "content": "MERGED"},
+				{"operation": "replace", "line_range": [6, 6], "content": "REPLACED_L6"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "L1\nMERGED\nL5\nREPLACED_L6\nL7\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_inserts_and_replaces_mixed() {
+		// Insert at beginning + replace middle + insert at end — all using original line numbers
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 0, "content": "HEADER"},
+				{"operation": "replace", "line_range": [3, 3], "content": "C_NEW"},
+				{"operation": "insert", "line_range": 5, "content": "FOOTER"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "HEADER\nA\nB\nC_NEW\nD\nE\nFOOTER\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_into_empty_file() {
+		// Inserting into an empty file (0 lines) with line_range=0
+		let temp_file = create_test_file("").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "insert", "line_range": 0, "content": "first line\nsecond line"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert into empty file should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "first line\nsecond line");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_all_lines_with_different_count() {
+		// Replace all 3 lines with 5 lines
+		let temp_file = create_test_file("old1\nold2\nold3\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "line_range": [1, 3], "content": "new1\nnew2\nnew3\nnew4\nnew5"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"replace all should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "new1\nnew2\nnew3\nnew4\nnew5\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_three_replaces_expand_shrink_same() {
+		// Op1: expand line 1 (1→3), Op2: shrink lines 4-5 (2→1), Op3: same-size line 7 (1→1)
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "X1\nX2\nX3"},
+				{"operation": "replace", "line_range": [4, 5], "content": "MERGED_45"},
+				{"operation": "replace", "line_range": [7, 7], "content": "SAME_7"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"three replaces should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "X1\nX2\nX3\nL2\nL3\nMERGED_45\nL6\nSAME_7\nL8\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_after_last_and_replace_first() {
+		// Insert after last line + replace first line in same batch
+		let temp_file = create_test_file("first\nmiddle\nlast\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": -1, "content": "appended"},
+				{"operation": "replace", "line_range": [1, 1], "content": "FIRST"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert+replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "FIRST\nmiddle\nlast\nappended\n");
+	}
+
+	// ===== EDGE CASE & ERROR PROTECTION TESTS =====
+
+	#[tokio::test]
+	async fn test_batch_edit_content_null_gives_clear_error() {
+		// content: null (not a string) must return a clear error
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "insert", "line_range": 1, "content": null}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		// Should fail because content is null, not a string
+		// The parsing loop returns "Missing 'content' field" for non-string content
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"null content must error: {:?}",
+			result.result
+		);
+		// File must be unchanged
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_missing_operation_field() {
+		// Operation object without 'operation' field
+		let temp_file = create_test_file("line 1\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call =
+			create_batch_edit_call(&path, json!([{"line_range": 1, "content": "test"}])).await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"missing operation field must error: {:?}",
+			result.result
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_unsupported_operation_type() {
+		// Invalid operation type (not insert or replace)
+		let temp_file = create_test_file("line 1\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "delete", "line_range": 1, "content": "test"}]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"invalid operation type must error: {:?}",
+			result.result
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_max_operations_exceeded() {
+		// 51 operations should be rejected (max is 50)
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let ops: Vec<serde_json::Value> = (0..51)
+			.map(
+				|i| json!({"operation": "insert", "line_range": 0, "content": format!("op_{}", i)}),
+			)
+			.collect();
+		let call = create_batch_edit_call(&path, json!(ops)).await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"51 operations must error: {:?}",
+			result.result
+		);
+		let msg = result.result["content"][0]["text"].as_str().unwrap();
+		assert!(
+			msg.contains("Too many operations"),
+			"error should mention too many operations: {}",
+			msg
+		);
+		// File must be unchanged
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nline 2\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_large_file_scattered_operations() {
+		// 1000-line file with 5 scattered operations — verify correctness
+		let mut content = String::new();
+		for i in 1..=1000 {
+			content.push_str(&format!("line {}\n", i));
+		}
+		let temp_file = create_test_file(&content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "FIRST"},
+				{"operation": "replace", "line_range": [250, 250], "content": "LINE_250"},
+				{"operation": "replace", "line_range": [500, 500], "content": "LINE_500"},
+				{"operation": "replace", "line_range": [750, 750], "content": "LINE_750"},
+				{"operation": "replace", "line_range": [1000, 1000], "content": "LAST"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"large file ops should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		let lines: Vec<&str> = actual.lines().collect();
+		assert_eq!(lines[0], "FIRST");
+		assert_eq!(lines[1], "line 2"); // untouched
+		assert_eq!(lines[249], "LINE_250");
+		assert_eq!(lines[499], "LINE_500");
+		assert_eq!(lines[749], "LINE_750");
+		assert_eq!(lines[999], "LAST");
+		assert_eq!(lines.len(), 1000); // same line count (1:1 replacements)
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_expand_early_shrink_late_verify_all_lines() {
+		// Expand line 1 (1→5) + shrink lines 8-10 (3→1) — verify every line
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "E1\nE2\nE3\nE4\nE5"},
+				{"operation": "replace", "line_range": [8, 10], "content": "SHRUNK"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"expand+shrink should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(
+			actual,
+			"E1\nE2\nE3\nE4\nE5\nL2\nL3\nL4\nL5\nL6\nL7\nSHRUNK\n"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_single_line_range_as_integer() {
+		// Some LLMs might send line_range as a single integer for replace
+		// The code handles this via LineRange::Single(line) => (line, line)
+		let temp_file = create_test_file("A\nB\nC\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		// Manually construct the call with integer line_range for replace
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{"operation": "replace", "line_range": 2, "content": "B_NEW"}]
+			}),
+		};
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		// This should work — single integer for replace means replace that one line
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"integer line_range for replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nB_NEW\nC\n");
+	}
+
+	// ===== MIXED INSERT+REPLACE ORIGINAL-LINE-NUMBER CORRECTNESS TESTS =====
+	// These tests verify that when inserts and replaces are combined,
+	// ALL operations reference ORIGINAL line numbers regardless of how
+	// earlier operations expand/shrink the file.
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_adjacent_lines_no_conflict() {
+		// Two inserts at adjacent (but different) lines must NOT conflict
+		let temp_file = create_test_file("A\nB\nC\nD\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 1, "content": "after_A"},
+				{"operation": "insert", "line_range": 3, "content": "after_C"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"adjacent inserts should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nafter_A\nB\nC\nafter_C\nD\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_insert_after_line_and_replace_next_line() {
+		// Insert after line 2 + replace line 3: non-conflicting adjacent ops
+		let temp_file = create_test_file("A\nB\nC\nD\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 2, "content": "INSERTED"},
+				{"operation": "replace", "line_range": [3, 3], "content": "C_NEW"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert+replace adjacent should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		// Insert after B, replace C with C_NEW
+		assert_eq!(actual, "A\nB\nINSERTED\nC_NEW\nD\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_expand_replace_then_insert_before() {
+		// Replace line 4 with 5 lines (expand), insert after line 1.
+		// The insert must use original line 1, not be affected by the expansion.
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [4, 4], "content": "X1\nX2\nX3\nX4\nX5"},
+				{"operation": "insert", "line_range": 1, "content": "HEADER"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"expand+insert should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "L1\nHEADER\nL2\nL3\nX1\nX2\nX3\nX4\nX5\nL5\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_delete_and_insert_nearby() {
+		// Delete line 3 (empty replace) + insert after line 1
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [3, 3], "content": ""},
+				{"operation": "insert", "line_range": 1, "content": "NEW"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"delete+insert should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		// C deleted, NEW inserted after A
+		assert_eq!(actual, "A\nNEW\nB\nD\nE\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_two_inserts_same_line_conflicts() {
+		// Two inserts after the same line must conflict
+		let temp_file = create_test_file("A\nB\nC\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 2, "content": "first"},
+				{"operation": "insert", "line_range": 2, "content": "second"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"two inserts at same line must conflict: {:?}",
+			result.result
+		);
+		// File must be unchanged
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nB\nC\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_first_and_last_line() {
+		// Replace first + last line in same batch — boundary test
+		let temp_file = create_test_file("FIRST\nM1\nM2\nM3\nLAST\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "NEW_FIRST"},
+				{"operation": "replace", "line_range": [5, 5], "content": "NEW_LAST"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"replace first+last should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "NEW_FIRST\nM1\nM2\nM3\nNEW_LAST\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_multiline_insert_with_expand_replace() {
+		// Multi-line insert at beginning + expanding replace in middle
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 0, "content": "H1\nH2\nH3"},
+				{"operation": "replace", "line_range": [3, 3], "content": "C1\nC2\nC3\nC4"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"multiline insert+expand replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "H1\nH2\nH3\nA\nB\nC1\nC2\nC3\nC4\nD\nE\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_four_ops_insert_replace_delete_insert() {
+		// 4 mixed operations: insert at 0, replace line 2, delete line 4, insert after line 6
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 0, "content": "HEADER"},
+				{"operation": "replace", "line_range": [2, 2], "content": "L2_NEW"},
+				{"operation": "replace", "line_range": [4, 4], "content": ""},
+				{"operation": "insert", "line_range": 6, "content": "FOOTER"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"4 mixed ops should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		// HEADER at top, L2→L2_NEW, L4 deleted, FOOTER after L6
+		assert_eq!(actual, "HEADER\nL1\nL2_NEW\nL3\nL5\nL6\nFOOTER\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_expand_early_insert_late_verify_positions() {
+		// Replace line 1 with 4 lines (expand by 3), then insert after line 5 (original).
+		// The insert must land after original line 5, not be shifted by the expansion.
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "R1\nR2\nR3\nR4"},
+				{"operation": "insert", "line_range": 5, "content": "AFTER_L5"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"expand early + insert late should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		// Line 1 expanded to 4 lines, insert after original line 5
+		assert_eq!(actual, "R1\nR2\nR3\nR4\nL2\nL3\nL4\nL5\nAFTER_L5\nL6\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_shrink_early_insert_late_verify_positions() {
+		// Replace lines 1-3 with 1 line (shrink by 2), then insert after line 5 (original).
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 3], "content": "MERGED"},
+				{"operation": "insert", "line_range": 5, "content": "AFTER_L5"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"shrink early + insert late should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		// Lines 1-3 merged, insert after original line 5
+		assert_eq!(actual, "MERGED\nL4\nL5\nAFTER_L5\nL6\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_ops_given_in_reverse_order() {
+		// Operations given in reverse order (high line first, low line last)
+		// Must produce same result as forward order — order in JSON shouldn't matter
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 5, "content": "FOOTER"},
+				{"operation": "replace", "line_range": [3, 3], "content": "C_NEW"},
+				{"operation": "insert", "line_range": 0, "content": "HEADER"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"reverse-order ops should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "HEADER\nA\nB\nC_NEW\nD\nE\nFOOTER\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_real_world_two_replaces_different_sizes() {
+		// Real-world scenario from the log: two replace operations where
+		// op1 replaces 24 lines with 28 lines, op2 replaces 10 lines with 12 lines.
+		// Both use original line numbers.
+		let mut content = String::new();
+		for i in 1..=50 {
+			content.push_str(&format!("line {}\n", i));
+		}
+		let temp_file = create_test_file(&content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// Op1: replace lines 10-15 (6 lines) with 10 lines (expand by 4)
+		// Op2: replace lines 30-35 (6 lines) with 3 lines (shrink by 3)
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [10, 15], "content": "R1\nR2\nR3\nR4\nR5\nR6\nR7\nR8\nR9\nR10"},
+				{"operation": "replace", "line_range": [30, 35], "content": "S1\nS2\nS3"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"real-world two replaces should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		let lines: Vec<&str> = actual.lines().collect();
+
+		// Lines 1-9 unchanged
+		for (i, line) in lines.iter().take(9).enumerate() {
+			assert_eq!(
+				*line,
+				format!("line {}", i + 1),
+				"line {} should be unchanged",
+				i + 1
+			);
+		}
+		// Lines 10-19 are R1-R10 (expanded from 6 to 10)
+		for i in 0..10 {
+			assert_eq!(lines[9 + i], format!("R{}", i + 1));
+		}
+		// Lines 16-29 (original) are now at positions 20-33
+		for i in 16..=29 {
+			assert_eq!(lines[9 + 10 + (i - 16)], format!("line {}", i));
+		}
+		// S1-S3 (shrunk from 6 to 3)
+		let s_start = 9 + 10 + 14; // 33
+		assert_eq!(lines[s_start], "S1");
+		assert_eq!(lines[s_start + 1], "S2");
+		assert_eq!(lines[s_start + 2], "S3");
+		// Lines 36-50 (original) follow
+		for i in 36..=50 {
+			let pos = s_start + 3 + (i - 36);
+			assert_eq!(lines[pos], format!("line {}", i));
+		}
+		// Total: 9 + 10 + 14 + 3 + 15 = 51 lines
+		assert_eq!(lines.len(), 51);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_five_scattered_inserts() {
+		// 5 inserts at different positions in a 10-line file
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 0, "content": "I0"},
+				{"operation": "insert", "line_range": 2, "content": "I2"},
+				{"operation": "insert", "line_range": 5, "content": "I5"},
+				{"operation": "insert", "line_range": 8, "content": "I8"},
+				{"operation": "insert", "line_range": 10, "content": "I10"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"5 scattered inserts should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(
+			actual,
+			"I0\nL1\nL2\nI2\nL3\nL4\nL5\nI5\nL6\nL7\nL8\nI8\nL9\nL10\nI10\n"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_error_does_not_modify_file() {
+		// If one operation in a batch has an error (e.g., out-of-bounds),
+		// the ENTIRE batch must be rejected and the file must remain unchanged.
+		let temp_file = create_test_file("A\nB\nC\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "A_NEW"},
+				{"operation": "replace", "line_range": [99, 99], "content": "INVALID"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result.get("isError"),
+			Some(&serde_json::json!(true)),
+			"batch with invalid op must error: {:?}",
+			result.result
+		);
+		// File MUST be completely unchanged — atomicity guarantee
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nB\nC\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_multiline_insert_between_two_replaces() {
+		// Replace line 1, multi-line insert after line 3, replace line 5
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "FIRST"},
+				{"operation": "insert", "line_range": 3, "content": "I1\nI2\nI3"},
+				{"operation": "replace", "line_range": [5, 5], "content": "FIFTH"}
+			]),
+		)
+		.await;
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"replace+insert+replace should succeed: {:?}",
+			result.result
+		);
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "FIRST\nL2\nL3\nI1\nI2\nI3\nL4\nFIFTH\nL6\n");
+	}
 	// ===== NEGATIVE LINE INDEXING TESTS =====
 
 	#[tokio::test]
@@ -2572,20 +3816,21 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_batch_edit_insert_and_replace_same_line_should_fail() {
-		// CRITICAL TEST: Insert after line N and replace line N should conflict
+	async fn test_batch_edit_insert_and_replace_same_line_succeeds() {
+		// Insert after line N and replace line N should SUCCEED (not conflict).
+		// Insert operates on the gap after line N, replace changes line N's content.
 		let temp_file = create_test_file("line 1\nline 2\nline 3\nline 4\nline 5\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 2, // insert after line 2
+				"line_range": 2,
 				"content": "INSERTED AFTER 2"
 			},
 			{
 				"operation": "replace",
-				"line_range": [2, 2], // replace line 2 - CONFLICTS!
+				"line_range": [2, 2],
 				"content": "REPLACED 2"
 			}
 		]);
@@ -2595,18 +3840,18 @@ mod tests {
 			.await
 			.unwrap();
 
-		// Should fail due to conflict
+		// Should succeed
 		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content due to conflicting operations"
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert after 2 + replace [2,2] should NOT conflict: {:?}",
+			result.result
 		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("Conflicting operations"),
-			"Should detect conflict: {}",
-			content
+
+		// Replace line 2 first (REPLACED 2), then insert INSERTED AFTER 2 after it
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(
+			actual,
+			"line 1\nREPLACED 2\nINSERTED AFTER 2\nline 3\nline 4\nline 5\n"
 		);
 	}
 
@@ -3197,5 +4442,317 @@ mod tests {
 			"PATHOLOGICAL: All expansions must preserve original positions!\nActual:\n{}\nExpected:\n{}",
 			actual, expected
 		);
+	}
+
+	// BUG CONFIRMATION: insert after line N + replace line N should NOT conflict
+	// Insert after N = put content between line N and N+1
+	// Replace N = change line N's content
+	// These are independent operations.
+	#[tokio::test]
+	async fn test_batch_edit_insert_after_n_and_replace_n_no_conflict() {
+		let temp_file = create_test_file("AAA\nBBB\nCCC\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 2, "content": "INSERTED"},
+				{"operation": "replace", "line_range": [2, 2], "content": "REPLACED"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		let result_str = serde_json::to_string(&result.result).unwrap();
+
+		// Should NOT contain "Conflicting operations"
+		assert!(
+			!result_str.contains("Conflicting operations"),
+			"BUG: insert after line 2 + replace line 2 should NOT conflict!\nGot: {}",
+			result_str
+		);
+
+		// Expected: replace line 2 (BBB→REPLACED), then insert INSERTED after line 2
+		// Result: AAA / REPLACED / INSERTED / CCC
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "AAA\nREPLACED\nINSERTED\nCCC\n");
+	}
+
+	// Insert after N + replace range that INCLUDES N → should succeed
+	// Insert goes into gap after line N, replace changes lines including N
+	#[tokio::test]
+	async fn test_batch_edit_insert_after_n_replace_range_including_n() {
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 3, "content": "NEW"},
+				{"operation": "replace", "line_range": [2, 4], "content": "X\nY\nZ"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert after 3 + replace [2,4] should NOT conflict: {:?}",
+			result.result
+		);
+
+		// Reverse-order: replace [2,4] first (B,C,D → X,Y,Z), then insert NEW after line 3
+		// After replace: A / X / Y / Z / E
+		// Insert after line 3 (Y): A / X / Y / NEW / Z / E
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nX\nY\nNEW\nZ\nE\n");
+	}
+
+	// Insert after 0 + replace line 1 → should succeed
+	// Insert at beginning, replace first line — independent operations
+	#[tokio::test]
+	async fn test_batch_edit_insert_at_zero_replace_line_one() {
+		let temp_file = create_test_file("FIRST\nSECOND\nTHIRD\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 0, "content": "HEADER"},
+				{"operation": "replace", "line_range": [1, 1], "content": "REPLACED_FIRST"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert at 0 + replace line 1 should NOT conflict: {:?}",
+			result.result
+		);
+
+		// Reverse-order: replace(1,1) pos=1 > insert(0) pos=0
+		// Replace first: REPLACED_FIRST / SECOND / THIRD
+		// Insert at 0: HEADER / REPLACED_FIRST / SECOND / THIRD
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "HEADER\nREPLACED_FIRST\nSECOND\nTHIRD\n");
+	}
+
+	// Two replaces with overlapping ranges → should conflict
+	#[tokio::test]
+	async fn test_batch_edit_two_replaces_overlapping_conflict() {
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 3], "content": "X"},
+				{"operation": "replace", "line_range": [3, 5], "content": "Y"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		let result_str = serde_json::to_string(&result.result).unwrap();
+		assert!(
+			result_str.contains("overlapping ranges"),
+			"overlapping replaces [1,3] and [3,5] should conflict: {}",
+			result_str
+		);
+
+		// File should be unchanged (atomic rejection)
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nB\nC\nD\nE\n");
+	}
+
+	// Insert + replace same line with multi-line content → verify correct output
+	#[tokio::test]
+	async fn test_batch_edit_insert_replace_same_line_multiline_content() {
+		let temp_file = create_test_file("A\nB\nC\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 2, "content": "I1\nI2\nI3"},
+				{"operation": "replace", "line_range": [2, 2], "content": "R1\nR2"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert after 2 + replace [2,2] with multiline should succeed: {:?}",
+			result.result
+		);
+
+		// Reverse-order: both at pos 2, replace sorts first
+		// Replace line 2 (B → R1,R2): A / R1 / R2 / C
+		// Insert after line 2 (I1,I2,I3 after R2): A / R1 / R2 / I1 / I2 / I3 / C
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nR1\nR2\nI1\nI2\nI3\nC\n");
+	}
+
+	// Multiple inserts at different lines + replace spanning middle → should succeed
+	#[tokio::test]
+	async fn test_batch_edit_multiple_inserts_with_spanning_replace() {
+		let temp_file = create_test_file("A\nB\nC\nD\nE\nF\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 1, "content": "AFTER_A"},
+				{"operation": "replace", "line_range": [3, 4], "content": "REPLACED_CD"},
+				{"operation": "insert", "line_range": 5, "content": "AFTER_E"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"mixed inserts + replace should succeed: {:?}",
+			result.result
+		);
+
+		// Reverse-order processing:
+		// 1. insert after 5 (pos=5): A/B/C/D/E/AFTER_E/F
+		// 2. replace [3,4] (pos=3): A/B/REPLACED_CD/E/AFTER_E/F
+		// 3. insert after 1 (pos=1): A/AFTER_A/B/REPLACED_CD/E/AFTER_E/F
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nAFTER_A\nB\nREPLACED_CD\nE\nAFTER_E\nF\n");
+	}
+
+	// Two replaces with adjacent (non-overlapping) ranges → should succeed
+	#[tokio::test]
+	async fn test_batch_edit_two_replaces_adjacent_no_conflict() {
+		let temp_file = create_test_file("A\nB\nC\nD\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 2], "content": "X\nY"},
+				{"operation": "replace", "line_range": [3, 4], "content": "W\nZ"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"adjacent replaces [1,2] and [3,4] should NOT conflict: {:?}",
+			result.result
+		);
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "X\nY\nW\nZ\n");
+	}
+
+	// Insert after last line + replace last line → should succeed
+	#[tokio::test]
+	async fn test_batch_edit_insert_after_last_replace_last() {
+		let temp_file = create_test_file("A\nB\nC\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "insert", "line_range": 3, "content": "FOOTER"},
+				{"operation": "replace", "line_range": [3, 3], "content": "REPLACED_C"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"insert after last + replace last should NOT conflict: {:?}",
+			result.result
+		);
+
+		// Same pos=3: replace first (C→REPLACED_C), then insert FOOTER after
+		// A / B / REPLACED_C / FOOTER
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nB\nREPLACED_C\nFOOTER\n");
+	}
+
+	// Replace that deletes lines + insert at same position → should succeed
+	#[tokio::test]
+	async fn test_batch_edit_delete_replace_with_insert_same_pos() {
+		let temp_file = create_test_file("A\nB\nC\nD\nE\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [2, 3], "content": ""},
+				{"operation": "insert", "line_range": 2, "content": "NEW"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"delete [2,3] + insert after 2 should NOT conflict: {:?}",
+			result.result
+		);
+
+		// Reverse-order: both pos=2, replace first
+		// Replace [2,3] with empty (delete B,C): A / D / E
+		// Insert after line 2 (NEW after D): A / D / NEW / E
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "A\nD\nNEW\nE\n");
+	}
+
+	// Stress test: insert at every gap + replace every other line
+	#[tokio::test]
+	async fn test_batch_edit_interleaved_inserts_and_replaces() {
+		let temp_file = create_test_file("L1\nL2\nL3\nL4\nL5\nL6\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([
+				{"operation": "replace", "line_range": [1, 1], "content": "R1"},
+				{"operation": "insert", "line_range": 1, "content": "I1"},
+				{"operation": "replace", "line_range": [3, 3], "content": "R3"},
+				{"operation": "insert", "line_range": 3, "content": "I3"},
+				{"operation": "replace", "line_range": [5, 5], "content": "R5"},
+				{"operation": "insert", "line_range": 5, "content": "I5"}
+			]),
+		)
+		.await;
+
+		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"interleaved inserts+replaces should succeed: {:?}",
+			result.result
+		);
+
+		// Processing order (reverse by pos, replace before insert at same pos):
+		// pos=5 replace: L1/L2/L3/L4/R5/L6
+		// pos=5 insert:  L1/L2/L3/L4/R5/I5/L6
+		// pos=3 replace: L1/L2/R3/L4/R5/I5/L6
+		// pos=3 insert:  L1/L2/R3/I3/L4/R5/I5/L6
+		// pos=1 replace: R1/L2/R3/I3/L4/R5/I5/L6
+		// pos=1 insert:  R1/I1/L2/R3/I3/L4/R5/I5/L6
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "R1\nI1\nL2\nR3\nI3\nL4\nR5\nI5\nL6\n");
 	}
 }

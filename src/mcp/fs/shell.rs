@@ -25,11 +25,7 @@ pub fn get_shell_function() -> McpFunction {
 
 Each command runs in its own process — state (cd, exports) does not persist. Chain with `&&`: `cd foo && cargo build`.
 
-Use ripgrep (`rg`) for file/code search — not `find` or `ls -r` (those show ignored files):
-- By name: `rg --files | rg <name>`
-- By content: `rg '<pattern>' -l`
-
-Background: set `background: true` to get a PID immediately; kill with `kill <pid>`. No need to append `&`.
+Background: set `background: true` to get a PID immediately; kill with `kill <pid>`.
 
 Examples:
 - `{\"command\": \"cargo test\"}`

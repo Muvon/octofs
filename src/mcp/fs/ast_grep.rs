@@ -69,56 +69,23 @@ fn group_ast_grep_output(output: &str) -> String {
 pub fn get_ast_grep_function() -> McpFunction {
 	McpFunction {
 		name: "ast_grep".to_string(),
-		description: "Search and refactor code using AST patterns with ast-grep (sg).
+		description: "Search and refactor code using AST patterns with ast-grep.
 
-AST-grep understands code structure — superior to regex for code transformations.
+Pattern syntax:
+- `$VAR` — matches ONE AST node
+- `$$$VAR` — matches ZERO or more nodes (use for parameter lists, arguments, body)
+- `$_` — wildcard, matches one node without capturing
 
-Pattern Syntax:
-- `$VAR` — matches exactly ONE AST node (not multiple args/params)
-- `$$$VAR` — matches ZERO or more nodes; use inside `()`, `{}`, `[]` for lists
-- `$_` — anonymous wildcard, matches one node without capturing
-- Same-named variables must match identical content
+Patterns are structurally exact — every element you include must be present, every element you omit must be absent.
+`fn $F($$$A) { $$$B }` does NOT match `fn foo() -> Bar {}` (missing return type in pattern).
 
-CRITICAL — Patterns are structurally exact:
-Every element you include must be present; every element you omit must be absent.
-Optional syntax (return types, async, pub, decorators, type annotations, throws) must be in the pattern to match code that has it — and absent to match code that lacks it.
-When unsure, make TWO calls: one with the optional part, one without.
+Common patterns:
+- `console.log($$$)` — find all console.log calls
+- `fn $NAME($$$ARGS) -> $RET { $$$BODY }` — Rust functions with return type
+- `def $NAME($$$ARGS): $$$` — Python functions
 
-- WRONG: `fn $NAME($ARGS)` — `$ARGS` is one node, misses multi-param functions
-- RIGHT: `fn $NAME($$$ARGS)` — matches zero or more parameters
-- `fn $NAME($$$ARGS) { $$$BODY }` does NOT match `fn foo() -> Bar {}` — return type absent from pattern
-- `function $NAME($$$ARGS) {}` does NOT match `async function foo() {}` — async absent from pattern
-
-Common Examples by Language:
-
-**JavaScript/TypeScript:**
-- Function calls: `$OBJ.$METHOD($$$)` or `console.log($$$)`
-- Regular function: `function $NAME($$$ARGS) { $$$ }`
-- Async function (separate pattern): `async function $NAME($$$ARGS) { $$$ }`
-- Arrow function: `($$$ARGS) => $BODY`
-- Variable: `const $VAR = $VALUE`
-- Import: `import $NAME from '$PATH'`
-
-**PHP:**
-- Function calls: `$NAME($$$)` / method calls: `$OBJ->$METHOD($$$)`
-- Class: `class $NAME { $$$ }`
-
-**Rust:**
-- Fn without return: `fn $NAME($$$ARGS) { $$$BODY }`
-- Fn with return (separate pattern): `fn $NAME($$$ARGS) -> $RET { $$$BODY }`
-- Struct: `struct $NAME { $$$ }` / macro: `println!($$$)`
-
-**Python:**
-- Fn without annotation: `def $NAME($$$ARGS): $$$`
-- Fn with return annotation (separate pattern): `def $NAME($$$ARGS) -> $RET: $$$`
-- Class: `class $NAME: $$$`
-
-Examples:
-- `{\"pattern\": \"console.log($$$)\", \"language\": \"javascript\"}`
-- `{\"pattern\": \"oldFunc($$$ARGS)\", \"rewrite\": \"newFunc($$$ARGS)\", \"language\": \"javascript\"}`
-- `{\"pattern\": \"class $NAME\", \"language\": \"php\", \"paths\": [\"src/**/*.php\"]}`
-- `{\"pattern\": \"$OBJ.oldMethod($$$ARGS)\", \"rewrite\": \"$OBJ.newMethod($$$ARGS)\"}`
-- `{\"pattern\": \"TODO\", \"context\": 2}`
+Refactoring: set `rewrite` to transform matches. Same metavariables carry captured content.
+- pattern: `oldFunc($$$ARGS)`, rewrite: `newFunc($$$ARGS)`
 ".to_string(),
 		parameters: json!({
 			"type": "object",

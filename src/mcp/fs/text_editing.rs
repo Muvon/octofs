@@ -134,6 +134,10 @@ fn resolve_unresolved_line_range(
 ) -> Result<LineRange, String> {
 	match unresolved {
 		UnresolvedLineRange::Single(line) => {
+			// Insert: 0 = before line 1 (beginning of file) — valid special case
+			if *line == 0 {
+				return Ok(LineRange::Single(0));
+			}
 			let resolved = resolve_line_index(*line, total_lines)?;
 			Ok(LineRange::Single(resolved))
 		}
@@ -368,139 +372,224 @@ fn check_replace_duplicates(
 	Ok(())
 }
 
-// Check for conflicting operations on the same lines
+// Check for conflicting operations that would corrupt the file.
+//
+// Conflict rules:
+//   Replace vs Replace — ranges overlap → conflict (both try to modify same lines)
+//   Insert  vs Insert  — same anchor line → conflict (ambiguous ordering)
+//   Insert  vs Replace — NEVER conflict. Insert operates in the *gap* after a line,
+//                        Replace operates on the line's *content*. They are independent.
 fn detect_conflicts(operations: &[BatchOperation]) -> Result<(), String> {
 	for i in 0..operations.len() {
 		for j in (i + 1)..operations.len() {
 			let op1 = &operations[i];
 			let op2 = &operations[j];
 
-			// Get affected lines for each operation
-			let lines1 = get_affected_lines(&op1.line_range);
-			let lines2 = get_affected_lines(&op2.line_range);
-
-			// Check for overlap
-			for line1 in &lines1 {
-				for line2 in &lines2 {
+			match (&op1.operation_type, &op2.operation_type) {
+				// Two replaces: check if ranges overlap
+				(OperationType::Replace, OperationType::Replace) => {
+					let (s1, e1) = replace_range(&op1.line_range);
+					let (s2, e2) = replace_range(&op2.line_range);
+					// Ranges overlap when s1 <= e2 AND s2 <= e1
+					if s1 <= e2 && s2 <= e1 {
+						return Err(format!(
+							"Conflicting operations: operation {} (replace [{},{}]) and {} (replace [{},{}]) have overlapping ranges",
+							op1.operation_index, s1, e1, op2.operation_index, s2, e2
+						));
+					}
+				}
+				// Two inserts: conflict only if same anchor line (ambiguous order)
+				(OperationType::Insert, OperationType::Insert) => {
+					let line1 = insert_anchor(&op1.line_range);
+					let line2 = insert_anchor(&op2.line_range);
 					if line1 == line2 {
 						return Err(format!(
-							"Conflicting operations: operation {} and {} both affect line {}",
+							"Conflicting operations: operation {} and {} both insert after line {}",
 							op1.operation_index, op2.operation_index, line1
 						));
 					}
 				}
+				// Insert + Replace: never conflict — they operate on different
+				// conceptual positions (gap vs content)
+				(OperationType::Insert, OperationType::Replace)
+				| (OperationType::Replace, OperationType::Insert) => {}
 			}
 		}
 	}
 	Ok(())
 }
 
-// Get all lines affected by an operation
-fn get_affected_lines(line_range: &LineRange) -> Vec<usize> {
+// Extract the (start, end) range from a replace operation's LineRange
+fn replace_range(line_range: &LineRange) -> (usize, usize) {
 	match line_range {
-		LineRange::Single(line) => {
-			// Insert affects the line it inserts after (for conflict detection)
-			vec![*line]
-		}
-		LineRange::Range(start, end) => {
-			// Replace affects all lines in the range
-			(*start..=*end).collect()
-		}
+		LineRange::Range(start, end) => (*start, *end),
+		LineRange::Single(line) => (*line, *line),
 	}
 }
 
-// Apply all operations to the original file content
+// Extract the anchor line from an insert operation's LineRange
+fn insert_anchor(line_range: &LineRange) -> usize {
+	match line_range {
+		LineRange::Single(line) => *line,
+		LineRange::Range(start, _) => *start,
+	}
+}
+
+// Apply all operations to the original file content.
+//
+// Two-phase approach: replaces first, then inserts.
+// All line numbers reference the ORIGINAL file. Replaces among themselves are
+// applied in reverse order (highest start first) so earlier replaces don't shift
+// later ones. After all replaces, we compute an offset map so inserts can find
+// their correct position in the (now modified) line array.
 async fn apply_batch_operations(
 	original_content: &str,
 	operations: &[BatchOperation],
 ) -> Result<String> {
 	let mut lines: Vec<String> = original_content.lines().map(|s| s.to_string()).collect();
+	let original_len = lines.len();
 
-	// Sort operations by line position in reverse order to maintain line number stability
-	let mut sorted_ops = operations.to_vec();
-	sorted_ops.sort_by(|a, b| {
-		let pos_a = match &a.line_range {
-			LineRange::Single(line) => *line,
-			LineRange::Range(start, _) => *start,
+	// Separate into replaces and inserts
+	let mut replaces: Vec<&BatchOperation> = operations
+		.iter()
+		.filter(|op| op.operation_type == OperationType::Replace)
+		.collect();
+	let mut inserts: Vec<&BatchOperation> = operations
+		.iter()
+		.filter(|op| op.operation_type == OperationType::Insert)
+		.collect();
+
+	// Sort replaces by start position descending (highest first)
+	replaces.sort_by(|a, b| {
+		let sa = match &a.line_range {
+			LineRange::Range(s, _) => *s,
+			LineRange::Single(l) => *l,
 		};
-		let pos_b = match &b.line_range {
-			LineRange::Single(line) => *line,
-			LineRange::Range(start, _) => *start,
+		let sb = match &b.line_range {
+			LineRange::Range(s, _) => *s,
+			LineRange::Single(l) => *l,
 		};
-		pos_b.cmp(&pos_a) // Reverse order
+		sb.cmp(&sa)
 	});
 
-	// Apply operations from highest line number to lowest
-	for operation in sorted_ops {
-		match operation.operation_type {
-			OperationType::Insert => {
-				let insert_after = match operation.line_range {
-					LineRange::Single(line) => line,
-					_ => return Err(anyhow!("Insert operation must use single line number")),
-				};
+	// Phase 1: Apply all replaces (reverse order preserves original line refs)
+	// Track each replace's offset: (original_end, delta) where delta = new_lines - old_lines
+	let mut replace_deltas: Vec<(usize, usize, i64)> = Vec::with_capacity(replaces.len());
 
-				// Validate line number
-				if insert_after > lines.len() {
-					return Err(anyhow!(
-						"Insert position {} is beyond file length {}",
-						insert_after,
-						lines.len()
-					));
-				}
+	for operation in &replaces {
+		let (start, end) = match operation.line_range {
+			LineRange::Range(start, end) => (start, end),
+			LineRange::Single(line) => (line, line),
+		};
 
-				// Split content by lines and insert
-				let content_lines: Vec<String> =
-					operation.content.lines().map(|s| s.to_string()).collect();
+		// Validate line range (1-indexed)
+		if start == 0 || end == 0 {
+			return Err(anyhow!("Line numbers must be 1-indexed (start from 1)"));
+		}
+		if start > original_len || end > original_len {
+			return Err(anyhow!(
+				"Line range [{}, {}] is beyond file length {}",
+				start,
+				end,
+				original_len
+			));
+		}
+		if start > end {
+			return Err(anyhow!("Invalid line range: start {} > end {}", start, end));
+		}
 
-				if insert_after == 0 {
-					// Insert at beginning
-					for (i, line) in content_lines.into_iter().enumerate() {
-						lines.insert(i, line);
-					}
-				} else {
-					// Insert after specified line
-					for (i, line) in content_lines.into_iter().enumerate() {
-						lines.insert(insert_after + i, line);
-					}
-				}
+		let old_count = end - start + 1;
+		let content_lines: Vec<String> = operation.content.lines().map(|s| s.to_string()).collect();
+		let new_count = content_lines.len();
+
+		// Remove old lines (0-indexed)
+		let start_idx = start - 1;
+		for _ in 0..old_count {
+			lines.remove(start_idx);
+		}
+
+		// Insert new content
+		for (i, line) in content_lines.into_iter().enumerate() {
+			lines.insert(start_idx + i, line);
+		}
+
+		replace_deltas.push((start, end, new_count as i64 - old_count as i64));
+	}
+
+	// Phase 2: Apply inserts with adjusted positions.
+	// For each insert's original anchor line, compute how much it shifted due to replaces.
+	// Sort inserts descending so they don't interfere with each other.
+	inserts.sort_by(|a, b| {
+		let la = match &a.line_range {
+			LineRange::Single(l) => *l,
+			LineRange::Range(s, _) => *s,
+		};
+		let lb = match &b.line_range {
+			LineRange::Single(l) => *l,
+			LineRange::Range(s, _) => *s,
+		};
+		lb.cmp(&la)
+	});
+
+	for operation in &inserts {
+		let original_anchor = match operation.line_range {
+			LineRange::Single(line) => line,
+			_ => return Err(anyhow!("Insert operation must use single line number")),
+		};
+
+		// Validate against original file length
+		if original_anchor > original_len {
+			return Err(anyhow!(
+				"Insert position {} is beyond file length {}",
+				original_anchor,
+				original_len
+			));
+		}
+
+		// Compute adjusted position: start from original anchor, apply offsets
+		// from all replaces that END at or before this anchor.
+		// A replace at [s,e] with delta D shifts everything after line e by D.
+		// If anchor >= e (insert is after the replaced region), apply the full delta.
+		// If anchor < s (insert is before the replaced region), no shift.
+		// If s <= anchor < e (insert is inside the replaced region), the anchor
+		// falls within replacement content — shift by (anchor - s) positions into
+		// the new content, capped at the new content length.
+		let mut adjusted = original_anchor as i64;
+		for &(rs, re, delta) in &replace_deltas {
+			if original_anchor >= re {
+				// Insert anchor is at or after the replace's end — full shift
+				adjusted += delta;
+			} else if original_anchor >= rs {
+				// Insert anchor is inside the replaced range.
+				// Map it proportionally: anchor was at offset (anchor - rs) into
+				// the old range. In the new content, cap at new_count.
+				let old_count = (re - rs + 1) as i64;
+				let new_count = old_count + delta;
+				let offset_in_old = (original_anchor - rs) as i64;
+				// Proportional position in new content, capped
+				let offset_in_new = offset_in_old.min(new_count);
+				// The replace starts at rs in original. After this replace,
+				// position rs maps to rs (unchanged start). So anchor maps to
+				// rs + offset_in_new. But we started with adjusted = original_anchor,
+				// so the delta to apply is: (rs as i64 + offset_in_new) - original_anchor as i64
+				adjusted += (rs as i64 + offset_in_new) - original_anchor as i64;
 			}
-			OperationType::Replace => {
-				let (start, end) = match operation.line_range {
-					LineRange::Range(start, end) => (start, end),
-					LineRange::Single(line) => (line, line), // Single line replacement
-				};
+			// else: anchor is before the replace — no shift needed
+		}
 
-				// Validate line range (1-indexed)
-				if start == 0 || end == 0 {
-					return Err(anyhow!("Line numbers must be 1-indexed (start from 1)"));
-				}
-				if start > lines.len() || end > lines.len() {
-					return Err(anyhow!(
-						"Line range [{}, {}] is beyond file length {}",
-						start,
-						end,
-						lines.len()
-					));
-				}
-				if start > end {
-					return Err(anyhow!("Invalid line range: start {} > end {}", start, end));
-				}
+		let insert_pos = adjusted.max(0) as usize;
 
-				// Remove the lines to be replaced (convert to 0-indexed)
-				let start_idx = start - 1;
-				let end_idx = end - 1;
+		// Split content by lines and insert
+		let content_lines: Vec<String> = operation.content.lines().map(|s| s.to_string()).collect();
 
-				// Remove lines in reverse order
-				for _ in start_idx..=end_idx {
-					lines.remove(start_idx);
-				}
-
-				// Insert new content
-				let content_lines: Vec<String> =
-					operation.content.lines().map(|s| s.to_string()).collect();
-				for (i, line) in content_lines.into_iter().enumerate() {
-					lines.insert(start_idx + i, line);
-				}
+		if insert_pos == 0 {
+			for (i, line) in content_lines.into_iter().enumerate() {
+				lines.insert(i, line);
+			}
+		} else {
+			let clamped = insert_pos.min(lines.len());
+			for (i, line) in content_lines.into_iter().enumerate() {
+				lines.insert(clamped + i, line);
 			}
 		}
 	}
@@ -585,6 +674,28 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			));
 		}
 	};
+
+	// Fail fast: validate operations array before touching the filesystem
+	if operations.is_empty() {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			"Operations array is empty — nothing to do.".to_string(),
+		));
+	}
+
+	const MAX_OPERATIONS: usize = 50;
+	if operations.len() > MAX_OPERATIONS {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!(
+				"Too many operations: {} (max {}). Split into multiple calls.",
+				operations.len(),
+				MAX_OPERATIONS
+			),
+		));
+	}
 
 	let path = super::core::resolve_path(path_str);
 
@@ -860,12 +971,27 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Save file history for undo functionality
 	save_file_history(&path).await?;
 
-	// Write the final content to file
-	if let Err(e) = tokio_fs::write(&path, &final_content).await {
+	// Atomic write: write to a temp file in the same directory, then rename over the target.
+	// This guarantees the file is never in a partial/corrupt state if the process is interrupted.
+	let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+	let tmp_path = parent_dir.join(format!(
+		".octofs_tmp_{}.tmp",
+		path.file_name().unwrap_or_default().to_string_lossy()
+	));
+	if let Err(e) = tokio_fs::write(&tmp_path, &final_content).await {
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Failed to write file '{}': {}", path_str, e),
+			format!("Failed to write temp file for '{}': {}", path_str, e),
+		));
+	}
+	if let Err(e) = tokio_fs::rename(&tmp_path, &path).await {
+		// Clean up temp file on rename failure
+		let _ = tokio_fs::remove_file(&tmp_path).await;
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Failed to atomically replace '{}': {}", path_str, e),
 		));
 	}
 

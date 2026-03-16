@@ -49,7 +49,7 @@ pub fn get_view_function() -> McpFunction {
 					"type": "array",
 					"items": {"type": "string"},
 					"maxItems": 50,
-					"description": "Array of file paths for multi-file viewing (replaces view_many). Max 50 files."
+					"description": "Array of file paths for multi-file viewing. Max 50 files."
 				},
 				"lines": {
 					"type": "array",
@@ -98,17 +98,16 @@ pub fn get_text_editor_function() -> McpFunction {
 
 			The `command` parameter specifies the operation to perform.
 			For READ operations use the `view` tool instead.
-			For line-based edits (insert after line, replace by line range), use `batch_edit` instead.
-			Note: every edit shifts line numbers — re-view the file before using str_replace after a batch_edit.
+			For line-based edits (insert after line, replace by line range), use the separate `batch_edit` tool.
 
 			Commands:
 
 			`create`: Create new file. Fails if file already exists.
 			- `{\"command\": \"create\", \"path\": \"src/new.rs\", \"content\": \"...\"}` — creates parent dirs automatically.
 
-			`str_replace`: Replace exact string. Fails if 0 or 2+ matches.
+			`str_replace`: Replace exact string match. Requires exactly 1 match — fails on 0 (no match) or 2+ (ambiguous).
 			- `{\"command\": \"str_replace\", \"path\": \"src/main.rs\", \"old_text\": \"fn old()\", \"new_text\": \"fn new()\"}`
-			- Use when you know the text but not the line numbers.
+			- `old_text` must match exactly (including whitespace). Use raw content, not escaped.
 
 			`undo_edit`: Revert the last edit on a file.
 			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`"
@@ -128,16 +127,22 @@ pub fn get_text_editor_function() -> McpFunction {
 				},
 				"content": {
 					"type": "string",
-					"description": "Content for create operation. Raw text with actual whitespace (not escape sequences)"
+					"description": "File content for create command. Raw text with actual whitespace (not escape sequences)"
 				},
 				"old_text": {
 					"type": "string",
-					"description": "Text to find and replace (must match exactly including whitespace) - for str_replace command"
+					"description": "Text to find (must match exactly including whitespace). REQUIRED for str_replace."
 				},
 				"new_text": {
 					"type": "string",
-					"description": "Replacement text for str_replace command. Raw text with actual whitespace (not escape sequences)"
-				},
+					"description": "Replacement text. REQUIRED for str_replace. Raw text with actual whitespace (not escape sequences)"
+				}
+			},
+			"if": { "properties": { "command": { "const": "create" } } },
+			"then": { "required": ["content"] },
+			"else": {
+				"if": { "properties": { "command": { "const": "str_replace" } } },
+				"then": { "required": ["old_text", "new_text"] }
 			}
 		}),
 	}
@@ -195,15 +200,29 @@ pub fn get_batch_edit_function() -> McpFunction {
 			CRITICAL: Always `view` the exact line range before replacing — never assume what is at a line number.
 			Line numbers shift after every edit. If you edited this file before, re-view it first.
 
+			CRITICAL: All line_range values reference the ORIGINAL file content before ANY changes.
+			Even if operation 1 replaces 1 line with 10 lines, operation 2 still uses the original line numbers.
+			The tool handles offset calculation internally — you never need to adjust for prior operations.
+
 			Operations:
-			- `insert`: line_range = N → insert after line N (0 = beginning)
+			- `insert`: line_range = integer → insert after line N (0 = beginning of file, -1 = after last line)
 			- `replace`: line_range = [start, end] → remove those lines, insert new content
+
+			Negative line numbers count from end: -1 = last line, -2 = second-to-last, etc.
 
 			Key rule — NEVER retype unchanged lines in replace:
 			❌ Bad: replace [1,3] with \"use std::fs;\\nuse std::io;\\nuse std::path::PathBuf;\" (retyped lines 1-2)
 			✅ Good: replace [3,3] with \"use std::path::PathBuf;\" (only the line actually changing)
 
+			Empty content in replace deletes the targeted lines entirely.
+
+			Duplicate-line guard: the tool rejects content whose first/last line matches the line
+			immediately before/after the replacement range — a common mistake where surrounding
+			context is accidentally included. Fix: shrink the range or trim the content.
+
 			Max 50 operations per call.
+
+			Atomicity: either ALL operations succeed or NONE are applied — the file is never left in a partial state.
 
 			Returns a diff of all changes made:
 			- Context lines: `NNN: <text>` (3 lines before/after each change)
@@ -229,25 +248,24 @@ pub fn get_batch_edit_function() -> McpFunction {
 								"description": "Type of operation: 'insert' (after line) or 'replace' (line range)"
 							},
 							"line_range": {
+								"description": "CRITICAL: Line numbers from ORIGINAL file content (before any modifications). Insert: single integer (0=beginning, N=after line N, -1=after last line). Replace: [start, end] array (1-indexed inclusive, negative ok). DO NOT USE if file was modified — line numbers will be wrong!",
 								"oneOf": [
 									{
 										"type": "integer",
-										"minimum": 0,
-										"description": "Single line number for insert (0=beginning, N=after line N)"
+										"description": "Single line number for insert (0=beginning, N=after line N, -1=after last line)"
 									},
 									{
 										"type": "array",
-										"items": {"type": "integer", "minimum": 1},
-										"minItems": 1,
+										"items": {"type": "integer"},
+										"minItems": 2,
 										"maxItems": 2,
-										"description": "Line range [start] or [start, end] (1-indexed, inclusive)"
+										"description": "Line range [start, end] for replace (1-indexed, inclusive, negative ok: -1=last line)"
 									}
-								],
-								"description": "CRITICAL: Line numbers from ORIGINAL file content (before any modifications). Insert: single number (after which line). Replace: [start, end] range (inclusive, 1-indexed). DO NOT USE if file was modified - line numbers will be wrong!"
+								]
 							},
 							"content": {
 								"type": "string",
-								"description": "Raw content to insert or replace with (no escaping needed - use actual tabs/spaces)"
+								"description": "Raw content to insert or replace with (no escaping needed — use actual tabs/spaces). Empty string in replace deletes the targeted lines."
 							}
 						},
 						"required": ["operation", "line_range", "content"]
