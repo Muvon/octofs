@@ -1,0 +1,63 @@
+# Pre-commit configuration for Rust project
+repos:
+  # Rust-specific hooks
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      # Format code with cargo fmt
+      - id: fmt
+        name: cargo fmt
+        description: Format Rust code with cargo fmt
+        entry: cargo fmt
+        language: system
+        files: \.rs$
+        args: ['--all', '--']
+
+      # Run cargo clippy for linting
+      - id: clippy
+        name: cargo clippy
+        description: Lint Rust code with cargo clippy
+        entry: cargo clippy
+        language: system
+        files: \.rs$
+        args: ['--all-targets', '--all-features', '--', '-D', 'warnings']
+
+      # Check that code compiles
+      - id: cargo-check
+        name: cargo check
+        description: Check that Rust code compiles
+        entry: cargo check
+        language: system
+        files: \.rs$
+        args: ['--all-targets', '--all-features']
+
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      # Remove trailing whitespace
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace
+
+      # Ensure files end with newline
+      - id: end-of-file-fixer
+        name: Fix End of Files
+
+      # Check for merge conflicts
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+
+      # Check YAML syntax
+      - id: check-yaml
+        name: Check YAML
+        files: \.ya?ml$
+
+      # Check TOML syntax
+      - id: check-toml
+        name: Check TOML
+        files: \.toml$
+
+      # Prevent large files from being committed
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']
