@@ -155,6 +155,20 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 		cmd
 	};
 
+	// Force non-interactive: create a new session with no controlling terminal.
+	// Without this, commands like `git rebase --continue` can open an editor
+	// (vim/nano) that tries /dev/tty and hangs forever. With setsid(), any
+	// open("/dev/tty") returns ENXIO — the kernel-level guarantee that no
+	// interactive prompt can block us. Combined with stdin=null (set below),
+	// this makes the child fully non-interactive.
+	#[cfg(unix)]
+	unsafe {
+		cmd.pre_exec(|| {
+			libc::setsid();
+			Ok(())
+		});
+	}
+
 	// Configure the command based on execution mode
 	if background {
 		// Background execution: detach process and return PID immediately
