@@ -4,7 +4,7 @@
   "description": "Standalone MCP filesystem tools server — view, edit, shell, ast-grep, workdir.",
   "name_for_human": "Octofs",
   "name_for_model": "octofs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repositories": [
     {
       "type": "github",
