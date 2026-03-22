@@ -135,8 +135,8 @@ pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult>
 
 	// Now we have the previous content or None, and we've released the lock
 	if let Some(prev_content) = previous_content {
-		// Write the previous content
-		tokio_fs::write(path, &prev_content).await?;
+		// Atomic write for undo
+		text_editing::atomic_write(path, &prev_content).await?;
 
 		// Get remaining history count
 		let history_remaining = {
@@ -165,7 +165,7 @@ pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult>
 		Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"No edit history available for this file".to_string(),
+			"No more undo history for this file (up to 10 levels are stored per file).".to_string(),
 		))
 	}
 }

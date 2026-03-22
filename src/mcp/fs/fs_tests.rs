@@ -763,8 +763,9 @@ mod tests {
 			.as_str()
 			.unwrap();
 		assert!(
-			content.contains("No match found"),
-			"Should contain no match error message"
+			content.contains("No exact match found"),
+			"Should contain no match error message, got: {}",
+			content
 		);
 	}
 
@@ -4754,5 +4755,151 @@ mod tests {
 		// pos=1 insert:  R1/I1/L2/R3/I3/L4/R5/I5/L6
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "R1\nI1\nL2\nR3\nI3\nL4\nR5\nI5\nL6\n");
+	}
+
+	// ========== FUZZY MATCHING TESTS ==========
+
+	#[tokio::test]
+	async fn test_str_replace_fuzzy_whitespace_match() {
+		// Extra spaces in old_text should still match via fuzzy fallback
+		let temp_file = create_test_file("fn hello() {\n    let x = 1;\n}").await;
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({}),
+		};
+
+		// Use old_text with different whitespace (tabs instead of spaces)
+		let result = crate::mcp::fs::text_editing::str_replace_spec(
+			&call,
+			temp_file.path(),
+			"fn hello() {\n\tlet x = 1;\n}",
+			"fn hello() {\n    let x = 2;\n}",
+		)
+		.await
+		.unwrap();
+
+		// Should succeed via fuzzy matching
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"Fuzzy whitespace match should succeed: {:?}",
+			result.result
+		);
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "fn hello() {\n    let x = 2;\n}");
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_fuzzy_indentation_adjustment() {
+		// old_text has no indentation, file content has 4-space indentation
+		let temp_file = create_test_file("class Foo {\n    def bar():\n        pass\n}").await;
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({}),
+		};
+
+		// Match with no indentation - fuzzy should find it and adjust new_text indentation
+		let result = crate::mcp::fs::text_editing::str_replace_spec(
+			&call,
+			temp_file.path(),
+			"def bar():\n    pass",
+			"def baz():\n    return 42",
+		)
+		.await
+		.unwrap();
+
+		assert!(
+			result.result.get("isError") != Some(&serde_json::json!(true)),
+			"Fuzzy indentation match should succeed: {:?}",
+			result.result
+		);
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "class Foo {\n    def baz():\n        return 42\n}");
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_error_shows_closest_matches() {
+		let temp_file =
+			create_test_file("fn hello_world() {}\nfn hello_earth() {}\nfn goodbye() {}").await;
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({}),
+		};
+
+		let result = crate::mcp::fs::text_editing::str_replace_spec(
+			&call,
+			temp_file.path(),
+			"fn hello_word() {}",
+			"fn replaced() {}",
+		)
+		.await
+		.unwrap();
+
+		// Should fail but show closest matches
+		assert_eq!(
+			result.result["isError"],
+			serde_json::json!(true),
+			"Should fail for no match"
+		);
+		let content = result.result["content"].as_array().unwrap()[0]["text"]
+			.as_str()
+			.unwrap();
+		assert!(
+			content.contains("Closest matches"),
+			"Should show closest matches in error: {}",
+			content
+		);
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_multi_level_undo() {
+		let temp_file = create_test_file("version 1").await;
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({}),
+		};
+
+		// Make 3 edits
+		for (old, new) in [
+			("version 1", "version 2"),
+			("version 2", "version 3"),
+			("version 3", "version 4"),
+		] {
+			crate::mcp::fs::text_editing::str_replace_spec(&call, temp_file.path(), old, new)
+				.await
+				.unwrap();
+		}
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "version 4");
+
+		// Undo 3 times - should go back to version 1
+		for expected in ["version 3", "version 2", "version 1"] {
+			let result = crate::mcp::fs::core::undo_edit(&call, temp_file.path())
+				.await
+				.unwrap();
+			assert!(
+				result.result.get("isError") != Some(&serde_json::json!(true)),
+				"Undo should succeed: {:?}",
+				result.result
+			);
+			let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+			assert_eq!(actual, expected);
+		}
+
+		// 4th undo should fail - no more history
+		let result = crate::mcp::fs::core::undo_edit(&call, temp_file.path())
+			.await
+			.unwrap();
+		assert_eq!(
+			result.result["isError"],
+			serde_json::json!(true),
+			"Should fail when no more undo history"
+		);
 	}
 }

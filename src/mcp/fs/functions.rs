@@ -108,8 +108,10 @@ pub fn get_text_editor_function() -> McpFunction {
 			`str_replace`: Replace exact string match. Requires exactly 1 match — fails on 0 (no match) or 2+ (ambiguous).
 			- `{\"command\": \"str_replace\", \"path\": \"src/main.rs\", \"old_text\": \"fn old()\", \"new_text\": \"fn new()\"}`
 			- `old_text` must match exactly (including whitespace). Use raw content, not escaped.
+			- Fuzzy fallback: if exact match fails, tries whitespace-normalized matching and auto-adjusts indentation.
+			- On failure: shows closest matches with line numbers, similarity %, and diagnosis.
 
-			`undo_edit`: Revert the last edit on a file.
+			`undo_edit`: Revert the last edit on a file. Supports up to 10 undo levels per file.
 			- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`"
 			.to_string(),
 		parameters: json!({

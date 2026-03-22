@@ -149,7 +149,212 @@ fn resolve_unresolved_line_range(
 	}
 }
 
-// Replace a string in a file following Anthropic specification
+/// Normalize a string for whitespace-insensitive comparison.
+/// Trims each line and collapses runs of whitespace into a single space.
+fn normalize_whitespace(s: &str) -> String {
+	s.lines()
+		.map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
+/// Find all byte-offset positions of `needle` in `haystack` (non-overlapping).
+fn find_all_positions(haystack: &str, needle: &str) -> Vec<usize> {
+	let mut positions = Vec::new();
+	let mut start = 0;
+	while let Some(pos) = haystack[start..].find(needle) {
+		positions.push(start + pos);
+		start += pos + needle.len();
+	}
+	positions
+}
+
+/// Convert a byte offset in `content` to a 1-indexed line number.
+fn byte_offset_to_line(content: &str, offset: usize) -> usize {
+	content[..offset].matches('\n').count() + 1
+}
+
+/// Compute line-by-line similarity ratio between two multi-line strings (0.0..1.0).
+/// Uses a simple longest-common-subsequence ratio per line, averaged.
+fn similarity_ratio(a: &str, b: &str) -> f64 {
+	let a_lines: Vec<&str> = a.lines().collect();
+	let b_lines: Vec<&str> = b.lines().collect();
+	if a_lines.is_empty() && b_lines.is_empty() {
+		return 1.0;
+	}
+	let max_lines = a_lines.len().max(b_lines.len());
+	let mut total = 0.0;
+	for i in 0..max_lines {
+		let la = a_lines.get(i).unwrap_or(&"");
+		let lb = b_lines.get(i).unwrap_or(&"");
+		total += line_similarity(la, lb);
+	}
+	total / max_lines as f64
+}
+
+/// Character-level similarity between two strings using longest common subsequence.
+fn line_similarity(a: &str, b: &str) -> f64 {
+	let a_chars: Vec<char> = a.chars().collect();
+	let b_chars: Vec<char> = b.chars().collect();
+	let total = a_chars.len() + b_chars.len();
+	if total == 0 {
+		return 1.0;
+	}
+	let lcs_len = lcs_length(&a_chars, &b_chars);
+	(2.0 * lcs_len as f64) / total as f64
+}
+
+/// Longest common subsequence length (O(n*m) DP, capped for performance).
+fn lcs_length(a: &[char], b: &[char]) -> usize {
+	// Cap to avoid quadratic blowup on very large inputs
+	const MAX_CHARS: usize = 2000;
+	let a = if a.len() > MAX_CHARS {
+		&a[..MAX_CHARS]
+	} else {
+		a
+	};
+	let b = if b.len() > MAX_CHARS {
+		&b[..MAX_CHARS]
+	} else {
+		b
+	};
+
+	let mut prev = vec![0usize; b.len() + 1];
+	let mut curr = vec![0usize; b.len() + 1];
+	for &ac in a {
+		for (j, &bc) in b.iter().enumerate() {
+			curr[j + 1] = if ac == bc {
+				prev[j] + 1
+			} else {
+				prev[j + 1].max(curr[j])
+			};
+		}
+		std::mem::swap(&mut prev, &mut curr);
+		curr.iter_mut().for_each(|v| *v = 0);
+	}
+	*prev.last().unwrap_or(&0)
+}
+
+/// Diagnose why two text blocks differ.
+fn diagnose_mismatch(expected: &str, actual: &str) -> String {
+	let exp_norm = normalize_whitespace(expected);
+	let act_norm = normalize_whitespace(actual);
+	if exp_norm == act_norm {
+		return "whitespace/indentation mismatch only".to_string();
+	}
+	// Check if it's just leading whitespace per line
+	let exp_trimmed: Vec<&str> = expected.lines().map(|l| l.trim()).collect();
+	let act_trimmed: Vec<&str> = actual.lines().map(|l| l.trim()).collect();
+	if exp_trimmed == act_trimmed {
+		return "indentation mismatch only".to_string();
+	}
+	"content differs".to_string()
+}
+
+/// Find the top N closest matching windows in `content` for `needle`.
+/// Returns vec of (start_line_1indexed, window_text, similarity).
+fn find_closest_matches(content: &str, needle: &str, top_n: usize) -> Vec<(usize, String, f64)> {
+	let content_lines: Vec<&str> = content.lines().collect();
+	let needle_lines: Vec<&str> = needle.lines().collect();
+	let needle_count = needle_lines.len().max(1);
+
+	if content_lines.len() < needle_count {
+		return Vec::new();
+	}
+
+	let mut candidates: Vec<(usize, String, f64)> = Vec::new();
+
+	for start in 0..=(content_lines.len() - needle_count) {
+		let window: String = content_lines[start..start + needle_count].join("\n");
+		let sim = similarity_ratio(needle, &window);
+		// Only consider windows with at least 40% similarity
+		if sim >= 0.4 {
+			candidates.push((start + 1, window, sim));
+		}
+	}
+
+	// Sort by similarity descending
+	candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+	candidates.truncate(top_n);
+	candidates
+}
+
+/// Detect the leading whitespace (indentation) of the first non-empty line.
+fn detect_indent(text: &str) -> &str {
+	for line in text.lines() {
+		if !line.trim().is_empty() {
+			let trimmed = line.trim_start();
+			return &line[..line.len() - trimmed.len()];
+		}
+	}
+	""
+}
+
+/// Adjust indentation of `new_text` to match the actual indentation at the match site.
+/// `provided_old` is the old_text as given by the caller (may have wrong indent).
+/// `actual_old` is the actual text found in the file at the match location.
+fn adjust_indentation(new_text: &str, provided_old: &str, actual_old: &str) -> String {
+	let provided_indent = detect_indent(provided_old);
+	let actual_indent = detect_indent(actual_old);
+
+	if provided_indent == actual_indent {
+		return new_text.to_string();
+	}
+
+	// Determine if we're using tabs or spaces from the actual file
+	let provided_len = provided_indent.len();
+
+	new_text
+		.lines()
+		.map(|line| {
+			if line.trim().is_empty() {
+				return line.to_string();
+			}
+			// Strip the provided indent prefix if present, then prepend actual indent
+			if provided_len > 0 && line.starts_with(provided_indent) {
+				format!("{}{}", actual_indent, &line[provided_len..])
+			} else {
+				// Line doesn't start with expected indent — prepend the delta
+				let line_indent_len = line.len() - line.trim_start().len();
+				if line_indent_len >= provided_len {
+					// Extra indent beyond base — preserve the extra part
+					format!("{}{}", actual_indent, &line[provided_len..])
+				} else {
+					// Less indent than base — just prepend actual
+					format!("{}{}", actual_indent, line.trim_start())
+				}
+			}
+		})
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
+/// Atomic write: write to a temp file in the same directory, then rename over the target.
+/// Guarantees the file is never in a partial/corrupt state if the process is interrupted.
+pub async fn atomic_write(path: &Path, content: &str) -> Result<()> {
+	let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+	let tmp_path = parent_dir.join(format!(
+		".octofs_tmp_{}.tmp",
+		path.file_name().unwrap_or_default().to_string_lossy()
+	));
+	tokio_fs::write(&tmp_path, content)
+		.await
+		.map_err(|e| anyhow!("Failed to write temp file for '{}': {}", path.display(), e))?;
+	if let Err(e) = tokio_fs::rename(&tmp_path, path).await {
+		// Clean up temp file on rename failure
+		let _ = tokio_fs::remove_file(&tmp_path).await;
+		return Err(anyhow!(
+			"Failed to atomically replace '{}': {}",
+			path.display(),
+			e
+		));
+	}
+	Ok(())
+}
+// Replace a string in a file with progressive matching strategy:
+// 1. Exact match (original behavior)
+// 2. Whitespace-normalized fuzzy match with indentation adjustment
+// 3. Rich diagnostics with closest candidates on failure
 pub async fn str_replace_spec(
 	call: &McpToolCall,
 	path: &Path,
@@ -173,51 +378,147 @@ pub async fn str_replace_spec(
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 
-	// Check if old_text appears in the file
+	// === Stage 1: Exact match ===
 	let occurrences = content.matches(old_text).count();
-	if occurrences == 0 {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"No match found for replacement. Please check your text and try again. Make sure you are not escaping \\\\t, \\\\n or similiar and pass raw content. Alternatively, use line_replace when you know exactly which line to replace.".to_string(),
-		));
+
+	if occurrences == 1 {
+		// Perfect exact match — replace directly
+		save_file_history(path).await?;
+		let new_content = content.replace(old_text, new_text);
+		atomic_write(path, &new_content).await?;
+
+		let line_count = old_text.lines().count();
+		if line_count > 1 {
+			crate::mcp::hint_accumulator::push_hint(&format!(
+				"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line range — it's faster and avoids content-search ambiguity.",
+				line_count
+			));
+		}
+
+		return Ok(McpToolResult {
+			tool_name: "text_editor".to_string(),
+			tool_id: call.tool_id.clone(),
+			result: json!({
+				"content": "Successfully replaced text at exactly one location.",
+				"path": path.to_string_lossy()
+			}),
+		});
 	}
+
 	if occurrences > 1 {
+		// Multiple exact matches — show locations to help disambiguate
+		let positions = find_all_positions(&content, old_text);
+		let locations: Vec<String> = positions
+			.iter()
+			.enumerate()
+			.map(|(i, &offset)| {
+				let line = byte_offset_to_line(&content, offset);
+				format!("  {}. line {}", i + 1, line)
+			})
+			.collect();
+
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Found {} matches for replacement text. Please provide more context to make a unique match or use line_replace when you know exactly which line to replace.", occurrences),
+			format!(
+				"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific line range.",
+				occurrences,
+				locations.join("\n")
+			),
 		));
 	}
 
-	// Save the current content for undo
-	save_file_history(path).await?;
+	// === Stage 2: Whitespace-normalized fuzzy match ===
+	let norm_old = normalize_whitespace(old_text);
+	let norm_content = normalize_whitespace(&content);
+	let norm_occurrences = norm_content.matches(&norm_old).count();
 
-	// Replace the string
-	let new_content = content.replace(old_text, new_text);
+	if norm_occurrences == 1 {
+		// Found exactly one whitespace-normalized match — map back to original content
+		// We need to find the actual text in the original content that corresponds
+		let content_lines: Vec<&str> = content.lines().collect();
+		let old_lines: Vec<&str> = old_text.lines().collect();
+		let old_line_count = old_lines.len();
 
-	// Write the new content
-	tokio_fs::write(path, &new_content)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+		let mut match_start = None;
+		for start in 0..=content_lines.len().saturating_sub(old_line_count) {
+			let window: Vec<&str> = content_lines[start..start + old_line_count].to_vec();
+			let window_norm: Vec<String> = window
+				.iter()
+				.map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+				.collect();
+			let old_norm: Vec<String> = old_lines
+				.iter()
+				.map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+				.collect();
+			if window_norm == old_norm {
+				match_start = Some(start);
+				break;
+			}
+		}
 
-	// Push hint into accumulator if str_replace matched multiple lines — batch_edit is better
-	let line_count = old_text.lines().count();
-	if line_count > 1 {
-		crate::mcp::hint_accumulator::push_hint(&format!(
-			"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line range — it's faster and avoids content-search ambiguity.",
-			line_count
-		));
+		if let Some(start) = match_start {
+			let actual_old = content_lines[start..start + old_line_count].join("\n");
+			let adjusted_new = adjust_indentation(new_text, old_text, &actual_old);
+
+			save_file_history(path).await?;
+			let new_content = content.replace(&actual_old, &adjusted_new);
+			atomic_write(path, &new_content).await?;
+
+			return Ok(McpToolResult {
+				tool_name: "text_editor".to_string(),
+				tool_id: call.tool_id.clone(),
+				result: json!({
+					"content": format!(
+						"Successfully replaced text via fuzzy match (whitespace-normalized) at line {}. Indentation was auto-adjusted to match the file.",
+						start + 1
+					),
+					"path": path.to_string_lossy(),
+					"match_type": "fuzzy_whitespace"
+				}),
+			});
+		}
 	}
 
-	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": "Successfully replaced text at exactly one location.",
-			"path": path.to_string_lossy()
-		}),
-	})
+	// === Stage 3: No match — provide rich diagnostics ===
+	let candidates = find_closest_matches(&content, old_text, 3);
+
+	let mut msg = String::from(
+		"No exact match found. Make sure you pass raw content (no escaped \\t, \\n).\n",
+	);
+
+	if candidates.is_empty() {
+		msg.push_str("No similar text found in the file. Verify the content exists.");
+	} else {
+		msg.push_str("Closest matches:\n");
+		let old_line_count = old_text.lines().count();
+		for (i, (line_num, window, sim)) in candidates.iter().enumerate() {
+			let diagnosis = diagnose_mismatch(old_text, window);
+			let end_line = line_num + old_line_count - 1;
+			msg.push_str(&format!(
+				"\n  {}. Lines {}-{} ({:.0}% similar, {})\n",
+				i + 1,
+				line_num,
+				end_line,
+				sim * 100.0,
+				diagnosis
+			));
+			// Show first 3 lines of the candidate as preview
+			for (j, line) in window.lines().take(3).enumerate() {
+				msg.push_str(&format!("     {}: {}\n", line_num + j, line));
+			}
+			if old_line_count > 3 {
+				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
+			}
+		}
+		msg.push_str("\nTip: use `batch_edit` with the line range shown above, or fix the `old_text` content.");
+	}
+
+	Ok(McpToolResult::error(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		msg,
+	))
 }
 
 // Insert text at a specific location in a file following Anthropic specification
@@ -278,10 +579,8 @@ pub async fn insert_text_spec(
 		new_content
 	};
 
-	// Write the new content
-	tokio_fs::write(path, &final_content)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	// Atomic write
+	atomic_write(path, &final_content).await?;
 
 	Ok(McpToolResult {
 		tool_name: "text_editor".to_string(),
@@ -971,29 +1270,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Save file history for undo functionality
 	save_file_history(&path).await?;
 
-	// Atomic write: write to a temp file in the same directory, then rename over the target.
-	// This guarantees the file is never in a partial/corrupt state if the process is interrupted.
-	let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-	let tmp_path = parent_dir.join(format!(
-		".octofs_tmp_{}.tmp",
-		path.file_name().unwrap_or_default().to_string_lossy()
-	));
-	if let Err(e) = tokio_fs::write(&tmp_path, &final_content).await {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Failed to write temp file for '{}': {}", path_str, e),
-		));
-	}
-	if let Err(e) = tokio_fs::rename(&tmp_path, &path).await {
-		// Clean up temp file on rename failure
-		let _ = tokio_fs::remove_file(&tmp_path).await;
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Failed to atomically replace '{}': {}", path_str, e),
-		));
-	}
+	atomic_write(&path, &final_content)
+		.await
+		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
 
 	// Update operation details with success status
 	for detail in &mut operation_details {
