@@ -79,15 +79,47 @@ impl McpServer {
 	}
 
 	/// Run the MCP server on stdio (default mode).
+	///
+	/// Exits cleanly on: EOF on stdin (parent closed pipe), or SIGTERM
+	/// (parent requests graceful shutdown). Both paths drop the tokio
+	/// runtime normally, which triggers `kill_on_drop` on any in-flight
+	/// shell children — ensuring no orphan processes.
 	pub async fn run(&self) -> Result<()> {
 		let stdin = stdin();
 		let mut stdout = stdout();
 		let mut reader = BufReader::new(stdin);
 		let mut line = String::new();
 
+		// Listen for SIGTERM so the MCP client can ask us to shut down
+		// gracefully (giving kill_on_drop a chance to fire) before
+		// resorting to SIGKILL.
+		#[cfg(unix)]
+		let mut sigterm = {
+			use tokio::signal::unix::{signal, SignalKind};
+			signal(SignalKind::terminate()).expect("failed to register SIGTERM handler")
+		};
+
 		loop {
 			line.clear();
-			let bytes_read = reader.read_line(&mut line).await?;
+
+			// Race: next JSON-RPC line vs SIGTERM
+			let bytes_read;
+			#[cfg(unix)]
+			{
+				tokio::select! {
+					result = reader.read_line(&mut line) => {
+						bytes_read = result?;
+					}
+					_ = sigterm.recv() => {
+						tracing::debug!("SIGTERM received, shutting down gracefully");
+						break;
+					}
+				}
+			}
+			#[cfg(not(unix))]
+			{
+				bytes_read = reader.read_line(&mut line).await?;
+			}
 
 			if bytes_read == 0 {
 				tracing::debug!("EOF received, shutting down");
