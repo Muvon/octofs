@@ -209,14 +209,6 @@ Octofs works seamlessly with:
 | @modelcontextprotocol/server-filesystem | Node.js | ❌ | ❌ | ❌ | Slower |
 | custom Python scripts | Python | Partial | Manual | Manual | Slower |
 
-## 🛣️ Roadmap
-
-- [ ] HTTP transport mode
-- [ ] Watch mode for file changes
-- [ ] Git integration (diff, blame, log)
-- [ ] LSP-style code intelligence
-- [ ] Plugin system for custom tools
-
 ## 📜 License
 
 Apache-2.0 — See [LICENSE](LICENSE)
