@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.2.0] - 2026-03-25
+
+### 📋 Release Summary
+
+This release improves shell session management with reliable process cleanup on shutdown and adds fuzzy matching for safer file replacements. macOS users now have native x86_64 support.
+
+
+### ✨ New Features & Enhancements
+
+- **shell**: track and kill shell child process groups on shutdown `f197fd41`
+
+### 🔧 Improvements & Optimizations
+
+- **str_replace**: add fuzzy matching and atomic writes `c95c65fe`
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: replace setsid with process_group to allow signal propagation `29a08556`
+
+### 🔄 Other Changes
+
+- **release**: add x86_64-apple-darwin build target `eb27d212`
+
+### 📊 Release Summary
+
+**Total commits**: 4 across 4 categories
+
+✨ **1** new feature - *Enhanced functionality*
+🔧 **1** improvement - *Better performance & code quality*
+🐛 **1** bug fix - *Improved stability*
+🔄 **1** other change - *Maintenance & tooling*
+
 ## [0.1.1] - 2026-03-20
 
 ### 📋 Release Summary
