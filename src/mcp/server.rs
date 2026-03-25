@@ -162,6 +162,10 @@ impl McpServer {
 			}
 		}
 
+		// Kill all in-flight shell children's process groups (including
+		// grandchildren) so nothing survives as an orphan after we exit.
+		crate::mcp::fs::shell::kill_all_shell_children();
+
 		Ok(())
 	}
 

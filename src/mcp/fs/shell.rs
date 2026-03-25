@@ -17,6 +17,57 @@
 use super::super::{get_thread_working_directory, McpFunction, McpToolCall, McpToolResult};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::sync::Mutex;
+
+// Track PIDs of in-flight foreground shell children.
+// Each child is spawned with process_group(0) so PGID == child PID.
+// On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
+// including any grandchildren the command may have spawned.
+static SHELL_CHILDREN: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
+
+fn register_child(pid: u32) {
+	SHELL_CHILDREN
+		.lock()
+		.unwrap()
+		.get_or_insert_with(HashSet::new)
+		.insert(pid);
+}
+
+fn unregister_child(pid: u32) {
+	if let Some(set) = SHELL_CHILDREN.lock().unwrap().as_mut() {
+		set.remove(&pid);
+	}
+}
+
+/// Kill every tracked in-flight shell child's process group.
+/// Called on SIGTERM / EOF so grandchildren don't survive as orphans.
+#[cfg(unix)]
+pub fn kill_all_shell_children() {
+	let pids: Vec<u32> = SHELL_CHILDREN
+		.lock()
+		.unwrap()
+		.as_mut()
+		.map(|set| set.drain().collect())
+		.unwrap_or_default();
+
+	for pid in pids {
+		let pgid = pid as libc::pid_t;
+		// SAFETY: kill is always safe with valid arguments.
+		// Negative pgid targets the entire process group.
+		unsafe {
+			libc::kill(-pgid, libc::SIGKILL);
+		}
+	}
+}
+
+#[cfg(not(unix))]
+pub fn kill_all_shell_children() {
+	// On non-unix, clear the set; kill_on_drop handles the direct child.
+	if let Some(set) = SHELL_CHILDREN.lock().unwrap().as_mut() {
+		set.clear();
+	}
+}
 // Define the shell function for the MCP protocol with enhanced description
 pub fn get_shell_function() -> McpFunction {
 	McpFunction {
@@ -212,8 +263,21 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 		});
 	}
 
+	// Track the child's PID so kill_all_shell_children() can nuke its
+	// entire process group (including grandchildren) on shutdown.
+	let child_pid = child.id();
+	if let Some(pid) = child_pid {
+		register_child(pid);
+	}
+
 	// Foreground execution: wait for completion and return output
 	let result = child.wait_with_output().await;
+
+	// Child finished — remove from tracker before processing result.
+	if let Some(pid) = child_pid {
+		unregister_child(pid);
+	}
+
 	match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
 		Ok(output) => {
 			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
