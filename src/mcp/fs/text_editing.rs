@@ -17,28 +17,32 @@
 use super::super::{McpToolCall, McpToolResult};
 use super::core::save_file_history;
 use anyhow::{anyhow, Result};
-use lazy_static::lazy_static;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::fs as tokio_fs;
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 
-// Thread-safe file locking infrastructure for concurrent write protection
-lazy_static! {
-	static ref FILE_LOCKS: Mutex<HashMap<String, Arc<Mutex<()>>>> = Mutex::new(HashMap::new());
+// Thread-safe file locking infrastructure for concurrent write protection.
+// Outer map uses std::sync::Mutex (held briefly, no await while locked).
+// Per-file locks use tokio::sync::Mutex (held across async file I/O).
+static FILE_LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+
+fn get_file_locks() -> &'static Mutex<HashMap<String, Arc<AsyncMutex<()>>>> {
+	FILE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 // Acquire a file-specific lock to prevent concurrent writes to the same file
-async fn acquire_file_lock(path: &Path) -> Result<Arc<Mutex<()>>> {
+async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
 	let path_str = path.to_string_lossy().to_string();
 
-	let mut locks = FILE_LOCKS.lock().await;
-
-	let file_lock = locks
-		.entry(path_str)
-		.or_insert_with(|| Arc::new(Mutex::new(())))
-		.clone();
+	let file_lock = {
+		let mut locks = get_file_locks().lock().expect("file locks poisoned");
+		locks
+			.entry(path_str)
+			.or_insert_with(|| Arc::new(AsyncMutex::new(())))
+			.clone()
+	};
 
 	Ok(file_lock)
 }

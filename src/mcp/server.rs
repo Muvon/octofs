@@ -240,7 +240,7 @@ impl McpServer {
 				let mut call = McpToolCall {
 					tool_name: tool_name.clone(),
 					parameters: arguments,
-					tool_id: format!("tool_{}", uuid::Uuid::new_v4().simple()),
+					tool_id: crate::mcp::next_tool_id(),
 				};
 
 				let result = self.dispatch_tool(&mut call).await;

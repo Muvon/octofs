@@ -18,11 +18,11 @@ use super::super::{get_thread_working_directory, McpToolCall, McpToolResult};
 use crate::mcp::fs::{directory, file_ops, text_editing};
 use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, Result};
-use lazy_static::lazy_static;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use tokio::fs as tokio_fs;
 
 /// Resolve a path relative to the thread working directory
@@ -78,14 +78,12 @@ fn resolve_line_range(start: i64, end: i64, total_lines: usize) -> Result<(usize
 	Ok((resolved_start, resolved_end))
 }
 
-// Thread-safe lazy initialization of file history using lazy_static
-lazy_static! {
-	pub static ref FILE_HISTORY: Mutex<HashMap<String, Vec<String>>> = Mutex::new(HashMap::new());
-}
+// Thread-safe lazy initialization of file history using OnceLock
+static FILE_HISTORY: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
 
 // Thread-safe way to get the file history
 pub fn get_file_history() -> &'static Mutex<HashMap<String, Vec<String>>> {
-	&FILE_HISTORY
+	FILE_HISTORY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 // Save the current content of a file for undo

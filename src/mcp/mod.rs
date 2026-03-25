@@ -15,6 +15,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TOOL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn next_tool_id() -> String {
+	format!("tool_{}", TOOL_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+}
 
 pub mod fs;
 pub mod hint_accumulator;
@@ -184,7 +191,7 @@ pub fn extract_mcp_content(result: &Value) -> String {
 pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
 	for call in calls.iter_mut() {
 		if call.tool_id.is_empty() {
-			call.tool_id = format!("tool_{}", uuid::Uuid::new_v4().simple());
+			call.tool_id = next_tool_id();
 		}
 	}
 }
