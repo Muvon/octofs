@@ -38,13 +38,103 @@ async fn main() -> Result<()> {
 			// Stderr-only logging — no stdout (would corrupt stdio MCP protocol)
 			init_mcp_logging();
 
-			let server = mcp::server::McpServer::new(working_directory);
+			// Set the session working directory for all tool calls
+			mcp::set_session_working_directory(working_directory.clone());
+
+			// Create the MCP server
+			let server = mcp::server::OctofsServer::new();
+
 			match bind {
-				Some(addr) => server.run_http(&addr).await?,
-				None => server.run().await?,
+				Some(addr) => {
+					// HTTP mode with Streamable HTTP transport
+					run_http_server(server, &addr).await?;
+				}
+				None => {
+					// STDIO mode (default)
+					run_stdio_server(server).await?;
+				}
 			}
 		}
 	}
+
+	Ok(())
+}
+
+/// Run the MCP server over STDIO (default mode).
+///
+/// Exits cleanly on: EOF on stdin (parent closed pipe), or SIGTERM
+/// (parent requests graceful shutdown). Both paths call kill_all_shell_children()
+/// to ensure no orphan processes survive after we exit.
+async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
+	use rmcp::{transport::stdio, ServiceExt};
+
+	tracing::info!("Starting MCP server (STDIO mode)");
+
+	let service = server.serve(stdio()).await.inspect_err(|e| {
+		tracing::error!("serving error: {:?}", e);
+	})?;
+
+	// `waiting()` blocks until the transport closes naturally (EOF on stdin).
+	// For SIGTERM we cancel via the service's cancellation token so the task
+	// exits cleanly without dropping the handle mid-flight.
+	#[cfg(unix)]
+	{
+		use tokio::signal::unix::{signal, SignalKind};
+		let ct = service.cancellation_token();
+		let mut sigterm =
+			signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+		tokio::select! {
+			_ = service.waiting() => {
+				// EOF on stdin — clean shutdown
+			}
+			_ = sigterm.recv() => {
+				tracing::debug!("SIGTERM received, shutting down gracefully");
+				ct.cancel();
+			}
+		}
+	}
+	#[cfg(not(unix))]
+	{
+		service.waiting().await.ok();
+	}
+
+	// Kill all in-flight shell children's process groups so nothing survives as an orphan.
+	mcp::fs::shell::kill_all_shell_children();
+
+	Ok(())
+}
+
+/// Run the MCP server over HTTP with Streamable HTTP transport
+async fn run_http_server(server: mcp::server::OctofsServer, bind_addr: &str) -> Result<()> {
+	use rmcp::transport::streamable_http_server::{
+		session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+	};
+
+	let ct = tokio_util::sync::CancellationToken::new();
+
+	let service = StreamableHttpService::new(
+		move || Ok(server.clone()),
+		LocalSessionManager::default().into(),
+		StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+	);
+
+	let router = axum::Router::new().nest_service("/mcp", service);
+	let addr = bind_addr
+		.parse::<std::net::SocketAddr>()
+		.map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind_addr, e))?;
+
+	let tcp_listener = tokio::net::TcpListener::bind(&addr)
+		.await
+		.map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
+
+	tracing::info!("MCP HTTP server listening on {}", addr);
+
+	let _ = axum::serve(tcp_listener, router)
+		.with_graceful_shutdown(async move {
+			tokio::signal::ctrl_c().await.unwrap();
+			ct.cancel();
+		})
+		.await;
 
 	Ok(())
 }
