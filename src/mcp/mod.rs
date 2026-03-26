@@ -57,14 +57,12 @@ pub fn set_thread_working_directory(path: PathBuf) {
 /// Returns CURRENT_WORKDIR if set, otherwise SESSION_WORKDIR.
 pub fn get_thread_working_directory() -> PathBuf {
 	CURRENT_WORKDIR.with(|w| {
-		w.borrow()
-			.clone()
-			.unwrap_or_else(|| {
-				SESSION_WORKDIR
-					.get()
-					.cloned()
-					.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-			})
+		w.borrow().clone().unwrap_or_else(|| {
+			SESSION_WORKDIR
+				.get()
+				.cloned()
+				.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+		})
 	})
 }
 

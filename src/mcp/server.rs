@@ -442,8 +442,7 @@ impl ServerHandler for OctofsServer {
 fn strip_nulls(value: Value) -> Value {
 	match value {
 		Value::Object(map) => Value::Object(
-			map
-				.into_iter()
+			map.into_iter()
 				.filter(|(_, v)| !v.is_null())
 				.map(|(k, v)| (k, strip_nulls(v)))
 				.collect(),
