@@ -154,7 +154,27 @@ impl McpServer {
 				}
 			};
 
-			if let Some(response) = self.handle_request(request).await {
+			// Race tool execution against SIGTERM so long-running commands
+			// (e.g. `cargo check`) are interrupted immediately when the MCP
+			// client sends SIGTERM on Ctrl+C.  Without this, SIGTERM is only
+			// checked during read_line — a multi-minute shell command would
+			// block here and the 200ms grace period would expire, causing
+			// SIGKILL with no chance to clean up child processes.
+			#[cfg(unix)]
+			let response = {
+				tokio::select! {
+					resp = self.handle_request(request) => resp,
+					_ = sigterm.recv() => {
+						tracing::debug!("SIGTERM received during tool execution, shutting down");
+						crate::mcp::fs::shell::kill_all_shell_children();
+						return Ok(());
+					}
+				}
+			};
+			#[cfg(not(unix))]
+			let response = self.handle_request(request).await;
+
+			if let Some(response) = response {
 				let json = serde_json::to_string(&response)?;
 				stdout.write_all(json.as_bytes()).await?;
 				stdout.write_all(b"\n").await?;
