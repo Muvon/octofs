@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.1] - 2026-03-27
+
+### 📋 Release Summary
+
+This release upgrades octofs to use the official rmcp SDK with HTTP transport for more reliable MCP connections (d0945d95) and eliminates race conditions when tools are interrupted (2e2fec9a). The update also streamlines the codebase, removes unused dependencies, and delivers refreshed documentation and branding for a cleaner user experience (c20664df, 69731527, 66e90fe9).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: integrate official rmcp SDK with HTTP transport `d0945d95`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: simplify return types and remove McpToolResult `c20664df`
+- **mcp**: reformat code for better readability `5a79032e`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: race tool execution against SIGTERM on Unix `2e2fec9a`
+
+### 📚 Documentation & Examples
+
+- **readme**: remove roadmap section `ee3f56f0`
+- add comprehensive project documentation and branding `66e90fe9`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.2.0] - 2026-03-25
 
 ### 📋 Release Summary
