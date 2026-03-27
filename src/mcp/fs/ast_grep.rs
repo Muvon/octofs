@@ -14,9 +14,9 @@
 
 // AST-grep execution functionality for the Filesystem MCP provider
 
-use super::super::{McpFunction, McpToolCall, McpToolResult};
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use super::super::McpToolCall;
+use anyhow::{anyhow, bail, Result};
+use serde_json::Value;
 
 // Group ast-grep output by file for token efficiency while preserving line numbers
 fn group_ast_grep_output(output: &str) -> String {
@@ -65,98 +65,23 @@ fn group_ast_grep_output(output: &str) -> String {
 	}
 }
 
-// Define the ast_grep function for the MCP protocol with enhanced description
-pub fn get_ast_grep_function() -> McpFunction {
-	McpFunction {
-		name: "ast_grep".to_string(),
-		description: "Search and refactor code using AST patterns with ast-grep.
-
-Pattern syntax:
-- `$VAR` — matches ONE AST node
-- `$$$VAR` — matches ZERO or more nodes (use for parameter lists, arguments, body)
-- `$_` — wildcard, matches one node without capturing
-
-Patterns are structurally exact — every element you include must be present, every element you omit must be absent.
-`fn $F($$$A) { $$$B }` does NOT match `fn foo() -> Bar {}` (missing return type in pattern).
-
-Common patterns:
-- `console.log($$$)` — find all console.log calls
-- `fn $NAME($$$ARGS) -> $RET { $$$BODY }` — Rust functions with return type
-- `def $NAME($$$ARGS): $$$` — Python functions
-
-Refactoring: set `rewrite` to transform matches. Same metavariables carry captured content.
-- pattern: `oldFunc($$$ARGS)`, rewrite: `newFunc($$$ARGS)`
-".to_string(),
-		parameters: json!({
-			"type": "object",
-			"required": ["pattern"],
-			"properties": {
-				"pattern": {
-					"type": "string",
-					"description": "The AST pattern to search for. Use metavariables ($NAME, $$$) to match code structure, not text content"
-				},
-				"paths": {
-					"type": "array",
-					"items": {"type": "string"},
-					"description": "Optional array of file paths or glob patterns to search within (default: current directory)"
-				},
-				"language": {
-					"type": "string",
-					"description": "Optional language of the code (e.g., 'rust', 'javascript', 'python', 'typescript', 'go', 'java', 'c', 'cpp', 'php')"
-				},
-				"rewrite": {
-					"type": "string",
-					"description": "Optional rewrite pattern to apply for refactoring transformations"
-				},
-				"json_output": {
-					"type": "boolean",
-					"default": false,
-					"description": "Optional boolean to get output in JSON format (default: false)"
-				},
-				"context": {
-					"type": "integer",
-					"default": 0,
-					"description": "Optional number of lines of context to show around matches (default: 0)"
-				},
-				"update_all": {
-					"type": "boolean",
-					"default": false,
-					"description": "Optional boolean to apply rewrites to all matches without confirmation (default: false)"
-				}
-			}
-		}),
-	}
-}
-
 // Execute an ast-grep command
-pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResult> {
+pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<String> {
 	use tokio::process::Command as TokioCommand;
 
 	// Extract pattern parameter (required)
 	let pattern = match call.parameters.get("pattern") {
 		Some(Value::String(p)) => {
 			if p.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Pattern parameter cannot be empty".to_string(),
-				));
+				bail!("Pattern parameter cannot be empty");
 			}
 			p.clone()
 		}
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Pattern parameter must be a string".to_string(),
-			));
+			bail!("Pattern parameter must be a string");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required 'pattern' parameter".to_string(),
-			));
+			bail!("Missing required 'pattern' parameter");
 		}
 	};
 
@@ -257,11 +182,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 				if path_obj.exists() {
 					verified_paths.push(path.clone());
 				} else {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						format!("Path does not exist: {}", path),
-					));
+					bail!("Path does not exist: {}", path);
 				}
 			}
 			Ok(verified_paths)
@@ -277,11 +198,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 				(true, Some(provided_paths)) => {
 					// If paths were explicitly provided but no files found, return error
 					let paths_str = provided_paths.join(", ");
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						format!("No files found matching the specified paths: [{}]. Please verify the file paths exist and are not in ignored directories.", paths_str),
-					));
+					bail!("No files found matching the specified paths: [{}]. Please verify the file paths exist and are not in ignored directories.", paths_str);
 				}
 				(true, None) => {
 					// No paths specified at all, use current directory
@@ -298,11 +215,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 			}
 		}
 		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Failed to expand glob patterns: {e}"),
-			));
+			bail!("Failed to expand glob patterns: {e}");
 		}
 	};
 
@@ -361,7 +274,7 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 
 	// Execute the command and wait for completion
 	let result = child.wait_with_output().await;
-	let output = match result.map_err(|e| anyhow!("AST-grep command execution failed: {}", e)) {
+	match result.map_err(|e| anyhow!("AST-grep command execution failed: {}", e)) {
 		Ok(output) => {
 			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -381,61 +294,8 @@ pub async fn execute_ast_grep_command(call: &McpToolCall) -> Result<McpToolResul
 				format!("{}\n\nError: {}", final_output, stderr)
 			};
 
-			// Add detailed execution results including status code
-			let status_code = output.status.code().unwrap_or(-1);
-			let success = output.status.success();
-
-			// For rewrite operations, provide additional context
-			let operation_type = if rewrite.is_some() {
-				"rewrite"
-			} else {
-				"search"
-			};
-
-			let result = json!({
-				"success": success,
-				"output": combined,
-				"code": status_code,
-				"operation": operation_type,
-				"parameters": {
-					"pattern": pattern,
-					"paths": paths,
-					"language": language,
-					"rewrite": rewrite,
-					"json_output": json_output,
-					"context": context,
-					"update_all": update_all
-				},
-				"message": if success {
-					format!("AST-grep {operation_type} executed successfully with exit code {status_code}")
-				} else {
-					format!("AST-grep {operation_type} failed with exit code {status_code}")
-				}
-			});
-
-			result
+			Ok(combined)
 		}
-		Err(e) => json!({
-			"success": false,
-			"output": format!("Failed to execute ast-grep command: {e}"),
-			"code": -1,
-			"operation": if rewrite.is_some() { "rewrite" } else { "search" },
-			"parameters": {
-				"pattern": pattern,
-				"paths": paths,
-				"language": language,
-				"rewrite": rewrite,
-				"json_output": json_output,
-				"context": context,
-				"update_all": update_all
-			},
-			"message": format!("Failed to execute ast-grep command: {}", e)
-		}),
-	};
-
-	Ok(McpToolResult {
-		tool_name: "ast_grep".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: output,
-	})
+		Err(e) => bail!("Failed to execute ast-grep command: {e}"),
+	}
 }

@@ -14,11 +14,11 @@
 
 // Core functionality and shared utilities for file system operations
 
-use super::super::{get_thread_working_directory, McpToolCall, McpToolResult};
+use super::super::{get_thread_working_directory, McpToolCall};
 use crate::mcp::fs::{directory, file_ops, text_editing};
 use crate::utils::truncation::format_extracted_content_smart;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{anyhow, bail, Result};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -114,7 +114,7 @@ pub async fn save_file_history(path: &Path) -> Result<()> {
 }
 
 // Undo the last edit to a file
-pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult> {
+pub async fn undo_edit(path: &Path) -> Result<String> {
 	let path_str = path.to_string_lossy().to_string();
 
 	// First retrieve the previous content while holding the lock
@@ -136,35 +136,12 @@ pub async fn undo_edit(call: &McpToolCall, path: &Path) -> Result<McpToolResult>
 		// Atomic write for undo
 		text_editing::atomic_write(path, &prev_content).await?;
 
-		// Get remaining history count
-		let history_remaining = {
-			let file_history = get_file_history();
-			let history_guard = file_history
-				.lock()
-				.map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
-
-			history_guard.get(&path_str).map_or(0, |h| h.len())
-		};
-
-		Ok(McpToolResult::success_with_metadata(
-			"text_editor".to_string(),
-			call.tool_id.clone(),
-			format!(
-				"Successfully undid the last edit to {}",
-				path.to_string_lossy()
-			),
-			json!({
-				"path": path.to_string_lossy(),
-				"history_remaining": history_remaining,
-				"command": "undo_edit"
-			}),
+		Ok(format!(
+			"Successfully undid the last edit to {}",
+			path.to_string_lossy()
 		))
 	} else {
-		Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"No more undo history for this file (up to 10 levels are stored per file).".to_string(),
-		))
+		bail!("No more undo history for this file (up to 10 levels are stored per file).");
 	}
 }
 
@@ -196,23 +173,15 @@ pub fn detect_language(ext: &str) -> &str {
 // Main execution functions
 
 // Execute a text editor command following modern text editor specifications
-pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
+pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Command parameter must be a string".to_string(),
-			));
+			bail!("Command parameter must be a string");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required 'command' parameter".to_string(),
-			));
+			bail!("Missing required 'command' parameter");
 		}
 	};
 
@@ -222,83 +191,55 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<McpToolResult> {
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Missing or invalid 'path' parameter for create command".to_string(),
-					))
+					bail!("Missing or invalid 'path' parameter for create command");
 				}
 			};
 			let content = match call.parameters.get("content") {
 				Some(Value::String(txt)) => txt.clone(),
 				_ => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Missing or invalid 'content' parameter for create command".to_string(),
-					))
+					bail!("Missing or invalid 'content' parameter for create command");
 				}
 			};
-			file_ops::create_file_spec(call, &resolve_path(&path), &content).await
+			file_ops::create_file_spec(&resolve_path(&path), &content).await
 		}
 		"str_replace" => {
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Missing or invalid 'path' parameter for str_replace command".to_string(),
-					))
+					bail!("Missing or invalid 'path' parameter for str_replace command");
 				}
 			};
 			let old_text = match call.parameters.get("old_text") {
 				Some(Value::String(s)) => s.clone(),
 				_ => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Missing or invalid 'old_text' parameter".to_string(),
-					))
+					bail!("Missing or invalid 'old_text' parameter");
 				}
 			};
 			let new_text = match call.parameters.get("new_text") {
 				Some(Value::String(s)) => s.clone(),
 				_ => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Missing or invalid 'new_text' parameter".to_string(),
-					))
+					bail!("Missing or invalid 'new_text' parameter");
 				}
 			};
-			text_editing::str_replace_spec(call, &resolve_path(&path), &old_text, &new_text).await
+			text_editing::str_replace_spec(&resolve_path(&path), &old_text, &new_text).await
 		}
 		"undo_edit" => {
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),
 				_ => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Missing or invalid 'path' parameter for undo_edit command".to_string(),
-					))
+					bail!("Missing or invalid 'path' parameter for undo_edit command");
 				}
 			};
-			undo_edit(call, &resolve_path(&path)).await
+			undo_edit(&resolve_path(&path)).await
 		}
-		_ => Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"Invalid command: {command}. Allowed commands are: create, str_replace, undo_edit"
-			),
-		)),
+		_ => bail!(
+			"Invalid command: {command}. Allowed commands are: create, str_replace, undo_edit"
+		),
 	}
 }
 
 // Execute view command - unified read-only tool for files, directories, and content search
-pub async fn execute_view(call: &McpToolCall) -> Result<McpToolResult> {
+pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// Multi-file view: paths array takes priority
 	if let Some(Value::Array(arr)) = call.parameters.get("paths") {
 		let path_strings: Result<Vec<String>, _> = arr
@@ -308,24 +249,16 @@ pub async fn execute_view(call: &McpToolCall) -> Result<McpToolResult> {
 			.collect();
 		let paths = path_strings?;
 		if paths.len() > 50 {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Too many files requested. Maximum 50 files per request.".to_string(),
-			));
+			bail!("Too many files requested. Maximum 50 files per request.");
 		}
-		return file_ops::view_many_files_spec(call, &paths).await;
+		return file_ops::view_many_files_spec(&paths).await;
 	}
 
 	// Single path required
 	let path = match call.parameters.get("path") {
 		Some(Value::String(p)) => p.clone(),
 		_ => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing or invalid 'path' parameter. Provide 'path' for a file/directory or 'paths' for multiple files.".to_string(),
-			));
+			bail!("Missing or invalid 'path' parameter. Provide 'path' for a file/directory or 'paths' for multiple files.");
 		}
 	};
 
@@ -355,11 +288,7 @@ pub async fn execute_view(call: &McpToolCall) -> Result<McpToolResult> {
 					match resolve_line_range(start, end, total_lines) {
 						Ok((s, e)) => Some((s, e as i64)),
 						Err(err) => {
-							return Ok(McpToolResult::error(
-								call.tool_name.clone(),
-								call.tool_id.clone(),
-								format!("Invalid lines parameter: {err}"),
-							));
+							bail!("Invalid lines parameter: {err}");
 						}
 					}
 				} else {
@@ -367,62 +296,36 @@ pub async fn execute_view(call: &McpToolCall) -> Result<McpToolResult> {
 				}
 			}
 			_ => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"lines array elements must be integers".to_string(),
-				));
+				bail!("lines array elements must be integers");
 			}
 		},
 		Some(Value::Array(_)) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"lines must be an array with exactly 2 elements".to_string(),
-			));
+			bail!("lines must be an array with exactly 2 elements");
 		}
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"lines must be an array".to_string(),
-			));
+			bail!("lines must be an array");
 		}
 		None => None,
 	};
 
-	let result = file_ops::view_file_spec(call, &resolved, lines).await?;
-
-	Ok(result)
+	file_ops::view_file_spec(&resolved, lines).await
 }
 
 // Execute extract_lines command - MCP compliant implementation
-pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> {
+pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// Validate and extract from_path parameter
 	let from_path = match call.parameters.get("from_path") {
 		Some(Value::String(p)) => {
 			if p.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Parameter 'from_path' cannot be empty".to_string(),
-				));
+				bail!("Parameter 'from_path' cannot be empty");
 			}
 			p.clone()
 		}
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Parameter 'from_path' must be a string".to_string(),
-			));
+			bail!("Parameter 'from_path' must be a string");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required parameter 'from_path'".to_string(),
-			));
+			bail!("Missing required parameter 'from_path'");
 		}
 	};
 
@@ -430,64 +333,36 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 	let (from_range_start_raw, from_range_end_raw) = match call.parameters.get("from_range") {
 		Some(Value::Array(arr)) => {
 			if arr.len() != 2 {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Parameter 'from_range' must be an array with exactly 2 elements".to_string(),
-				));
+				bail!("Parameter 'from_range' must be an array with exactly 2 elements");
 			}
 
 			let start = match arr[0].as_i64() {
 				Some(0) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Line numbers are 1-indexed, use 1 for first line".to_string(),
-					));
+					bail!("Line numbers are 1-indexed, use 1 for first line");
 				}
 				Some(n) => n,
 				None => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Start line number must be an integer".to_string(),
-					));
+					bail!("Start line number must be an integer");
 				}
 			};
 
 			let end = match arr[1].as_i64() {
 				Some(0) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Line numbers are 1-indexed, use 1 for first line".to_string(),
-					));
+					bail!("Line numbers are 1-indexed, use 1 for first line");
 				}
 				Some(n) => n,
 				None => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"End line number must be an integer".to_string(),
-					));
+					bail!("End line number must be an integer");
 				}
 			};
 
 			(start, end)
 		}
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Parameter 'from_range' must be an array".to_string(),
-			));
+			bail!("Parameter 'from_range' must be an array");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required parameter 'from_range'".to_string(),
-			));
+			bail!("Missing required parameter 'from_range'");
 		}
 	};
 
@@ -495,27 +370,15 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 	let append_path = match call.parameters.get("append_path") {
 		Some(Value::String(p)) => {
 			if p.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Parameter 'append_path' cannot be empty".to_string(),
-				));
+				bail!("Parameter 'append_path' cannot be empty");
 			}
 			p.clone()
 		}
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Parameter 'append_path' must be a string".to_string(),
-			));
+			bail!("Parameter 'append_path' must be a string");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required parameter 'append_path'".to_string(),
-			));
+			bail!("Missing required parameter 'append_path'");
 		}
 	};
 
@@ -524,47 +387,27 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 		Some(Value::Number(n)) => match n.as_i64() {
 			Some(line) => line,
 			None => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Parameter 'append_line' must be an integer".to_string(),
-				));
+				bail!("Parameter 'append_line' must be an integer");
 			}
 		},
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Parameter 'append_line' must be an integer".to_string(),
-			));
+			bail!("Parameter 'append_line' must be an integer");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required parameter 'append_line'".to_string(),
-			));
+			bail!("Missing required parameter 'append_line'");
 		}
 	};
 
 	// Read source file
 	let from_path_obj = resolve_path(&from_path);
 	if !from_path_obj.exists() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Source file does not exist: {from_path}"),
-		));
+		bail!("Source file does not exist: {from_path}");
 	}
 
 	let source_content = match tokio_fs::read_to_string(&from_path_obj).await {
 		Ok(content) => content,
 		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Failed to read source file '{from_path}': {e}"),
-			));
+			bail!("Failed to read source file '{from_path}': {e}");
 		}
 	};
 
@@ -577,11 +420,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 	{
 		Ok(range) => range,
 		Err(err) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Invalid from_range: {err}"),
-			));
+			bail!("Invalid from_range: {err}");
 		}
 	};
 
@@ -616,11 +455,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 	let append_path_obj = resolve_path(&append_path);
 	if let Some(parent) = append_path_obj.parent() {
 		if let Err(e) = tokio_fs::create_dir_all(parent).await {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Failed to create parent directories for '{append_path}': {e}"),
-			));
+			bail!("Failed to create parent directories for '{append_path}': {e}");
 		}
 	}
 
@@ -629,11 +464,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 		match tokio_fs::read_to_string(&append_path_obj).await {
 			Ok(content) => content,
 			Err(e) => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!("Failed to read target file '{append_path}': {e}"),
-				));
+				bail!("Failed to read target file '{append_path}': {e}");
 			}
 		}
 	} else {
@@ -668,14 +499,10 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 		let insert_after = append_line as usize;
 
 		if insert_after > target_lines.len() {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!(
-					"Insert position {insert_after} exceeds target file length ({}) lines) in '{append_path}'",
-					target_lines.len()
-				),
-			));
+			bail!(
+				"Insert position {insert_after} exceeds target file length ({}) lines) in '{append_path}'",
+				target_lines.len()
+			);
 		}
 
 		let mut new_lines = Vec::new();
@@ -702,11 +529,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 
 	// Write the final content to target file
 	if let Err(e) = tokio_fs::write(&append_path_obj, &final_content).await {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Failed to write to target file '{append_path}': {e}"),
-		));
+		bail!("Failed to write to target file '{append_path}': {e}");
 	}
 
 	// Return success result with useful information
@@ -717,28 +540,20 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<McpToolResult> 
 		n => format!("after line {n}"),
 	};
 
-	Ok(McpToolResult::success(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		format!(
-			"Successfully extracted {lines_extracted} lines (lines {}-{}) from '{from_path}' and appended to '{append_path}' at {position_desc}.\n\nExtracted content:\n{extracted_content_display}",
-			from_range.0,
-			from_range.1
-		),
+	Ok(format!(
+		"Successfully extracted {lines_extracted} lines (lines {}-{}) from '{from_path}' and appended to '{append_path}' at {position_desc}.\n\nExtracted content:\n{extracted_content_display}",
+		from_range.0,
+		from_range.1
 	))
 }
 
 // Execute batch_edit operations on a single file
-pub async fn execute_batch_edit(call: &McpToolCall) -> Result<McpToolResult> {
+pub async fn execute_batch_edit(call: &McpToolCall) -> Result<String> {
 	let (operations_vec, ai_format_warning) = match call.parameters.get("operations") {
 		Some(Value::Array(ops)) => {
 			// Correct format - AI passed array directly
 			if ops.len() > 50 {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Too many operations in batch. Maximum 50 operations allowed.".to_string(),
-				));
+				bail!("Too many operations in batch. Maximum 50 operations allowed.");
 			}
 			(ops.clone(), false)
 		}
@@ -747,32 +562,18 @@ pub async fn execute_batch_edit(call: &McpToolCall) -> Result<McpToolResult> {
 			match serde_json::from_str::<Vec<Value>>(ops_str) {
 				Ok(parsed_ops) => {
 					if parsed_ops.len() > 50 {
-						return Ok(McpToolResult::error(
-							call.tool_name.clone(),
-							call.tool_id.clone(),
-							"Too many operations in batch. Maximum 50 operations allowed."
-								.to_string(),
-						));
+						bail!("Too many operations in batch. Maximum 50 operations allowed.");
 					}
 					tracing::debug!("AI passed operations as JSON string instead of array - parsing defensively");
 					(parsed_ops, true)
 				}
 				Err(_) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Invalid 'operations' parameter for batch_edit - must be an array or valid JSON array string".to_string(),
-					));
+					bail!("Invalid 'operations' parameter for batch_edit - must be an array or valid JSON array string");
 				}
 			}
 		}
 		_ => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing or invalid 'operations' parameter for batch_edit - must be an array"
-					.to_string(),
-			))
+			bail!("Missing or invalid 'operations' parameter for batch_edit - must be an array");
 		}
 	};
 

@@ -35,12 +35,7 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"Expected success: {:?}",
-			result.result
-		);
+		execute_batch_edit(&call).await.unwrap();
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, expected, "Content mismatch");
 	}
@@ -233,12 +228,7 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"}} boundary must not trigger duplicate detection: {:?}",
-			result.result
-		);
+		execute_batch_edit(&call).await.unwrap();
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(
 			actual,
@@ -267,15 +257,12 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"compound closer at boundary must trigger duplicate detection: {:?}",
-			result.result
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		assert!(
+			err.to_string().contains("Duplicate line detected"),
+			"compound closer at boundary must trigger duplicate detection: {}",
+			err
 		);
-		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
-		assert!(error_msg.contains("Duplicate line detected"));
 		// File must be unchanged
 		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, content);
@@ -297,10 +284,8 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&serde_json::json!(true)));
-		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
-		assert!(error_msg.contains("Duplicate line detected"));
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		assert!(err.to_string().contains("Duplicate line detected"));
 		// File must be unchanged
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nline 3\nline 4\n");
@@ -323,10 +308,8 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&serde_json::json!(true)));
-		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
-		assert!(error_msg.contains("Duplicate line detected"));
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		assert!(err.to_string().contains("Duplicate line detected"));
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nline 3\nline 4\n");
 	}
@@ -348,14 +331,9 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"Expected success: {:?}",
-			result.result
-		);
-		// Diff is returned as the text content of the result
-		assert!(result.result["content"][0]["text"].as_str().is_some());
+		let text = execute_batch_edit(&call).await.unwrap();
+		// Diff is returned as the result string
+		assert!(!text.is_empty());
 	}
 
 	// ── Insert duplicate-detection tests ────────────────────────────────────────
@@ -381,15 +359,12 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"single-line insert duplicate must be blocked: {:?}",
-			result.result
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		assert!(
+			err.to_string().contains("Duplicate line detected"),
+			"single-line insert duplicate must be blocked: {}",
+			err
 		);
-		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
-		assert!(error_msg.contains("Duplicate line detected"));
 		// File must be unchanged
 		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, content);
@@ -414,12 +389,7 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"structural-noise single-line insert must be allowed: {:?}",
-			result.result
-		);
+		execute_batch_edit(&call).await.unwrap();
 	}
 
 	#[tokio::test]
@@ -443,15 +413,12 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"multi-line insert duplicate must be blocked: {:?}",
-			result.result
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		assert!(
+			err.to_string().contains("Duplicate block detected"),
+			"multi-line insert duplicate must be blocked: {}",
+			err
 		);
-		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
-		assert!(error_msg.contains("Duplicate block detected"));
 		// File must be unchanged
 		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, content);
@@ -478,15 +445,12 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"multi-line noise block insert duplicate must be blocked: {:?}",
-			result.result
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		assert!(
+			err.to_string().contains("Duplicate block detected"),
+			"multi-line noise block insert duplicate must be blocked: {}",
+			err
 		);
-		let error_msg = result.result["content"][0]["text"].as_str().unwrap();
-		assert!(error_msg.contains("Duplicate block detected"));
 		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, content);
 	}
@@ -509,12 +473,7 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"new multi-line insert must be allowed: {:?}",
-			result.result
-		);
+		execute_batch_edit(&call).await.unwrap();
 		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2a\nline 2b\nline 3\n");
 	}
@@ -538,15 +497,7 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"Expected success: {:?}",
-			result.result
-		);
-		let diff = result.result["content"][0]["text"]
-			.as_str()
-			.expect("diff must be present in content text");
+		let diff = execute_batch_edit(&call).await.unwrap();
 		assert!(diff.contains("-2:"), "diff must show removed line");
 		assert!(diff.contains("+2:"), "diff must show added line");
 	}
@@ -568,12 +519,7 @@ mod tests {
 				}]
 			}),
 		};
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"Expected success: {:?}",
-			result.result
-		);
+		execute_batch_edit(&call).await.unwrap();
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nNEW LAST\n");
 	}
@@ -582,23 +528,10 @@ mod tests {
 
 	async fn test_str_replace(content: &str, old_str: &str, new_str: &str, expected: &str) {
 		let temp_file = create_test_file(content).await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
-			temp_file.path(),
-			old_str,
-			new_str,
-		)
-		.await
-		.unwrap();
-
-		// Check that operation succeeded
-		assert!(result.result.get("error").is_none());
+		crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), old_str, new_str)
+			.await
+			.unwrap();
 
 		// Check file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -739,64 +672,35 @@ mod tests {
 	#[tokio::test]
 	async fn test_str_replace_error_no_match() {
 		let temp_file = create_test_file("Hello world").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
+		let err = crate::mcp::fs::text_editing::str_replace_spec(
 			temp_file.path(),
 			"not_found",
 			"replacement",
 		)
 		.await
-		.unwrap();
+		.unwrap_err();
 
 		// Should return error for no match
 		assert!(
-			result.result.get("isError").unwrap().as_bool().unwrap(),
-			"Should have isError: true"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("No exact match found"),
+			err.to_string().contains("No exact match found"),
 			"Should contain no match error message, got: {}",
-			content
+			err
 		);
 	}
 
 	#[tokio::test]
 	async fn test_str_replace_error_multiple_matches() {
 		let temp_file = create_test_file("test test test").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
-			temp_file.path(),
-			"test",
-			"replacement",
-		)
-		.await
-		.unwrap();
+		let err =
+			crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "test", "replacement")
+				.await
+				.unwrap_err();
 
 		// Should return error for multiple matches
 		assert!(
-			result.result.get("isError").unwrap().as_bool().unwrap(),
-			"Should have isError: true"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("Found 3 matches"),
+			err.to_string().contains("Found 3 matches"),
 			"Should contain multiple matches error message"
 		);
 	}
@@ -804,24 +708,11 @@ mod tests {
 	#[tokio::test]
 	async fn test_str_replace_byte_level_verification() {
 		let temp_file = create_test_file("hello\nworld\ntest").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
 		// Replace with content containing actual newlines
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
-			temp_file.path(),
-			"world",
-			"new\nline",
-		)
-		.await
-		.unwrap();
-
-		// Check that operation succeeded
-		assert!(result.result.get("error").is_none());
+		crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "world", "new\nline")
+			.await
+			.unwrap();
 
 		// Read and verify byte content
 		let actual_bytes = fs::read(temp_file.path()).await.unwrap();
@@ -861,7 +752,7 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = list_directory(
+		let output = list_directory(
 			&call,
 			call.parameters
 				.get("directory")
@@ -870,18 +761,15 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output = result.result.as_object().unwrap();
 
-		// Should have basic file listing info (no tool-level truncation)
-		assert_eq!(output["count"], 30); // Total count
-		assert_eq!(output["displayed_count"], 30); // All files displayed (global truncation handles limits)
-		assert_eq!(output["success"], true);
-		assert_eq!(output["type"], "file listing");
-
-		// Should have files array
-		assert!(output.contains_key("files"));
-		let files = output["files"].as_array().unwrap();
-		assert_eq!(files.len(), 30);
+		// Should list all 30 files
+		let file_lines: Vec<&str> = output.lines().filter(|l| !l.is_empty()).collect();
+		assert_eq!(
+			file_lines.len(),
+			30,
+			"Should list 30 files, got: {}",
+			output
+		);
 
 		// Test with different pattern
 		let call_limited = McpToolCall {
@@ -893,7 +781,7 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result_limited = list_directory(
+		let output_limited = list_directory(
 			&call_limited,
 			call_limited
 				.parameters
@@ -903,18 +791,16 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output_limited = result_limited.result.as_object().unwrap();
 
 		// Should find only one file matching the pattern
-		assert_eq!(output_limited["count"], 1);
-		assert_eq!(output_limited["displayed_count"], 1);
-
-		let files_limited = output_limited["files"].as_array().unwrap();
-		assert_eq!(files_limited.len(), 1);
-		assert!(files_limited[0]
-			.as_str()
-			.unwrap()
-			.contains("test_file_01.txt"));
+		let limited_lines: Vec<&str> = output_limited.lines().filter(|l| !l.is_empty()).collect();
+		assert_eq!(
+			limited_lines.len(),
+			1,
+			"Should find 1 file, got: {}",
+			output_limited
+		);
+		assert!(limited_lines[0].contains("test_file_01.txt"));
 	}
 
 	#[tokio::test]
@@ -950,7 +836,7 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result = list_directory(
+		let output = list_directory(
 			&call,
 			call.parameters
 				.get("directory")
@@ -959,23 +845,15 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output = result.result.as_object().unwrap();
 
-		// Should be content search
-		assert_eq!(output["type"], "content search");
-		assert!(output["success"].as_bool().unwrap());
-
-		// Should have lines (not files) for content search
-		assert!(output.contains_key("lines"));
-		assert!(output.contains_key("total_lines"));
-		assert!(output.contains_key("displayed_lines"));
-
-		// Check that output preserves ripgrep format with line numbers
-		let output_str = output["output"].as_str().unwrap();
-		println!("Content search output:\n{}", output_str);
+		println!("Content search output:\n{}", output);
 
 		// Should contain filenames and line numbers (ripgrep format)
-		assert!(output_str.contains("test1.rs:") || output_str.contains("test2.rs:"));
+		assert!(
+			output.contains("test1.rs:") || output.contains("test2.rs:"),
+			"Should contain filenames: {}",
+			output
+		);
 
 		// Test content search with context
 		let call_with_context = McpToolCall {
@@ -990,7 +868,7 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let result_with_context = list_directory(
+		let output_with_context = list_directory(
 			&call_with_context,
 			call_with_context
 				.parameters
@@ -1000,14 +878,12 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output_with_context = result_with_context.result.as_object().unwrap();
 
-		let output_str_with_context = output_with_context["output"].as_str().unwrap();
-		println!("Content search with context:\n{}", output_str_with_context);
+		println!("Content search with context:\n{}", output_with_context);
 
 		// With context, should have more lines
-		let lines_no_context = output["lines"].as_array().unwrap().len();
-		let lines_with_context = output_with_context["lines"].as_array().unwrap().len();
+		let lines_no_context = output.lines().count();
+		let lines_with_context = output_with_context.lines().count();
 		assert!(
 			lines_with_context >= lines_no_context,
 			"Context should add more lines: {} vs {}",
@@ -1046,7 +922,7 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let file_list_result = list_directory(
+		let file_list_str = list_directory(
 			&file_list_call,
 			file_list_call
 				.parameters
@@ -1056,12 +932,6 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let file_list_output = file_list_result.result.as_object().unwrap();
-
-		// Should be file listing
-		assert_eq!(file_list_output["type"], "file listing");
-		assert!(file_list_output.contains_key("files"));
-		assert!(file_list_output.contains_key("count"));
 
 		// Test 2: Content search (should return formatted matches)
 		let content_search_call = McpToolCall {
@@ -1073,7 +943,7 @@ mod tests {
 			tool_id: "test-call-id".to_string(),
 		};
 
-		let content_search_result = list_directory(
+		let content_search_str = list_directory(
 			&content_search_call,
 			content_search_call
 				.parameters
@@ -1083,16 +953,6 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let content_search_output = content_search_result.result.as_object().unwrap();
-
-		// Should be content search
-		assert_eq!(content_search_output["type"], "content search");
-		assert!(content_search_output.contains_key("lines"));
-		assert!(content_search_output.contains_key("total_lines"));
-
-		// Outputs should be completely different
-		let file_list_str = file_list_output["output"].as_str().unwrap();
-		let content_search_str = content_search_output["output"].as_str().unwrap();
 
 		println!("File listing output:\n{}", file_list_str);
 		println!("Content search output:\n{}", content_search_str);
@@ -1100,15 +960,12 @@ mod tests {
 		// File listing should just be filenames
 		assert!(file_list_str.contains("test_1.rs"));
 		// Check that file listing doesn't contain line numbers
-		// Look for line number patterns: either ":digit:" or newline followed by "digit:"
-		// Use regex to avoid false positives from Windows drive letters (C:)
 		let line_number_pattern = regex::Regex::new(r"(:\d+:|^\d+:)").unwrap();
-		assert!(!line_number_pattern.is_match(file_list_str)); // No line numbers
+		assert!(!line_number_pattern.is_match(&file_list_str)); // No line numbers
 
 		// Content search should have line numbers and content
-		// Content search format is either "filename:line:content" or "filename:\nline:content"
 		let has_line_numbers = content_search_str.contains("2:    println!")
-			|| line_number_pattern.is_match(content_search_str);
+			|| line_number_pattern.is_match(&content_search_str);
 		assert!(has_line_numbers); // Line numbers
 		assert!(content_search_str.contains("println!")); // Actual content
 	}
@@ -1145,13 +1002,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
-
-		// Check that operation succeeded
-		assert!(
-			result.result.get("isError") == Some(&json!(false)),
-			"Extract lines should succeed"
-		);
+		execute_extract_lines(&call).await.unwrap();
 
 		// Check source file unchanged
 		let source_after = fs::read_to_string(&source_path).await.unwrap();
@@ -1274,15 +1125,12 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail with invalid range"
+			err.to_string().contains("exceeds file length"),
+			"Should fail with invalid range: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("exceeds file length"));
 	}
 
 	#[tokio::test]
@@ -1304,15 +1152,12 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail when start > end"
+			err.to_string().contains("cannot be greater than"),
+			"Should fail when start > end: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("cannot be greater than"));
 	}
 
 	#[tokio::test]
@@ -1332,15 +1177,12 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail with missing source file"
+			err.to_string().contains("does not exist"),
+			"Should fail with missing source file: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("does not exist"));
 	}
 
 	#[tokio::test]
@@ -1363,15 +1205,12 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail with invalid append position"
+			err.to_string().contains("exceeds target file length"),
+			"Should fail with invalid append position: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("exceeds target file length"));
 	}
 
 	#[tokio::test]
@@ -1393,11 +1232,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
-		assert!(
-			result.result.get("isError") == Some(&json!(false)),
-			"Should succeed creating parent directories"
-		);
+		execute_extract_lines(&call).await.unwrap();
 
 		// Check that target file was created with correct content
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
@@ -1423,15 +1258,13 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail with missing from_path"
+			err.to_string()
+				.contains("Missing required parameter 'from_path'"),
+			"Should fail with missing from_path: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("Missing required parameter 'from_path'"));
 
 		// Test invalid from_range format
 		let call = McpToolCall {
@@ -1445,15 +1278,12 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail with invalid from_range"
+			err.to_string().contains("exactly 2 elements"),
+			"Should fail with invalid from_range: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("exactly 2 elements"));
 
 		// Test empty from_path
 		let call = McpToolCall {
@@ -1467,15 +1297,12 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			result.result.get("isError") == Some(&json!(true)),
-			"Should fail with empty from_path"
+			err.to_string().contains("cannot be empty"),
+			"Should fail with empty from_path: {}",
+			err
 		);
-		assert!(result.result["content"][0]["text"]
-			.as_str()
-			.unwrap()
-			.contains("cannot be empty"));
 	}
 
 	// ===============================
@@ -1507,15 +1334,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Check success
-		assert!(
-			result.result.get("error").is_none(),
-			"Operation should succeed"
-		);
 
 		// Verify file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -1551,15 +1372,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Check success
-		assert!(
-			result.result.get("error").is_none(),
-			"Operation should succeed"
-		);
 
 		// Verify file content - operations applied in reverse order to maintain line stability
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -1591,16 +1406,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed — insert and replace at same line are independent
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert after 2 + replace [2,2] should NOT conflict: {:?}",
-			result.result
-		);
 
 		// Replace line 2 first, then insert after it
 		// line 1 / replaced line 2 / inserted after line 2 / line 3
@@ -1631,22 +1439,14 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
+			.unwrap_err();
 
-		// Check that it failed due to overlap
 		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("overlapping ranges"),
+			err.to_string().contains("overlapping ranges"),
 			"Should detect overlap: {}",
-			content
+			err
 		);
 	}
 
@@ -1670,21 +1470,15 @@ mod tests {
 			}),
 		};
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
+			.unwrap_err();
 
-		// Check that it failed due to missing path
 		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("Missing required 'path' parameter"),
-			"Should indicate missing path"
+			err.to_string()
+				.contains("Missing required 'path' parameter"),
+			"Should indicate missing path: {}",
+			err
 		);
 	}
 
@@ -1702,25 +1496,20 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
+			.unwrap_err();
 
-		// Check that it failed due to invalid operation
+		let msg = err.to_string();
 		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
-		assert!(
-			content.contains("No valid operations found"),
-			"Should indicate no valid operations"
+			msg.contains("No valid operations found"),
+			"Should indicate no valid operations: {}",
+			msg
 		);
 		assert!(
-			content.contains("operations failed during parsing"),
-			"Should indicate parsing failure"
+			msg.contains("operations failed during parsing"),
+			"Should indicate parsing failure: {}",
+			msg
 		);
 	}
 
@@ -1752,15 +1541,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Check success
-		assert!(
-			result.result.get("error").is_none(),
-			"Comprehensive operation should succeed"
-		);
 
 		// Verify file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -1769,13 +1552,6 @@ mod tests {
 			actual, expected,
 			"Should handle comprehensive batch edit scenario"
 		);
-
-		// Check result details
-		let batch_summary = &result.result["metadata"]["batch_summary"];
-		assert_eq!(batch_summary["total_operations"], 3);
-		assert_eq!(batch_summary["successful_operations"], 3);
-		assert_eq!(batch_summary["failed_operations"], 0);
-		assert_eq!(batch_summary["overall_success"], true);
 	}
 
 	#[tokio::test]
@@ -1800,15 +1576,9 @@ mod tests {
 		]);
 
 		let batch_call = create_batch_edit_call(&path, operations).await;
-		let batch_result = crate::mcp::fs::core::execute_batch_edit(&batch_call)
+		crate::mcp::fs::core::execute_batch_edit(&batch_call)
 			.await
 			.unwrap();
-
-		// Check batch edit succeeded
-		assert!(
-			batch_result.result.get("error").is_none(),
-			"Batch edit should succeed"
-		);
 
 		// Verify file content after batch edit
 		let content_after_batch = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -1820,24 +1590,9 @@ mod tests {
 		);
 
 		// Now test undo functionality
-		let undo_call = McpToolCall {
-			tool_id: "test_undo".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({
-				"command": "undo_edit",
-				"path": path
-			}),
-		};
-
-		let undo_result = crate::mcp::fs::core::undo_edit(&undo_call, temp_file.path())
+		let undo_text = crate::mcp::fs::core::undo_edit(temp_file.path())
 			.await
 			.unwrap();
-
-		// Check undo succeeded
-		assert!(
-			undo_result.result.get("error").is_none(),
-			"Undo should succeed"
-		);
 
 		// Verify file content is restored to original
 		let content_after_undo = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -1848,13 +1603,10 @@ mod tests {
 		);
 
 		// Verify undo result message
-		let content = undo_result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
 		assert!(
-			content.contains("Successfully undid the last edit"),
+			undo_text.contains("Successfully undid the last edit"),
 			"Should contain undo confirmation message, got: {}",
-			content
+			undo_text
 		);
 	}
 
@@ -1870,14 +1622,9 @@ mod tests {
 			json!([{"operation": "insert", "line_range": 0, "content": "line 0"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"insert at 0 should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 0\nline 1\nline 2\n");
 	}
@@ -1892,14 +1639,9 @@ mod tests {
 			json!([{"operation": "insert", "line_range": 2, "content": "line 3"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"insert at end should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nline 3\n");
 	}
@@ -1914,14 +1656,9 @@ mod tests {
 			json!([{"operation": "insert", "line_range": -1, "content": "appended"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"negative insert should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nappended\n");
 	}
@@ -1936,15 +1673,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [99, 99], "content": "oops"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"out-of-bounds replace must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 		// File must be unchanged
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nline 3\n");
@@ -1960,15 +1691,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [3, 1], "content": "bad"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"start > end must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nline 3\n");
 	}
@@ -1979,15 +1704,9 @@ mod tests {
 		let temp_file = create_test_file("line 1\nline 2\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(&path, json!([])).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"empty operations must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 	}
 
 	#[tokio::test]
@@ -1998,16 +1717,10 @@ mod tests {
 			json!([{"operation": "insert", "line_range": 1, "content": "test"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"missing file must error: {:?}",
-			result.result
-		);
-		let msg = result.result["content"][0]["text"].as_str().unwrap();
+			.unwrap_err();
+		let msg = err.to_string();
 		assert!(
 			msg.contains("not found") || msg.contains("No such file"),
 			"error should mention file not found: {}",
@@ -2030,14 +1743,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"non-overlapping replaces should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "A\nb\nC\nd\nE\n");
 	}
@@ -2052,14 +1760,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [2, 2], "content": "new1\nnew2\nnew3"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"expand replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "before\nnew1\nnew2\nnew3\nafter\n");
 	}
@@ -2074,14 +1777,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [2, 4], "content": "SINGLE"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"shrink replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "before\nSINGLE\nafter\n");
 	}
@@ -2096,14 +1794,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [2, 2], "content": ""}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"empty-content replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "keep\nalso keep\n");
 	}
@@ -2118,14 +1811,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [-1, -1], "content": "LAST"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"negative replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\nLAST\n");
 	}
@@ -2157,17 +1845,8 @@ mod tests {
 			}));
 		}
 		for handle in handles {
-			let result = handle.await.unwrap();
-			// Each individual call must succeed (no internal errors)
-			assert!(
-				result
-					.result
-					.get("isError")
-					.map(|v| v == &serde_json::json!(false))
-					.unwrap_or(true),
-				"concurrent write should not error: {:?}",
-				result.result
-			);
+			// Each individual call must succeed (unwrap panics on Err)
+			handle.await.unwrap();
 		}
 		// File must be valid UTF-8 and contain all original lines
 		let final_content = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -2195,15 +1874,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [2, 2], "content": "BETA_NEW"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let diff = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert_eq!(
-			result.result["isError"], false,
-			"should succeed: {:?}",
-			result.result
-		);
-		let diff = result.result["content"][0]["text"].as_str().unwrap();
 		assert!(
 			diff.contains("-2:"),
 			"diff must show removed line: {}",
@@ -2235,14 +1908,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"mixed ops should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "// generated\nfn foo() {\n    new_body();\n}\n");
 	}
@@ -2257,14 +1925,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [1, 1], "content": "LINE ONE"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("error").is_none(),
-			"should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "LINE ONE\nline 2"); // no trailing newline preserved
 	}
@@ -2279,15 +1942,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [0, 1], "content": "bad"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"line 0 replace must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 		// File must be unchanged
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\n");
@@ -2309,14 +1966,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// Line 5 (original) replaced, line 2 expanded to 10 lines
 		assert_eq!(
@@ -2339,14 +1991,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "L1\nMERGED\nL5\nREPLACED_L6\nL7\n");
 	}
@@ -2365,14 +2012,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "HEADER\nA\nB\nC_NEW\nD\nE\nFOOTER\n");
 	}
@@ -2387,14 +2029,9 @@ mod tests {
 			json!([{"operation": "insert", "line_range": 0, "content": "first line\nsecond line"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert into empty file should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "first line\nsecond line");
 	}
@@ -2409,14 +2046,9 @@ mod tests {
 			json!([{"operation": "replace", "line_range": [1, 3], "content": "new1\nnew2\nnew3\nnew4\nnew5"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"replace all should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "new1\nnew2\nnew3\nnew4\nnew5\n");
 	}
@@ -2435,14 +2067,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"three replaces should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "X1\nX2\nX3\nL2\nL3\nMERGED_45\nL6\nSAME_7\nL8\n");
 	}
@@ -2460,14 +2087,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert+replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "FIRST\nmiddle\nlast\nappended\n");
 	}
@@ -2484,17 +2106,11 @@ mod tests {
 			json!([{"operation": "insert", "line_range": 1, "content": null}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
-			.await
-			.unwrap();
 		// Should fail because content is null, not a string
 		// The parsing loop returns "Missing 'content' field" for non-string content
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"null content must error: {:?}",
-			result.result
-		);
+		crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap_err();
 		// File must be unchanged
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "line 1\nline 2\n");
@@ -2507,15 +2123,9 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call =
 			create_batch_edit_call(&path, json!([{"line_range": 1, "content": "test"}])).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"missing operation field must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 	}
 
 	#[tokio::test]
@@ -2528,15 +2138,9 @@ mod tests {
 			json!([{"operation": "delete", "line_range": 1, "content": "test"}]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"invalid operation type must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 	}
 
 	#[tokio::test]
@@ -2550,16 +2154,10 @@ mod tests {
 			)
 			.collect();
 		let call = create_batch_edit_call(&path, json!(ops)).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"51 operations must error: {:?}",
-			result.result
-		);
-		let msg = result.result["content"][0]["text"].as_str().unwrap();
+			.unwrap_err();
+		let msg = err.to_string();
 		assert!(
 			msg.contains("Too many operations"),
 			"error should mention too many operations: {}",
@@ -2590,14 +2188,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"large file ops should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		let lines: Vec<&str> = actual.lines().collect();
 		assert_eq!(lines[0], "FIRST");
@@ -2622,14 +2215,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"expand+shrink should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(
 			actual,
@@ -2652,15 +2240,10 @@ mod tests {
 				"operations": [{"operation": "replace", "line_range": 2, "content": "B_NEW"}]
 			}),
 		};
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		// This should work — single integer for replace means replace that one line
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		// This should work — single integer for replace means replace that one line
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"integer line_range for replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "A\nB_NEW\nC\n");
 	}
@@ -2683,14 +2266,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"adjacent inserts should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "A\nafter_A\nB\nC\nafter_C\nD\n");
 	}
@@ -2708,14 +2286,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert+replace adjacent should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// Insert after B, replace C with C_NEW
 		assert_eq!(actual, "A\nB\nINSERTED\nC_NEW\nD\n");
@@ -2735,14 +2308,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"expand+insert should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "L1\nHEADER\nL2\nL3\nX1\nX2\nX3\nX4\nX5\nL5\n");
 	}
@@ -2760,14 +2328,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"delete+insert should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// C deleted, NEW inserted after A
 		assert_eq!(actual, "A\nNEW\nB\nD\nE\n");
@@ -2786,15 +2349,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"two inserts at same line must conflict: {:?}",
-			result.result
-		);
+			.unwrap_err();
 		// File must be unchanged
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "A\nB\nC\n");
@@ -2813,14 +2370,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"replace first+last should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "NEW_FIRST\nM1\nM2\nM3\nNEW_LAST\n");
 	}
@@ -2838,14 +2390,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"multiline insert+expand replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "H1\nH2\nH3\nA\nB\nC1\nC2\nC3\nC4\nD\nE\n");
 	}
@@ -2865,14 +2412,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"4 mixed ops should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// HEADER at top, L2→L2_NEW, L4 deleted, FOOTER after L6
 		assert_eq!(actual, "HEADER\nL1\nL2_NEW\nL3\nL5\nL6\nFOOTER\n");
@@ -2892,14 +2434,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"expand early + insert late should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// Line 1 expanded to 4 lines, insert after original line 5
 		assert_eq!(actual, "R1\nR2\nR3\nR4\nL2\nL3\nL4\nL5\nAFTER_L5\nL6\n");
@@ -2918,14 +2455,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"shrink early + insert late should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// Lines 1-3 merged, insert after original line 5
 		assert_eq!(actual, "MERGED\nL4\nL5\nAFTER_L5\nL6\n");
@@ -2946,14 +2478,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"reverse-order ops should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "HEADER\nA\nB\nC_NEW\nD\nE\nFOOTER\n");
 	}
@@ -2980,14 +2507,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"real-world two replaces should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		let lines: Vec<&str> = actual.lines().collect();
 
@@ -3038,14 +2560,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"5 scattered inserts should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(
 			actual,
@@ -3067,15 +2584,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result.get("isError"),
-			Some(&serde_json::json!(true)),
-			"batch with invalid op must error: {:?}",
-			result.result
-		);
+			.unwrap_err();
 		// File MUST be completely unchanged — atomicity guarantee
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "A\nB\nC\n");
@@ -3095,14 +2606,9 @@ mod tests {
 			]),
 		)
 		.await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"replace+insert+replace should succeed: {:?}",
-			result.result
-		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "FIRST\nL2\nL3\nI1\nI2\nI3\nL4\nFIFTH\nL6\n");
 	}
@@ -3128,9 +2634,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let content = execute_view(&call).await.unwrap();
 		assert!(
 			content.contains("5: line 5"),
 			"Should show last line: {}",
@@ -3147,9 +2651,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let content = execute_view(&call).await.unwrap();
 		assert!(
 			content.contains("4: line 4"),
 			"Should show second-to-last line: {}",
@@ -3166,9 +2668,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let content = execute_view(&call).await.unwrap();
 		assert!(
 			content.contains("3: line 3"),
 			"Should show line 3: {}",
@@ -3195,9 +2695,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let content = execute_view(&call).await.unwrap();
 		assert!(
 			content.contains("2: line 2"),
 			"Should show line 2: {}",
@@ -3235,9 +2733,8 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(true)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let err = execute_view(&call).await.unwrap_err();
+		let content = err.to_string();
 		assert!(
 			content.contains("exceeds file length"),
 			"Should show error: {}",
@@ -3269,8 +2766,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
+		execute_extract_lines(&call).await.unwrap();
 
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
 		assert_eq!(target_content.trim(), "line 5", "Should extract last line");
@@ -3288,8 +2784,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
+		execute_extract_lines(&call).await.unwrap();
 
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
 		assert_eq!(
@@ -3311,8 +2806,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
+		execute_extract_lines(&call).await.unwrap();
 
 		let target_content = fs::read_to_string(&target_path).await.unwrap();
 		assert_eq!(
@@ -3346,9 +2840,8 @@ mod tests {
 			}),
 		};
 
-		let result = execute_extract_lines(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(true)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let err = execute_extract_lines(&call).await.unwrap_err();
+		let content = err.to_string();
 		assert!(
 			content.contains("exceeds file length"),
 			"Should show error: {}",
@@ -3382,8 +2875,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
+		execute_batch_edit(&call).await.unwrap();
 
 		let content = fs::read_to_string(&file_path).await.unwrap();
 		assert!(
@@ -3415,8 +2907,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
+		execute_batch_edit(&call).await.unwrap();
 
 		let content = fs::read_to_string(&file_path).await.unwrap();
 		assert!(
@@ -3453,22 +2944,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call).await.unwrap();
-
-		// Check if operation succeeded
-		if let Some(content_array) = result.result["content"].as_array() {
-			if let Some(first_content) = content_array.first() {
-				if let Some(text) = first_content["text"].as_str() {
-					if text.contains("error")
-						|| text.contains("Error")
-						|| text.contains("failed")
-						|| text.contains("Failed")
-					{
-						panic!("Batch edit failed: {}", text);
-					}
-				}
-			}
-		}
+		execute_batch_edit(&call).await.unwrap();
 
 		let content = fs::read_to_string(&file_path).await.unwrap();
 		let lines: Vec<&str> = content.lines().collect();
@@ -3506,9 +2982,8 @@ mod tests {
 			}),
 		};
 
-		let result = execute_batch_edit(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(true)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let err = execute_batch_edit(&call).await.unwrap_err();
+		let content = err.to_string();
 		assert!(
 			content.contains("exceeds file length"),
 			"Should show error: {}",
@@ -3534,9 +3009,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let content = execute_view(&call).await.unwrap();
 		assert!(
 			content.contains("1: only line"),
 			"Should show the only line: {}",
@@ -3553,9 +3026,8 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(true)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let err = execute_view(&call).await.unwrap_err();
+		let content = err.to_string();
 		assert!(
 			content.contains("exceeds file length"),
 			"Should show error: {}",
@@ -3582,18 +3054,7 @@ mod tests {
 			parameters: json!({ "path": temp_dir.path().to_string_lossy() }),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert!(
-			!result
-				.result
-				.get("isError")
-				.and_then(|v| v.as_bool())
-				.unwrap_or(false),
-			"Should not error: {:?}",
-			result.result
-		);
-		// result must contain file listing output
-		let output = result.result["output"].as_str().unwrap_or("");
+		let output = execute_view(&call).await.unwrap();
 		assert!(
 			output.contains("alpha.rs") || output.contains("beta.rs"),
 			"Should list files: {output}"
@@ -3620,17 +3081,7 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert!(
-			!result
-				.result
-				.get("isError")
-				.and_then(|v| v.as_bool())
-				.unwrap_or(false),
-			"Should not error: {:?}",
-			result.result
-		);
-		let output = result.result["output"].as_str().unwrap_or("");
+		let output = execute_view(&call).await.unwrap();
 		assert!(
 			output.contains("hello_world"),
 			"Should find match: {output}"
@@ -3657,19 +3108,13 @@ mod tests {
 			}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
+		let output = execute_view(&call).await.unwrap();
+		// Should find exactly one .toml file
 		assert!(
-			!result
-				.result
-				.get("isError")
-				.and_then(|v| v.as_bool())
-				.unwrap_or(false),
-			"Should not error: {:?}",
-			result.result
+			output.contains("config.toml"),
+			"Should list config.toml: {}",
+			output
 		);
-		let files = result.result["files"].as_array().unwrap();
-		assert_eq!(files.len(), 1, "Should find exactly one .toml file");
-		assert!(files[0].as_str().unwrap().contains("config.toml"));
 	}
 
 	#[tokio::test]
@@ -3685,9 +3130,7 @@ mod tests {
 			parameters: json!({ "path": file_path.to_string_lossy() }),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(false)));
-		let content = result.result["content"][0]["text"].as_str().unwrap();
+		let content = execute_view(&call).await.unwrap();
 		assert!(
 			content.contains("1: line one"),
 			"Should show line 1: {content}"
@@ -3707,9 +3150,8 @@ mod tests {
 			parameters: json!({}),
 		};
 
-		let result = execute_view(&call).await.unwrap();
-		assert_eq!(result.result.get("isError"), Some(&json!(true)));
-		let msg = result.result["content"][0]["text"].as_str().unwrap();
+		let err = execute_view(&call).await.unwrap_err();
+		let msg = err.to_string();
 		assert!(msg.contains("path"), "Error should mention 'path': {msg}");
 	}
 
@@ -3747,16 +3189,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Check success
-		assert!(
-			result.result.get("error").is_none(),
-			"Operation should succeed: {:?}",
-			result.result
-		);
 
 		// Verify file content - ALL operations should use ORIGINAL line positions
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -3797,18 +3232,11 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
+			.unwrap_err();
 
-		// Should fail due to conflict
-		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content due to overlapping operations"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
+		let content = err.to_string();
 		assert!(
 			content.contains("Conflicting operations"),
 			"Should detect conflict: {}",
@@ -3837,16 +3265,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert after 2 + replace [2,2] should NOT conflict: {:?}",
-			result.result
-		);
 
 		// Replace line 2 first (REPLACED 2), then insert INSERTED AFTER 2 after it
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -3882,16 +3303,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Check success
-		assert!(
-			result.result.get("error").is_none(),
-			"Operation should succeed: {:?}",
-			result.result
-		);
 
 		// Verify content - all operations should use ORIGINAL line positions
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -3941,16 +3355,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Check success
-		assert!(
-			result.result.get("error").is_none(),
-			"Operation should succeed: {:?}",
-			result.result
-		);
 
 		// Verify content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -4006,16 +3413,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed - no conflicts
-		assert!(
-			result.result.get("error").is_none(),
-			"Adjacent operations should not conflict: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		let expected = "REPLACED 1\nREPLACED 2\nline 3\nAFTER 3\nREPLACED 4\nline 5\n";
@@ -4048,16 +3448,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// This should SUCCEED because line 1 and line 3 don't overlap
-		assert!(
-			result.result.get("error").is_none(),
-			"Non-overlapping operations should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		// Expected: line 1 -> 4 lines, line 2 unchanged, line 3 -> 4 lines, lines 4-5 unchanged
@@ -4091,18 +3484,10 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-
-		// Should fail due to overlap at line 3
-		assert!(
-			result.result.get("content").is_some(),
-			"Should have error content due to overlapping ranges"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
+			.unwrap_err();
+		let content = err.to_string();
 		assert!(
 			content.contains("Conflicting operations"),
 			"Should detect overlap at line 3: {}",
@@ -4151,16 +3536,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed - no conflicts
-		assert!(
-			result.result.get("error").is_none(),
-			"Ultimate stress test should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 
@@ -4228,16 +3606,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed - no conflicts despite extreme size changes
-		assert!(
-			result.result.get("error").is_none(),
-			"Extreme expansions/contractions should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 
@@ -4307,16 +3678,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed
-		assert!(
-			result.result.get("error").is_none(),
-			"Massive file operations should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 
@@ -4422,16 +3786,9 @@ mod tests {
 		]);
 
 		let call = create_batch_edit_call(&path, operations).await;
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-
-		// Should succeed
-		assert!(
-			result.result.get("error").is_none(),
-			"All expansions should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 
@@ -4462,17 +3819,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		let result_str = serde_json::to_string(&result.result).unwrap();
-
-		// Should NOT contain "Conflicting operations"
-		assert!(
-			!result_str.contains("Conflicting operations"),
-			"BUG: insert after line 2 + replace line 2 should NOT conflict!\nGot: {}",
-			result_str
-		);
 
 		// Expected: replace line 2 (BBB→REPLACED), then insert INSERTED after line 2
 		// Result: AAA / REPLACED / INSERTED / CCC
@@ -4495,14 +3844,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert after 3 + replace [2,4] should NOT conflict: {:?}",
-			result.result
-		);
 
 		// Reverse-order: replace [2,4] first (B,C,D → X,Y,Z), then insert NEW after line 3
 		// After replace: A / X / Y / Z / E
@@ -4526,14 +3870,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert at 0 + replace line 1 should NOT conflict: {:?}",
-			result.result
-		);
 
 		// Reverse-order: replace(1,1) pos=1 > insert(0) pos=0
 		// Replace first: REPLACED_FIRST / SECOND / THIRD
@@ -4556,10 +3895,10 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-		let result_str = serde_json::to_string(&result.result).unwrap();
+			.unwrap_err();
+		let result_str = err.to_string();
 		assert!(
 			result_str.contains("overlapping ranges"),
 			"overlapping replaces [1,3] and [3,5] should conflict: {}",
@@ -4585,14 +3924,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert after 2 + replace [2,2] with multiline should succeed: {:?}",
-			result.result
-		);
 
 		// Reverse-order: both at pos 2, replace sorts first
 		// Replace line 2 (B → R1,R2): A / R1 / R2 / C
@@ -4616,14 +3950,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"mixed inserts + replace should succeed: {:?}",
-			result.result
-		);
 
 		// Reverse-order processing:
 		// 1. insert after 5 (pos=5): A/B/C/D/E/AFTER_E/F
@@ -4647,14 +3976,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"adjacent replaces [1,2] and [3,4] should NOT conflict: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "X\nY\nW\nZ\n");
@@ -4674,14 +3998,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"insert after last + replace last should NOT conflict: {:?}",
-			result.result
-		);
 
 		// Same pos=3: replace first (C→REPLACED_C), then insert FOOTER after
 		// A / B / REPLACED_C / FOOTER
@@ -4703,14 +4022,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"delete [2,3] + insert after 2 should NOT conflict: {:?}",
-			result.result
-		);
 
 		// Reverse-order: both pos=2, replace first
 		// Replace [2,3] with empty (delete B,C): A / D / E
@@ -4737,14 +4051,9 @@ mod tests {
 		)
 		.await;
 
-		let result = crate::mcp::fs::core::execute_batch_edit(&call)
+		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap();
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"interleaved inserts+replaces should succeed: {:?}",
-			result.result
-		);
 
 		// Processing order (reverse by pos, replace before insert at same pos):
 		// pos=5 replace: L1/L2/L3/L4/R5/L6
@@ -4763,28 +4072,15 @@ mod tests {
 	async fn test_str_replace_fuzzy_whitespace_match() {
 		// Extra spaces in old_text should still match via fuzzy fallback
 		let temp_file = create_test_file("fn hello() {\n    let x = 1;\n}").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
 		// Use old_text with different whitespace (tabs instead of spaces)
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
+		crate::mcp::fs::text_editing::str_replace_spec(
 			temp_file.path(),
 			"fn hello() {\n\tlet x = 1;\n}",
 			"fn hello() {\n    let x = 2;\n}",
 		)
 		.await
 		.unwrap();
-
-		// Should succeed via fuzzy matching
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"Fuzzy whitespace match should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "fn hello() {\n    let x = 2;\n}");
@@ -4794,27 +4090,15 @@ mod tests {
 	async fn test_str_replace_fuzzy_indentation_adjustment() {
 		// old_text has no indentation, file content has 4-space indentation
 		let temp_file = create_test_file("class Foo {\n    def bar():\n        pass\n}").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
 		// Match with no indentation - fuzzy should find it and adjust new_text indentation
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
+		crate::mcp::fs::text_editing::str_replace_spec(
 			temp_file.path(),
 			"def bar():\n    pass",
 			"def baz():\n    return 42",
 		)
 		.await
 		.unwrap();
-
-		assert!(
-			result.result.get("isError") != Some(&serde_json::json!(true)),
-			"Fuzzy indentation match should succeed: {:?}",
-			result.result
-		);
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "class Foo {\n    def baz():\n        return 42\n}");
@@ -4824,30 +4108,17 @@ mod tests {
 	async fn test_str_replace_error_shows_closest_matches() {
 		let temp_file =
 			create_test_file("fn hello_world() {}\nfn hello_earth() {}\nfn goodbye() {}").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
-		let result = crate::mcp::fs::text_editing::str_replace_spec(
-			&call,
+		let err = crate::mcp::fs::text_editing::str_replace_spec(
 			temp_file.path(),
 			"fn hello_word() {}",
 			"fn replaced() {}",
 		)
 		.await
-		.unwrap();
+		.unwrap_err();
 
 		// Should fail but show closest matches
-		assert_eq!(
-			result.result["isError"],
-			serde_json::json!(true),
-			"Should fail for no match"
-		);
-		let content = result.result["content"].as_array().unwrap()[0]["text"]
-			.as_str()
-			.unwrap();
+		let content = err.to_string();
 		assert!(
 			content.contains("Closest matches"),
 			"Should show closest matches in error: {}",
@@ -4858,11 +4129,6 @@ mod tests {
 	#[tokio::test]
 	async fn test_str_replace_multi_level_undo() {
 		let temp_file = create_test_file("version 1").await;
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			tool_name: "text_editor".to_string(),
-			parameters: json!({}),
-		};
 
 		// Make 3 edits
 		for (old, new) in [
@@ -4870,7 +4136,7 @@ mod tests {
 			("version 2", "version 3"),
 			("version 3", "version 4"),
 		] {
-			crate::mcp::fs::text_editing::str_replace_spec(&call, temp_file.path(), old, new)
+			crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), old, new)
 				.await
 				.unwrap();
 		}
@@ -4880,26 +4146,16 @@ mod tests {
 
 		// Undo 3 times - should go back to version 1
 		for expected in ["version 3", "version 2", "version 1"] {
-			let result = crate::mcp::fs::core::undo_edit(&call, temp_file.path())
+			crate::mcp::fs::core::undo_edit(temp_file.path())
 				.await
 				.unwrap();
-			assert!(
-				result.result.get("isError") != Some(&serde_json::json!(true)),
-				"Undo should succeed: {:?}",
-				result.result
-			);
 			let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 			assert_eq!(actual, expected);
 		}
 
 		// 4th undo should fail - no more history
-		let result = crate::mcp::fs::core::undo_edit(&call, temp_file.path())
+		crate::mcp::fs::core::undo_edit(temp_file.path())
 			.await
-			.unwrap();
-		assert_eq!(
-			result.result["isError"],
-			serde_json::json!(true),
-			"Should fail when no more undo history"
-		);
+			.unwrap_err();
 	}
 }

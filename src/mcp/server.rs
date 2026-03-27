@@ -14,17 +14,13 @@
 
 //! MCP server implementation using the official rmcp SDK.
 //!
-//! This module provides full MCP 2025-03-26 compliance with:
-//! - Streamable HTTP transport with SSE support
-//! - Session management (Mcp-Session-Id header)
-//! - Tool annotations (readOnlyHint, destructiveHint, etc.)
-//! - Proper protocol version negotiation
+//! Tool methods return `Result<String, String>` which rmcp auto-converts:
+//! - `Ok(text)` → `CallToolResult::success` with text content
+//! - `Err(text)` → `CallToolResult::error` with text content (tool-level error)
 
 use rmcp::{
 	handler::server::{router::tool::ToolRouter, wrapper::Parameters, ServerHandler},
-	model::{
-		CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
-	},
+	model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
 	schemars, tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize};
@@ -41,9 +37,11 @@ pub struct ViewParams {
 	pub path: Option<String>,
 	/// Array of file paths for multi-file viewing. Max 50 files.
 	#[serde(default)]
+	#[schemars(length(max = 50))]
 	pub paths: Option<Vec<String>>,
 	/// Line range [start, end] for single file viewing (1-indexed, inclusive).
 	#[serde(default)]
+	#[schemars(length(min = 2, max = 2))]
 	pub lines: Option<Vec<i64>>,
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
@@ -70,9 +68,17 @@ fn default_true() -> Option<bool> {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextEditorCommand {
+	Create,
+	StrReplace,
+	UndoEdit,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct TextEditorParams {
 	/// The operation to perform: create, str_replace, undo_edit
-	pub command: String,
+	pub command: TextEditorCommand,
 	/// REQUIRED. Path to the file to operate on.
 	pub path: String,
 	/// File content for create command.
@@ -87,9 +93,16 @@ pub struct TextEditorParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchEditOperationType {
+	Insert,
+	Replace,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct BatchEditOperation {
 	/// Type of operation: 'insert' (after line) or 'replace' (line range)
-	pub operation: String,
+	pub operation: BatchEditOperationType,
 	/// Line numbers from ORIGINAL file content.
 	pub line_range: BatchEditLineRange,
 	/// Raw content to insert or replace with.
@@ -109,7 +122,8 @@ pub enum BatchEditLineRange {
 pub struct BatchEditParams {
 	/// Path to the file to edit
 	pub path: String,
-	/// Array of operations for batch_edit on SINGLE file.
+	/// Array of operations for batch_edit on SINGLE file. Max 50 operations.
+	#[schemars(length(max = 50))]
 	pub operations: Vec<BatchEditOperation>,
 }
 
@@ -118,6 +132,7 @@ pub struct ExtractLinesParams {
 	/// Path to the source file to extract lines from
 	pub from_path: String,
 	/// Two-element array [start, end] with 1-indexed line numbers (inclusive)
+	#[schemars(length(min = 2, max = 2))]
 	pub from_range: Vec<i64>,
 	/// Path to the target file where extracted lines will be appended
 	pub append_path: String,
@@ -200,17 +215,8 @@ impl OctofsServer {
 - Hidden files: `\"include_hidden\": true`",
 		annotations(read_only_hint = true)
 	)]
-	async fn view(
-		&self,
-		Parameters(params): Parameters<ViewParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "view".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("view", fs::execute_view(&call).await)
+	async fn view(&self, Parameters(params): Parameters<ViewParams>) -> Result<String, String> {
+		with_hints(fs::execute_view(&make_call("view", &params)).await)
 	}
 
 	/// Perform text editing operations on files.
@@ -240,14 +246,8 @@ Commands:
 	async fn text_editor(
 		&self,
 		Parameters(params): Parameters<TextEditorParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "text_editor".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("text_editor", fs::execute_text_editor(&call).await)
+	) -> Result<String, String> {
+		with_hints(fs::execute_text_editor(&make_call("text_editor", &params)).await)
 	}
 
 	/// Perform multiple atomic edits on a single file.
@@ -277,6 +277,10 @@ Key rule — NEVER retype unchanged lines in replace:
 
 Empty content in replace deletes the targeted lines entirely.
 
+Duplicate-line guard: the tool rejects content whose first/last line matches the line
+immediately before/after the replacement range — a common mistake where surrounding
+context is accidentally included. Fix: shrink the range or trim the content.
+
 Max 50 operations per call.
 
 Atomicity: either ALL operations succeed or NONE are applied — the file is never left in a partial state.
@@ -292,14 +296,8 @@ Read the diff to verify edits landed correctly — no need for a follow-up `view
 	async fn batch_edit(
 		&self,
 		Parameters(params): Parameters<BatchEditParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "batch_edit".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("batch_edit", fs::execute_batch_edit(&call).await)
+	) -> Result<String, String> {
+		with_hints(fs::execute_batch_edit(&make_call("batch_edit", &params)).await)
 	}
 
 	/// Copy lines from source to target file.
@@ -318,14 +316,8 @@ Examples:
 	async fn extract_lines(
 		&self,
 		Parameters(params): Parameters<ExtractLinesParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "extract_lines".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("extract_lines", fs::execute_extract_lines(&call).await)
+	) -> Result<String, String> {
+		with_hints(fs::execute_extract_lines(&make_call("extract_lines", &params)).await)
 	}
 
 	/// Execute a shell command.
@@ -343,17 +335,8 @@ Examples:
 - `{\"command\": \"kill 12345\"}`",
 		annotations(destructive_hint = true, open_world_hint = true)
 	)]
-	async fn shell(
-		&self,
-		Parameters(params): Parameters<ShellParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "shell".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("shell", fs::execute_shell_command(&call).await)
+	async fn shell(&self, Parameters(params): Parameters<ShellParams>) -> Result<String, String> {
+		with_hints(fs::execute_shell_command(&make_call("shell", &params)).await)
 	}
 
 	/// Search and refactor code using AST patterns.
@@ -381,14 +364,8 @@ Refactoring: set `rewrite` to transform matches. Same metavariables carry captur
 	async fn ast_grep(
 		&self,
 		Parameters(params): Parameters<AstGrepParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "ast_grep".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("ast_grep", fs::execute_ast_grep_command(&call).await)
+	) -> Result<String, String> {
+		with_hints(fs::execute_ast_grep_command(&make_call("ast_grep", &params)).await)
 	}
 
 	/// Get or set working directory context.
@@ -406,14 +383,8 @@ Changes apply to the current thread only. Subsequent tool calls resolve paths re
 	async fn workdir(
 		&self,
 		Parameters(params): Parameters<WorkdirParams>,
-	) -> Result<CallToolResult, rmcp::ErrorData> {
-		let call = super::McpToolCall {
-			tool_name: "workdir".to_string(),
-			parameters: strip_nulls(serde_json::to_value(&params).unwrap_or(Value::Null)),
-			tool_id: super::next_tool_id(),
-		};
-
-		execute_tool("workdir", fs::execute_workdir_command(&call).await)
+	) -> Result<String, String> {
+		with_hints(fs::execute_workdir_command(&make_call("workdir", &params)).await)
 	}
 }
 
@@ -433,12 +404,19 @@ impl ServerHandler for OctofsServer {
 	}
 }
 
-// ── Helper to convert tool results ─────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────────
+
+/// Build an McpToolCall from typed params (serialized back to JSON for legacy handlers).
+fn make_call(name: &str, params: &impl serde::Serialize) -> super::McpToolCall {
+	super::McpToolCall {
+		tool_name: name.to_string(),
+		parameters: strip_nulls(serde_json::to_value(params).unwrap_or_default()),
+		tool_id: super::next_tool_id(),
+	}
+}
 
 /// Remove null-valued keys from a JSON object so existing handlers see absent
 /// keys (not `null`) for optional fields that were not provided by the caller.
-/// This bridges the rmcp SDK's serialization (Option<T> → null) with the
-/// existing parameter-extraction pattern (`.get("key")` returning None).
 fn strip_nulls(value: Value) -> Value {
 	match value {
 		Value::Object(map) => Value::Object(
@@ -451,48 +429,24 @@ fn strip_nulls(value: Value) -> Value {
 	}
 }
 
-fn execute_tool(
-	tool_name: &'static str,
-	result: Result<super::McpToolResult, anyhow::Error>,
-) -> Result<CallToolResult, rmcp::ErrorData> {
-	match result {
-		Ok(tool_result) => {
-			let is_error = tool_result.is_error();
-			let mut content = extract_content_from_result(&tool_result.result);
-			// Drain any misuse hints accumulated during tool execution and append them
-			let hints = super::hint_accumulator::drain_hints();
-			for hint in hints {
-				content.push(Content::text(hint));
-			}
-			if is_error {
-				Ok(CallToolResult::error(content))
-			} else {
-				Ok(CallToolResult::success(content))
-			}
-		}
-		Err(e) => Err(rmcp::ErrorData::internal_error(
-			format!("Tool '{}' failed: {}", tool_name, e),
-			None,
-		)),
-	}
-}
-
-fn extract_content_from_result(result: &Value) -> Vec<Content> {
-	// The existing result format is: { "content": [{ "type": "text", "text": "..." }] }
-	if let Some(content_array) = result.get("content").and_then(|c| c.as_array()) {
-		content_array
-			.iter()
-			.filter_map(|item| {
-				if item.get("type")?.as_str()? == "text" {
-					Some(Content::text(item.get("text")?.as_str()?.to_string()))
-				} else {
-					None
-				}
-			})
-			.collect()
+/// Convert handler result to `Result<String, String>` and append accumulated hints.
+fn with_hints(result: anyhow::Result<String>) -> Result<String, String> {
+	let hints = super::hint_accumulator::drain_hints();
+	let suffix = if hints.is_empty() {
+		String::new()
 	} else {
-		// Fallback: just return the result as text
-		vec![Content::text(result.to_string())]
+		format!("\n\n{}", hints.join("\n\n"))
+	};
+	match result {
+		Ok(mut text) => {
+			text.push_str(&suffix);
+			Ok(text)
+		}
+		Err(e) => {
+			let mut msg = e.to_string();
+			msg.push_str(&suffix);
+			Err(msg)
+		}
 	}
 }
 

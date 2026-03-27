@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -80,111 +80,4 @@ pub struct McpToolCall {
 	pub parameters: Value,
 	#[serde(default)]
 	pub tool_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpToolResult {
-	pub tool_name: String,
-	pub result: Value,
-	#[serde(default)]
-	pub tool_id: String,
-}
-
-impl McpToolResult {
-	pub fn success(tool_name: String, tool_id: String, content: String) -> Self {
-		Self {
-			tool_name,
-			tool_id,
-			result: json!({
-				"content": [
-					{
-						"type": "text",
-						"text": content
-					}
-				],
-				"isError": false
-			}),
-		}
-	}
-
-	pub fn success_with_metadata(
-		tool_name: String,
-		tool_id: String,
-		content: String,
-		metadata: serde_json::Value,
-	) -> Self {
-		Self {
-			tool_name,
-			tool_id,
-			result: json!({
-				"content": [
-					{
-						"type": "text",
-						"text": content
-					}
-				],
-				"isError": false,
-				"metadata": metadata
-			}),
-		}
-	}
-
-	pub fn error(tool_name: String, tool_id: String, error_message: String) -> Self {
-		Self {
-			tool_name,
-			tool_id,
-			result: json!({
-				"content": [
-					{
-						"type": "text",
-						"text": error_message
-					}
-				],
-				"isError": true
-			}),
-		}
-	}
-
-	pub fn is_error(&self) -> bool {
-		self.result
-			.get("isError")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false)
-	}
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpFunction {
-	pub name: String,
-	pub description: String,
-	pub parameters: Value,
-}
-
-/// Extract text content from an MCP-compliant result value.
-pub fn extract_mcp_content(result: &Value) -> String {
-	if let Some(content_array) = result.get("content") {
-		if let Some(content_items) = content_array.as_array() {
-			return content_items
-				.iter()
-				.filter_map(|item| {
-					if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-						item.get("text").and_then(|t| t.as_str())
-					} else {
-						None
-					}
-				})
-				.collect::<Vec<_>>()
-				.join("\n");
-		}
-	}
-	serde_json::to_string_pretty(result).unwrap_or_default()
-}
-
-/// Ensure tool calls have valid IDs.
-pub fn ensure_tool_call_ids(calls: &mut [McpToolCall]) {
-	for call in calls.iter_mut() {
-		if call.tool_id.is_empty() {
-			call.tool_id = next_tool_id();
-		}
-	}
 }

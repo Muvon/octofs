@@ -14,10 +14,8 @@
 
 // File operations module - handling file viewing, creation, and basic manipulation
 
-use super::super::{McpToolCall, McpToolResult};
 use crate::utils::truncation::format_content_with_line_numbers;
-use anyhow::{anyhow, Result};
-use serde_json::json;
+use anyhow::{anyhow, bail, Result};
 use std::path::Path;
 use tokio::fs as tokio_fs;
 
@@ -28,23 +26,9 @@ fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i
 }
 
 // View the content of a file following Anthropic specification - with line numbers and line_range support
-pub async fn view_file_spec(
-	call: &McpToolCall,
-	path: &Path,
-	line_range: Option<(usize, i64)>,
-) -> Result<McpToolResult> {
+pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Result<String> {
 	if !path.exists() {
-		return Ok(McpToolResult {
-			tool_name: call.tool_name.clone(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"content": [{
-					"type": "text",
-					"text": "File not found"
-				}],
-				"isError": true
-			}),
-		});
+		bail!("File not found");
 	}
 
 	if path.is_dir() {
@@ -72,31 +56,11 @@ pub async fn view_file_spec(
 		entries.sort();
 		let content = entries.join("\n");
 
-		return Ok(McpToolResult {
-			tool_name: call.tool_name.clone(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"content": [{
-					"type": "text",
-					"text": content
-				}],
-				"isError": false
-			}),
-		});
+		return Ok(content);
 	}
 
 	if !path.is_file() {
-		return Ok(McpToolResult {
-			tool_name: call.tool_name.clone(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"content": [{
-					"type": "text",
-					"text": "Path is not a file"
-				}],
-				"isError": true
-			}),
-		});
+		bail!("Path is not a file");
 	}
 
 	// Check file size to avoid loading very large files
@@ -105,17 +69,7 @@ pub async fn view_file_spec(
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 	if metadata.len() > 1024 * 1024 * 5 {
 		// 5MB limit
-		return Ok(McpToolResult {
-			tool_name: call.tool_name.clone(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"content": [{
-					"type": "text",
-					"text": "File is too large (>5MB)"
-				}],
-				"isError": true
-			}),
-		});
+		bail!("File is too large (>5MB)");
 	}
 
 	// Read the file content
@@ -130,49 +84,21 @@ pub async fn view_file_spec(
 	if content_with_numbers.starts_with("Start line")
 		|| content_with_numbers.starts_with("Start line")
 	{
-		return Ok(McpToolResult {
-			tool_name: call.tool_name.clone(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"content": [{
-					"type": "text",
-					"text": content_with_numbers
-				}],
-				"isError": true
-			}),
-		});
+		bail!("{}", content_with_numbers);
 	}
 
-	// Return plain text content with proper MCP format
-	Ok(McpToolResult {
-		tool_name: call.tool_name.clone(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": [{
-				"type": "text",
-				"text": content_with_numbers
-			}],
-			"isError": false
-		}),
-	})
+	// Return plain text content
+	Ok(content_with_numbers)
 }
 
 // Create a new file following Anthropic specification
-pub async fn create_file_spec(
-	call: &McpToolCall,
-	path: &Path,
-	content: &str,
-) -> Result<McpToolResult> {
+pub async fn create_file_spec(path: &Path, content: &str) -> Result<String> {
 	// Check if file already exists — guide the AI toward the right edit tool instead of retrying create
 	if path.exists() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"File already exists: {}. Do NOT retry `create` — use `str_replace` to replace specific content, `line_replace` to replace specific lines, or `insert` to add new content at a position.",
-				path.display()
-			),
-		));
+		bail!(
+			"File already exists: {}. Do NOT retry `create` — use `str_replace` to replace specific content, `line_replace` to replace specific lines, or `insert` to add new content at a position.",
+			path.display()
+		);
 	}
 
 	// Create parent directories if they don't exist
@@ -189,19 +115,14 @@ pub async fn create_file_spec(
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 
-	Ok(McpToolResult {
-		tool_name: call.tool_name.clone(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": format!("File created successfully with {} bytes", content.len()),
-			"path": path.to_string_lossy(),
-			"size": content.len()
-		}),
-	})
+	Ok(format!(
+		"File created successfully with {} bytes",
+		content.len()
+	))
 }
 
 // View multiple files simultaneously as part of text_editor tool
-pub async fn view_many_files_spec(call: &McpToolCall, paths: &[String]) -> Result<McpToolResult> {
+pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
 	let mut result_parts = Vec::new();
 	let mut success_count = 0;
 
@@ -305,22 +226,15 @@ pub async fn view_many_files_spec(call: &McpToolCall, paths: &[String]) -> Resul
 	// Join all parts with newlines to create plain text output
 	let final_content = result_parts.join("\n");
 
-	// Return plain text content with proper MCP format
-	Ok(McpToolResult {
-		tool_name: call.tool_name.clone(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": [{
-				"type": "text",
-				"text": final_content
-			}],
-			"isError": success_count == 0
-		}),
-	})
+	if success_count == 0 {
+		bail!("{}", final_content);
+	}
+
+	Ok(final_content)
 }
 
 // View multiple files simultaneously with optimized token usage
-pub async fn view_many_files(call: &McpToolCall, paths: &[String]) -> Result<McpToolResult> {
+pub async fn view_many_files(paths: &[String]) -> Result<String> {
 	let mut result_parts = Vec::new();
 	let mut success_count = 0;
 
@@ -424,16 +338,9 @@ pub async fn view_many_files(call: &McpToolCall, paths: &[String]) -> Result<Mcp
 	// Join all parts with newlines to create plain text output
 	let final_content = result_parts.join("\n");
 
-	// Return plain text content with proper MCP format
-	Ok(McpToolResult {
-		tool_name: "view_many".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": [{
-				"type": "text",
-				"text": final_content
-			}],
-			"isError": success_count == 0
-		}),
-	})
+	if success_count == 0 {
+		bail!("{}", final_content);
+	}
+
+	Ok(final_content)
 }

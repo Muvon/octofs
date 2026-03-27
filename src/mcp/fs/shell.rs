@@ -14,9 +14,9 @@
 
 // Shell execution functionality for the Filesystem MCP provider
 
-use super::super::{get_thread_working_directory, McpFunction, McpToolCall, McpToolResult};
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use super::super::{get_thread_working_directory, McpToolCall};
+use anyhow::{anyhow, bail, Result};
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -68,38 +68,6 @@ pub fn kill_all_shell_children() {
 		set.clear();
 	}
 }
-// Define the shell function for the MCP protocol with enhanced description
-pub fn get_shell_function() -> McpFunction {
-	McpFunction {
-		name: "shell".to_string(),
-		description: "Execute a command in the shell. Returns stdout+stderr combined, with success/failure indication.
-
-Each command runs in its own process — state (cd, exports) does not persist. Chain with `&&`: `cd foo && cargo build`.
-
-Background: set `background: true` to get a PID immediately; kill with `kill <pid>`.
-
-Examples:
-- `{\"command\": \"cargo test\"}`
-- `{\"command\": \"python -m http.server 8000\", \"background\": true}`
-- `{\"command\": \"kill 12345\"}`
-".to_string(),
-		parameters: json!({
-			"type": "object",
-			"properties": {
-				"command": {
-					"type": "string",
-					"description": "The shell command to execute (runs from current working directory)"
-				},
-				"background": {
-					"type": "boolean",
-					"default": false,
-					"description": "Run command in background and return PID instead of waiting for completion (no need to append '&')"
-				}
-			},
-			"required": ["command"]
-		}),
-	}
-}
 
 // Each entry: (triggering programs, required tool name, hint message).
 // The hint is only shown when the recommended tool is actually enabled.
@@ -147,34 +115,22 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 }
 
 // Execute a shell command
-pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> {
+pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 	use tokio::process::Command as TokioCommand;
 
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => {
 			if cmd.trim().is_empty() {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					"Command parameter cannot be empty".to_string(),
-				));
+				bail!("Command parameter cannot be empty");
 			}
 			cmd.clone()
 		}
 		Some(_) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Command parameter must be a string".to_string(),
-			));
+			bail!("Command parameter must be a string");
 		}
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required 'command' parameter".to_string(),
-			));
+			bail!("Missing required 'command' parameter");
 		}
 	};
 
@@ -249,18 +205,9 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 		// We do this by forgetting the child handle, which prevents kill_on_drop
 		std::mem::forget(child);
 
-		return Ok(McpToolResult {
-			tool_name: "shell".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"success": true,
-				"background": true,
-				"pid": pid,
-				"command": command,
-				"message": format!("Command started in background with PID {pid}"),
-				"note": format!("Use 'kill {pid}' to terminate this background process if needed")
-			}),
-		});
+		return Ok(format!(
+			"Command started in background with PID {pid}\nUse 'kill {pid}' to terminate this background process if needed"
+		));
 	}
 
 	// Track the child's PID so kill_all_shell_children() can nuke its
@@ -306,27 +253,13 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<McpToolResult> 
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
 			if success {
-				// Command succeeded - use success format
-				Ok(McpToolResult::success(
-					"shell".to_string(),
-					call.tool_id.clone(),
-					final_output,
-				))
+				Ok(final_output)
 			} else {
-				// Command failed - use error format per MCP protocol
-				Ok(McpToolResult::error(
-					"shell".to_string(),
-					call.tool_id.clone(),
-					format!(
-						"Command failed with exit code {status_code}\nCommand: {command}\n\nOutput:\n{final_output}"
-					),
-				))
+				bail!(
+					"Command failed with exit code {status_code}\nCommand: {command}\n\nOutput:\n{final_output}"
+				)
 			}
 		}
-		Err(e) => Ok(McpToolResult::error(
-			"shell".to_string(),
-			call.tool_id.clone(),
-			format!("Error: {e}"),
-		)),
+		Err(e) => bail!("Error: {e}"),
 	}
 }

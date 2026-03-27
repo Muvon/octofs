@@ -1,8 +1,7 @@
 // Directory operations module - handling file listing with ripgrep (FIXED VERSION)
 
-use super::super::{get_thread_working_directory, McpToolCall, McpToolResult};
-use anyhow::{anyhow, Result};
-use serde_json::json;
+use super::super::{get_thread_working_directory, McpToolCall};
+use anyhow::{bail, Result};
 use std::process::Command;
 // Parse a ripgrep output line to extract filename and rest, handling Windows paths correctly
 // UTF-8 safe version that uses character boundaries instead of byte indices
@@ -222,7 +221,7 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 }
 
 // Execute list_files command with PROPER content search vs file listing handling
-pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<McpToolResult> {
+pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<String> {
 	let pattern = call
 		.parameters
 		.get("pattern")
@@ -290,100 +289,53 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<McpTo
 		cmd.get_args().collect::<Vec<_>>()
 	);
 
-	let directory = directory.to_string();
-	let output = tokio::task::spawn_blocking(move || match cmd.output() {
-		Ok(output) => {
-			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+	let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
+		match cmd.output() {
+			Ok(output) => {
+				let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+				let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-			if is_content_search {
-				let lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-				let grouped_output = group_ripgrep_output(&lines);
-				let output_str = if stdout.is_empty() && !stderr.is_empty() {
-					stderr
+				if is_content_search {
+					let lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+					let grouped_output = group_ripgrep_output(&lines);
+					let output_str = if stdout.is_empty() && !stderr.is_empty() {
+						stderr
+					} else {
+						grouped_output
+					};
+					Ok(output_str)
 				} else {
-					grouped_output
-				};
-				json!({
-					"success": output.status.success(),
-					"output": output_str,
-					"lines": lines,
-					"total_lines": lines.len(),
-					"displayed_lines": lines.len(),
-					"type": output_type,
-					"parameters": {
-						"directory": directory,
-						"pattern": pattern,
-						"content": content,
-						"max_depth": max_depth,
-						"include_hidden": include_hidden,
-						"line_numbers": line_numbers,
-						"context": context_lines
+					let mut files: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+					if let Some(ref name_pattern) = pattern {
+						let regex_pattern = convert_glob_to_regex(name_pattern);
+						if let Ok(regex) = regex::Regex::new(&regex_pattern) {
+							files.retain(|file| regex.is_match(file));
+						}
 					}
-				})
-			} else {
-				let mut files: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-				if let Some(ref name_pattern) = pattern {
-					let regex_pattern = convert_glob_to_regex(name_pattern);
-					if let Ok(regex) = regex::Regex::new(&regex_pattern) {
-						files.retain(|file| regex.is_match(file));
-					}
+					let output_str = if stdout.is_empty() && !stderr.is_empty() {
+						stderr
+					} else {
+						files.join("\n")
+					};
+					Ok(output_str)
 				}
-				let files_count = files.len();
-				let output_str = if stdout.is_empty() && !stderr.is_empty() {
-					stderr
-				} else {
-					files.join("\n")
-				};
-				json!({
-					"success": output.status.success(),
-					"output": output_str,
-					"files": files,
-					"count": files_count,
-					"displayed_count": files_count,
-					"type": output_type,
-					"parameters": {
-						"directory": directory,
-						"pattern": pattern,
-						"content": content,
-						"max_depth": max_depth,
-						"include_hidden": include_hidden,
-						"line_numbers": line_numbers,
-						"context": context_lines
-					}
-				})
 			}
+			Err(e) => Err(format!("Failed to list directory: {}", e)),
 		}
-		Err(e) => json!({
-			"success": false,
-			"output": format!("Failed to list directory: {}", e),
-			"files": [],
-			"count": 0,
-			"displayed_count": 0,
-			"parameters": {
-				"directory": directory,
-				"pattern": pattern,
-				"content": content,
-				"max_depth": max_depth,
-				"include_hidden": include_hidden,
-				"line_numbers": line_numbers,
-				"context": context_lines
-			}
-		}),
 	})
-	.await
-	.map_err(|e| anyhow!("Failed to execute directory listing: {}", e))?;
+	.await;
 
-	Ok(McpToolResult {
-		tool_name: call.tool_name.clone(),
-		tool_id: call.tool_id.clone(),
-		result: output,
-	})
+	match output {
+		Ok(Ok(s)) => Ok(s),
+		Ok(Err(e)) => bail!("{}", e),
+		Err(join_err) => bail!("Failed to execute directory listing: {}", join_err),
+	}
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use serde_json::json;
 
 	#[test]
 	fn test_parse_ripgrep_line_unix_path() {
@@ -546,23 +498,9 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output = result.result.as_object().unwrap();
 
-		// Should be file listing (not content search)
-		assert_eq!(output["type"], "file listing");
-		assert!(output["success"].as_bool().unwrap());
-
-		// Should have files array (not lines)
-		assert!(output.contains_key("files"));
-		let files = output["files"].as_array().unwrap();
-
-		// Should find the config.json file via pattern matching
-		assert_eq!(
-			files.len(),
-			1,
-			"Should find exactly one file matching *.json pattern"
-		);
-		assert!(files[0].as_str().unwrap().contains("config.json"));
+		// Should contain the config.json file
+		assert!(result.contains("config.json"));
 	}
 
 	#[tokio::test]
@@ -606,23 +544,9 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output = result.result.as_object().unwrap();
 
-		// Should be file listing (not content search)
-		assert_eq!(output["type"], "file listing");
-		assert!(output["success"].as_bool().unwrap());
-
-		// Should have files array (not lines)
-		assert!(output.contains_key("files"));
-		let files = output["files"].as_array().unwrap();
-
-		// Should find the config.json file via pattern matching
-		assert_eq!(
-			files.len(),
-			1,
-			"Should find exactly one file matching *.json pattern"
-		);
-		assert!(files[0].as_str().unwrap().contains("config.json"));
+		// Should contain the config.json file
+		assert!(result.contains("config.json"));
 	}
 
 	#[tokio::test]
@@ -666,22 +590,8 @@ mod tests {
 		)
 		.await
 		.unwrap();
-		let output = result.result.as_object().unwrap();
 
-		// Should be file listing (not content search)
-		assert_eq!(output["type"], "file listing");
-		assert!(output["success"].as_bool().unwrap());
-
-		// Should have files array (not lines)
-		assert!(output.contains_key("files"));
-		let files = output["files"].as_array().unwrap();
-
-		// Should find the config.json file via pattern matching
-		assert_eq!(
-			files.len(),
-			1,
-			"Should find exactly one file matching *.json pattern"
-		);
-		assert!(files[0].as_str().unwrap().contains("config.json"));
+		// Should contain the config.json file
+		assert!(result.contains("config.json"));
 	}
 }

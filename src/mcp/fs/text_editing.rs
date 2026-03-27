@@ -14,9 +14,9 @@
 
 // Text editing module - handling string replacement, line operations, and insertions
 
-use super::super::{McpToolCall, McpToolResult};
+use super::super::McpToolCall;
 use super::core::save_file_history;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -359,18 +359,9 @@ pub async fn atomic_write(path: &Path, content: &str) -> Result<()> {
 // 1. Exact match (original behavior)
 // 2. Whitespace-normalized fuzzy match with indentation adjustment
 // 3. Rich diagnostics with closest candidates on failure
-pub async fn str_replace_spec(
-	call: &McpToolCall,
-	path: &Path,
-	old_text: &str,
-	new_text: &str,
-) -> Result<McpToolResult> {
+pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Result<String> {
 	if !path.exists() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"File not found".to_string(),
-		));
+		bail!("File not found");
 	}
 
 	// Acquire file lock to prevent concurrent writes
@@ -399,14 +390,7 @@ pub async fn str_replace_spec(
 			));
 		}
 
-		return Ok(McpToolResult {
-			tool_name: "text_editor".to_string(),
-			tool_id: call.tool_id.clone(),
-			result: json!({
-				"content": "Successfully replaced text at exactly one location.",
-				"path": path.to_string_lossy()
-			}),
-		});
+		return Ok("Successfully replaced text at exactly one location.".to_string());
 	}
 
 	if occurrences > 1 {
@@ -421,15 +405,11 @@ pub async fn str_replace_spec(
 			})
 			.collect();
 
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific line range.",
-				occurrences,
-				locations.join("\n")
-			),
-		));
+		bail!(
+			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific line range.",
+			occurrences,
+			locations.join("\n")
+		);
 	}
 
 	// === Stage 2: Whitespace-normalized fuzzy match ===
@@ -469,18 +449,10 @@ pub async fn str_replace_spec(
 			let new_content = content.replace(&actual_old, &adjusted_new);
 			atomic_write(path, &new_content).await?;
 
-			return Ok(McpToolResult {
-				tool_name: "text_editor".to_string(),
-				tool_id: call.tool_id.clone(),
-				result: json!({
-					"content": format!(
-						"Successfully replaced text via fuzzy match (whitespace-normalized) at line {}. Indentation was auto-adjusted to match the file.",
-						start + 1
-					),
-					"path": path.to_string_lossy(),
-					"match_type": "fuzzy_whitespace"
-				}),
-			});
+			return Ok(format!(
+				"Successfully replaced text via fuzzy match (whitespace-normalized) at line {}. Indentation was auto-adjusted to match the file.",
+				start + 1
+			));
 		}
 	}
 
@@ -518,83 +490,7 @@ pub async fn str_replace_spec(
 		msg.push_str("\nTip: use `batch_edit` with the line range shown above, or fix the `old_text` content.");
 	}
 
-	Ok(McpToolResult::error(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		msg,
-	))
-}
-
-// Insert text at a specific location in a file following Anthropic specification
-pub async fn insert_text_spec(
-	call: &McpToolCall,
-	path: &Path,
-	insert_after_line: usize,
-	content: &str,
-) -> Result<McpToolResult> {
-	if !path.exists() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"File not found".to_string(),
-		));
-	}
-
-	// Acquire file lock to prevent concurrent writes
-	let file_lock = acquire_file_lock(path).await?;
-	let _lock_guard = file_lock.lock().await;
-
-	// Read the file content
-	let file_content = tokio_fs::read_to_string(path)
-		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
-	let mut lines: Vec<&str> = file_content.lines().collect();
-
-	// Validate insert_after_line
-	if insert_after_line > lines.len() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"Insert line {} exceeds file length ({} lines)",
-				insert_after_line,
-				lines.len()
-			),
-		));
-	}
-
-	// Save the current content for undo
-	save_file_history(path).await?;
-
-	// Split new content into lines
-	let new_lines: Vec<&str> = content.lines().collect();
-
-	// Insert the new lines
-	let insert_index = insert_after_line; // 0 means beginning, 1 means after line 1, etc.
-	lines.splice(insert_index..insert_index, new_lines);
-
-	// Join lines back to string
-	let new_content = lines.join("\n");
-
-	// Add final newline if original file had one
-	let final_content = if file_content.ends_with('\n') {
-		format!("{}\n", new_content)
-	} else {
-		new_content
-	};
-
-	// Atomic write
-	atomic_write(path, &final_content).await?;
-
-	Ok(McpToolResult {
-		tool_name: "text_editor".to_string(),
-		tool_id: call.tool_id.clone(),
-		result: json!({
-			"content": format!("Successfully inserted {} lines at line {}", content.lines().count(), insert_after_line),
-			"path": path.to_string_lossy(),
-			"lines_inserted": content.lines().count()
-		}),
-	})
+	bail!("{}", msg);
 }
 
 // Returns true for lines that are pure structural punctuation (e.g. `}`, `]`, `}`).
@@ -965,50 +861,34 @@ fn parse_line_range(
 }
 
 // NEW REVOLUTIONARY BATCH_EDIT: Single file, multiple operations, original line numbers
-pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result<McpToolResult> {
+pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result<String> {
 	// Extract path from the call parameters - NEW: single file only
 	let path_str = match call.parameters.get("path").and_then(|v| v.as_str()) {
 		Some(p) => p,
 		None => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				"Missing required 'path' parameter for batch_edit".to_string(),
-			));
+			bail!("Missing required 'path' parameter for batch_edit");
 		}
 	};
 
 	// Fail fast: validate operations array before touching the filesystem
 	if operations.is_empty() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"Operations array is empty — nothing to do.".to_string(),
-		));
+		bail!("Operations array is empty — nothing to do.");
 	}
 
 	const MAX_OPERATIONS: usize = 50;
 	if operations.len() > MAX_OPERATIONS {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"Too many operations: {} (max {}). Split into multiple calls.",
-				operations.len(),
-				MAX_OPERATIONS
-			),
-		));
+		bail!(
+			"Too many operations: {} (max {}). Split into multiple calls.",
+			operations.len(),
+			MAX_OPERATIONS
+		);
 	}
 
 	let path = super::core::resolve_path(path_str);
 
 	// Check if file exists
 	if !path.exists() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("File not found: {}", path_str),
-		));
+		bail!("File not found: {}", path_str);
 	}
 
 	// Acquire file lock to prevent concurrent writes
@@ -1016,16 +896,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let _lock_guard = file_lock.lock().await;
 
 	// Read original file content
-	let original_content = match tokio_fs::read_to_string(&path).await {
-		Ok(content) => content,
-		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Failed to read file '{}': {}", path_str, e),
-			));
-		}
-	};
+	let original_content = tokio_fs::read_to_string(&path)
+		.await
+		.map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
 
 	// Parse and validate all operations (with unresolved line ranges)
 	let mut unresolved_operations = Vec::new();
@@ -1141,14 +1014,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 	// If all operations failed during parsing, return error
 	if unresolved_operations.is_empty() {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!(
-				"No valid operations found. {} operations failed during parsing.",
-				failed_operations
-			),
-		));
+		bail!(
+			"No valid operations found. {} operations failed during parsing.",
+			failed_operations
+		);
 	}
 
 	// Resolve negative line indices now that we have the file content
@@ -1166,25 +1035,18 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				});
 			}
 			Err(err) => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!(
-						"Invalid line range in operation {}: {}",
-						unresolved_op.operation_index, err
-					),
-				));
+				bail!(
+					"Invalid line range in operation {}: {}",
+					unresolved_op.operation_index,
+					err
+				);
 			}
 		}
 	}
 
 	// Check for conflicts between operations
 	if let Err(conflict_error) = detect_conflicts(&batch_operations) {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			conflict_error,
-		));
+		bail!("{}", conflict_error);
 	}
 
 	// Duplicate-line detection: validate operations against original content before applying.
@@ -1208,11 +1070,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					end,
 					op.operation_index,
 				) {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						e,
-					));
+					bail!("{}", e);
 				}
 			}
 			OperationType::Insert => {
@@ -1227,14 +1085,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					if insert_after < original_lines.len() {
 						let line_after = original_lines[insert_after];
 						if content_lines[0] == line_after && !is_structural_noise(line_after) {
-							return Ok(McpToolResult::error(
-								call.tool_name.clone(),
-								call.tool_id.clone(),
-								format!(
-									"Duplicate line detected in operation {}: inserting after line {} would duplicate line {} which already reads {:?}. Do NOT re-insert content that already exists in the file.",
-									op.operation_index, insert_after, insert_after + 1, line_after
-								),
-							));
+							bail!(
+								"Duplicate line detected in operation {}: inserting after line {} would duplicate line {} which already reads {:?}. Do NOT re-insert content that already exists in the file.",
+								op.operation_index, insert_after, insert_after + 1, line_after
+							);
 						}
 					}
 				} else {
@@ -1245,14 +1099,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 						&& content_lines[..check_len]
 							== original_lines[insert_after..insert_after + check_len]
 					{
-						return Ok(McpToolResult::error(
-							call.tool_name.clone(),
-							call.tool_id.clone(),
-							format!(
-								"Duplicate block detected in operation {}: the {} inserted lines starting after line {} already exist verbatim at lines {}-{}. Do NOT re-insert content that already exists in the file.",
-								op.operation_index, check_len, insert_after, insert_after + 1, insert_after + check_len
-							),
-						));
+						bail!(
+							"Duplicate block detected in operation {}: the {} inserted lines starting after line {} already exist verbatim at lines {}-{}. Do NOT re-insert content that already exists in the file.",
+							op.operation_index, check_len, insert_after, insert_after + 1, insert_after + check_len
+						);
 					}
 				}
 			}
@@ -1260,16 +1110,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	}
 
 	// Apply all operations to the original content
-	let final_content = match apply_batch_operations(&original_content, &batch_operations).await {
-		Ok(content) => content,
-		Err(e) => {
-			return Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("Failed to apply operations: {}", e),
-			));
-		}
-	};
+	let final_content = apply_batch_operations(&original_content, &batch_operations)
+		.await
+		.map_err(|e| anyhow!("Failed to apply operations: {}", e))?;
 
 	// Save file history for undo functionality
 	save_file_history(&path).await?;
@@ -1354,24 +1197,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}
 	}
 
-	let successful_operations = batch_operations.len();
-	let total_operations = operations.len();
-
 	// The diff IS the result — plain text, same style as `view` output.
 	// LLM reads it to verify edits landed correctly without needing a separate view call.
 	let diff_output = diffs.join("\n---\n");
 
-	Ok(McpToolResult::success_with_metadata(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		diff_output,
-		json!({
-			"batch_summary": {
-				"total_operations": total_operations,
-				"successful_operations": successful_operations,
-				"failed_operations": failed_operations,
-				"overall_success": failed_operations == 0
-			}
-		}),
-	))
+	Ok(diff_output)
 }
