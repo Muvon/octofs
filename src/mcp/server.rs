@@ -116,6 +116,10 @@ pub enum BatchEditLineRange {
 	Single(i64),
 	/// Line range [start, end] for replace (1-indexed, inclusive)
 	Range(Vec<i64>),
+	/// Single hash identifier for insert (hash mode: insert after line with this hash)
+	Hash(String),
+	/// Hash range [start_hash, end_hash] for replace (hash mode)
+	HashRange(Vec<String>),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -203,7 +207,7 @@ impl OctofsServer {
 		name = "view",
 		description = "Read files, view directories, and search file content. Unified read-only tool.
 
-**File** (path is a file): returns plain text with 1-indexed line numbers.
+**File** (path is a file): returns plain text with line identifiers (numbers or content-based hashes depending on server --line-mode).
 - Whole file: `{\"path\": \"src/main.rs\"}`
 - Line range (negative ok: -1 = last): `{\"path\": \"src/main.rs\", \"lines\": [10, 20]}`
 
@@ -212,7 +216,9 @@ impl OctofsServer {
 **Directory** (path is a directory):
 - List: `{\"path\": \"src/\"}` — filter: `\"pattern\": \"*.rs\"`, depth: `\"max_depth\": 2`
 - Search content (ripgrep): `{\"path\": \"src\", \"content\": \"fn main\"}`
-- Hidden files: `\"include_hidden\": true`",
+- Hidden files: `\"include_hidden\": true`
+
+In hash mode (--line-mode hash): each line is prefixed with a 4-char hex hash derived from its content (e.g., `a3bd: code here`). These hashes are stable — unchanged lines keep the same hash across edits.",
 		annotations(read_only_hint = true)
 	)]
 	async fn view(&self, Parameters(params): Parameters<ViewParams>) -> Result<String, String> {
@@ -253,21 +259,25 @@ Commands:
 	/// Perform multiple atomic edits on a single file.
 	#[tool(
 		name = "batch_edit",
-		description = "Perform multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL line numbers.
+		description = "Perform multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL line numbers or hash identifiers.
 
-Use when: 2+ edits on an unmodified file (all line numbers reference the file before any changes).
-Do NOT use: after any prior edit to the file — line numbers will be stale.
+Use when: 2+ edits on an unmodified file (all line references point to the file before any changes).
+Do NOT use: after any prior edit to the file — line numbers/hashes will be stale.
 
-CRITICAL: Always `view` the exact line range before replacing — never assume what is at a line number.
-Line numbers shift after every edit. If you edited this file before, re-view it first.
+CRITICAL: Always `view` the exact line range before replacing — never assume what is at a line.
+If you edited this file before, re-view it first.
 
 CRITICAL: All line_range values reference the ORIGINAL file content before ANY changes.
-Even if operation 1 replaces 1 line with 10 lines, operation 2 still uses the original line numbers.
+Even if operation 1 replaces 1 line with 10 lines, operation 2 still uses the original references.
 The tool handles offset calculation internally — you never need to adjust for prior operations.
 
 Operations:
-- `insert`: line_range = integer → insert after line N (0 = beginning of file, -1 = after last line)
-- `replace`: line_range = [start, end] → remove those lines, insert new content
+- `insert`: line_range = integer or hash string → insert after that line (0 = beginning of file, -1 = after last line)
+- `replace`: line_range = [start, end] (numbers or hash strings) → remove those lines, insert new content
+
+In hash mode (--line-mode hash): line_range accepts 4-char hex hash identifiers from `view` output.
+  - insert: `\"line_range\": \"a3bd\"` → insert after the line with hash a3bd
+  - replace: `\"line_range\": [\"a3bd\", \"c7f2\"]` → replace lines from hash a3bd to c7f2
 
 Negative line numbers count from end: -1 = last line, -2 = second-to-last, etc.
 
@@ -285,10 +295,10 @@ Max 50 operations per call.
 
 Atomicity: either ALL operations succeed or NONE are applied — the file is never left in a partial state.
 
-Returns a diff of all changes made:
-- Context lines: `NNN: <text>` (3 lines before/after each change)
-- Removed lines: `-NNN: <text>`
-- Added lines:   `+NNN: <text>`
+Returns a diff of all changes made (using line numbers or hashes depending on server mode):
+- Context lines: `ID: <text>` (3 lines before/after each change)
+- Removed lines: `-ID: <text>`
+- Added lines:   `+ID: <text>`
 - Multiple ops separated by `---`
 Read the diff to verify edits landed correctly — no need for a follow-up `view` call.",
 		annotations(destructive_hint = true)

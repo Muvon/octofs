@@ -27,7 +27,11 @@ async fn main() -> Result<()> {
 	let cli = Cli::parse();
 
 	match cli.command {
-		Commands::Mcp { path, bind } => {
+		Commands::Mcp {
+			path,
+			bind,
+			line_mode,
+		} => {
 			// Resolve working directory
 			let working_directory = if let Some(p) = path {
 				p.canonicalize().unwrap_or(p)
@@ -37,6 +41,13 @@ async fn main() -> Result<()> {
 
 			// Stderr-only logging — no stdout (would corrupt stdio MCP protocol)
 			init_mcp_logging();
+
+			// Set line identifier mode
+			let mode = match line_mode.as_str() {
+				"hash" => utils::line_hash::LineMode::Hash,
+				_ => utils::line_hash::LineMode::Number,
+			};
+			utils::line_hash::set_line_mode(mode);
 
 			// Set the session working directory for all tool calls
 			mcp::set_session_working_directory(working_directory.clone());

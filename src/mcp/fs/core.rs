@@ -427,11 +427,19 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// Extract the specified lines (convert to 0-indexed)
 	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1].to_vec();
 
-	// Create smart formatted content with proper line numbers for display
+	// Create smart formatted content with proper line identifiers for display
+	// In hash mode, compute hashes from the full source file and slice the relevant range
+	let extracted_hashes: Option<Vec<String>> = if crate::utils::line_hash::is_hash_mode() {
+		let all_hashes = crate::utils::line_hash::compute_line_hashes(&source_lines);
+		Some(all_hashes[(from_range.0 - 1)..from_range.1].to_vec())
+	} else {
+		None
+	};
 	let extracted_content_display = format_extracted_content_smart(
 		&extracted_lines,
 		from_range.0, // Start line number (1-indexed)
 		Some(30),     // Limit display to 30 lines with smart truncation
+		extracted_hashes.as_deref(),
 	);
 
 	// Preserve original newline structure by checking if source content ends with newline

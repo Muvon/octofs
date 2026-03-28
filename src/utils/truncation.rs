@@ -34,12 +34,23 @@ pub fn truncate_to_tokens(content: &str, max_tokens: usize) -> String {
 	}
 }
 
-/// Format content with line numbers and smart elision for display.
+/// Format content with line identifiers (numbers or hashes) and smart elision for display.
 pub fn format_content_with_line_numbers(
 	lines: &[&str],
 	start_line_number: usize,
 	view_range: Option<(usize, i64)>,
 ) -> String {
+	// Compute prefixes based on active line mode
+	let prefixes: Vec<String> = if super::line_hash::is_hash_mode() {
+		super::line_hash::compute_line_hashes(lines)
+	} else {
+		lines
+			.iter()
+			.enumerate()
+			.map(|(i, _)| format!("{}", start_line_number + i))
+			.collect()
+	};
+
 	if let Some((start, end)) = view_range {
 		let start_idx = if start == 0 {
 			0
@@ -71,23 +82,23 @@ pub fn format_content_with_line_numbers(
 
 		if start_idx > 3 {
 			for (i, line) in lines.iter().enumerate().take(2) {
-				result_lines.push(format!("{}: {}", start_line_number + i, line));
+				result_lines.push(format!("{}: {}", prefixes[i], line));
 			}
 			if start_idx > 5 {
 				result_lines.push(format!("[...{} lines more]", start_idx - 2));
 			} else {
 				for (i, line) in lines.iter().enumerate().take(start_idx).skip(2) {
-					result_lines.push(format!("{}: {}", start_line_number + i, line));
+					result_lines.push(format!("{}: {}", prefixes[i], line));
 				}
 			}
 		} else {
 			for (i, line) in lines.iter().enumerate().take(start_idx) {
-				result_lines.push(format!("{}: {}", start_line_number + i, line));
+				result_lines.push(format!("{}: {}", prefixes[i], line));
 			}
 		}
 
 		for (i, line) in lines.iter().enumerate().take(end_idx).skip(start_idx) {
-			result_lines.push(format!("{}: {}", start_line_number + i, line));
+			result_lines.push(format!("{}: {}", prefixes[i], line));
 		}
 
 		let remaining_lines = lines.len() - end_idx;
@@ -95,16 +106,16 @@ pub fn format_content_with_line_numbers(
 			if remaining_lines > 5 {
 				result_lines.push(format!("[...{} lines more]", remaining_lines - 2));
 				for (i, line) in lines.iter().enumerate().skip(lines.len() - 2) {
-					result_lines.push(format!("{}: {}", start_line_number + i, line));
+					result_lines.push(format!("{}: {}", prefixes[i], line));
 				}
 			} else {
 				for (i, line) in lines.iter().enumerate().skip(end_idx) {
-					result_lines.push(format!("{}: {}", start_line_number + i, line));
+					result_lines.push(format!("{}: {}", prefixes[i], line));
 				}
 			}
 		} else {
 			for (i, line) in lines.iter().enumerate().skip(end_idx) {
-				result_lines.push(format!("{}: {}", start_line_number + i, line));
+				result_lines.push(format!("{}: {}", prefixes[i], line));
 			}
 		}
 
@@ -113,25 +124,40 @@ pub fn format_content_with_line_numbers(
 		lines
 			.iter()
 			.enumerate()
-			.map(|(i, line)| format!("{}: {}", start_line_number + i, line))
+			.map(|(i, line)| format!("{}: {}", prefixes[i], line))
 			.collect::<Vec<_>>()
 			.join("\n")
 	}
 }
 
-/// Format extracted content with proper line numbers and smart truncation.
+/// Format extracted content with proper line identifiers and smart truncation.
+/// When `hashes` is provided and hash mode is active, uses those as prefixes.
+/// Otherwise falls back to sequential line numbers or auto-computed hashes.
 pub fn format_extracted_content_smart(
 	lines: &[&str],
 	start_line: usize,
 	max_display_lines: Option<usize>,
+	hashes: Option<&[String]>,
 ) -> String {
+	let prefixes: Vec<String> = if let Some(h) = hashes {
+		h.to_vec()
+	} else if super::line_hash::is_hash_mode() {
+		super::line_hash::compute_line_hashes(lines)
+	} else {
+		lines
+			.iter()
+			.enumerate()
+			.map(|(i, _)| format!("{}", start_line + i))
+			.collect()
+	};
+
 	let max_lines = max_display_lines.unwrap_or(50);
 
 	if lines.len() <= max_lines {
 		lines
 			.iter()
 			.enumerate()
-			.map(|(i, line)| format!("{}: {}", start_line + i, line))
+			.map(|(i, line)| format!("{}: {}", prefixes[i], line))
 			.collect::<Vec<_>>()
 			.join("\n")
 	} else {
@@ -141,7 +167,7 @@ pub fn format_extracted_content_smart(
 		let mut result_lines = Vec::new();
 
 		for (i, line) in lines.iter().enumerate().take(show_first) {
-			result_lines.push(format!("{}: {}", start_line + i, line));
+			result_lines.push(format!("{}: {}", prefixes[i], line));
 		}
 
 		let hidden_lines = lines.len() - show_first - show_last;
@@ -149,7 +175,7 @@ pub fn format_extracted_content_smart(
 
 		let skip_count = lines.len() - show_last;
 		for (i, line) in lines.iter().enumerate().skip(skip_count) {
-			result_lines.push(format!("{}: {}", start_line + i, line));
+			result_lines.push(format!("{}: {}", prefixes[i], line));
 		}
 
 		result_lines.join("\n")

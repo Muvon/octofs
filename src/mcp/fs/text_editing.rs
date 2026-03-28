@@ -127,14 +127,18 @@ enum LineRange {
 
 #[derive(Debug, Clone)]
 enum UnresolvedLineRange {
-	Single(i64),     // Insert after this line (may be negative)
-	Range(i64, i64), // Replace this range (may be negative)
+	Single(i64),               // Insert after this line (may be negative)
+	Range(i64, i64),           // Replace this range (may be negative)
+	Hash(String),              // Insert after line identified by hash
+	HashRange(String, String), // Replace range identified by hashes
 }
 
-// Resolve unresolved line range to actual line range using file length
+// Resolve unresolved line range to actual line range using file length.
+// `lines` is needed for hash resolution (the full file's lines).
 fn resolve_unresolved_line_range(
 	unresolved: &UnresolvedLineRange,
 	total_lines: usize,
+	lines: &[&str],
 ) -> Result<LineRange, String> {
 	match unresolved {
 		UnresolvedLineRange::Single(line) => {
@@ -149,6 +153,21 @@ fn resolve_unresolved_line_range(
 			let (resolved_start, resolved_end) =
 				resolve_line_range_batch(*start, *end, total_lines)?;
 			Ok(LineRange::Range(resolved_start, resolved_end))
+		}
+		UnresolvedLineRange::Hash(hash) => {
+			let line = crate::utils::line_hash::resolve_hash_to_line(hash, lines)?;
+			Ok(LineRange::Single(line))
+		}
+		UnresolvedLineRange::HashRange(start_hash, end_hash) => {
+			let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, lines)?;
+			let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, lines)?;
+			if start > end {
+				return Err(format!(
+					"Hash '{}' (line {}) is after hash '{}' (line {})",
+					start_hash, start, end_hash, end
+				));
+			}
+			Ok(LineRange::Range(start, end))
 		}
 	}
 }
@@ -396,19 +415,31 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 	if occurrences > 1 {
 		// Multiple exact matches — show locations to help disambiguate
 		let positions = find_all_positions(&content, old_text);
+		let use_hashes = crate::utils::line_hash::is_hash_mode();
+		let file_lines: Vec<&str> = content.lines().collect();
+		let hashes: Vec<String> = if use_hashes {
+			crate::utils::line_hash::compute_line_hashes(&file_lines)
+		} else {
+			Vec::new()
+		};
 		let locations: Vec<String> = positions
 			.iter()
 			.enumerate()
 			.map(|(i, &offset)| {
 				let line = byte_offset_to_line(&content, offset);
-				format!("  {}. line {}", i + 1, line)
+				if use_hashes {
+					format!("  {}. hash {} (line {})", i + 1, hashes[line - 1], line)
+				} else {
+					format!("  {}. line {}", i + 1, line)
+				}
 			})
 			.collect();
 
 		bail!(
-			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific line range.",
+			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific {}.",
 			occurrences,
-			locations.join("\n")
+			locations.join("\n"),
+			if use_hashes { "hash range" } else { "line range" }
 		);
 	}
 
@@ -466,28 +497,61 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 	if candidates.is_empty() {
 		msg.push_str("No similar text found in the file. Verify the content exists.");
 	} else {
+		let use_hashes = crate::utils::line_hash::is_hash_mode();
+		let diag_lines: Vec<&str> = content.lines().collect();
+		let diag_hashes: Vec<String> = if use_hashes {
+			crate::utils::line_hash::compute_line_hashes(&diag_lines)
+		} else {
+			Vec::new()
+		};
+
 		msg.push_str("Closest matches:\n");
 		let old_line_count = old_text.lines().count();
 		for (i, (line_num, window, sim)) in candidates.iter().enumerate() {
 			let diagnosis = diagnose_mismatch(old_text, window);
 			let end_line = line_num + old_line_count - 1;
-			msg.push_str(&format!(
-				"\n  {}. Lines {}-{} ({:.0}% similar, {})\n",
-				i + 1,
-				line_num,
-				end_line,
-				sim * 100.0,
-				diagnosis
-			));
+			if use_hashes {
+				let start_hash = &diag_hashes[line_num - 1];
+				let end_hash = &diag_hashes[end_line - 1];
+				msg.push_str(&format!(
+					"\n  {}. Hashes {}-{} ({:.0}% similar, {})\n",
+					i + 1,
+					start_hash,
+					end_hash,
+					sim * 100.0,
+					diagnosis
+				));
+			} else {
+				msg.push_str(&format!(
+					"\n  {}. Lines {}-{} ({:.0}% similar, {})\n",
+					i + 1,
+					line_num,
+					end_line,
+					sim * 100.0,
+					diagnosis
+				));
+			}
 			// Show first 3 lines of the candidate as preview
 			for (j, line) in window.lines().take(3).enumerate() {
-				msg.push_str(&format!("     {}: {}\n", line_num + j, line));
+				let pfx = if use_hashes {
+					diag_hashes[line_num - 1 + j].clone()
+				} else {
+					format!("{}", line_num + j)
+				};
+				msg.push_str(&format!("     {}: {}\n", pfx, line));
 			}
 			if old_line_count > 3 {
 				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
 			}
 		}
-		msg.push_str("\nTip: use `batch_edit` with the line range shown above, or fix the `old_text` content.");
+		msg.push_str(&format!(
+			"\nTip: use `batch_edit` with the {} shown above, or fix the `old_text` content.",
+			if use_hashes {
+				"hash range"
+			} else {
+				"line range"
+			}
+		));
 	}
 
 	bail!("{}", msg);
@@ -523,27 +587,44 @@ fn check_replace_duplicates(
 	start_line: usize,
 	end_line: usize,
 	operation_index: usize,
+	hashes: &[String],
+	use_hashes: bool,
 ) -> Result<(), String> {
 	if content_lines.is_empty() {
 		return Ok(());
 	}
+
+	// Format a line reference as hash or number
+	let line_id = |line_1idx: usize| -> String {
+		if use_hashes {
+			hashes[line_1idx - 1].clone()
+		} else {
+			format!("line {}", line_1idx)
+		}
+	};
+	let range_id = |s: usize, e: usize| -> String {
+		if use_hashes {
+			format!("[{},{}]", hashes[s - 1], hashes[e - 1])
+		} else {
+			format!("[{}-{}]", s, e)
+		}
+	};
+
 	// First content line matches the line immediately before the range
 	if start_line > 1 {
 		let line_before = file_lines[start_line - 2];
 		if content_lines[0] == line_before && !is_structural_noise(line_before) {
 			return Err(format!(
-				"Duplicate line detected in operation {}: content's first line matches line {} \
-				(just before the replacement range [{}-{}]). \
-				Line {}: {:?}. Do NOT include surrounding unchanged lines — \
-				only provide the lines that replace [{}-{}].",
+				"Duplicate line detected in operation {}: content's first line matches {} \
+				(just before the replacement range {}). \
+				{}: {:?}. Do NOT include surrounding unchanged lines — \
+				only provide the lines that replace {}.",
 				operation_index,
-				start_line - 1,
-				start_line,
-				end_line,
-				start_line - 1,
+				line_id(start_line - 1),
+				range_id(start_line, end_line),
+				line_id(start_line - 1),
 				line_before,
-				start_line,
-				end_line
+				range_id(start_line, end_line)
 			));
 		}
 	}
@@ -553,18 +634,16 @@ fn check_replace_duplicates(
 		let last = content_lines[content_lines.len() - 1];
 		if last == line_after && !is_structural_noise(line_after) {
 			return Err(format!(
-				"Duplicate line detected in operation {}: content's last line matches line {} \
-				(just after the replacement range [{}-{}]). \
-				Line {}: {:?}. Do NOT include surrounding unchanged lines — \
-				only provide the lines that replace [{}-{}].",
+				"Duplicate line detected in operation {}: content's last line matches {} \
+				(just after the replacement range {}). \
+				{}: {:?}. Do NOT include surrounding unchanged lines — \
+				only provide the lines that replace {}.",
 				operation_index,
-				end_line + 1,
-				start_line,
-				end_line,
-				end_line + 1,
+				line_id(end_line + 1),
+				range_id(start_line, end_line),
+				line_id(end_line + 1),
 				line_after,
-				start_line,
-				end_line
+				range_id(start_line, end_line)
 			));
 		}
 	}
@@ -578,7 +657,19 @@ fn check_replace_duplicates(
 //   Insert  vs Insert  — same anchor line → conflict (ambiguous ordering)
 //   Insert  vs Replace — NEVER conflict. Insert operates in the *gap* after a line,
 //                        Replace operates on the line's *content*. They are independent.
-fn detect_conflicts(operations: &[BatchOperation]) -> Result<(), String> {
+fn detect_conflicts(
+	operations: &[BatchOperation],
+	hashes: &[String],
+	use_hashes: bool,
+) -> Result<(), String> {
+	let id = |line_1idx: usize| -> String {
+		if use_hashes {
+			hashes[line_1idx - 1].clone()
+		} else {
+			format!("{}", line_1idx)
+		}
+	};
+
 	for i in 0..operations.len() {
 		for j in (i + 1)..operations.len() {
 			let op1 = &operations[i];
@@ -593,7 +684,7 @@ fn detect_conflicts(operations: &[BatchOperation]) -> Result<(), String> {
 					if s1 <= e2 && s2 <= e1 {
 						return Err(format!(
 							"Conflicting operations: operation {} (replace [{},{}]) and {} (replace [{},{}]) have overlapping ranges",
-							op1.operation_index, s1, e1, op2.operation_index, s2, e2
+							op1.operation_index, id(s1), id(e1), op2.operation_index, id(s2), id(e2)
 						));
 					}
 				}
@@ -603,8 +694,10 @@ fn detect_conflicts(operations: &[BatchOperation]) -> Result<(), String> {
 					let line2 = insert_anchor(&op2.line_range);
 					if line1 == line2 {
 						return Err(format!(
-							"Conflicting operations: operation {} and {} both insert after line {}",
-							op1.operation_index, op2.operation_index, line1
+							"Conflicting operations: operation {} and {} both insert after {}",
+							op1.operation_index,
+							op2.operation_index,
+							id(line1)
 						));
 					}
 				}
@@ -802,7 +895,7 @@ async fn apply_batch_operations(
 	}
 }
 
-// Parse line_range from JSON value (supports both single number and array, including negative indices)
+// Parse line_range from JSON value (supports numbers, arrays, and hash strings)
 fn parse_line_range(
 	value: &Value,
 	operation_type: &OperationType,
@@ -823,8 +916,31 @@ fn parse_line_range(
 				}
 			}
 		}
+		Value::String(s) => {
+			// Hash-based line identifier (e.g., "a3bd")
+			Ok(UnresolvedLineRange::Hash(s.clone()))
+		}
 		Value::Array(arr) => {
-			if arr.len() == 1 {
+			if arr.is_empty() {
+				return Err("Line range array must have 1 or 2 elements".to_string());
+			}
+			// Check if array contains strings (hash range) or numbers (line range)
+			if arr[0].is_string() {
+				// Hash range: ["start_hash", "end_hash"]
+				if arr.len() != 2 {
+					return Err("Hash range array must have exactly 2 elements".to_string());
+				}
+				let start_hash = arr[0].as_str().ok_or("Hash must be a string")?.to_string();
+				let end_hash = arr[1].as_str().ok_or("Hash must be a string")?.to_string();
+				match operation_type {
+					OperationType::Insert => {
+						Err("Insert operation cannot use hash range - use single hash".to_string())
+					}
+					OperationType::Replace => {
+						Ok(UnresolvedLineRange::HashRange(start_hash, end_hash))
+					}
+				}
+			} else if arr.len() == 1 {
 				let line = arr[0].as_i64().ok_or("Line number must be an integer")?;
 				match operation_type {
 					// 0 is valid for insert: means "insert at beginning of file"
@@ -856,7 +972,7 @@ fn parse_line_range(
 				Err("Line range array must have 1 or 2 elements".to_string())
 			}
 		}
-		_ => Err("Line range must be a number or array".to_string()),
+		_ => Err("Line range must be a number, array, or hash string".to_string()),
 	}
 }
 
@@ -1008,6 +1124,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			"line_range": match &line_range {
 				UnresolvedLineRange::Single(line) => json!(line),
 				UnresolvedLineRange::Range(start, end) => json!([start, end]),
+				UnresolvedLineRange::Hash(h) => json!(h),
+				UnresolvedLineRange::HashRange(s, e) => json!([s, e]),
 			}
 		}));
 	}
@@ -1020,12 +1138,17 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		);
 	}
 
-	// Resolve negative line indices now that we have the file content
+	// Resolve negative line indices (and hash identifiers) now that we have the file content
 	let total_lines = original_content.lines().count();
+	let original_lines_for_resolve: Vec<&str> = original_content.lines().collect();
 	let mut batch_operations = Vec::new();
 
 	for unresolved_op in unresolved_operations {
-		match resolve_unresolved_line_range(&unresolved_op.line_range, total_lines) {
+		match resolve_unresolved_line_range(
+			&unresolved_op.line_range,
+			total_lines,
+			&original_lines_for_resolve,
+		) {
 			Ok(resolved_range) => {
 				batch_operations.push(BatchOperation {
 					operation_type: unresolved_op.operation_type,
@@ -1044,14 +1167,30 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}
 	}
 
+	// Compute hashes once for all validation and output (used in hash mode)
+	let original_lines: Vec<&str> = original_content.lines().collect();
+	let use_hashes = crate::utils::line_hash::is_hash_mode();
+	let orig_hashes: Vec<String> = if use_hashes {
+		crate::utils::line_hash::compute_line_hashes(&original_lines)
+	} else {
+		Vec::new()
+	};
+
 	// Check for conflicts between operations
-	if let Err(conflict_error) = detect_conflicts(&batch_operations) {
+	if let Err(conflict_error) = detect_conflicts(&batch_operations, &orig_hashes, use_hashes) {
 		bail!("{}", conflict_error);
 	}
 
 	// Duplicate-line detection: validate operations against original content before applying.
 	// Catches the #1 AI mistake of including surrounding/already-existing lines.
-	let original_lines: Vec<&str> = original_content.lines().collect();
+	// Helper: format a line reference as hash or number for error messages
+	let orig_line_id = |line_1idx: usize| -> String {
+		if use_hashes {
+			orig_hashes[line_1idx - 1].clone()
+		} else {
+			format!("line {}", line_1idx)
+		}
+	};
 	for op in &batch_operations {
 		let content_lines: Vec<&str> = op.content.lines().collect();
 		if content_lines.is_empty() {
@@ -1069,6 +1208,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					start,
 					end,
 					op.operation_index,
+					&orig_hashes,
+					use_hashes,
 				) {
 					bail!("{}", e);
 				}
@@ -1086,8 +1227,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 						let line_after = original_lines[insert_after];
 						if content_lines[0] == line_after && !is_structural_noise(line_after) {
 							bail!(
-								"Duplicate line detected in operation {}: inserting after line {} would duplicate line {} which already reads {:?}. Do NOT re-insert content that already exists in the file.",
-								op.operation_index, insert_after, insert_after + 1, line_after
+								"Duplicate line detected in operation {}: inserting after {} would duplicate {} which already reads {:?}. Do NOT re-insert content that already exists in the file.",
+								op.operation_index, orig_line_id(insert_after), orig_line_id(insert_after + 1), line_after
 							);
 						}
 					}
@@ -1100,8 +1241,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 							== original_lines[insert_after..insert_after + check_len]
 					{
 						bail!(
-							"Duplicate block detected in operation {}: the {} inserted lines starting after line {} already exist verbatim at lines {}-{}. Do NOT re-insert content that already exists in the file.",
-							op.operation_index, check_len, insert_after, insert_after + 1, insert_after + check_len
+							"Duplicate block detected in operation {}: the {} inserted lines starting after {} already exist verbatim at {}-{}. Do NOT re-insert content that already exists in the file.",
+							op.operation_index, check_len, orig_line_id(insert_after), orig_line_id(insert_after + 1), orig_line_id(insert_after + check_len)
 						);
 					}
 				}
@@ -1128,10 +1269,33 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}
 	}
 
-	// Build annotated diff for each replace operation so the AI can verify edits landed correctly.
-	// Format: context lines "NNN: <line>", removed "-NNN: <line>", added "+NNN: <line>", gap "..."
+	// Build annotated diff for each operation so the AI can verify edits landed correctly.
+	// In hash mode: uses content-based hashes as line prefixes.
+	// In number mode: uses sequential line numbers as before.
 	const CONTEXT: usize = 3;
 	let new_lines: Vec<&str> = final_content.lines().collect();
+	let new_hashes: Vec<String> = if use_hashes {
+		crate::utils::line_hash::compute_line_hashes(&new_lines)
+	} else {
+		Vec::new()
+	};
+
+	// Helper closures: produce a line prefix from index (0-based for hashes, 1-based number for display)
+	let orig_prefix = |line_1idx: usize| -> String {
+		if use_hashes {
+			orig_hashes[line_1idx - 1].clone()
+		} else {
+			format!("{}", line_1idx)
+		}
+	};
+	let new_prefix = |line_1idx: usize| -> String {
+		if use_hashes {
+			new_hashes[line_1idx - 1].clone()
+		} else {
+			format!("{}", line_1idx)
+		}
+	};
+
 	let mut diffs: Vec<String> = Vec::new();
 
 	// Sort ops by original start line (ascending) for readable diff output
@@ -1160,19 +1324,25 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					diff.push("...".to_string());
 				}
 				for i in ctx_before_start..start {
-					diff.push(format!("{}: {}", i, original_lines[i - 1]));
+					diff.push(format!("{}: {}", orig_prefix(i), original_lines[i - 1]));
 				}
 				for (i, old_line) in removed.iter().enumerate() {
-					diff.push(format!("-{}: {}", start + i, old_line));
+					diff.push(format!("-{}: {}", orig_prefix(start + i), old_line));
 				}
 				for (i, new_line) in content_lines.iter().enumerate() {
-					diff.push(format!("+{}: {}", start + i, new_line));
+					let idx = start + i;
+					let pfx = if idx <= new_lines.len() {
+						new_prefix(idx)
+					} else {
+						format!("{}", idx)
+					};
+					diff.push(format!("+{}: {}", pfx, new_line));
 				}
 				let new_after_start = start + content_lines.len();
 				let new_after_end = (new_after_start + CONTEXT - 1).min(new_lines.len());
 				for new_i in new_after_start..=new_after_end {
 					if new_i >= 1 && new_i <= new_lines.len() {
-						diff.push(format!("{}: {}", new_i, new_lines[new_i - 1]));
+						diff.push(format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]));
 					}
 				}
 				if new_after_end < new_lines.len() {
@@ -1190,7 +1360,13 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				let insert_at = after + 1; // new line numbers start here
 				let mut diff: Vec<String> = Vec::new();
 				for (i, new_line) in content_lines.iter().enumerate() {
-					diff.push(format!("+{}: {}", insert_at + i, new_line));
+					let idx = insert_at + i;
+					let pfx = if idx <= new_lines.len() {
+						new_prefix(idx)
+					} else {
+						format!("{}", idx)
+					};
+					diff.push(format!("+{}: {}", pfx, new_line));
 				}
 				diffs.push(diff.join("\n"));
 			}

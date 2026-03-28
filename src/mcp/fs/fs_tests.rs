@@ -4158,4 +4158,159 @@ mod tests {
 			.await
 			.unwrap_err();
 	}
+
+	// ── Hash mode tests ────────────────────────────────────────────────────────
+	// These test the hash logic directly without setting global state,
+	// since OnceLock can only be set once per process.
+
+	#[tokio::test]
+	async fn test_hash_stability_after_edit() {
+		// Verify that unchanged lines keep their hashes after an edit
+		let before = vec!["alpha", "beta", "gamma"];
+		let hashes_before = crate::utils::line_hash::compute_line_hashes(&before);
+
+		let after = vec!["alpha", "MODIFIED", "gamma"];
+		let hashes_after = crate::utils::line_hash::compute_line_hashes(&after);
+
+		// alpha and gamma should keep their hashes
+		assert_eq!(hashes_before[0], hashes_after[0], "alpha hash changed");
+		assert_eq!(hashes_before[2], hashes_after[2], "gamma hash changed");
+		// beta should have a different hash
+		assert_ne!(hashes_before[1], hashes_after[1], "beta hash should change");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_with_hash_line_range() {
+		// Hash-based line_range works for replace (resolved to line numbers internally)
+		let content = "alpha\nbeta\ngamma\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// Compute hashes for the file
+		let lines: Vec<&str> = content.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+
+		// Replace "beta" line using its hash range
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"line_range": [&hashes[1], &hashes[1]],
+					"content": "BETA_REPLACED"
+				}]
+			}),
+		};
+
+		execute_batch_edit(&call).await.unwrap();
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\nBETA_REPLACED\ngamma\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_hash_insert() {
+		// Hash-based line_range works for insert
+		let content = "first\nsecond\nthird\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let lines: Vec<&str> = content.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+
+		// Insert after "first" using its hash
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "insert",
+					"line_range": &hashes[0],
+					"content": "INSERTED"
+				}]
+			}),
+		};
+
+		execute_batch_edit(&call).await.unwrap();
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "first\nINSERTED\nsecond\nthird\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_hash_multi_line_replace() {
+		// Hash range replace across multiple lines
+		let content = "a\nb\nc\nd\ne\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let lines: Vec<&str> = content.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+
+		// Replace lines b-d using hash range
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"line_range": [&hashes[1], &hashes[3]],
+					"content": "REPLACED"
+				}]
+			}),
+		};
+
+		execute_batch_edit(&call).await.unwrap();
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "a\nREPLACED\ne\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_invalid_hash() {
+		let content = "hello\nworld\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"line_range": ["zzzz", "zzzz"],
+					"content": "nope"
+				}]
+			}),
+		};
+
+		let result = execute_batch_edit(&call).await;
+		assert!(result.is_err());
+		let err = result.unwrap_err().to_string();
+		assert!(
+			err.contains("not found"),
+			"Error should mention hash not found: {}",
+			err
+		);
+	}
+
+	#[tokio::test]
+	async fn test_hash_round_trip() {
+		// Compute hashes, resolve back to line numbers
+		let lines = vec!["fn main() {", "    println!(\"hi\");", "}"];
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+
+		for (i, hash) in hashes.iter().enumerate() {
+			let resolved = crate::utils::line_hash::resolve_hash_to_line(hash, &lines).unwrap();
+			assert_eq!(
+				resolved,
+				i + 1,
+				"Hash {} should resolve to line {}",
+				hash,
+				i + 1
+			);
+		}
+	}
 }
