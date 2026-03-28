@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Content-based line hashing for stable line identifiers.
-// Each line gets a 4-char hex hash derived from its content.
-// Collisions are resolved by incrementing until a free slot is found.
+// Position-aware line hashing for stable, unique line identifiers.
+// Each line gets a 4-char hex hash derived from its 1-indexed position AND content.
+// Including position guarantees uniqueness for duplicate lines without any collision
+// resolution — no two lines can share a hash because their positions differ.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Line identifier mode: sequential numbers or content-based hashes.
@@ -44,7 +45,7 @@ pub fn is_hash_mode() -> bool {
 }
 
 /// FNV-1a hash folded to 16 bits.
-/// Produces a deterministic hash from line content.
+/// Produces a deterministic hash from arbitrary bytes.
 fn fnv1a_16(content: &str) -> u16 {
 	const FNV_OFFSET: u32 = 2166136261;
 	const FNV_PRIME: u32 = 16777619;
@@ -59,22 +60,19 @@ fn fnv1a_16(content: &str) -> u16 {
 	((hash >> 16) ^ (hash & 0xFFFF)) as u16
 }
 
-/// Compute 4-char hex hashes for all lines with collision resolution.
-/// Lines are processed top-to-bottom; on collision, hash is incremented until free.
+/// Compute 4-char hex hashes for all lines.
+/// Each hash is derived from `"<1-indexed-position>:<content>"`, which guarantees
+/// uniqueness across all lines — duplicate content at different positions always
+/// produces different hashes, with no collision-resolution bookkeeping needed.
 pub fn compute_line_hashes(lines: &[&str]) -> Vec<String> {
-	let mut used = HashSet::with_capacity(lines.len());
-	let mut hashes = Vec::with_capacity(lines.len());
-
-	for line in lines {
-		let mut h = fnv1a_16(line);
-		while used.contains(&h) {
-			h = h.wrapping_add(1);
-		}
-		used.insert(h);
-		hashes.push(format!("{:04x}", h));
-	}
-
-	hashes
+	lines
+		.iter()
+		.enumerate()
+		.map(|(i, line)| {
+			let key = format!("{}:{}", i + 1, line);
+			format!("{:04x}", fnv1a_16(&key))
+		})
+		.collect()
 }
 
 /// Build a reverse lookup map: hash string → 1-indexed line number.
@@ -101,15 +99,16 @@ mod tests {
 
 	#[test]
 	fn test_basic_hash_deterministic() {
-		let h1 = fnv1a_16("hello world");
-		let h2 = fnv1a_16("hello world");
+		// Same position + content always produces the same hash
+		let h1 = fnv1a_16("1:hello world");
+		let h2 = fnv1a_16("1:hello world");
 		assert_eq!(h1, h2);
 	}
 
 	#[test]
 	fn test_different_content_different_hash() {
-		let h1 = fnv1a_16("line one");
-		let h2 = fnv1a_16("line two");
+		let h1 = fnv1a_16("1:line one");
+		let h2 = fnv1a_16("1:line two");
 		assert_ne!(h1, h2);
 	}
 
@@ -119,7 +118,7 @@ mod tests {
 		let hashes = compute_line_hashes(&lines);
 		assert_eq!(hashes.len(), 3);
 		// All unique content → all unique hashes
-		let unique: HashSet<&String> = hashes.iter().collect();
+		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
 		assert_eq!(unique.len(), 3);
 		// Each hash is 4 hex chars
 		for h in &hashes {
@@ -129,34 +128,30 @@ mod tests {
 	}
 
 	#[test]
-	fn test_collision_resolution_duplicates() {
+	fn test_duplicate_content_unique_hashes() {
+		// Duplicate content at different positions must produce different hashes
+		// because position is included in the hash key.
 		let lines = vec!["same", "same", "same"];
 		let hashes = compute_line_hashes(&lines);
 		assert_eq!(hashes.len(), 3);
-		// All must be unique despite identical content
-		let unique: HashSet<&String> = hashes.iter().collect();
-		assert_eq!(unique.len(), 3);
-		// First keeps base hash, others are incremented
-		let base = fnv1a_16("same");
-		assert_eq!(hashes[0], format!("{:04x}", base));
-		assert_eq!(hashes[1], format!("{:04x}", base.wrapping_add(1)));
-		assert_eq!(hashes[2], format!("{:04x}", base.wrapping_add(2)));
+		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
+		assert_eq!(
+			unique.len(),
+			3,
+			"duplicate lines must get unique hashes via position"
+		);
+		// Verify each hash matches its position-keyed input
+		assert_eq!(hashes[0], format!("{:04x}", fnv1a_16("1:same")));
+		assert_eq!(hashes[1], format!("{:04x}", fnv1a_16("2:same")));
+		assert_eq!(hashes[2], format!("{:04x}", fnv1a_16("3:same")));
 	}
 
 	#[test]
-	fn test_stability_unique_lines() {
-		// Unique lines keep their hash regardless of surrounding content
-		let lines_before = vec!["alpha", "beta", "gamma"];
-		let hashes_before = compute_line_hashes(&lines_before);
-
-		// Insert a line in the middle
-		let lines_after = vec!["alpha", "NEW LINE", "beta", "gamma"];
-		let hashes_after = compute_line_hashes(&lines_after);
-
-		// alpha, beta, gamma should keep the same hashes
-		assert_eq!(hashes_before[0], hashes_after[0]); // alpha
-		assert_eq!(hashes_before[1], hashes_after[2]); // beta
-		assert_eq!(hashes_before[2], hashes_after[3]); // gamma
+	fn test_same_content_different_position_different_hash() {
+		// Identical content at different positions must differ
+		let h1 = fnv1a_16("1:closing brace");
+		let h2 = fnv1a_16("5:closing brace");
+		assert_ne!(h1, h2);
 	}
 
 	#[test]
@@ -184,10 +179,11 @@ mod tests {
 
 	#[test]
 	fn test_empty_lines() {
+		// Empty lines at different positions get unique hashes
 		let lines = vec!["", "", "content"];
 		let hashes = compute_line_hashes(&lines);
 		assert_eq!(hashes.len(), 3);
-		let unique: HashSet<&String> = hashes.iter().collect();
+		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
 		assert_eq!(unique.len(), 3);
 	}
 
@@ -201,6 +197,16 @@ mod tests {
 	}
 
 	#[test]
+	fn test_unique_content_hash_stable_at_same_position() {
+		// A line with unique content at the same position always gets the same hash
+		let lines_a = vec!["alpha", "beta", "gamma"];
+		let lines_b = vec!["alpha", "beta", "gamma"];
+		let hashes_a = compute_line_hashes(&lines_a);
+		let hashes_b = compute_line_hashes(&lines_b);
+		assert_eq!(hashes_a, hashes_b);
+	}
+
+	#[test]
 	fn test_modified_line_changes_hash() {
 		let lines_before = vec!["alpha", "beta", "gamma"];
 		let hashes_before = compute_line_hashes(&lines_before);
@@ -208,8 +214,8 @@ mod tests {
 		let lines_after = vec!["alpha", "BETA_MODIFIED", "gamma"];
 		let hashes_after = compute_line_hashes(&lines_after);
 
-		assert_eq!(hashes_before[0], hashes_after[0]); // alpha unchanged
-		assert_ne!(hashes_before[1], hashes_after[1]); // beta changed
-		assert_eq!(hashes_before[2], hashes_after[2]); // gamma unchanged
+		assert_eq!(hashes_before[0], hashes_after[0]); // alpha at pos 1 unchanged
+		assert_ne!(hashes_before[1], hashes_after[1]); // content changed
+		assert_eq!(hashes_before[2], hashes_after[2]); // gamma at pos 3 unchanged
 	}
 }

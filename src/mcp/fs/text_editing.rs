@@ -163,8 +163,9 @@ fn resolve_unresolved_line_range(
 			let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, lines)?;
 			if start > end {
 				return Err(format!(
-					"Hash '{}' (line {}) is after hash '{}' (line {})",
-					start_hash, start, end_hash, end
+					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). \
+					Did you mean line_range: [\"{}\", \"{}\"]?",
+					start_hash, start, end_hash, end, end_hash, start_hash
 				));
 			}
 			Ok(LineRange::Range(start, end))

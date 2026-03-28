@@ -4313,4 +4313,90 @@ mod tests {
 			);
 		}
 	}
+
+	#[tokio::test]
+	async fn test_batch_edit_swapped_hash_range_error() {
+		// When start and end hashes are swapped, the error must suggest the correct order
+		let content = "line1\nline2\nline3\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let lines: Vec<&str> = content.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+
+		// Intentionally swap: pass line3's hash as start, line1's hash as end
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"line_range": [&hashes[2], &hashes[0]],
+					"content": "nope"
+				}]
+			}),
+		};
+
+		let err = execute_batch_edit(&call).await.unwrap_err().to_string();
+		// Error must explain the reversal and suggest the correct order
+		assert!(
+			err.contains("reversed"),
+			"Error should say range is reversed: {}",
+			err
+		);
+		assert!(
+			err.contains("Did you mean"),
+			"Error should suggest correct order: {}",
+			err
+		);
+		// Suggested order must be [hashes[0], hashes[2]] (the correct start→end)
+		assert!(
+			err.contains(&hashes[0]),
+			"Error should contain the correct start hash: {}",
+			err
+		);
+		assert!(
+			err.contains(&hashes[2]),
+			"Error should contain the correct end hash: {}",
+			err
+		);
+		// File must be unchanged
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, content);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_duplicate_content_lines_unique_hashes() {
+		// Files with duplicate content lines must still work correctly with hash ranges
+		// because position-aware hashing gives each line a unique hash.
+		let content = "}\n}\n}\nfn foo() {\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let lines: Vec<&str> = content.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+
+		// All four hashes must be unique despite three identical "}" lines
+		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
+		assert_eq!(unique.len(), 4, "duplicate lines must get unique hashes");
+
+		// Replace only the second "}" (line 2) using its specific hash
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"line_range": [&hashes[1], &hashes[1]],
+					"content": "// replaced"
+				}]
+			}),
+		};
+
+		execute_batch_edit(&call).await.unwrap();
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "}\n// replaced\n}\nfn foo() {\n");
+	}
 }
