@@ -45,7 +45,7 @@ tracing = { version = "0.1", features = ["std"] }
 clap = { version = "4.5.56", features = ["derive"] }
 
 # MCP SDK
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.3.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 [target.'cfg(unix)'.dependencies]
