@@ -277,9 +277,12 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	}
 
 	// File: resolve optional line range with negative-index support
+	// Accepts both line numbers [10, 20] and hash identifiers ["a3bd", "c7f2"]
 	let lines = match call.parameters.get("lines") {
-		Some(Value::Array(arr)) if arr.len() == 2 => match (arr[0].as_i64(), arr[1].as_i64()) {
-			(Some(start), Some(end)) => {
+		Some(Value::Array(arr)) if arr.len() == 2 => {
+			// Try numbers first, then hash strings
+			if let (Some(start), Some(end)) = (arr[0].as_i64(), arr[1].as_i64()) {
+				// Numeric line range
 				let total_lines = match tokio_fs::read_to_string(&resolved).await {
 					Ok(c) => c.lines().count(),
 					Err(_) => 0,
@@ -294,11 +297,27 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 				} else {
 					Some((start as usize, end))
 				}
+			} else if let (Some(start_hash), Some(end_hash)) = (arr[0].as_str(), arr[1].as_str()) {
+				// Hash-based line range — resolve to line numbers
+				let content = tokio_fs::read_to_string(&resolved)
+					.await
+					.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
+				let file_lines: Vec<&str> = content.lines().collect();
+				let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, &file_lines)
+					.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
+				let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, &file_lines)
+					.map_err(|e| anyhow!("Invalid end hash: {}", e))?;
+				if start > end {
+					bail!(
+						"Start hash '{}' (line {}) is after end hash '{}' (line {}) — range must go forward",
+						start_hash, start, end_hash, end
+					);
+				}
+				Some((start, end as i64))
+			} else {
+				bail!("lines array elements must be integers or hash strings");
 			}
-			_ => {
-				bail!("lines array elements must be integers");
-			}
-		},
+		}
 		Some(Value::Array(_)) => {
 			bail!("lines must be an array with exactly 2 elements");
 		}

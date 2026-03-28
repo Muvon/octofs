@@ -39,10 +39,10 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(length(max = 50))]
 	pub paths: Option<Vec<String>>,
-	/// Line range [start, end] for single file viewing (1-indexed, inclusive).
+	/// Line range [start, end] for single file viewing. Accepts line numbers (1-indexed, inclusive) or line identifiers from previous `view` output.
 	#[serde(default)]
 	#[schemars(length(min = 2, max = 2))]
-	pub lines: Option<Vec<i64>>,
+	pub lines: Option<Vec<Value>>,
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
 	pub pattern: Option<String>,
@@ -197,28 +197,202 @@ pub struct OctofsServer {
 #[tool_router]
 impl OctofsServer {
 	pub fn new() -> Self {
-		Self {
+		let mut server = Self {
 			tool_router: Self::tool_router(),
+		};
+		server.apply_mode_descriptions();
+		server
+	}
+
+	/// Overwrite tool descriptions based on the active line mode.
+	/// Each tool gets a precise description matching the current mode — no generic fallbacks.
+	fn apply_mode_descriptions(&mut self) {
+		use crate::utils::line_hash::is_hash_mode;
+		let hash = is_hash_mode();
+
+		if let Some(route) = self.tool_router.map.get_mut("view") {
+			route.attr.description = Some(if hash {
+				r#"Read files, view directories, and search file content. Unified read-only tool.
+
+**File** (path is a file): returns plain text where each line is prefixed with a 4-char hex hash identifier (e.g., `a3bd: code here`). Hashes are derived from line content — unchanged lines keep the same hash across edits.
+- Whole file: `{"path": "src/main.rs"}`
+- Line range by hash: `{"path": "src/main.rs", "lines": ["a3bd", "c7f2"]}`
+- Line range by number also accepted: `{"path": "src/main.rs", "lines": [10, 20]}`
+
+**Multi-file** (paths array, max 50): `{"paths": ["src/main.rs", "src/lib.rs"]}`
+
+**Directory** (path is a directory):
+- List: `{"path": "src/"}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
+- Search content (ripgrep): `{"path": "src", "content": "fn main"}`
+- Hidden files: `"include_hidden": true`
+
+IMPORTANT: Hash prefixes like `a3bd: ` are for reference only. When editing via `text_editor` or `batch_edit`, use raw file content — never include the hash prefix."#
+			} else {
+				r#"Read files, view directories, and search file content. Unified read-only tool.
+
+**File** (path is a file): returns plain text with 1-indexed line numbers (e.g., `1: code here`).
+- Whole file: `{"path": "src/main.rs"}`
+- Line range (negative ok: -1 = last): `{"path": "src/main.rs", "lines": [10, 20]}`
+
+**Multi-file** (paths array, max 50): `{"paths": ["src/main.rs", "src/lib.rs"]}`
+
+**Directory** (path is a directory):
+- List: `{"path": "src/"}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
+- Search content (ripgrep): `{"path": "src", "content": "fn main"}`
+- Hidden files: `"include_hidden": true`"#
+			}.into());
+		}
+
+		if let Some(route) = self.tool_router.map.get_mut("text_editor") {
+			route.attr.description = Some(if hash {
+				r#"Perform text editing operations on files.
+
+The `command` parameter specifies the operation to perform.
+For READ operations use the `view` tool instead.
+For line-based edits (insert after hash, replace by hash range), use the separate `batch_edit` tool.
+
+Commands:
+
+`create`: Create new file. Fails if file already exists.
+- `{"command": "create", "path": "src/new.rs", "content": "..."}` — creates parent dirs automatically.
+
+`str_replace`: Replace exact string match. Requires exactly 1 match — fails on 0 (no match) or 2+ (ambiguous).
+- `{"command": "str_replace", "path": "src/main.rs", "old_text": "fn old()", "new_text": "fn new()"}`
+- `old_text` must match exactly (including whitespace). Use raw file content only.
+- NEVER include hash prefixes from `view` output (e.g., `a3bd: `) — pass only the actual file content.
+- Fuzzy fallback: if exact match fails, tries whitespace-normalized matching and auto-adjusts indentation.
+- On failure: shows closest matches with hash identifiers, similarity %, and diagnosis.
+
+`undo_edit`: Revert the last edit on a file. Supports up to 10 undo levels per file.
+- `{"command": "undo_edit", "path": "src/main.rs"}`"#
+			} else {
+				r#"Perform text editing operations on files.
+
+The `command` parameter specifies the operation to perform.
+For READ operations use the `view` tool instead.
+For line-based edits (insert after line, replace by line range), use the separate `batch_edit` tool.
+
+Commands:
+
+`create`: Create new file. Fails if file already exists.
+- `{"command": "create", "path": "src/new.rs", "content": "..."}` — creates parent dirs automatically.
+
+`str_replace`: Replace exact string match. Requires exactly 1 match — fails on 0 (no match) or 2+ (ambiguous).
+- `{"command": "str_replace", "path": "src/main.rs", "old_text": "fn old()", "new_text": "fn new()"}`
+- `old_text` must match exactly (including whitespace). Use raw content, not escaped.
+- Fuzzy fallback: if exact match fails, tries whitespace-normalized matching and auto-adjusts indentation.
+- On failure: shows closest matches with line numbers, similarity %, and diagnosis.
+
+`undo_edit`: Revert the last edit on a file. Supports up to 10 undo levels per file.
+- `{"command": "undo_edit", "path": "src/main.rs"}`"#
+			}.into());
+		}
+
+		if let Some(route) = self.tool_router.map.get_mut("batch_edit") {
+			route.attr.description = Some(if hash {
+				r#"Perform multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL hash identifiers from `view` output.
+
+Use when: 2+ edits on an unmodified file (all line_range hashes reference the file before any changes).
+Do NOT use: after any prior edit to the file — hashes will be stale. Re-view first.
+
+CRITICAL: Always `view` the exact hash range before replacing — never assume what is at a hash.
+
+CRITICAL: All line_range values reference the ORIGINAL file content before ANY changes.
+Even if operation 1 replaces 1 line with 10 lines, operation 2 still uses the original hashes.
+The tool handles offset calculation internally — you never need to adjust for prior operations.
+
+Operations:
+- `insert`: line_range = hash string → insert after that line (e.g., `"line_range": "a3bd"`)
+  Special: 0 = beginning of file, -1 = after last line
+- `replace`: line_range = [start_hash, end_hash] → replace those lines (e.g., `"line_range": ["a3bd", "c7f2"]`)
+
+Key rule — NEVER retype unchanged lines in replace. Only provide content for lines that actually change.
+
+Content is raw file text — NEVER include hash prefixes from `view` output.
+
+Empty content in replace deletes the targeted lines entirely.
+
+Duplicate-line guard: the tool rejects content whose first/last line matches the line
+immediately before/after the replacement range. Fix: shrink the range or trim the content.
+
+Max 50 operations per call.
+
+Atomicity: either ALL operations succeed or NONE are applied.
+
+Returns a diff with hash identifiers:
+- Context lines: `hash: <text>` (3 lines before/after each change)
+- Removed lines: `-hash: <text>`
+- Added lines:   `+hash: <text>`
+- Multiple ops separated by `---`
+Read the diff to verify edits landed correctly — no need for a follow-up `view` call."#
+			} else {
+				r#"Perform multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL line numbers.
+
+Use when: 2+ edits on an unmodified file (all line numbers reference the file before any changes).
+Do NOT use: after any prior edit to the file — line numbers will be stale. Re-view first.
+
+CRITICAL: Always `view` the exact line range before replacing — never assume what is at a line number.
+
+CRITICAL: All line_range values reference the ORIGINAL file content before ANY changes.
+Even if operation 1 replaces 1 line with 10 lines, operation 2 still uses the original line numbers.
+The tool handles offset calculation internally — you never need to adjust for prior operations.
+
+Operations:
+- `insert`: line_range = integer → insert after line N (0 = beginning of file, -1 = after last line)
+- `replace`: line_range = [start, end] → remove those lines, insert new content (1-indexed, inclusive)
+
+Negative line numbers count from end: -1 = last line, -2 = second-to-last, etc.
+
+Key rule — NEVER retype unchanged lines in replace. Only provide content for lines that actually change.
+
+Empty content in replace deletes the targeted lines entirely.
+
+Duplicate-line guard: the tool rejects content whose first/last line matches the line
+immediately before/after the replacement range. Fix: shrink the range or trim the content.
+
+Max 50 operations per call.
+
+Atomicity: either ALL operations succeed or NONE are applied.
+
+Returns a diff with line numbers:
+- Context lines: `NNN: <text>` (3 lines before/after each change)
+- Removed lines: `-NNN: <text>`
+- Added lines:   `+NNN: <text>`
+- Multiple ops separated by `---`
+Read the diff to verify edits landed correctly — no need for a follow-up `view` call."#
+			}.into());
+		}
+
+		if let Some(route) = self.tool_router.map.get_mut("extract_lines") {
+			route.attr.description = Some(if hash {
+				r#"Copy lines from a source file and append them into a target file. Source is not modified.
+
+Parameters use line numbers (1-indexed). Output displays extracted content with hash identifiers.
+
+- `from_range`: [start, end] line numbers (1-indexed, inclusive)
+- `append_line`: 0 = beginning, -1 = end, N = after line N
+
+Examples:
+- `{"from_path": "src/utils.rs", "from_range": [10, 25], "append_path": "src/new.rs", "append_line": -1}`
+- `{"from_path": "config.toml", "from_range": [1, 5], "append_path": "new.toml", "append_line": 0}`"#
+			} else {
+				r#"Copy lines from a source file and append them into a target file. Source is not modified.
+
+- `from_range`: [start, end] line numbers (1-indexed, inclusive)
+- `append_line`: 0 = beginning, -1 = end, N = after line N
+
+Examples:
+- `{"from_path": "src/utils.rs", "from_range": [10, 25], "append_path": "src/new.rs", "append_line": -1}`
+- `{"from_path": "config.toml", "from_range": [1, 5], "append_path": "new.toml", "append_line": 0}`
+- `{"from_path": "main.rs", "from_range": [50, 60], "append_path": "module.rs", "append_line": 3}`"#
+			}.into());
 		}
 	}
 
 	/// Read files, view directories, and search file content.
 	#[tool(
 		name = "view",
-		description = "Read files, view directories, and search file content. Unified read-only tool.
-
-**File** (path is a file): returns plain text with line identifiers (numbers or content-based hashes depending on server --line-mode).
-- Whole file: `{\"path\": \"src/main.rs\"}`
-- Line range (negative ok: -1 = last): `{\"path\": \"src/main.rs\", \"lines\": [10, 20]}`
-
-**Multi-file** (paths array, max 50): `{\"paths\": [\"src/main.rs\", \"src/lib.rs\"]}`
-
-**Directory** (path is a directory):
-- List: `{\"path\": \"src/\"}` — filter: `\"pattern\": \"*.rs\"`, depth: `\"max_depth\": 2`
-- Search content (ripgrep): `{\"path\": \"src\", \"content\": \"fn main\"}`
-- Hidden files: `\"include_hidden\": true`
-
-In hash mode (--line-mode hash): each line is prefixed with a 4-char hex hash derived from its content (e.g., `a3bd: code here`). These hashes are stable — unchanged lines keep the same hash across edits.",
+		description = "Read files, view directories, and search file content.",
 		annotations(read_only_hint = true)
 	)]
 	async fn view(&self, Parameters(params): Parameters<ViewParams>) -> Result<String, String> {
@@ -228,25 +402,7 @@ In hash mode (--line-mode hash): each line is prefixed with a 4-char hex hash de
 	/// Perform text editing operations on files.
 	#[tool(
 		name = "text_editor",
-		description = "Perform text editing operations on files.
-
-The `command` parameter specifies the operation to perform.
-For READ operations use the `view` tool instead.
-For line-based edits (insert after line, replace by line range), use the separate `batch_edit` tool.
-
-Commands:
-
-`create`: Create new file. Fails if file already exists.
-- `{\"command\": \"create\", \"path\": \"src/new.rs\", \"content\": \"...\"}` — creates parent dirs automatically.
-
-`str_replace`: Replace exact string match. Requires exactly 1 match — fails on 0 (no match) or 2+ (ambiguous).
-- `{\"command\": \"str_replace\", \"path\": \"src/main.rs\", \"old_text\": \"fn old()\", \"new_text\": \"fn new()\"}`
-- `old_text` must match exactly (including whitespace). Use raw content, not escaped.
-- Fuzzy fallback: if exact match fails, tries whitespace-normalized matching and auto-adjusts indentation.
-- On failure: shows closest matches with line numbers, similarity %, and diagnosis.
-
-`undo_edit`: Revert the last edit on a file. Supports up to 10 undo levels per file.
-- `{\"command\": \"undo_edit\", \"path\": \"src/main.rs\"}`",
+		description = "Perform text editing operations on files.",
 		annotations(destructive_hint = true)
 	)]
 	async fn text_editor(
@@ -259,48 +415,7 @@ Commands:
 	/// Perform multiple atomic edits on a single file.
 	#[tool(
 		name = "batch_edit",
-		description = "Perform multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL line numbers or hash identifiers.
-
-Use when: 2+ edits on an unmodified file (all line references point to the file before any changes).
-Do NOT use: after any prior edit to the file — line numbers/hashes will be stale.
-
-CRITICAL: Always `view` the exact line range before replacing — never assume what is at a line.
-If you edited this file before, re-view it first.
-
-CRITICAL: All line_range values reference the ORIGINAL file content before ANY changes.
-Even if operation 1 replaces 1 line with 10 lines, operation 2 still uses the original references.
-The tool handles offset calculation internally — you never need to adjust for prior operations.
-
-Operations:
-- `insert`: line_range = integer or hash string → insert after that line (0 = beginning of file, -1 = after last line)
-- `replace`: line_range = [start, end] (numbers or hash strings) → remove those lines, insert new content
-
-In hash mode (--line-mode hash): line_range accepts 4-char hex hash identifiers from `view` output.
-  - insert: `\"line_range\": \"a3bd\"` → insert after the line with hash a3bd
-  - replace: `\"line_range\": [\"a3bd\", \"c7f2\"]` → replace lines from hash a3bd to c7f2
-
-Negative line numbers count from end: -1 = last line, -2 = second-to-last, etc.
-
-Key rule — NEVER retype unchanged lines in replace:
-❌ Bad: replace [1,3] with \"use std::fs;\\nuse std::io;\\nuse std::path::PathBuf;\" (retyped lines 1-2)
-✅ Good: replace [3,3] with \"use std::path::PathBuf;\" (only the line actually changing)
-
-Empty content in replace deletes the targeted lines entirely.
-
-Duplicate-line guard: the tool rejects content whose first/last line matches the line
-immediately before/after the replacement range — a common mistake where surrounding
-context is accidentally included. Fix: shrink the range or trim the content.
-
-Max 50 operations per call.
-
-Atomicity: either ALL operations succeed or NONE are applied — the file is never left in a partial state.
-
-Returns a diff of all changes made (using line numbers or hashes depending on server mode):
-- Context lines: `ID: <text>` (3 lines before/after each change)
-- Removed lines: `-ID: <text>`
-- Added lines:   `+ID: <text>`
-- Multiple ops separated by `---`
-Read the diff to verify edits landed correctly — no need for a follow-up `view` call.",
+		description = "Perform multiple insert/replace operations on a single file atomically.",
 		annotations(destructive_hint = true)
 	)]
 	async fn batch_edit(
@@ -313,14 +428,7 @@ Read the diff to verify edits landed correctly — no need for a follow-up `view
 	/// Copy lines from source to target file.
 	#[tool(
 		name = "extract_lines",
-		description = "Copy lines from a source file and append them into a target file. Source is not modified.
-
-- `append_line`: 0 = beginning, -1 = end, N = after line N.
-
-Examples:
-- `{\"from_path\": \"src/utils.rs\", \"from_range\": [10, 25], \"append_path\": \"src/new.rs\", \"append_line\": -1}`
-- `{\"from_path\": \"config.toml\", \"from_range\": [1, 5], \"append_path\": \"new.toml\", \"append_line\": 0}`
-- `{\"from_path\": \"main.rs\", \"from_range\": [50, 60], \"append_path\": \"module.rs\", \"append_line\": 3}`",
+		description = "Copy lines from a source file and append them into a target file.",
 		annotations(destructive_hint = true)
 	)]
 	async fn extract_lines(
