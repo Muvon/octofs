@@ -269,10 +269,20 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		return directory::list_directory(call, &path).await;
 	}
 
-	// File + content: grep the file with ripgrep instead of reading it whole
+	// File + content: search the file with ripgrep and render with the same hash/number format
 	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {
 		if !content_pattern.trim().is_empty() {
-			return directory::list_directory(call, &path).await;
+			let context_lines = call
+				.parameters
+				.get("context")
+				.and_then(|v| v.as_i64())
+				.unwrap_or(0) as usize;
+			return file_ops::view_file_with_content_search(
+				&resolved,
+				content_pattern,
+				context_lines,
+			)
+			.await;
 		}
 	}
 

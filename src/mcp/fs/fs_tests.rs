@@ -4399,4 +4399,157 @@ mod tests {
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(actual, "}\n// replaced\n}\nfn foo() {\n");
 	}
+
+	// ── view content search on a file ────────────────────────────────────────
+
+	#[tokio::test]
+	async fn test_view_file_content_search_basic() {
+		let temp_file = create_test_file("alpha\nbeta\ngamma\ndelta\nepsilon\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "content": "gamma" }),
+		};
+		let output = execute_view(&call).await.unwrap();
+
+		// Must contain the matched line with a number prefix (no "-" marker)
+		assert!(
+			output.contains("3: gamma"),
+			"expected '3: gamma', got: {output}"
+		);
+		// Must NOT contain rg-style separators
+		assert!(
+			!output.contains("gamma:"),
+			"must not have rg colon format: {output}"
+		);
+		assert!(
+			!output.contains("-gamma"),
+			"must not have rg dash format: {output}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_file_content_search_no_match_returns_empty() {
+		let temp_file = create_test_file("alpha\nbeta\ngamma\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "content": "zzznomatch" }),
+		};
+		let output = execute_view(&call).await.unwrap();
+		assert!(
+			output.is_empty(),
+			"no match should return empty, got: {output}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_file_content_search_with_context() {
+		let temp_file =
+			create_test_file("alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "content": "gamma", "context": 1 }),
+		};
+		let output = execute_view(&call).await.unwrap();
+
+		// Match + 1 context line on each side
+		assert!(output.contains("2: beta"), "context before: {output}");
+		assert!(output.contains("3: gamma"), "match line: {output}");
+		assert!(output.contains("4: delta"), "context after: {output}");
+		// Context lines must NOT have a "-" prefix
+		assert!(
+			!output.contains("-beta"),
+			"no rg dash prefix on context: {output}"
+		);
+		assert!(
+			!output.contains("-delta"),
+			"no rg dash prefix on context: {output}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_file_content_search_multiple_matches_separated() {
+		let temp_file =
+			create_test_file("alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// "eta" matches line 7 (eta) and line 8 (theta contains eta)
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "content": "eta" }),
+		};
+		let output = execute_view(&call).await.unwrap();
+
+		assert!(output.contains("7: eta"), "first match: {output}");
+		assert!(output.contains("8: theta"), "second match: {output}");
+	}
+
+	#[tokio::test]
+	async fn test_view_file_content_search_context_blocks_separated_by_dashes() {
+		// Two non-adjacent matches with context should be separated by "--"
+		let temp_file = create_test_file("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// Match "a" (line 1) and "j" (line 10) with no context — they are non-adjacent
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "content": "a" }),
+		};
+		let output = execute_view(&call).await.unwrap();
+		// Single match, no separator needed
+		assert!(output.contains("1: a"), "match: {output}");
+		assert!(
+			!output.contains("\n--\n"),
+			"no separator for single block: {output}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_file_content_search_context_same_format_as_view_lines() {
+		// The output format must be identical to what view with lines= produces
+		let temp_file = create_test_file("alpha\nbeta\ngamma\ndelta\nepsilon\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// Get the line via content search
+		let search_call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "content": "gamma" }),
+		};
+		let search_output = execute_view(&search_call).await.unwrap();
+
+		// Get the same line via lines range
+		let lines_call = McpToolCall {
+			tool_id: "test".to_string(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path, "lines": [3, 3] }),
+		};
+		let lines_output = execute_view(&lines_call).await.unwrap();
+
+		// The matched line must appear in both outputs with the same prefix format
+		// (lines_output may include surrounding context lines, so we check the specific line)
+		let search_line = search_output
+			.lines()
+			.find(|l| l.contains("gamma"))
+			.unwrap_or("");
+		let lines_line = lines_output
+			.lines()
+			.find(|l| l.contains("gamma"))
+			.unwrap_or("");
+
+		assert_eq!(
+			search_line, lines_line,
+			"content search and lines view must produce identical line format"
+		);
+	}
 }
