@@ -316,6 +316,7 @@ let content = tokio::fs::read_to_string(&path)
 5. **Validation**: Validate inputs early and fail fast
 6. **Performance**: Consider performance implications of changes
 7. **Compatibility**: Ensure changes don't break existing tools
+8. **Copyright Header**: Every `.rs` file must have the Apache 2.0 copyright header with the current year (`Copyright 2026 Muvon Un Limited`). Verify year is up-to-date when modifying files in a new calendar year
 
 ## Development Patterns
 
