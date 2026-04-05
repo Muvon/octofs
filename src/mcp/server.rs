@@ -18,6 +18,8 @@
 //! - `Ok(text)` → `CallToolResult::success` with text content
 //! - `Err(text)` → `CallToolResult::error` with text content (tool-level error)
 
+use std::sync::Arc;
+
 use rmcp::{
 	handler::server::{router::tool::ToolRouter, wrapper::Parameters, ServerHandler},
 	model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
@@ -131,6 +133,214 @@ pub struct BatchEditParams {
 	pub operations: Vec<BatchEditOperation>,
 }
 
+// ── Mode-specific schema builders ──────────────────────────────────────────────
+// Build JSON schemas by patching the base runtime-type schema with mode-specific
+// field types. No phantom types needed — just JSON surgery.
+
+/// Build a `view` input schema with `lines` typed for the active mode.
+fn view_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> {
+	let mut schema = (*schema_for::<ViewParams>()).clone();
+	let props = schema
+		.get_mut("properties")
+		.and_then(|v| v.as_object_mut())
+		.expect("view schema must have properties");
+
+	let lines_schema = if hash_mode {
+		serde_json::json!({
+			"type": ["array", "null"],
+			"description": "Line range [start_hash, end_hash] for single file viewing. Use 4-char hex hash identifiers from previous `view` output.",
+			"items": { "type": "string" },
+			"minItems": 2,
+			"maxItems": 2
+		})
+	} else {
+		serde_json::json!({
+			"type": ["array", "null"],
+			"description": "Line range [start, end] for single file viewing (1-indexed, inclusive). Supports negative indexing: -1 = last line.",
+			"items": { "type": "integer" },
+			"minItems": 2,
+			"maxItems": 2
+		})
+	};
+	props.insert("lines".to_string(), lines_schema);
+	Arc::new(schema)
+}
+
+/// Build a `batch_edit` input schema with `line_range` typed for the active mode.
+fn batch_edit_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> {
+	let mut schema = (*schema_for::<BatchEditParams>()).clone();
+
+	let line_range_schema = if hash_mode {
+		serde_json::json!({
+			"anyOf": [
+				{
+					"type": "string",
+					"description": "Hash string for insert (insert after line with this hash). Special values: 0 = beginning of file, -1 = after last line."
+				},
+				{
+					"type": "array",
+					"description": "Hash range [start_hash, end_hash] for replace.",
+					"items": { "type": "string" },
+					"minItems": 2,
+					"maxItems": 2
+				}
+			]
+		})
+	} else {
+		serde_json::json!({
+			"anyOf": [
+				{
+					"type": "integer",
+					"description": "Single line number for insert (0=beginning, N=after line N, -1=after last line)."
+				},
+				{
+					"type": "array",
+					"description": "Line range [start, end] for replace (1-indexed, inclusive).",
+					"items": { "type": "integer" },
+					"minItems": 2,
+					"maxItems": 2
+				}
+			]
+		})
+	};
+
+	// Patch line_range inside the operation schema.
+	// schemars may inline or use $defs — handle both.
+	patch_batch_edit_line_range(&mut schema, &line_range_schema);
+
+	// Also update the operation's line_range description
+	let lr_desc = if hash_mode {
+		"Hash identifiers from ORIGINAL file content."
+	} else {
+		"Line numbers from ORIGINAL file content."
+	};
+	patch_batch_edit_line_range_description(&mut schema, lr_desc);
+
+	Arc::new(schema)
+}
+
+/// Walk the schema JSON to find and replace the `line_range` definition.
+fn patch_batch_edit_line_range(
+	schema: &mut serde_json::Map<String, Value>,
+	new_line_range: &Value,
+) {
+	// Strategy: find BatchEditLineRange in $defs and replace it,
+	// or find it inlined in the operation properties.
+	if let Some(defs) = schema.get_mut("$defs").and_then(|v| v.as_object_mut()) {
+		if defs.contains_key("BatchEditLineRange") {
+			defs.insert("BatchEditLineRange".to_string(), new_line_range.clone());
+			return;
+		}
+	}
+
+	// Fallback: walk into properties -> operations -> items -> properties -> line_range
+	if let Some(ops_schema) = schema
+		.get_mut("properties")
+		.and_then(|v| v.as_object_mut())
+		.and_then(|p| p.get_mut("operations"))
+		.and_then(|v| v.as_object_mut())
+		.and_then(|o| o.get_mut("items"))
+		.and_then(|v| v.as_object_mut())
+		.and_then(|i| i.get_mut("properties"))
+		.and_then(|v| v.as_object_mut())
+	{
+		if ops_schema.contains_key("line_range") {
+			ops_schema.insert("line_range".to_string(), new_line_range.clone());
+		}
+	}
+}
+
+/// Update the description on the line_range field in the operation schema.
+fn patch_batch_edit_line_range_description(
+	schema: &mut serde_json::Map<String, Value>,
+	description: &str,
+) {
+	// Try inlined path first
+	if let Some(lr) = schema
+		.get_mut("properties")
+		.and_then(|v| v.as_object_mut())
+		.and_then(|p| p.get_mut("operations"))
+		.and_then(|v| v.as_object_mut())
+		.and_then(|o| o.get_mut("items"))
+		.and_then(|v| v.as_object_mut())
+		.and_then(|i| i.get_mut("properties"))
+		.and_then(|v| v.as_object_mut())
+		.and_then(|p| p.get_mut("line_range"))
+		.and_then(|v| v.as_object_mut())
+	{
+		lr.insert(
+			"description".to_string(),
+			Value::String(description.to_string()),
+		);
+	}
+}
+
+/// Build an `extract_lines` input schema with `from_range` and `append_line` typed for the active
+/// mode.
+fn extract_lines_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> {
+	let mut schema = (*schema_for::<ExtractLinesParams>()).clone();
+	let props = schema
+		.get_mut("properties")
+		.and_then(|v| v.as_object_mut())
+		.expect("extract_lines schema must have properties");
+
+	let from_range_schema = if hash_mode {
+		serde_json::json!({
+			"type": "array",
+			"description": "Two-element array [start_hash, end_hash]. Use 4-char hex hash identifiers from `view` output.",
+			"items": { "type": "string" },
+			"minItems": 2,
+			"maxItems": 2
+		})
+	} else {
+		serde_json::json!({
+			"type": "array",
+			"description": "Two-element array [start, end] with 1-indexed line numbers (inclusive). Supports negative indexing: -1 = last line.",
+			"items": { "type": "integer" },
+			"minItems": 2,
+			"maxItems": 2
+		})
+	};
+	props.insert("from_range".to_string(), from_range_schema);
+
+	let append_line_schema = if hash_mode {
+		serde_json::json!({
+			"anyOf": [
+				{
+					"type": "string",
+					"description": "Hash identifier from `view` output — insert after the line with this hash."
+				},
+				{
+					"type": "integer",
+					"description": "Special positions: 0 = beginning of file, -1 = end of file."
+				}
+			],
+			"description": "Position where to append: hash string (after that line), 0 = beginning, -1 = end."
+		})
+	} else {
+		serde_json::json!({
+			"type": "integer",
+			"description": "Position where to append: 0 = beginning, -1 = end, N = after line N (1-indexed)."
+		})
+	};
+	props.insert("append_line".to_string(), append_line_schema);
+
+	Arc::new(schema)
+}
+
+/// Generate a JSON Schema object for a type, suitable for MCP input_schema.
+fn schema_for<T: schemars::JsonSchema + 'static>() -> Arc<serde_json::Map<String, Value>> {
+	use rmcp::schemars::generate::SchemaSettings;
+	let settings = SchemaSettings::draft2020_12();
+	let generator = settings.into_generator();
+	let schema = generator.into_root_schema_for::<T>();
+	let value = serde_json::to_value(schema).expect("schema serialization");
+	match value {
+		Value::Object(map) => Arc::new(map),
+		_ => unreachable!("schema must be an object"),
+	}
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ExtractLinesParams {
 	/// Path to the source file to extract lines from
@@ -204,13 +414,14 @@ impl OctofsServer {
 		server
 	}
 
-	/// Overwrite tool descriptions based on the active line mode.
-	/// Each tool gets a precise description matching the current mode — no generic fallbacks.
+	/// Overwrite tool descriptions and input schemas based on the active line mode.
+	/// Each tool gets a precise description and schema matching the current mode — no generic fallbacks.
 	fn apply_mode_descriptions(&mut self) {
 		use crate::utils::line_hash::is_hash_mode;
 		let hash = is_hash_mode();
 
 		if let Some(route) = self.tool_router.map.get_mut("view") {
+			route.attr.input_schema = view_schema(hash);
 			route.attr.description = Some(if hash {
 				r#"Read files, view directories, and search file content. Unified read-only tool.
 
@@ -289,6 +500,7 @@ Commands:
 		}
 
 		if let Some(route) = self.tool_router.map.get_mut("batch_edit") {
+			route.attr.input_schema = batch_edit_schema(hash);
 			route.attr.description = Some(if hash {
 				r#"Perform multiple insert/replace operations on a SINGLE file atomically, using ORIGINAL hash identifiers from `view` output.
 
@@ -364,22 +576,24 @@ Read the diff to verify edits landed correctly — no need for a follow-up `view
 		}
 
 		if let Some(route) = self.tool_router.map.get_mut("extract_lines") {
+			route.attr.input_schema = extract_lines_schema(hash);
 			route.attr.description = Some(if hash {
 				r#"Copy lines from a source file and append them into a target file. Source is not modified.
 
-Parameters use line numbers (1-indexed). Output displays extracted content with hash identifiers.
+Parameters use hash identifiers from `view` output. Output displays extracted content with hash identifiers.
 
-- `from_range`: [start, end] line numbers (1-indexed, inclusive)
-- `append_line`: 0 = beginning, -1 = end, N = after line N
+- `from_range`: [start_hash, end_hash] — hash identifiers for the line range to extract
+- `append_line`: hash string (insert after that line), 0 = beginning, -1 = end
 
 Examples:
-- `{"from_path": "src/utils.rs", "from_range": [10, 25], "append_path": "src/new.rs", "append_line": -1}`
-- `{"from_path": "config.toml", "from_range": [1, 5], "append_path": "new.toml", "append_line": 0}`"#
+- `{"from_path": "src/utils.rs", "from_range": ["a3bd", "c7f2"], "append_path": "src/new.rs", "append_line": -1}`
+- `{"from_path": "config.toml", "from_range": ["d1e5", "f8a0"], "append_path": "new.toml", "append_line": 0}`
+- `{"from_path": "main.rs", "from_range": ["b2c4", "e9f1"], "append_path": "module.rs", "append_line": "a1b2"}`"#
 			} else {
 				r#"Copy lines from a source file and append them into a target file. Source is not modified.
 
-- `from_range`: [start, end] line numbers (1-indexed, inclusive)
-- `append_line`: 0 = beginning, -1 = end, N = after line N
+- `from_range`: [start, end] line numbers (1-indexed, inclusive). Supports negative indexing: -1 = last line.
+- `append_line`: 0 = beginning, -1 = end, N = after line N (1-indexed)
 
 Examples:
 - `{"from_path": "src/utils.rs", "from_range": [10, 25], "append_path": "src/new.rs", "append_line": -1}`

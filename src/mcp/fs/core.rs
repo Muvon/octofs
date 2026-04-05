@@ -358,34 +358,47 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Validate and extract from_range parameter (defer negative index resolution until after file read)
-	let (from_range_start_raw, from_range_end_raw) = match call.parameters.get("from_range") {
+	// Validate and extract from_range parameter.
+	// Accepts [int, int] (line numbers) or [string, string] (hash identifiers).
+	// Hash resolution is deferred until after the source file is read.
+	enum FromRange {
+		Lines(i64, i64),
+		Hashes(String, String),
+	}
+	let from_range_raw = match call.parameters.get("from_range") {
 		Some(Value::Array(arr)) => {
 			if arr.len() != 2 {
 				bail!("Parameter 'from_range' must be an array with exactly 2 elements");
 			}
-
-			let start = match arr[0].as_i64() {
-				Some(0) => {
-					bail!("Line numbers are 1-indexed, use 1 for first line");
-				}
-				Some(n) => n,
-				None => {
-					bail!("Start line number must be an integer");
-				}
-			};
-
-			let end = match arr[1].as_i64() {
-				Some(0) => {
-					bail!("Line numbers are 1-indexed, use 1 for first line");
-				}
-				Some(n) => n,
-				None => {
-					bail!("End line number must be an integer");
-				}
-			};
-
-			(start, end)
+			if arr[0].is_string() || arr[1].is_string() {
+				// Hash mode
+				let start = arr[0]
+					.as_str()
+					.ok_or_else(|| {
+						anyhow::anyhow!("from_range elements must both be hash strings")
+					})?
+					.to_string();
+				let end = arr[1]
+					.as_str()
+					.ok_or_else(|| {
+						anyhow::anyhow!("from_range elements must both be hash strings")
+					})?
+					.to_string();
+				FromRange::Hashes(start, end)
+			} else {
+				// Number mode
+				let start = match arr[0].as_i64() {
+					Some(0) => bail!("Line numbers are 1-indexed, use 1 for first line"),
+					Some(n) => n,
+					None => bail!("Start line number must be an integer"),
+				};
+				let end = match arr[1].as_i64() {
+					Some(0) => bail!("Line numbers are 1-indexed, use 1 for first line"),
+					Some(n) => n,
+					None => bail!("End line number must be an integer"),
+				};
+				FromRange::Lines(start, end)
+			}
 		}
 		Some(_) => {
 			bail!("Parameter 'from_range' must be an array");
@@ -411,16 +424,21 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Validate and extract append_line parameter
-	let append_line = match call.parameters.get("append_line") {
+	// Validate and extract append_line parameter.
+	// Accepts integer (line number or 0/-1 special) or string (hash identifier).
+	// Hash resolution is deferred until after the target file is read.
+	enum AppendLine {
+		Position(i64),
+		Hash(String),
+	}
+	let append_line_raw = match call.parameters.get("append_line") {
 		Some(Value::Number(n)) => match n.as_i64() {
-			Some(line) => line,
-			None => {
-				bail!("Parameter 'append_line' must be an integer");
-			}
+			Some(line) => AppendLine::Position(line),
+			None => bail!("Parameter 'append_line' must be an integer"),
 		},
+		Some(Value::String(h)) => AppendLine::Hash(h.clone()),
 		Some(_) => {
-			bail!("Parameter 'append_line' must be an integer");
+			bail!("Parameter 'append_line' must be an integer or hash string");
 		}
 		None => {
 			bail!("Missing required parameter 'append_line'");
@@ -444,12 +462,26 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let source_lines: Vec<&str> = source_content.lines().collect();
 	let total_lines = source_lines.len();
 
-	// Resolve negative indices now that we know the file length
-	let from_range = match resolve_line_range(from_range_start_raw, from_range_end_raw, total_lines)
-	{
-		Ok(range) => range,
-		Err(err) => {
-			bail!("Invalid from_range: {err}");
+	// Resolve from_range: hashes → line numbers, or resolve negative indices
+	let from_range = match from_range_raw {
+		FromRange::Hashes(start_hash, end_hash) => {
+			let start = crate::utils::line_hash::resolve_hash_to_line(&start_hash, &source_lines)
+				.map_err(|e| anyhow::anyhow!("Invalid from_range start: {e}"))?;
+			let end = crate::utils::line_hash::resolve_hash_to_line(&end_hash, &source_lines)
+				.map_err(|e| anyhow::anyhow!("Invalid from_range end: {e}"))?;
+			if start > end {
+				bail!(
+					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). Did you mean from_range: [\"{}\", \"{}\"]?",
+					start_hash, start, end_hash, end, end_hash, start_hash
+				);
+			}
+			(start, end)
+		}
+		FromRange::Lines(start_raw, end_raw) => {
+			match resolve_line_range(start_raw, end_raw, total_lines) {
+				Ok(range) => range,
+				Err(err) => bail!("Invalid from_range: {err}"),
+			}
 		}
 	};
 
@@ -506,6 +538,20 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	} else {
 		String::new()
+	};
+
+	// Resolve append_line: hash → line number, or keep integer as-is
+	let append_line: i64 = match append_line_raw {
+		AppendLine::Position(n) => n,
+		AppendLine::Hash(hash) => {
+			if target_content.is_empty() {
+				bail!("Cannot use hash identifier for append_line on an empty or non-existent target file");
+			}
+			let target_lines: Vec<&str> = target_content.lines().collect();
+			let line = crate::utils::line_hash::resolve_hash_to_line(&hash, &target_lines)
+				.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
+			line as i64
+		}
 	};
 
 	// Determine insertion logic based on append_line
