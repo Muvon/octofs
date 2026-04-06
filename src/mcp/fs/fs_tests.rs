@@ -844,7 +844,6 @@ mod tests {
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"content": "println!",
-				"line_numbers": true,
 				"max_lines": 0  // unlimited
 			}),
 			tool_id: "test-call-id".to_string(),
@@ -875,7 +874,6 @@ mod tests {
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"content": "println!",
-				"line_numbers": true,
 				"context": 1,
 				"max_lines": 0
 			}),
@@ -2643,7 +2641,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [-1, -1]
 			}),
 		};
@@ -2660,7 +2658,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [-2, -2]
 			}),
 		};
@@ -2677,7 +2675,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [-3, -1]
 			}),
 		};
@@ -2704,7 +2702,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [2, -2]
 			}),
 		};
@@ -2742,7 +2740,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [-5, -1]
 			}),
 		};
@@ -3018,7 +3016,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [-1, -1]
 			}),
 		};
@@ -3035,7 +3033,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": file_path.to_string_lossy(),
+				"paths": file_path.to_string_lossy(),
 				"lines": [-2, -1]
 			}),
 		};
@@ -3065,7 +3063,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": temp_dir.path().to_string_lossy() }),
+			parameters: json!({ "paths": temp_dir.path().to_string_lossy() }),
 		};
 
 		let output = execute_view(&call).await.unwrap();
@@ -3090,7 +3088,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": temp_dir.path().to_string_lossy(),
+				"paths": temp_dir.path().to_string_lossy(),
 				"content": "hello_world"
 			}),
 		};
@@ -3117,7 +3115,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": temp_dir.path().to_string_lossy(),
+				"paths": temp_dir.path().to_string_lossy(),
 				"pattern": "*.toml"
 			}),
 		};
@@ -3141,7 +3139,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": file_path.to_string_lossy() }),
+			parameters: json!({ "paths": file_path.to_string_lossy() }),
 		};
 
 		let content = execute_view(&call).await.unwrap();
@@ -3157,7 +3155,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_view_missing_path_errors() {
-		// view with no path and no paths must return a clear error, not panic
+		// view with no paths must return a clear error, not panic
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
@@ -3166,7 +3164,7 @@ mod tests {
 
 		let err = execute_view(&call).await.unwrap_err();
 		let msg = err.to_string();
-		assert!(msg.contains("path"), "Error should mention 'path': {msg}");
+		assert!(msg.contains("paths"), "Error should mention 'paths': {msg}");
 	}
 
 	#[tokio::test]
@@ -4424,7 +4422,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "gamma" }),
+			parameters: json!({ "paths": path, "content": "gamma" }),
 		};
 		let output = execute_view(&call).await.unwrap();
 
@@ -4452,7 +4450,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "zzznomatch" }),
+			parameters: json!({ "paths": path, "content": "zzznomatch" }),
 		};
 		let output = execute_view(&call).await.unwrap();
 		assert!(
@@ -4470,7 +4468,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "gamma", "context": 1 }),
+			parameters: json!({ "paths": path, "content": "gamma", "context": 1 }),
 		};
 		let output = execute_view(&call).await.unwrap();
 
@@ -4499,7 +4497,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "eta" }),
+			parameters: json!({ "paths": path, "content": "eta" }),
 		};
 		let output = execute_view(&call).await.unwrap();
 
@@ -4517,7 +4515,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "a" }),
+			parameters: json!({ "paths": path, "content": "a" }),
 		};
 		let output = execute_view(&call).await.unwrap();
 		// Single match, no separator needed
@@ -4538,7 +4536,7 @@ mod tests {
 		let search_call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "gamma" }),
+			parameters: json!({ "paths": path, "content": "gamma" }),
 		};
 		let search_output = execute_view(&search_call).await.unwrap();
 
@@ -4546,7 +4544,7 @@ mod tests {
 		let lines_call = McpToolCall {
 			tool_id: "test".to_string(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "lines": [3, 3] }),
+			parameters: json!({ "paths": path, "lines": [3, 3] }),
 		};
 		let lines_output = execute_view(&lines_call).await.unwrap();
 

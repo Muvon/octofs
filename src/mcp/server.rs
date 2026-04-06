@@ -34,13 +34,10 @@ use super::fs;
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// File path, directory path, or glob pattern. Required unless `paths` is provided.
-	#[serde(default)]
-	pub path: Option<String>,
-	/// Array of file paths for multi-file viewing. Max 50 files.
-	#[serde(default)]
-	#[schemars(length(max = 50))]
-	pub paths: Option<Vec<String>>,
+	/// One or more file/directory paths. Single path for file viewing or directory listing; multiple paths for multi-file viewing (max 50).
+	#[serde(deserialize_with = "deserialize_string_or_vec")]
+	#[schemars(length(min = 1, max = 50))]
+	pub paths: Vec<String>,
 	/// Line range [start, end] for single file viewing. Accepts line numbers (1-indexed, inclusive) or line identifiers from previous `view` output.
 	#[serde(default)]
 	#[schemars(length(min = 2, max = 2))]
@@ -57,16 +54,45 @@ pub struct ViewParams {
 	/// Include hidden files/directories starting with '.'.
 	#[serde(default)]
 	pub include_hidden: Option<bool>,
-	/// Show line numbers in content search results.
-	#[serde(default = "default_true")]
-	pub line_numbers: Option<bool>,
 	/// Context lines around content search matches.
 	#[serde(default)]
 	pub context: Option<usize>,
 }
 
-fn default_true() -> Option<bool> {
-	Some(true)
+/// Deserialize a value that can be either a single string or an array of strings.
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	use serde::de;
+
+	struct StringOrVec;
+
+	impl<'de> de::Visitor<'de> for StringOrVec {
+		type Value = Vec<String>;
+
+		fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+			formatter.write_str("a string or an array of strings")
+		}
+
+		fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+			Ok(vec![value.to_string()])
+		}
+
+		fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
+			Ok(vec![value])
+		}
+
+		fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+			let mut vec = Vec::new();
+			while let Some(elem) = seq.next_element::<String>()? {
+				vec.push(elem);
+			}
+			Ok(vec)
+		}
+	}
+
+	deserializer.deserialize_any(StringOrVec)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -145,11 +171,30 @@ fn view_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> {
 		.and_then(|v| v.as_object_mut())
 		.expect("view schema must have properties");
 
+	// Allow paths to be a single string or an array of strings
+	let paths_schema = serde_json::json!({
+		"anyOf": [
+			{
+				"type": "string",
+				"description": "Single file or directory path."
+			},
+			{
+				"type": "array",
+				"description": "One or more file/directory paths (max 50).",
+				"items": { "type": "string" },
+				"minItems": 1,
+				"maxItems": 50
+			}
+		],
+		"description": "One or more file/directory paths. Single string or array. Single path for file viewing or directory listing; multiple paths for multi-file viewing (max 50)."
+	});
+	props.insert("paths".to_string(), paths_schema);
+
 	let lines_schema = if hash_mode {
 		serde_json::json!({
 			"type": ["array", "null"],
-			"description": "Line range [start_hash, end_hash] for single file viewing. Use 4-char hex hash identifiers from previous `view` output.",
-			"items": { "type": "string" },
+			"description": "Line range [start, end] for single file viewing. Accepts 4-char hex hash identifiers from previous `view` output or integer line numbers (1-indexed, inclusive).",
+			"items": { "anyOf": [{"type": "string"}, {"type": "integer"}] },
 			"minItems": 2,
 			"maxItems": 2
 		})
@@ -174,13 +219,13 @@ fn batch_edit_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> {
 		serde_json::json!({
 			"anyOf": [
 				{
-					"type": "string",
-					"description": "Hash string for insert (insert after line with this hash). Special values: 0 = beginning of file, -1 = after last line."
+					"anyOf": [{"type": "string"}, {"type": "integer"}],
+					"description": "Insert after this line. Use hash string from `view` output, or integer (0 = beginning, -1 = after last line)."
 				},
 				{
 					"type": "array",
-					"description": "Hash range [start_hash, end_hash] for replace.",
-					"items": { "type": "string" },
+					"description": "Range [start, end] for replace. Use hash strings from `view` output or integer line numbers.",
+					"items": { "anyOf": [{"type": "string"}, {"type": "integer"}] },
 					"minItems": 2,
 					"maxItems": 2
 				}
@@ -210,7 +255,7 @@ fn batch_edit_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> {
 
 	// Also update the operation's line_range description
 	let lr_desc = if hash_mode {
-		"Hash identifiers from ORIGINAL file content."
+		"Line identifiers from ORIGINAL file content. Use hash strings from `view` output or integer line numbers."
 	} else {
 		"Line numbers from ORIGINAL file content."
 	};
@@ -287,8 +332,8 @@ fn extract_lines_schema(hash_mode: bool) -> Arc<serde_json::Map<String, Value>> 
 	let from_range_schema = if hash_mode {
 		serde_json::json!({
 			"type": "array",
-			"description": "Two-element array [start_hash, end_hash]. Use 4-char hex hash identifiers from `view` output.",
-			"items": { "type": "string" },
+			"description": "Two-element array [start, end]. Use 4-char hex hash identifiers from `view` output or integer line numbers.",
+			"items": { "anyOf": [{"type": "string"}, {"type": "integer"}] },
 			"minItems": 2,
 			"maxItems": 2
 		})
@@ -426,15 +471,15 @@ impl OctofsServer {
 				r#"Read files, view directories, and search file content. Unified read-only tool.
 
 **File** (path is a file): returns plain text where each line is prefixed with a 4-char hex hash identifier (e.g., `a3bd: code here`). Hashes are derived from line content — unchanged lines keep the same hash across edits.
-- Whole file: `{"path": "src/main.rs"}`
-- Line range by hash: `{"path": "src/main.rs", "lines": ["a3bd", "c7f2"]}`
-- Line range by number also accepted: `{"path": "src/main.rs", "lines": [10, 20]}`
+- Whole file: `{"paths": ["src/main.rs"]}`
+- Line range by hash: `{"paths": ["src/main.rs"], "lines": ["a3bd", "c7f2"]}`
+- Line range by number also accepted: `{"paths": ["src/main.rs"], "lines": [10, 20]}`
 
-**Multi-file** (paths array, max 50): `{"paths": ["src/main.rs", "src/lib.rs"]}`
+**Multi-file** (max 50): `{"paths": ["src/main.rs", "src/lib.rs"]}`
 
 **Directory** (path is a directory):
-- List: `{"path": "src/"}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
-- Search content (ripgrep): `{"path": "src", "content": "fn main"}`
+- List: `{"paths": ["src/"]}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
+- Search content (ripgrep): `{"paths": ["src"], "content": "fn main"}`
 - Hidden files: `"include_hidden": true`
 
 IMPORTANT: Hash prefixes like `a3bd: ` are for reference only. When editing via `text_editor` or `batch_edit`, use raw file content — never include the hash prefix."#
@@ -442,14 +487,14 @@ IMPORTANT: Hash prefixes like `a3bd: ` are for reference only. When editing via 
 				r#"Read files, view directories, and search file content. Unified read-only tool.
 
 **File** (path is a file): returns plain text with 1-indexed line numbers (e.g., `1: code here`).
-- Whole file: `{"path": "src/main.rs"}`
-- Line range (negative ok: -1 = last): `{"path": "src/main.rs", "lines": [10, 20]}`
+- Whole file: `{"paths": ["src/main.rs"]}`
+- Line range (negative ok: -1 = last): `{"paths": ["src/main.rs"], "lines": [10, 20]}`
 
-**Multi-file** (paths array, max 50): `{"paths": ["src/main.rs", "src/lib.rs"]}`
+**Multi-file** (max 50): `{"paths": ["src/main.rs", "src/lib.rs"]}`
 
 **Directory** (path is a directory):
-- List: `{"path": "src/"}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
-- Search content (ripgrep): `{"path": "src", "content": "fn main"}`
+- List: `{"paths": ["src/"]}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
+- Search content (ripgrep): `{"paths": ["src"], "content": "fn main"}`
 - Hidden files: `"include_hidden": true`"#
 			}.into());
 		}

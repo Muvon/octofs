@@ -240,33 +240,44 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 
 // Execute view command - unified read-only tool for files, directories, and content search
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
-	// Multi-file view: paths array takes priority
-	if let Some(Value::Array(arr)) = call.parameters.get("paths") {
-		let path_strings: Result<Vec<String>, _> = arr
-			.iter()
-			.map(|p| p.as_str().ok_or_else(|| anyhow!("Invalid path in array")))
-			.map(|r| r.map(|s| s.to_string()))
-			.collect();
-		let paths = path_strings?;
-		if paths.len() > 50 {
-			bail!("Too many files requested. Maximum 50 files per request.");
+	// Extract paths array (required, one or more elements)
+	let paths: Vec<String> = match call.parameters.get("paths") {
+		Some(Value::Array(arr)) => {
+			let path_strings: Result<Vec<String>, _> = arr
+				.iter()
+				.map(|p| {
+					p.as_str()
+						.ok_or_else(|| anyhow!("Invalid path in array"))
+						.map(|s| s.to_string())
+				})
+				.collect();
+			path_strings?
 		}
-		return file_ops::view_many_files_spec(&paths).await;
-	}
-
-	// Single path required
-	let path = match call.parameters.get("path") {
-		Some(Value::String(p)) => p.clone(),
+		Some(Value::String(s)) => vec![s.clone()],
 		_ => {
-			bail!("Missing or invalid 'path' parameter. Provide 'path' for a file/directory or 'paths' for multiple files.");
+			bail!("Missing or invalid 'paths' parameter.");
 		}
 	};
 
-	let resolved = resolve_path(&path);
+	if paths.is_empty() {
+		bail!("'paths' must contain at least one element.");
+	}
+	if paths.len() > 50 {
+		bail!("Too many files requested. Maximum 50 files per request.");
+	}
+
+	// Multi-file view: more than one path
+	if paths.len() > 1 {
+		return file_ops::view_many_files_spec(&paths).await;
+	}
+
+	// Single path
+	let path = &paths[0];
+	let resolved = resolve_path(path);
 
 	// Directory: dispatch directly with the resolved path string
 	if resolved.is_dir() {
-		return directory::list_directory(call, &path).await;
+		return directory::list_directory(call, path).await;
 	}
 
 	// File + content: search the file with ripgrep and render with the same hash/number format

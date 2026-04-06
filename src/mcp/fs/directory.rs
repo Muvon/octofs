@@ -15,6 +15,7 @@
 // Directory operations module - handling file listing with ripgrep (FIXED VERSION)
 
 use super::super::{get_thread_working_directory, McpToolCall};
+use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use anyhow::{bail, Result};
 use std::process::Command;
 // Parse a ripgrep output line to extract filename and rest, handling Windows paths correctly
@@ -110,66 +111,118 @@ fn parse_ripgrep_dash_line(line: &str) -> Option<(String, String)> {
 	None
 }
 
-// Group ripgrep output by file for token efficiency while preserving line numbers
-fn group_ripgrep_output(lines: &[String]) -> String {
-	let mut result = Vec::new();
-	let mut current_file = String::new();
-	let mut file_lines = Vec::new();
+// Group ripgrep output by file, re-rendering each line with the active prefix
+// (hash or line-number) so directory content search matches the view format.
+fn group_ripgrep_output(lines: &[String], working_dir: &std::path::Path) -> String {
+	use std::collections::BTreeMap;
+
+	// Collect per-file entries preserving order: (line_number, is_context, raw_content)
+	// We use a Vec to keep insertion order and a separate structure for file grouping.
+	let mut file_order: Vec<String> = Vec::new();
+	let mut file_entries: BTreeMap<String, Vec<RipgrepEntry>> = BTreeMap::new();
 
 	for line in lines {
-		if line.contains("[") && line.contains("truncated") {
-			// Handle truncation markers
-			if !file_lines.is_empty() {
-				result.push(format!("{}:\n{}", current_file, file_lines.join("\n")));
-				file_lines.clear();
-			}
-			result.push(line.clone());
+		if line.contains('[') && line.contains("truncated") {
 			continue;
 		}
 
-		// Parse ripgrep output: filename:line_number:content or filename-line_number-content (context)
-		// Need to handle Windows paths (C:\path\file.rs:123:content) by finding the colon before line number
 		if let Some((filename, rest)) = parse_ripgrep_line(line) {
-			if filename != current_file {
-				// New file - output previous file's lines
-				if !file_lines.is_empty() {
-					result.push(format!("{}:\n{}", current_file, file_lines.join("\n")));
-					file_lines.clear();
+			if let Some((line_num, content)) = parse_line_num_and_content(&rest, ':') {
+				if !file_entries.contains_key(&filename) {
+					file_order.push(filename.clone());
 				}
-				current_file = filename.to_string();
+				file_entries
+					.entry(filename)
+					.or_default()
+					.push(RipgrepEntry {
+						line_num,
+						content,
+						is_separator: false,
+					});
 			}
-
-			// Add the line content (without filename)
-			file_lines.push(rest.to_string());
 		} else if let Some((filename, rest)) = parse_ripgrep_dash_line(line) {
-			// Context line (filename-line_number-content)
-
-			if filename != current_file {
-				// New file - output previous file's lines
-				if !file_lines.is_empty() {
-					result.push(format!("{}:\n{}", current_file, file_lines.join("\n")));
-					file_lines.clear();
+			if let Some((line_num, content)) = parse_line_num_and_content(&rest, '-') {
+				if !file_entries.contains_key(&filename) {
+					file_order.push(filename.clone());
 				}
-				current_file = filename.to_string();
+				file_entries
+					.entry(filename)
+					.or_default()
+					.push(RipgrepEntry {
+						line_num,
+						content,
+						is_separator: false,
+					});
 			}
-
-			// Add the context line (with dash to indicate context)
-			file_lines.push(format!("-{}", rest));
 		} else if line == "--" {
-			// Separator between match groups - preserve it
-			file_lines.push("--".to_string());
-		} else {
-			// Other lines (shouldn't happen in normal ripgrep output, but handle gracefully)
-			file_lines.push(line.clone());
+			// Attach separator to the last file seen
+			if let Some(last_file) = file_order.last() {
+				file_entries
+					.entry(last_file.clone())
+					.or_default()
+					.push(RipgrepEntry {
+						line_num: 0,
+						content: String::new(),
+						is_separator: true,
+					});
+			}
 		}
 	}
 
-	// Output the last file's lines
-	if !file_lines.is_empty() {
-		result.push(format!("{}:\n{}", current_file, file_lines.join("\n")));
+	let hash_mode = is_hash_mode();
+	let mut result = Vec::new();
+
+	for filename in &file_order {
+		let entries = match file_entries.get(filename) {
+			Some(e) => e,
+			None => continue,
+		};
+
+		// Read the file to compute prefixes
+		let file_path = working_dir.join(filename);
+		let prefixes: Option<Vec<String>> =
+			std::fs::read_to_string(&file_path).ok().map(|content| {
+				let file_lines: Vec<&str> = content.lines().collect();
+				if hash_mode {
+					compute_line_hashes(&file_lines)
+				} else {
+					(1..=file_lines.len()).map(|n| n.to_string()).collect()
+				}
+			});
+
+		let mut rendered = Vec::new();
+		for entry in entries {
+			if entry.is_separator {
+				rendered.push("--".to_string());
+				continue;
+			}
+			let prefix = prefixes
+				.as_ref()
+				.and_then(|p| p.get(entry.line_num.saturating_sub(1)))
+				.cloned()
+				.unwrap_or_else(|| entry.line_num.to_string());
+			rendered.push(format!("{}:{}", prefix, entry.content));
+		}
+
+		result.push(format!("{}:\n{}", filename, rendered.join("\n")));
 	}
 
 	result.join("\n\n")
+}
+
+struct RipgrepEntry {
+	line_num: usize,
+	content: String,
+	is_separator: bool,
+}
+
+// Parse "linenum<sep>content" from the rest portion of a ripgrep line.
+fn parse_line_num_and_content(rest: &str, sep: char) -> Option<(usize, String)> {
+	let pos = rest.find(sep)?;
+	let num_str = &rest[..pos];
+	let num: usize = num_str.parse().ok()?;
+	let content = &rest[pos + 1..];
+	Some((num, content.to_string()))
 }
 
 // Convert glob pattern to regex pattern for use with ripgrep
@@ -256,11 +309,6 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.get("include_hidden")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
-	let line_numbers = call
-		.parameters
-		.get("line_numbers")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(true);
 	let context_lines = call
 		.parameters
 		.get("context")
@@ -279,9 +327,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
 	let (output_type, is_content_search) = if has_content {
 		let content_pattern = content.as_ref().unwrap();
-		if line_numbers {
-			cmd.arg("--line-number");
-		}
+		cmd.arg("--line-number");
 		if context_lines > 0 {
 			cmd.arg("--context").arg(context_lines.to_string());
 		}
@@ -311,7 +357,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 
 				if is_content_search {
 					let lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-					let grouped_output = group_ripgrep_output(&lines);
+					let grouped_output = group_ripgrep_output(&lines, &working_dir);
 					let output_str = if stdout.is_empty() && !stderr.is_empty() {
 						stderr
 					} else {
