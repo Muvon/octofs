@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.3.0] - 2026-04-08
+
+### 📋 Release Summary
+
+This release introduces hash-based line selection and referencing, enabling stable edits through position-aware line identifiers. Content search has been added to file viewing tools, and the MCP protocol now supports hash-based line ranges. The ast_grep tool has been removed in favor of improved path resolution, and search functionality has been migrated to a pure-Rust implementation (953f7735, 41d6585d, 7a46c1bc).
+
+
+### 🚨 Breaking Changes
+
+⚠️ **Important**: This release contains breaking changes that may require code updates.
+
+- **mcp**: remove ast_grep tool and add path resolution `9c607564`
+
+### ✨ New Features & Enhancements
+
+- **fs**: add hash line selection and dynamic schema `ad9b6456`
+- **fs**: add content search to file view tools `55ca8508`
+- **line-hash**: implement position-aware hashing `05f3960a`
+- **mcp**: support hash-based line ranges `0e9e7aba`
+- **cli**: add hash-based line identifiers for stable edits `5cd1a849`
+
+### 🔧 Improvements & Optimizations
+
+- **fs**: replace ripgrep with pure-Rust search `953f7735`
+- **mcp**: unify view parameter to paths with ripgrep output `41d6585d`
+
+### 📚 Documentation & Examples
+
+- **readme**: add MCP tools reference and configuration `3cca5e67`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.2.1] - 2026-03-27
 
 ### 📋 Release Summary
