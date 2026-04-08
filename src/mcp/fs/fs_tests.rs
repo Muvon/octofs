@@ -861,7 +861,7 @@ mod tests {
 
 		println!("Content search output:\n{}", output);
 
-		// Should contain filenames and line numbers (ripgrep format)
+		// Should contain filenames and line numbers
 		assert!(
 			output.contains("test1.rs:") || output.contains("test2.rs:"),
 			"Should contain filenames: {}",

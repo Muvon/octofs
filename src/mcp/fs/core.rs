@@ -280,7 +280,7 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		return directory::list_directory(call, path).await;
 	}
 
-	// File + content: search the file with ripgrep and render with the same hash/number format
+	// File + content: search the file for a literal pattern and render with the same hash/number format
 	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {
 		if !content_pattern.trim().is_empty() {
 			let context_lines = call

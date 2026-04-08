@@ -15,11 +15,11 @@
 // File operations module - handling file viewing, creation, and basic manipulation
 
 use super::core::resolve_path;
+use super::search;
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, bail, Result};
 use std::path::Path;
-use std::process::Command;
 use tokio::fs as tokio_fs;
 
 // Helper function to format file content with line numbers and smart truncation
@@ -94,8 +94,8 @@ pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Re
 	Ok(content_with_numbers)
 }
 
-// Search a single file with ripgrep and render results using the same hash/number format as view.
-// This ensures content search on a file produces identical-looking output to a normal file view.
+// Search a single file for a literal pattern and render results using the same
+// hash/number format as view. No external tools — pure Rust string matching.
 pub async fn view_file_with_content_search(
 	path: &Path,
 	pattern: &str,
@@ -108,7 +108,6 @@ pub async fn view_file_with_content_search(
 		bail!("Path is not a file");
 	}
 
-	// Read the file so we can render with proper hashes/line-numbers
 	let content = tokio_fs::read_to_string(path)
 		.await
 		.map_err(|e| anyhow!("Cannot read file: {}", e))?;
@@ -119,49 +118,10 @@ pub async fn view_file_with_content_search(
 		return Ok(String::new());
 	}
 
-	// Run ripgrep to find matching line numbers
-	let mut cmd = Command::new("rg");
-	cmd.arg("--line-number");
-	if context_lines > 0 {
-		cmd.arg("--context").arg(context_lines.to_string());
-	}
-	// Fixed-string search, output only line numbers (no filename needed for single file)
-	cmd.arg("-F").arg("--").arg(pattern).arg(path);
-
-	let output = tokio::task::spawn_blocking(move || cmd.output())
-		.await
-		.map_err(|e| anyhow!("Task join error: {}", e))?
-		.map_err(|e| anyhow!("Failed to run ripgrep: {}", e))?;
-
-	let stdout = String::from_utf8_lossy(&output.stdout);
-
-	// Parse line numbers from rg output.
-	// Match lines:   "N:content"
-	// Context lines: "N-content"
-	// Separator:     "--"
-	let mut line_nums: Vec<usize> = Vec::new();
-	for line in stdout.lines() {
-		if line == "--" {
-			continue;
-		}
-		// Try "N:..." (match) or "N-..." (context)
-		let num_str = line
-			.split_once(':')
-			.map(|(n, _)| n)
-			.or_else(|| line.split_once('-').map(|(n, _)| n));
-		if let Some(n) = num_str.and_then(|s| s.parse::<usize>().ok()) {
-			if n >= 1 && n <= total {
-				line_nums.push(n);
-			}
-		}
-	}
-
-	if line_nums.is_empty() {
+	let blocks = search::search_content(&content, pattern, context_lines);
+	if blocks.is_empty() {
 		return Ok(String::new());
 	}
-
-	line_nums.sort_unstable();
-	line_nums.dedup();
 
 	// Compute prefixes once for the whole file (same as view_file_spec does)
 	let prefixes: Vec<String> = if is_hash_mode() {
@@ -170,28 +130,12 @@ pub async fn view_file_with_content_search(
 		(1..=total).map(|n| n.to_string()).collect()
 	};
 
-	// Group consecutive line numbers into contiguous ranges and render each block.
-	// Blocks are separated by "--" (same visual convention as rg context separators).
-	let mut blocks: Vec<Vec<usize>> = Vec::new();
-	let mut current: Vec<usize> = Vec::new();
-	for &n in &line_nums {
-		if current.is_empty() || n == *current.last().unwrap() + 1 {
-			current.push(n);
-		} else {
-			blocks.push(current.clone());
-			current.clear();
-			current.push(n);
-		}
-	}
-	if !current.is_empty() {
-		blocks.push(current);
-	}
-
+	// Render each block; separate blocks with "--"
 	let mut parts: Vec<String> = Vec::new();
 	for block in &blocks {
 		let mut rendered = Vec::new();
-		for &n in block {
-			let idx = n - 1; // 0-indexed
+		for &n in &block.line_numbers {
+			let idx = n - 1;
 			rendered.push(format!("{}: {}", prefixes[idx], file_lines[idx]));
 		}
 		parts.push(rendered.join("\n"));

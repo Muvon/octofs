@@ -58,7 +58,7 @@ Each filesystem tool is implemented as a separate function in `src/mcp/fs/functi
 **view** - Read files, view directories, and search file content
 - Read single file or multiple files
 - View directory structure with filtering
-- Search file content with ripgrep
+- Search file content with built-in fixed-string matching
 - Support for line ranges and context
 
 **text_editor** - Create, edit, and manage file content

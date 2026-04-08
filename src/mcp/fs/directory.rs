@@ -12,238 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Directory operations module - handling file listing with ripgrep (FIXED VERSION)
+// Directory operations module — file listing and content search using ignore + pure-Rust matching.
 
 use super::super::{get_thread_working_directory, McpToolCall};
+use super::search;
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use anyhow::{bail, Result};
-use std::process::Command;
-// Parse a ripgrep output line to extract filename and rest, handling Windows paths correctly
-// UTF-8 safe version that uses character boundaries instead of byte indices
-fn parse_ripgrep_line(line: &str) -> Option<(String, String)> {
-	// Find all colon positions
-	let colon_positions: Vec<usize> = line.match_indices(':').map(|(i, _)| i).collect();
+use ignore::WalkBuilder;
+use std::path::Path;
 
-	// We need at least 2 colons for filename:line_number:content format
-	if colon_positions.len() < 2 {
-		return None;
-	}
-
-	// On Windows, the first colon might be after drive letter (C:)
-	// Look for the colon that's followed by digits (line number)
-	for i in 0..colon_positions.len() - 1 {
-		let colon_pos = colon_positions[i];
-		let next_colon_pos = colon_positions[i + 1];
-
-		// Check if the part between these colons is a line number (digits)
-		// UTF-8 safe: get substring between character positions
-		let chars: Vec<char> = line.chars().collect();
-		if colon_pos + 1 < chars.len() && next_colon_pos <= chars.len() {
-			let potential_line_num: String =
-				chars[(colon_pos + 1)..next_colon_pos].iter().collect();
-			if potential_line_num.chars().all(|c| c.is_ascii_digit())
-				&& !potential_line_num.is_empty()
-			{
-				// Found the filename:line_number:content pattern
-				// UTF-8 safe: split at character boundaries
-				let filename = line.chars().take(colon_pos).collect::<String>();
-				let rest = line.chars().skip(colon_pos + 1).collect::<String>();
-				return Some((filename, rest));
-			}
-		}
-	}
-
-	// Fallback: if no digit pattern found, use the last colon before content
-	// This handles edge cases where line numbers might have non-digit characters
-	if colon_positions.len() >= 2 {
-		let colon_pos = colon_positions[colon_positions.len() - 2];
-		// UTF-8 safe: split at character boundaries
-		let filename = line.chars().take(colon_pos).collect::<String>();
-		let rest = line.chars().skip(colon_pos + 1).collect::<String>();
-		return Some((filename, rest));
-	}
-
-	None
-}
-
-// Parse a ripgrep context line (with dashes) to extract filename and rest, handling Windows paths
-// UTF-8 safe version that uses character boundaries instead of byte indices
-fn parse_ripgrep_dash_line(line: &str) -> Option<(String, String)> {
-	// Find all dash positions
-	let dash_positions: Vec<usize> = line.match_indices('-').map(|(i, _)| i).collect();
-
-	// We need at least 2 dashes for filename-line_number-content format
-	if dash_positions.len() < 2 {
-		return None;
-	}
-
-	// On Windows, look for the dash that's followed by digits (line number)
-	for i in 0..dash_positions.len() - 1 {
-		let dash_pos = dash_positions[i];
-		let next_dash_pos = dash_positions[i + 1];
-
-		// Check if the part between these dashes is a line number (digits)
-		// UTF-8 safe: get substring between character positions
-		let chars: Vec<char> = line.chars().collect();
-		if dash_pos + 1 < chars.len() && next_dash_pos <= chars.len() {
-			let potential_line_num: String = chars[(dash_pos + 1)..next_dash_pos].iter().collect();
-			if potential_line_num.chars().all(|c| c.is_ascii_digit())
-				&& !potential_line_num.is_empty()
-			{
-				// Found the filename-line_number-content pattern
-				// UTF-8 safe: split at character boundaries
-				let filename = line.chars().take(dash_pos).collect::<String>();
-				let rest = line.chars().skip(dash_pos + 1).collect::<String>();
-				return Some((filename, rest));
-			}
-		}
-	}
-
-	// Fallback: use the last dash before content
-	if dash_positions.len() >= 2 {
-		let dash_pos = dash_positions[dash_positions.len() - 2];
-		// UTF-8 safe: split at character boundaries
-		let filename = line.chars().take(dash_pos).collect::<String>();
-		let rest = line.chars().skip(dash_pos + 1).collect::<String>();
-		return Some((filename, rest));
-	}
-
-	None
-}
-
-// Group ripgrep output by file, re-rendering each line with the active prefix
-// (hash or line-number) so directory content search matches the view format.
-fn group_ripgrep_output(lines: &[String], working_dir: &std::path::Path) -> String {
-	use std::collections::BTreeMap;
-
-	// Collect per-file entries preserving order: (line_number, is_context, raw_content)
-	// We use a Vec to keep insertion order and a separate structure for file grouping.
-	let mut file_order: Vec<String> = Vec::new();
-	let mut file_entries: BTreeMap<String, Vec<RipgrepEntry>> = BTreeMap::new();
-
-	for line in lines {
-		if line.contains('[') && line.contains("truncated") {
-			continue;
-		}
-
-		if let Some((filename, rest)) = parse_ripgrep_line(line) {
-			if let Some((line_num, content)) = parse_line_num_and_content(&rest, ':') {
-				if !file_entries.contains_key(&filename) {
-					file_order.push(filename.clone());
-				}
-				file_entries
-					.entry(filename)
-					.or_default()
-					.push(RipgrepEntry {
-						line_num,
-						content,
-						is_separator: false,
-					});
-			}
-		} else if let Some((filename, rest)) = parse_ripgrep_dash_line(line) {
-			if let Some((line_num, content)) = parse_line_num_and_content(&rest, '-') {
-				if !file_entries.contains_key(&filename) {
-					file_order.push(filename.clone());
-				}
-				file_entries
-					.entry(filename)
-					.or_default()
-					.push(RipgrepEntry {
-						line_num,
-						content,
-						is_separator: false,
-					});
-			}
-		} else if line == "--" {
-			// Attach separator to the last file seen
-			if let Some(last_file) = file_order.last() {
-				file_entries
-					.entry(last_file.clone())
-					.or_default()
-					.push(RipgrepEntry {
-						line_num: 0,
-						content: String::new(),
-						is_separator: true,
-					});
-			}
-		}
-	}
-
-	let hash_mode = is_hash_mode();
-	let mut result = Vec::new();
-
-	for filename in &file_order {
-		let entries = match file_entries.get(filename) {
-			Some(e) => e,
-			None => continue,
-		};
-
-		// Read the file to compute prefixes
-		let file_path = working_dir.join(filename);
-		let prefixes: Option<Vec<String>> =
-			std::fs::read_to_string(&file_path).ok().map(|content| {
-				let file_lines: Vec<&str> = content.lines().collect();
-				if hash_mode {
-					compute_line_hashes(&file_lines)
-				} else {
-					(1..=file_lines.len()).map(|n| n.to_string()).collect()
-				}
-			});
-
-		let mut rendered = Vec::new();
-		for entry in entries {
-			if entry.is_separator {
-				rendered.push("--".to_string());
-				continue;
-			}
-			let prefix = prefixes
-				.as_ref()
-				.and_then(|p| p.get(entry.line_num.saturating_sub(1)))
-				.cloned()
-				.unwrap_or_else(|| entry.line_num.to_string());
-			rendered.push(format!("{}:{}", prefix, entry.content));
-		}
-
-		result.push(format!("{}:\n{}", filename, rendered.join("\n")));
-	}
-
-	result.join("\n\n")
-}
-
-struct RipgrepEntry {
-	line_num: usize,
-	content: String,
-	is_separator: bool,
-}
-
-// Parse "linenum<sep>content" from the rest portion of a ripgrep line.
-fn parse_line_num_and_content(rest: &str, sep: char) -> Option<(usize, String)> {
-	let pos = rest.find(sep)?;
-	let num_str = &rest[..pos];
-	let num: usize = num_str.parse().ok()?;
-	let content = &rest[pos + 1..];
-	Some((num, content.to_string()))
-}
-
-// Convert glob pattern to regex pattern for use with ripgrep
+// Convert glob pattern to regex pattern for filename filtering
 fn convert_glob_to_regex(glob_pattern: &str) -> String {
-	// Handle multiple patterns separated by |
 	let patterns: Vec<&str> = glob_pattern.split('|').collect();
 
 	if patterns.len() > 1 {
-		// Multiple patterns - convert each and join with |
 		let regex_patterns: Vec<String> = patterns
 			.iter()
 			.map(|p| convert_single_glob_to_regex(p.trim()))
 			.collect();
 		format!("({})", regex_patterns.join("|"))
 	} else {
-		// Single pattern
 		convert_single_glob_to_regex(glob_pattern)
 	}
 }
 
-// Convert a single glob pattern to regex
 fn convert_single_glob_to_regex(pattern: &str) -> String {
 	let mut regex = String::new();
 	let chars: Vec<char> = pattern.chars().collect();
@@ -251,16 +43,9 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 
 	while i < chars.len() {
 		match chars[i] {
-			'*' => {
-				// Convert * to .*? (non-greedy match any characters)
-				regex.push_str(".*?");
-			}
-			'?' => {
-				// Convert ? to . (match any single character)
-				regex.push('.');
-			}
+			'*' => regex.push_str(".*?"),
+			'?' => regex.push('.'),
 			'[' => {
-				// Character class - pass through as-is
 				regex.push('[');
 				i += 1;
 				while i < chars.len() && chars[i] != ']' {
@@ -272,14 +57,10 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 				}
 			}
 			c if "(){}^$+|\\".contains(c) => {
-				// Escape regex special characters
 				regex.push('\\');
 				regex.push(c);
 			}
-			c => {
-				// Regular character
-				regex.push(c);
-			}
+			c => regex.push(c),
 		}
 		i += 1;
 	}
@@ -287,7 +68,43 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 	regex
 }
 
-// Execute list_files command with PROPER content search vs file listing handling
+// Build an ignore::WalkBuilder with the given options
+fn build_walker(directory: &str, max_depth: Option<usize>, include_hidden: bool) -> WalkBuilder {
+	let mut builder = WalkBuilder::new(directory);
+	builder
+		.git_ignore(true)
+		.git_global(true)
+		.git_exclude(true)
+		.require_git(false)
+		.follow_links(false)
+		.hidden(!include_hidden);
+	if let Some(depth) = max_depth {
+		builder.max_depth(Some(depth));
+	}
+	builder
+}
+
+// Collect file paths from walker, relative to working_dir
+fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<String> {
+	let walker = builder.build();
+	let mut files: Vec<String> = Vec::new();
+	for entry in walker.flatten() {
+		let path = entry.path();
+		if !path.is_file() {
+			continue;
+		}
+		let rel = path
+			.strip_prefix(working_dir)
+			.unwrap_or(path)
+			.to_string_lossy()
+			.to_string();
+		files.push(rel);
+	}
+	files.sort();
+	files
+}
+
+// Execute list_directory — file listing or content search
 pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<String> {
 	let pattern = call
 		.parameters
@@ -315,80 +132,105 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.and_then(|v| v.as_i64())
 		.unwrap_or(0) as usize;
 
-	let mut cmd = Command::new("rg");
-
-	if let Some(depth) = max_depth {
-		cmd.arg("--max-depth").arg(depth.to_string());
-	}
-	if include_hidden {
-		cmd.arg("--hidden");
-	}
+	let working_dir = get_thread_working_directory();
+	let abs_dir = if Path::new(directory).is_absolute() {
+		std::path::PathBuf::from(directory)
+	} else {
+		working_dir.join(directory)
+	};
+	let abs_dir_str = abs_dir.to_string_lossy().to_string();
 
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
-	let (output_type, is_content_search) = if has_content {
-		let content_pattern = content.as_ref().unwrap();
-		cmd.arg("--line-number");
-		if context_lines > 0 {
-			cmd.arg("--context").arg(context_lines.to_string());
-		}
-		cmd.arg("-F").arg("--").arg(content_pattern);
-		cmd.arg(directory);
-		("content search", true)
-	} else {
-		cmd.arg("--files");
-		cmd.arg(directory);
-		("file listing", false)
-	};
 
-	let working_dir = get_thread_working_directory();
-	cmd.current_dir(&working_dir);
+	if has_content {
+		// Content search mode
+		let content_pattern = content.unwrap();
+		let content_pattern_clone = content_pattern.clone();
 
-	tracing::debug!(
-		"Executing list_directory ({}): rg {:?}",
-		output_type,
-		cmd.get_args().collect::<Vec<_>>()
-	);
+		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
+			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
+			let files = collect_file_paths(&mut builder, &working_dir);
 
-	let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
-		match cmd.output() {
-			Ok(output) => {
-				let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-				let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+			let hash_mode = is_hash_mode();
+			let mut file_results: Vec<String> = Vec::new();
 
-				if is_content_search {
-					let lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-					let grouped_output = group_ripgrep_output(&lines, &working_dir);
-					let output_str = if stdout.is_empty() && !stderr.is_empty() {
-						stderr
-					} else {
-						grouped_output
-					};
-					Ok(output_str)
+			for rel_path in &files {
+				let full_path = working_dir.join(rel_path);
+				let file_content = match std::fs::read_to_string(&full_path) {
+					Ok(c) => c,
+					Err(_) => continue, // skip unreadable files
+				};
+
+				// Skip likely binary files
+				let sample_size = file_content.len().min(512);
+				let null_count = file_content.as_bytes()[..sample_size]
+					.iter()
+					.filter(|&&b| b == 0)
+					.count();
+				if null_count > sample_size / 10 {
+					continue;
+				}
+
+				let blocks =
+					search::search_content(&file_content, &content_pattern_clone, context_lines);
+				if blocks.is_empty() {
+					continue;
+				}
+
+				let file_lines: Vec<&str> = file_content.lines().collect();
+				let prefixes: Vec<String> = if hash_mode {
+					compute_line_hashes(&file_lines)
 				} else {
-					let mut files: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-					if let Some(ref name_pattern) = pattern {
-						let regex_pattern = convert_glob_to_regex(name_pattern);
-						if let Ok(regex) = regex::Regex::new(&regex_pattern) {
-							files.retain(|file| regex.is_match(file));
+					(1..=file_lines.len()).map(|n| n.to_string()).collect()
+				};
+
+				let mut rendered_blocks: Vec<String> = Vec::new();
+				for block in &blocks {
+					let mut rendered = Vec::new();
+					for &n in &block.line_numbers {
+						let idx = n - 1;
+						if idx < file_lines.len() {
+							rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
 						}
 					}
-					let output_str = if stdout.is_empty() && !stderr.is_empty() {
-						stderr
-					} else {
-						files.join("\n")
-					};
-					Ok(output_str)
+					rendered_blocks.push(rendered.join("\n"));
+				}
+
+				file_results.push(format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")));
+			}
+
+			Ok(file_results.join("\n\n"))
+		})
+		.await;
+
+		match output {
+			Ok(Ok(s)) => Ok(s),
+			Ok(Err(e)) => bail!("{}", e),
+			Err(join_err) => bail!("Failed to execute content search: {}", join_err),
+		}
+	} else {
+		// File listing mode
+		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
+			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
+			let mut files = collect_file_paths(&mut builder, &working_dir);
+
+			// Apply glob pattern filter if provided
+			if let Some(ref name_pattern) = pattern {
+				let regex_pattern = convert_glob_to_regex(name_pattern);
+				if let Ok(regex) = regex::Regex::new(&regex_pattern) {
+					files.retain(|file| regex.is_match(file));
 				}
 			}
-			Err(e) => Err(format!("Failed to list directory: {}", e)),
-		}
-	})
-	.await;
 
-	match output {
-		Ok(Ok(s)) => Ok(s),
-		Ok(Err(e)) => bail!("{}", e),
-		Err(join_err) => bail!("Failed to execute directory listing: {}", join_err),
+			Ok(files.join("\n"))
+		})
+		.await;
+
+		match output {
+			Ok(Ok(s)) => Ok(s),
+			Ok(Err(e)) => bail!("{}", e),
+			Err(join_err) => bail!("Failed to execute directory listing: {}", join_err),
+		}
 	}
 }
 
@@ -398,153 +240,36 @@ mod tests {
 	use serde_json::json;
 
 	#[test]
-	fn test_parse_ripgrep_line_unix_path() {
-		let line = "/home/user/file.rs:123:println!(\"test\");";
-		let result = parse_ripgrep_line(line);
-		assert_eq!(
-			result,
-			Some((
-				"/home/user/file.rs".to_string(),
-				"123:println!(\"test\");".to_string()
-			))
-		);
-	}
-
-	#[test]
-	fn test_parse_ripgrep_line_windows_path() {
-		let line = "C:\\Users\\Test\\file.rs:123:println!(\"test\");";
-		let result = parse_ripgrep_line(line);
-		assert_eq!(
-			result,
-			Some((
-				"C:\\Users\\Test\\file.rs".to_string(),
-				"123:println!(\"test\");".to_string()
-			))
-		);
-	}
-
-	#[test]
-	fn test_parse_ripgrep_line_windows_path_with_spaces() {
-		let line = "C:\\Users\\Test User\\My File.rs:456:let x = 42;";
-		let result = parse_ripgrep_line(line);
-		assert_eq!(
-			result,
-			Some((
-				"C:\\Users\\Test User\\My File.rs".to_string(),
-				"456:let x = 42;".to_string()
-			))
-		);
-	}
-
-	#[test]
-	fn test_parse_ripgrep_dash_line_unix_path() {
-		let line = "/home/user/file.rs-123-some context line";
-		let result = parse_ripgrep_dash_line(line);
-		assert_eq!(
-			result,
-			Some((
-				"/home/user/file.rs".to_string(),
-				"123-some context line".to_string()
-			))
-		);
-	}
-
-	#[test]
-	fn test_parse_ripgrep_dash_line_windows_path() {
-		let line = "C:\\Users\\Test\\file.rs-123-some context line";
-		let result = parse_ripgrep_dash_line(line);
-		assert_eq!(
-			result,
-			Some((
-				"C:\\Users\\Test\\file.rs".to_string(),
-				"123-some context line".to_string()
-			))
-		);
-	}
-
-	#[test]
-	fn test_parse_ripgrep_line_invalid_format() {
-		let line = "just some text without proper format";
-		let result = parse_ripgrep_line(line);
-		assert_eq!(result, None);
-	}
-
-	#[test]
-	fn test_parse_ripgrep_line_single_colon() {
-		let line = "C:\\Users\\file.rs";
-		let result = parse_ripgrep_line(line);
-		assert_eq!(result, None);
-	}
-	#[test]
 	fn test_content_search_with_special_chars() {
-		// Create a mock tool call with content parameter containing special regex characters
-		let _call = McpToolCall {
-			tool_name: "view".to_string(),
-			tool_id: "test_id".to_string(),
-			parameters: json!({
-				"directory": "src",
-				"content": "backward_step()"
-			}),
-		};
-
-		// Use std::process::Command::new to create a command and inspect its arguments
-		let mut cmd = Command::new("rg");
-		cmd.arg("--line-number");
-
-		// Add the -F flag and content pattern
-		cmd.arg("-F").arg("backward_step()");
-		cmd.arg("src");
-
-		// Get the arguments as a Vec<String> for comparison
-		let args: Vec<String> = cmd
-			.get_args()
-			.map(|arg| arg.to_string_lossy().to_string())
-			.collect();
-
-		// Verify the command contains the -F flag followed by the content pattern
-		assert!(args.contains(&"-F".to_string()));
-		assert!(args.contains(&"backward_step()".to_string()));
-
-		// Verify the order: -F should come before the pattern
-		let f_index = args.iter().position(|arg| arg == "-F").unwrap();
-		let pattern_index = args
-			.iter()
-			.position(|arg| arg == "backward_step()")
-			.unwrap();
-		assert!(
-			f_index < pattern_index,
-			"-F flag should come before the pattern"
-		);
+		// Verify that special regex characters in patterns are treated as literals
+		let content = "line1\nbackward_step()\nline3\n";
+		let blocks = search::search_content(content, "backward_step()", 0);
+		assert_eq!(blocks.len(), 1);
+		assert_eq!(blocks[0].line_numbers, vec![2]);
 	}
 
 	#[tokio::test]
 	async fn test_list_files_empty_content_should_list_files() {
-		// CRITICAL TEST: When content is empty string "", should do file listing, NOT content search
-		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
-		// Create a temporary directory with test files
 		let temp_dir = TempDir::new().unwrap();
 		let temp_path = temp_dir.path();
 
-		// Create some test files
 		for i in 1..=5 {
 			let file_path = temp_path.join(format!("test_file_{}.txt", i));
 			fs::write(&file_path, format!("Content of file {}", i)).unwrap();
 		}
 
-		// Create a specific file that would match the pattern
 		let config_path = temp_path.join("config.json");
 		fs::write(&config_path, "{}").unwrap();
 
-		// Test with EMPTY content string - should do file listing, not content search
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.json",
-				"content": ""  // Empty content - should list files, not search
+				"content": ""
 			}),
 			tool_id: "test-call-id".to_string(),
 		};
@@ -559,38 +284,30 @@ mod tests {
 		.await
 		.unwrap();
 
-		// Should contain the config.json file
 		assert!(result.contains("config.json"));
 	}
 
 	#[tokio::test]
 	async fn test_list_files_no_content_parameter_should_list_files() {
-		// CRITICAL TEST: When content parameter is not provided at all, should do file listing
-		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
-		// Create a temporary directory with test files
 		let temp_dir = TempDir::new().unwrap();
 		let temp_path = temp_dir.path();
 
-		// Create some test files
 		for i in 1..=5 {
 			let file_path = temp_path.join(format!("test_file_{}.txt", i));
 			fs::write(&file_path, format!("Content of file {}", i)).unwrap();
 		}
 
-		// Create a specific file that would match the pattern
 		let config_path = temp_path.join("config.json");
 		fs::write(&config_path, "{}").unwrap();
 
-		// Test WITHOUT content parameter - should do file listing, not content search
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.json"
-				// No "content" key at all
 			}),
 			tool_id: "test-call-id".to_string(),
 		};
@@ -605,38 +322,31 @@ mod tests {
 		.await
 		.unwrap();
 
-		// Should contain the config.json file
 		assert!(result.contains("config.json"));
 	}
 
 	#[tokio::test]
 	async fn test_list_files_whitespace_content_should_list_files() {
-		// CRITICAL TEST: When content is only whitespace, should do file listing, NOT content search
-		use crate::mcp::fs::directory::list_directory;
 		use std::fs;
 		use tempfile::TempDir;
 
-		// Create a temporary directory with test files
 		let temp_dir = TempDir::new().unwrap();
 		let temp_path = temp_dir.path();
 
-		// Create some test files
 		for i in 1..=5 {
 			let file_path = temp_path.join(format!("test_file_{}.txt", i));
 			fs::write(&file_path, format!("Content of file {}", i)).unwrap();
 		}
 
-		// Create a specific file that would match the pattern
 		let config_path = temp_path.join("config.json");
 		fs::write(&config_path, "{}").unwrap();
 
-		// Test with whitespace-only content - should do file listing, not content search
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"directory": temp_path.to_str().unwrap(),
 				"pattern": "*.json",
-				"content": "   "  // Whitespace only - should list files, not search
+				"content": "   "
 			}),
 			tool_id: "test-call-id".to_string(),
 		};
@@ -651,7 +361,6 @@ mod tests {
 		.await
 		.unwrap();
 
-		// Should contain the config.json file
 		assert!(result.contains("config.json"));
 	}
 }

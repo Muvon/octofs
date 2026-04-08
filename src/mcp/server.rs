@@ -45,7 +45,7 @@ pub struct ViewParams {
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
 	pub pattern: Option<String>,
-	/// Content search string (ripgrep). Only used when path is a directory.
+	/// Content search string (fixed-string match). Only used when path is a directory.
 	#[serde(default)]
 	pub content: Option<String>,
 	/// Maximum directory traversal depth.
@@ -455,7 +455,7 @@ impl OctofsServer {
 
 **Directory** (path is a directory):
 - List: `{"paths": ["src/"]}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
-- Search content (ripgrep): `{"paths": ["src"], "content": "fn main"}`
+- Search content: `{"paths": ["src"], "content": "fn main"}`
 - Hidden files: `"include_hidden": true`
 
 IMPORTANT: Hash prefixes like `a3bd: ` are for reference only. When editing via `text_editor` or `batch_edit`, use raw file content — never include the hash prefix."#
@@ -470,7 +470,7 @@ IMPORTANT: Hash prefixes like `a3bd: ` are for reference only. When editing via 
 
 **Directory** (path is a directory):
 - List: `{"paths": ["src/"]}` — filter: `"pattern": "*.rs"`, depth: `"max_depth": 2`
-- Search content (ripgrep): `{"paths": ["src"], "content": "fn main"}`
+- Search content: `{"paths": ["src"], "content": "fn main"}`
 - Hidden files: `"include_hidden": true`"#
 			}.into());
 		}

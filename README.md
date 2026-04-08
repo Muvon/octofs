@@ -42,7 +42,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart—but it's **
 | Feature | Octofs | Others |
 |---------|--------|--------|
 | **Speed** | Rust-powered, sub-millisecond responses | Python-based, slower |
-| **Content Search** | Ripgrep-powered content search with context | String matching only |
+| **Content Search** | Built-in content search with context lines | String matching only |
 | **Batch Operations** | Atomic multi-file edits | One-at-a-time |
 | **Safety** | Gitignore-aware, path validation | Full filesystem access |
 | **Shell Integration** | Background process support | Limited or none |
@@ -96,7 +96,7 @@ cd octofs && cargo build --release
 - **Line Extraction** — Copy specific line ranges between files
 
 ### 🔍 Code Intelligence
-- **Content Search** — Ripgrep-powered search with context lines and line numbers
+- **Content Search** — Built-in search with context lines and line numbers
 - **Signature Extraction** — Get function signatures without implementation noise
 - **Semantic Search** — Find code by what it does, not what it's called
 

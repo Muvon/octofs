@@ -53,7 +53,7 @@
           },
           "content": {
             "type": "string",
-            "description": "Content search string (ripgrep). Only used when path is a directory."
+            "description": "Content search string (fixed-string match). Only used when path is a directory."
           },
           "max_depth": {
             "type": "integer",

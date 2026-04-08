@@ -17,6 +17,7 @@
 pub mod core;
 pub mod directory;
 pub mod file_ops;
+pub mod search;
 pub mod shell;
 pub mod text_editing;
 pub mod workdir;

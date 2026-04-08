@@ -22,9 +22,6 @@ jobs:
       with:
         components: rustfmt, clippy
 
-    - name: Install ripgrep
-      run: cargo install ripgrep --locked
-
     - name: Cache dependencies
       uses: actions/cache@v4
       with:
@@ -64,9 +61,6 @@ jobs:
       with:
         components: clippy
 
-    - name: Install ripgrep
-      run: cargo install ripgrep --locked
-
     - name: Cache dependencies
       uses: actions/cache@v4
       with:
@@ -102,9 +96,6 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-
-    - name: Install ripgrep
-      run: cargo install ripgrep --locked
 
     - name: Cache dependencies
       uses: actions/cache@v4

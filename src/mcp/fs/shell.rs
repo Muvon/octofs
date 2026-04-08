@@ -80,7 +80,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str, &str)] = &[
 	(
 		&["grep", "egrep", "fgrep", "rg"],
 		"view",
-		"⚠️ Prefer `view` with content= for text search (.gitignore-aware). Use shell grep only for unsupported raw flags.",
+		"⚠️ Use `view` with content= to search for text in files or directories (gitignore-aware, context lines, line numbers).",
 	),
 	(
 		&["find", "ls"],
