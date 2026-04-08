@@ -28,7 +28,6 @@
     - `core.rs` - Core file operations (read, write, create)
     - `text_editing.rs` - Text editing operations (str_replace, batch_edit)
     - `directory.rs` - Directory operations (list, search, traverse)
-    - `ast_grep.rs` - AST-based code analysis and refactoring
     - `shell.rs` - Shell command execution with background support
     - `workdir.rs` - Working directory context management
     - `file_ops.rs` - File operation utilities
@@ -80,12 +79,6 @@ Each filesystem tool is implemented as a separate function in `src/mcp/fs/functi
 - Preserve source file
 
 ### Code Analysis
-
-**ast_grep** - Search and refactor code using AST patterns
-- Pattern matching with metavariables
-- Code refactoring with rewrites
-- Language-specific parsing
-- Context-aware matching
 
 **view_signatures** - Extract function signatures and declarations
 - Function signatures
@@ -388,4 +381,3 @@ octofs 2>&1 | grep -i error
 - [MCP Specification](https://modelcontextprotocol.io/)
 - [Tokio Documentation](https://tokio.rs/)
 - [Rust Error Handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html)
-- [AST Grep Documentation](https://ast-grep.github.io/)

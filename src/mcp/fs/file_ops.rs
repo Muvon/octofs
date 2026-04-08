@@ -14,6 +14,7 @@
 
 // File operations module - handling file viewing, creation, and basic manipulation
 
+use super::core::resolve_path;
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, bail, Result};
@@ -236,8 +237,8 @@ pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
 
 	// Process each file in the list
 	for path_str in paths {
-		let path = Path::new(&path_str);
-		let path_display = path.display().to_string();
+		let path = resolve_path(path_str);
+		let path_display = path_str.to_string();
 
 		// Add file header
 		result_parts.push(path_display.clone());
@@ -252,7 +253,7 @@ pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
 		if path.is_dir() {
 			// Handle directory case - list contents like view command does
 			let mut entries = Vec::new();
-			if let Ok(mut read_dir) = tokio_fs::read_dir(path).await {
+			if let Ok(mut read_dir) = tokio_fs::read_dir(&path).await {
 				while let Ok(Some(entry)) = read_dir.next_entry().await {
 					let name = entry.file_name().to_string_lossy().to_string();
 					if let Ok(file_type) = entry.file_type().await {
@@ -279,7 +280,7 @@ pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
 		}
 
 		// Check file size - avoid loading very large files
-		let _metadata = match tokio_fs::metadata(path).await {
+		let _metadata = match tokio_fs::metadata(&path).await {
 			Ok(meta) => {
 				if meta.len() > 1024 * 1024 * 5 {
 					// 5MB limit
@@ -308,7 +309,7 @@ pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
 		}
 
 		// Read file content with error handling
-		let content = match tokio_fs::read_to_string(path).await {
+		let content = match tokio_fs::read_to_string(&path).await {
 			Ok(content) => content,
 			Err(_) => {
 				result_parts.push("✗ Permission denied. Cannot read file".to_string());
@@ -348,8 +349,8 @@ pub async fn view_many_files(paths: &[String]) -> Result<String> {
 
 	// Process each file in the list
 	for path_str in paths {
-		let path = Path::new(&path_str);
-		let path_display = path.display().to_string();
+		let path = resolve_path(path_str);
+		let path_display = path_str.to_string();
 
 		// Add file header
 		result_parts.push(path_display.clone());
@@ -364,7 +365,7 @@ pub async fn view_many_files(paths: &[String]) -> Result<String> {
 		if path.is_dir() {
 			// Handle directory case - list contents like view command does
 			let mut entries = Vec::new();
-			if let Ok(mut read_dir) = tokio_fs::read_dir(path).await {
+			if let Ok(mut read_dir) = tokio_fs::read_dir(&path).await {
 				while let Ok(Some(entry)) = read_dir.next_entry().await {
 					let name = entry.file_name().to_string_lossy().to_string();
 					if let Ok(file_type) = entry.file_type().await {
@@ -391,7 +392,7 @@ pub async fn view_many_files(paths: &[String]) -> Result<String> {
 		}
 
 		// Check file size - avoid loading very large files
-		let _metadata = match tokio_fs::metadata(path).await {
+		let _metadata = match tokio_fs::metadata(&path).await {
 			Ok(meta) => {
 				if meta.len() > 1024 * 1024 * 5 {
 					// 5MB limit
@@ -420,7 +421,7 @@ pub async fn view_many_files(paths: &[String]) -> Result<String> {
 		}
 
 		// Read file content with error handling
-		let content = match tokio_fs::read_to_string(path).await {
+		let content = match tokio_fs::read_to_string(&path).await {
 			Ok(content) => content,
 			Err(_) => {
 				result_parts.push("✗ Permission denied. Cannot read file".to_string());

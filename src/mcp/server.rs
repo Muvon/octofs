@@ -409,30 +409,6 @@ pub struct ShellParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct AstGrepParams {
-	/// The AST pattern to search for
-	pub pattern: String,
-	/// Optional language of the code
-	#[serde(default)]
-	pub language: Option<String>,
-	/// Optional rewrite pattern for refactoring
-	#[serde(default)]
-	pub rewrite: Option<String>,
-	/// Optional array of file paths to search within
-	#[serde(default)]
-	pub paths: Option<Vec<String>>,
-	/// Optional context lines around matches
-	#[serde(default)]
-	pub context: Option<usize>,
-	/// Apply rewrites to all matches without confirmation
-	#[serde(default)]
-	pub update_all: Option<bool>,
-	/// Output in JSON format
-	#[serde(default)]
-	pub json_output: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
 	/// Optional path to set as new working directory
 	#[serde(default)]
@@ -716,35 +692,6 @@ Examples:
 		with_hints(fs::execute_shell_command(&make_call("shell", &params)).await)
 	}
 
-	/// Search and refactor code using AST patterns.
-	#[tool(
-		name = "ast_grep",
-		description = "Search and refactor code using AST patterns with ast-grep.
-
-Pattern syntax:
-- `$VAR` — matches ONE AST node
-- `$$$VAR` — matches ZERO or more nodes (use for parameter lists, arguments, body)
-- `$_` — wildcard, matches one node without capturing
-
-Patterns are structurally exact — every element you include must be present, every element you omit must be absent.
-`fn $F($$$A) { $$$B }` does NOT match `fn foo() -> Bar {}` (missing return type in pattern).
-
-Common patterns:
-- `console.log($$$)` — find all console.log calls
-- `fn $NAME($$$ARGS) -> $RET { $$$BODY }` — Rust functions with return type
-- `def $NAME($$$ARGS): $$$` — Python functions
-
-Refactoring: set `rewrite` to transform matches. Same metavariables carry captured content.
-- pattern: `oldFunc($$$ARGS)`, rewrite: `newFunc($$$ARGS)`",
-		annotations(read_only_hint = false)
-	)]
-	async fn ast_grep(
-		&self,
-		Parameters(params): Parameters<AstGrepParams>,
-	) -> Result<String, String> {
-		with_hints(fs::execute_ast_grep_command(&make_call("ast_grep", &params)).await)
-	}
-
 	/// Get or set working directory context.
 	#[tool(
 		name = "workdir",
@@ -775,7 +722,7 @@ impl ServerHandler for OctofsServer {
 				"This server provides filesystem tools: view (read files/dirs), \
 			 text_editor (create/str_replace/undo), batch_edit (multi-op line edits), \
 			 extract_lines (copy lines between files), shell (execute commands), \
-			 ast_grep (AST-aware code search/refactor), workdir (get/set working directory)."
+			 workdir (get/set working directory)."
 					.to_string(),
 			)
 	}

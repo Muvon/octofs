@@ -14,7 +14,6 @@
 
 // File System MCP provider - modular structure
 
-pub mod ast_grep;
 pub mod core;
 pub mod directory;
 pub mod file_ops;
@@ -28,6 +27,5 @@ mod fs_tests;
 // Re-export main functionality
 pub use core::{execute_batch_edit, execute_extract_lines, execute_text_editor, execute_view};
 
-pub use ast_grep::execute_ast_grep_command;
 pub use shell::execute_shell_command;
 pub use workdir::execute_workdir_command;

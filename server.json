@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Muvon/octofs",
-  "description": "Standalone MCP filesystem tools server — view, edit, shell, ast-grep, workdir.",
+  "description": "Standalone MCP filesystem tools server — view, edit, shell, workdir.",
   "name_for_human": "Octofs",
   "name_for_model": "octofs",
   "version": "0.2.1",
@@ -189,48 +189,6 @@
       }
     },
     {
-      "name": "ast_grep",
-      "description": "Search and refactor code using AST patterns with ast-grep. Understands code structure — superior to regex for code transformations.",
-      "inputSchema": {
-        "type": "object",
-        "required": ["pattern"],
-        "properties": {
-          "pattern": {
-            "type": "string",
-            "description": "The AST pattern to search for. Use metavariables ($NAME, $$$) to match code structure."
-          },
-          "paths": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Optional array of file paths or glob patterns to search within (default: current directory)."
-          },
-          "language": {
-            "type": "string",
-            "description": "Optional language of the code (e.g., 'rust', 'javascript', 'python', 'typescript', 'go', 'java', 'c', 'cpp', 'php')."
-          },
-          "rewrite": {
-            "type": "string",
-            "description": "Optional rewrite pattern to apply for refactoring transformations."
-          },
-          "json_output": {
-            "type": "boolean",
-            "default": false,
-            "description": "Optional boolean to get output in JSON format (default: false)."
-          },
-          "context": {
-            "type": "integer",
-            "default": 0,
-            "description": "Optional number of lines of context to show around matches (default: 0)."
-          },
-          "update_all": {
-            "type": "boolean",
-            "default": false,
-            "description": "Optional boolean to apply rewrites to all matches without confirmation (default: false)."
-          }
-        }
-      }
-    },
-    {
       "name": "shell",
       "description": "Execute a command in the shell. Returns stdout+stderr combined, with success/failure indication. Each command runs in its own process — state does not persist between calls.",
       "inputSchema": {
@@ -269,5 +227,5 @@
     }
   ],
   "categories": ["developer-tools", "filesystem"],
-  "tags": ["filesystem", "mcp", "ai-tools", "ast-grep", "shell", "file-editing"]
+  "tags": ["filesystem", "mcp", "ai-tools", "shell", "file-editing"]
 }

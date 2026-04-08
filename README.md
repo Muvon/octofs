@@ -42,7 +42,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart—but it's **
 | Feature | Octofs | Others |
 |---------|--------|--------|
 | **Speed** | Rust-powered, sub-millisecond responses | Python-based, slower |
-| **AST Intelligence** | Built-in `ast-grep` for semantic code search | String matching only |
+| **Content Search** | Ripgrep-powered content search with context | String matching only |
 | **Batch Operations** | Atomic multi-file edits | One-at-a-time |
 | **Safety** | Gitignore-aware, path validation | Full filesystem access |
 | **Shell Integration** | Background process support | Limited or none |
@@ -96,7 +96,7 @@ cd octofs && cargo build --release
 - **Line Extraction** — Copy specific line ranges between files
 
 ### 🔍 Code Intelligence
-- **AST Search** — Find code by structure, not just text (`ast-grep` powered)
+- **Content Search** — Ripgrep-powered search with context lines and line numbers
 - **Signature Extraction** — Get function signatures without implementation noise
 - **Semantic Search** — Find code by what it does, not what it's called
 
@@ -112,7 +112,7 @@ cd octofs && cargo build --release
 You: Find all uses of the old API and migrate to v2
 
 AI with Octofs:
-1. ast-grep search for deprecated patterns
+1. Content search for deprecated patterns across files
 2. View all 23 occurrences across 8 files
 3. Generate batch edits with context
 4. Apply with your review
@@ -147,8 +147,7 @@ AI with Octofs:
 | `view` | Read files, list directories, search content | `view path="src" pattern="*.rs"` |
 | `text_editor` | Create, edit, replace text | `text_editor path="main.rs" command="str_replace"` |
 | `batch_edit` | Atomic multi-file operations | `batch_edit edits=[{...}, {...}]` |
-| `ast_grep` | Structural code search | `ast_grep pattern="fn $NAME($$$ARGS)"` |
-| `view_signatures` | Extract function signatures | `view_signatures path="src/lib.rs"` |
+| `extract_lines` | Copy lines between files | `extract_lines from_path="a.rs" append_path="b.rs"` |
 | `shell` | Execute commands | `shell command="cargo test"` |
 | `workdir` | Manage working directory | `workdir action="set" path="/project"` |
 
@@ -164,7 +163,6 @@ octofs/
 │       └── fs/           # Filesystem tools
 │           ├── core.rs       # File operations
 │           ├── text_editing.rs  # Batch edits
-│           ├── ast_grep.rs      # Code analysis
 │           ├── shell.rs         # Command execution
 │           └── workdir.rs       # Context management
 └── src/utils/            # Utilities (glob, truncation)

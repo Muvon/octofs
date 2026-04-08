@@ -26,7 +26,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-	/// Start MCP server exposing filesystem tools (view, text_editor, batch_edit, shell, ast_grep, workdir, extract_lines)
+	/// Start MCP server exposing filesystem tools (view, text_editor, batch_edit, shell, workdir, extract_lines)
 	Mcp {
 		/// Working directory for filesystem operations (default: current directory)
 		#[arg(long, value_name = "PATH")]

@@ -79,8 +79,8 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str, &str)] = &[
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"ast_grep",
-		"⚠️ Prefer `ast_grep` for code search or `view` with content= for text search (.gitignore-aware). Use shell grep only for unsupported raw flags.",
+		"view",
+		"⚠️ Prefer `view` with content= for text search (.gitignore-aware). Use shell grep only for unsupported raw flags.",
 	),
 	(
 		&["find", "ls"],
