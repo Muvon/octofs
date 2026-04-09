@@ -2648,7 +2648,7 @@ mod tests {
 
 		let content = execute_view(&call).await.unwrap();
 		assert!(
-			content.contains("5: line 5"),
+			content.contains("5:line 5"),
 			"Should show last line: {}",
 			content
 		);
@@ -2665,7 +2665,7 @@ mod tests {
 
 		let content = execute_view(&call).await.unwrap();
 		assert!(
-			content.contains("4: line 4"),
+			content.contains("4:line 4"),
 			"Should show second-to-last line: {}",
 			content
 		);
@@ -2682,17 +2682,17 @@ mod tests {
 
 		let content = execute_view(&call).await.unwrap();
 		assert!(
-			content.contains("3: line 3"),
+			content.contains("3:line 3"),
 			"Should show line 3: {}",
 			content
 		);
 		assert!(
-			content.contains("4: line 4"),
+			content.contains("4:line 4"),
 			"Should show line 4: {}",
 			content
 		);
 		assert!(
-			content.contains("5: line 5"),
+			content.contains("5:line 5"),
 			"Should show line 5: {}",
 			content
 		);
@@ -2709,17 +2709,17 @@ mod tests {
 
 		let content = execute_view(&call).await.unwrap();
 		assert!(
-			content.contains("2: line 2"),
+			content.contains("2:line 2"),
 			"Should show line 2: {}",
 			content
 		);
 		assert!(
-			content.contains("3: line 3"),
+			content.contains("3:line 3"),
 			"Should show line 3: {}",
 			content
 		);
 		assert!(
-			content.contains("4: line 4"),
+			content.contains("4:line 4"),
 			"Should show line 4: {}",
 			content
 		);
@@ -3023,7 +3023,7 @@ mod tests {
 
 		let content = execute_view(&call).await.unwrap();
 		assert!(
-			content.contains("1: only line"),
+			content.contains("1:only line"),
 			"Should show the only line: {}",
 			content
 		);
@@ -3144,11 +3144,11 @@ mod tests {
 
 		let content = execute_view(&call).await.unwrap();
 		assert!(
-			content.contains("1: line one"),
+			content.contains("1:line one"),
 			"Should show line 1: {content}"
 		);
 		assert!(
-			content.contains("2: line two"),
+			content.contains("2:line two"),
 			"Should show line 2: {content}"
 		);
 	}
@@ -4428,8 +4428,8 @@ mod tests {
 
 		// Must contain the matched line with a number prefix (no "-" marker)
 		assert!(
-			output.contains("3: gamma"),
-			"expected '3: gamma', got: {output}"
+			output.contains("3:gamma"),
+			"expected '3:gamma', got: {output}"
 		);
 		// Must NOT contain rg-style separators
 		assert!(
@@ -4473,9 +4473,9 @@ mod tests {
 		let output = execute_view(&call).await.unwrap();
 
 		// Match + 1 context line on each side
-		assert!(output.contains("2: beta"), "context before: {output}");
-		assert!(output.contains("3: gamma"), "match line: {output}");
-		assert!(output.contains("4: delta"), "context after: {output}");
+		assert!(output.contains("2:beta"), "context before: {output}");
+		assert!(output.contains("3:gamma"), "match line: {output}");
+		assert!(output.contains("4:delta"), "context after: {output}");
 		// Context lines must NOT have a "-" prefix
 		assert!(
 			!output.contains("-beta"),
@@ -4501,8 +4501,8 @@ mod tests {
 		};
 		let output = execute_view(&call).await.unwrap();
 
-		assert!(output.contains("7: eta"), "first match: {output}");
-		assert!(output.contains("8: theta"), "second match: {output}");
+		assert!(output.contains("7:eta"), "first match: {output}");
+		assert!(output.contains("8:theta"), "second match: {output}");
 	}
 
 	#[tokio::test]
@@ -4519,7 +4519,7 @@ mod tests {
 		};
 		let output = execute_view(&call).await.unwrap();
 		// Single match, no separator needed
-		assert!(output.contains("1: a"), "match: {output}");
+		assert!(output.contains("1:a"), "match: {output}");
 		assert!(
 			!output.contains("\n--\n"),
 			"no separator for single block: {output}"

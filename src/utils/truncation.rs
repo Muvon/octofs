@@ -82,23 +82,23 @@ pub fn format_content_with_line_numbers(
 
 		if start_idx > 3 {
 			for (i, line) in lines.iter().enumerate().take(2) {
-				result_lines.push(format!("{}: {}", prefixes[i], line));
+				result_lines.push(format!("{}:{}", prefixes[i], line));
 			}
 			if start_idx > 5 {
 				result_lines.push(format!("[...{} lines more]", start_idx - 2));
 			} else {
 				for (i, line) in lines.iter().enumerate().take(start_idx).skip(2) {
-					result_lines.push(format!("{}: {}", prefixes[i], line));
+					result_lines.push(format!("{}:{}", prefixes[i], line));
 				}
 			}
 		} else {
 			for (i, line) in lines.iter().enumerate().take(start_idx) {
-				result_lines.push(format!("{}: {}", prefixes[i], line));
+				result_lines.push(format!("{}:{}", prefixes[i], line));
 			}
 		}
 
 		for (i, line) in lines.iter().enumerate().take(end_idx).skip(start_idx) {
-			result_lines.push(format!("{}: {}", prefixes[i], line));
+			result_lines.push(format!("{}:{}", prefixes[i], line));
 		}
 
 		let remaining_lines = lines.len() - end_idx;
@@ -106,16 +106,16 @@ pub fn format_content_with_line_numbers(
 			if remaining_lines > 5 {
 				result_lines.push(format!("[...{} lines more]", remaining_lines - 2));
 				for (i, line) in lines.iter().enumerate().skip(lines.len() - 2) {
-					result_lines.push(format!("{}: {}", prefixes[i], line));
+					result_lines.push(format!("{}:{}", prefixes[i], line));
 				}
 			} else {
 				for (i, line) in lines.iter().enumerate().skip(end_idx) {
-					result_lines.push(format!("{}: {}", prefixes[i], line));
+					result_lines.push(format!("{}:{}", prefixes[i], line));
 				}
 			}
 		} else {
 			for (i, line) in lines.iter().enumerate().skip(end_idx) {
-				result_lines.push(format!("{}: {}", prefixes[i], line));
+				result_lines.push(format!("{}:{}", prefixes[i], line));
 			}
 		}
 
@@ -124,7 +124,7 @@ pub fn format_content_with_line_numbers(
 		lines
 			.iter()
 			.enumerate()
-			.map(|(i, line)| format!("{}: {}", prefixes[i], line))
+			.map(|(i, line)| format!("{}:{}", prefixes[i], line))
 			.collect::<Vec<_>>()
 			.join("\n")
 	}
@@ -157,7 +157,7 @@ pub fn format_extracted_content_smart(
 		lines
 			.iter()
 			.enumerate()
-			.map(|(i, line)| format!("{}: {}", prefixes[i], line))
+			.map(|(i, line)| format!("{}:{}", prefixes[i], line))
 			.collect::<Vec<_>>()
 			.join("\n")
 	} else {
@@ -167,7 +167,7 @@ pub fn format_extracted_content_smart(
 		let mut result_lines = Vec::new();
 
 		for (i, line) in lines.iter().enumerate().take(show_first) {
-			result_lines.push(format!("{}: {}", prefixes[i], line));
+			result_lines.push(format!("{}:{}", prefixes[i], line));
 		}
 
 		let hidden_lines = lines.len() - show_first - show_last;
@@ -175,7 +175,7 @@ pub fn format_extracted_content_smart(
 
 		let skip_count = lines.len() - show_last;
 		for (i, line) in lines.iter().enumerate().skip(skip_count) {
-			result_lines.push(format!("{}: {}", prefixes[i], line));
+			result_lines.push(format!("{}:{}", prefixes[i], line));
 		}
 
 		result_lines.join("\n")

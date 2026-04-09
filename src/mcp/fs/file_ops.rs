@@ -136,7 +136,7 @@ pub async fn view_file_with_content_search(
 		let mut rendered = Vec::new();
 		for &n in &block.line_numbers {
 			let idx = n - 1;
-			rendered.push(format!("{}: {}", prefixes[idx], file_lines[idx]));
+			rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
 		}
 		parts.push(rendered.join("\n"));
 	}
