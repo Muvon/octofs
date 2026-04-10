@@ -39,6 +39,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -230,6 +231,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -259,6 +261,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -288,6 +291,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -312,6 +316,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -335,6 +340,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -363,6 +369,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -393,6 +400,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -417,6 +425,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -449,6 +458,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -477,6 +487,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -501,6 +512,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -523,6 +535,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -764,6 +777,7 @@ mod tests {
 				"pattern": "*.txt"
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 		};
 
 		let output = list_directory(
@@ -793,6 +807,7 @@ mod tests {
 				"pattern": "*_01.txt"
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 		};
 
 		let output_limited = list_directory(
@@ -847,6 +862,7 @@ mod tests {
 				"max_lines": 0  // unlimited
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 		};
 
 		let output = list_directory(
@@ -878,6 +894,7 @@ mod tests {
 				"max_lines": 0
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 		};
 
 		let output_with_context = list_directory(
@@ -932,6 +949,7 @@ mod tests {
 				"pattern": "*.rs"
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 		};
 
 		let file_list_str = list_directory(
@@ -953,6 +971,7 @@ mod tests {
 				"content": "println!"
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 		};
 
 		let content_search_str = list_directory(
@@ -1005,6 +1024,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1128,6 +1148,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1155,6 +1176,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1180,6 +1202,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1208,6 +1231,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1235,6 +1259,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1262,6 +1287,7 @@ mod tests {
 		// Test missing from_path
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_range": [1, 1],
@@ -1281,6 +1307,7 @@ mod tests {
 		// Test invalid from_range format
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -1300,6 +1327,7 @@ mod tests {
 		// Test empty from_path
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": "",
@@ -1324,6 +1352,7 @@ mod tests {
 	async fn create_batch_edit_call(path: &str, operations: serde_json::Value) -> McpToolCall {
 		McpToolCall {
 			tool_id: "test_batch_edit".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -1474,6 +1503,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "text_editor".to_string(),
 			parameters: json!({
 				"command": "batch_edit",
@@ -1850,6 +1880,7 @@ mod tests {
 						"path": p,
 						"operations": [{"operation": "insert", "line_range": 0, "content": format!("marker_{}", i)}]
 					}),
+					workdir: std::env::current_dir().unwrap_or_default(),
 				};
 				crate::mcp::fs::core::execute_batch_edit(&call)
 					.await
@@ -2246,6 +2277,7 @@ mod tests {
 		// Manually construct the call with integer line_range for replace
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -2639,6 +2671,7 @@ mod tests {
 		// Test -1 (last line)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -2656,6 +2689,7 @@ mod tests {
 		// Test -2 (second-to-last line)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -2673,6 +2707,7 @@ mod tests {
 		// Test range with negative indices
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -2700,6 +2735,7 @@ mod tests {
 		// Test mixed positive and negative indices
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -2738,6 +2774,7 @@ mod tests {
 		// Test negative index beyond file length
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -2769,6 +2806,7 @@ mod tests {
 		// Test extracting last line with -1
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -2787,6 +2825,7 @@ mod tests {
 		fs::write(&target_path, "").await.unwrap(); // Clear target
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -2809,6 +2848,7 @@ mod tests {
 		fs::write(&target_path, "").await.unwrap(); // Clear target
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -2843,6 +2883,7 @@ mod tests {
 		// Test negative index beyond file length
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
@@ -2874,6 +2915,7 @@ mod tests {
 		// Test replacing last line with negative index
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": file_path.to_string_lossy(),
@@ -2906,6 +2948,7 @@ mod tests {
 			.unwrap();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": file_path.to_string_lossy(),
@@ -2943,6 +2986,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": file_path.to_string_lossy(),
@@ -2981,6 +3025,7 @@ mod tests {
 		// Test negative index beyond file length
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": file_path.to_string_lossy(),
@@ -3014,6 +3059,7 @@ mod tests {
 		// Test -1 on single line file
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -3031,6 +3077,7 @@ mod tests {
 		// Test -2 on single line file (should fail)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
@@ -3062,6 +3109,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": temp_dir.path().to_string_lossy() }),
 		};
@@ -3086,6 +3134,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": temp_dir.path().to_string_lossy(),
@@ -3113,6 +3162,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": temp_dir.path().to_string_lossy(),
@@ -3138,6 +3188,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": file_path.to_string_lossy() }),
 		};
@@ -3158,6 +3209,7 @@ mod tests {
 		// view with no paths must return a clear error, not panic
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({}),
 		};
@@ -4205,6 +4257,7 @@ mod tests {
 		// Replace "beta" line using its hash range
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -4234,6 +4287,7 @@ mod tests {
 		// Insert after "first" using its hash
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -4263,6 +4317,7 @@ mod tests {
 		// Replace lines b-d using hash range
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -4287,6 +4342,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -4339,6 +4395,7 @@ mod tests {
 		// Intentionally swap: pass line3's hash as start, line1's hash as end
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -4396,6 +4453,7 @@ mod tests {
 		// Replace only the second "}" (line 2) using its specific hash
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
@@ -4421,6 +4479,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "content": "gamma" }),
 		};
@@ -4449,6 +4508,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "content": "zzznomatch" }),
 		};
@@ -4467,6 +4527,7 @@ mod tests {
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "content": "gamma", "context": 1 }),
 		};
@@ -4496,6 +4557,7 @@ mod tests {
 		// "eta" matches line 7 (eta) and line 8 (theta contains eta)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "content": "eta" }),
 		};
@@ -4514,6 +4576,7 @@ mod tests {
 		// Match "a" (line 1) and "j" (line 10) with no context — they are non-adjacent
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "content": "a" }),
 		};
@@ -4535,6 +4598,7 @@ mod tests {
 		// Get the line via content search
 		let search_call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "content": "gamma" }),
 		};
@@ -4543,6 +4607,7 @@ mod tests {
 		// Get the same line via lines range
 		let lines_call = McpToolCall {
 			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({ "paths": path, "lines": [3, 3] }),
 		};

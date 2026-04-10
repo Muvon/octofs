@@ -14,12 +14,11 @@
 
 // Shell execution functionality for the Filesystem MCP provider
 
-use super::super::{get_thread_working_directory, McpToolCall};
+use super::super::McpToolCall;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Mutex;
-
 // Track PIDs of in-flight foreground shell children.
 // Each child is spawned with process_group(0) so PGID == child PID.
 // On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
@@ -146,9 +145,8 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 	// Only direct user commands via `octomind shell` CLI should persist to history
 	// (see src/commands/shell.rs for user-initiated shell history)
 
-	// Get the working directory from thread-local storage
-	let working_dir = get_thread_working_directory();
-
+	// Get the working directory from the call context
+	let working_dir = call.workdir.clone();
 	// Use tokio::process::Command for better cancellation support
 	let mut cmd = if cfg!(target_os = "windows") {
 		let mut cmd = TokioCommand::new("cmd");

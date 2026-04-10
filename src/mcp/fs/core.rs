@@ -14,7 +14,9 @@
 
 // Core functionality and shared utilities for file system operations
 
-use super::super::{get_thread_working_directory, McpToolCall};
+// Core functionality and shared utilities for file system operations
+
+use super::super::McpToolCall;
 use crate::mcp::fs::{directory, file_ops, text_editing};
 use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, bail, Result};
@@ -25,15 +27,15 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use tokio::fs as tokio_fs;
 
-/// Resolve a path relative to the thread working directory
+/// Resolve a path relative to the session working directory
 /// If the path is absolute, returns it as-is
-/// If the path is relative, resolves it relative to the thread working directory
-pub fn resolve_path(path_str: &str) -> std::path::PathBuf {
+/// If the path is relative, resolves it relative to the session working directory
+pub fn resolve_path(path_str: &str, workdir: &Path) -> std::path::PathBuf {
 	let path = Path::new(path_str);
 	if path.is_absolute() {
 		path.to_path_buf()
 	} else {
-		get_thread_working_directory().join(path)
+		workdir.join(path)
 	}
 }
 
@@ -200,7 +202,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'content' parameter for create command");
 				}
 			};
-			file_ops::create_file_spec(&resolve_path(&path), &content).await
+			file_ops::create_file_spec(&resolve_path(&path, &call.workdir), &content).await
 		}
 		"str_replace" => {
 			let path = match call.parameters.get("path") {
@@ -221,7 +223,12 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'new_text' parameter");
 				}
 			};
-			text_editing::str_replace_spec(&resolve_path(&path), &old_text, &new_text).await
+			text_editing::str_replace_spec(
+				&resolve_path(&path, &call.workdir),
+				&old_text,
+				&new_text,
+			)
+			.await
 		}
 		"undo_edit" => {
 			let path = match call.parameters.get("path") {
@@ -230,7 +237,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'path' parameter for undo_edit command");
 				}
 			};
-			undo_edit(&resolve_path(&path)).await
+			undo_edit(&resolve_path(&path, &call.workdir)).await
 		}
 		_ => bail!(
 			"Invalid command: {command}. Allowed commands are: create, str_replace, undo_edit"
@@ -268,13 +275,12 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 
 	// Multi-file view: more than one path
 	if paths.len() > 1 {
-		return file_ops::view_many_files_spec(&paths).await;
+		return file_ops::view_many_files_spec(&paths, &call.workdir).await;
 	}
 
 	// Single path
 	let path = &paths[0];
-	let resolved = resolve_path(path);
-
+	let resolved = resolve_path(path, &call.workdir);
 	// Directory: dispatch directly with the resolved path string
 	if resolved.is_dir() {
 		return directory::list_directory(call, path).await;
@@ -457,7 +463,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	// Read source file
-	let from_path_obj = resolve_path(&from_path);
+	let from_path_obj = resolve_path(&from_path, &call.workdir);
 	if !from_path_obj.exists() {
 		bail!("Source file does not exist: {from_path}");
 	}
@@ -532,7 +538,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		};
 
 	// Handle target file - create parent directories if needed
-	let append_path_obj = resolve_path(&append_path);
+	let append_path_obj = resolve_path(&append_path, &call.workdir);
 	if let Some(parent) = append_path_obj.parent() {
 		if let Err(e) = tokio_fs::create_dir_all(parent).await {
 			bail!("Failed to create parent directories for '{append_path}': {e}");
