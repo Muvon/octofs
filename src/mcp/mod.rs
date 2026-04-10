@@ -15,69 +15,52 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-
-static TOOL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-pub(crate) fn next_tool_id() -> String {
-	format!("tool_{}", TOOL_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
-}
 
 pub mod fs;
 pub mod hint_accumulator;
 pub mod server;
 pub mod shared_utils;
 
-// Global session working directory (set once at startup, never changes).
-// This is the anchor for workdir reset operations.
-static SESSION_WORKDIR: OnceLock<PathBuf> = OnceLock::new();
+// Session working directory is now stored per-server-instance (see server.rs).
+// This module only provides helper functions for the session root directory.
 
-// Thread-local current working directory for mid-session changes.
-// Defaults to SESSION_WORKDIR if not set.
-thread_local! {
-	static CURRENT_WORKDIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+static SESSION_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Set the session root directory (set once at startup from CLI).
+/// This is the default workdir for new server instances.
+pub fn set_session_root_directory(path: PathBuf) {
+	SESSION_ROOT.set(path).ok();
 }
 
-/// Set the session working directory. Call once at startup.
-/// This sets the global anchor that never changes during the session.
-pub fn set_session_working_directory(path: PathBuf) {
-	SESSION_WORKDIR.set(path).ok(); // Ignore if already set
-}
-
-/// Override the active directory mid-session (workdir tool).
-/// Does not affect the session anchor.
-pub fn set_thread_working_directory(path: PathBuf) {
-	CURRENT_WORKDIR.with(|w| {
-		*w.borrow_mut() = Some(path);
-	});
-}
-
-/// Active working directory for the current thread.
-/// Returns CURRENT_WORKDIR if set, otherwise SESSION_WORKDIR.
-pub fn get_thread_working_directory() -> PathBuf {
-	CURRENT_WORKDIR.with(|w| {
-		w.borrow().clone().unwrap_or_else(|| {
-			SESSION_WORKDIR
-				.get()
-				.cloned()
-				.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-		})
-	})
-}
-
-/// Session anchor — the directory to return to on workdir reset.
-pub fn get_thread_original_working_directory() -> PathBuf {
-	SESSION_WORKDIR
+/// Get the session root directory (default for new sessions).
+pub fn get_session_root_directory() -> PathBuf {
+	SESSION_ROOT
 		.get()
 		.cloned()
 		.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
+/// MCP tool call with per-session working directory context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCall {
 	pub tool_name: String,
 	pub parameters: Value,
 	#[serde(default)]
 	pub tool_id: String,
+	/// Per-session working directory for this call.
+	pub workdir: PathBuf,
+}
+
+impl McpToolCall {
+	/// Create a test call with default working directory.
+	#[cfg(test)]
+	pub fn test_call(tool_name: &str, parameters: Value) -> Self {
+		Self {
+			tool_name: tool_name.to_string(),
+			parameters,
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+		}
+	}
 }

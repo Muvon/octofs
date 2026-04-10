@@ -175,13 +175,13 @@ pub async fn create_file_spec(path: &Path, content: &str) -> Result<String> {
 }
 
 // View multiple files simultaneously as part of text_editor tool
-pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
+pub async fn view_many_files_spec(paths: &[String], workdir: &Path) -> Result<String> {
 	let mut result_parts = Vec::new();
 	let mut success_count = 0;
 
 	// Process each file in the list
 	for path_str in paths {
-		let path = resolve_path(path_str);
+		let path = resolve_path(path_str, workdir);
 		let path_display = path_str.to_string();
 
 		// Add file header
@@ -287,13 +287,13 @@ pub async fn view_many_files_spec(paths: &[String]) -> Result<String> {
 }
 
 // View multiple files simultaneously with optimized token usage
-pub async fn view_many_files(paths: &[String]) -> Result<String> {
+pub async fn view_many_files(paths: &[String], workdir: &Path) -> Result<String> {
 	let mut result_parts = Vec::new();
 	let mut success_count = 0;
 
 	// Process each file in the list
 	for path_str in paths {
-		let path = resolve_path(path_str);
+		let path = resolve_path(path_str, workdir);
 		let path_display = path_str.to_string();
 
 		// Add file header

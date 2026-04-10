@@ -14,13 +14,12 @@
 
 // Directory operations module — file listing and content search using ignore + pure-Rust matching.
 
-use super::super::{get_thread_working_directory, McpToolCall};
+use super::super::McpToolCall;
 use super::search;
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use anyhow::{bail, Result};
 use ignore::WalkBuilder;
 use std::path::Path;
-
 // Convert glob pattern to regex pattern for filename filtering
 fn convert_glob_to_regex(glob_pattern: &str) -> String {
 	let patterns: Vec<&str> = glob_pattern.split('|').collect();
@@ -132,7 +131,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.and_then(|v| v.as_i64())
 		.unwrap_or(0) as usize;
 
-	let working_dir = get_thread_working_directory();
+	let working_dir = call.workdir.clone();
 	let abs_dir = if Path::new(directory).is_absolute() {
 		std::path::PathBuf::from(directory)
 	} else {
@@ -272,6 +271,7 @@ mod tests {
 				"content": ""
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
 		};
 
 		let result = list_directory(
@@ -310,6 +310,7 @@ mod tests {
 				"pattern": "*.json"
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
 		};
 
 		let result = list_directory(
@@ -349,6 +350,7 @@ mod tests {
 				"content": "   "
 			}),
 			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
 		};
 
 		let result = list_directory(

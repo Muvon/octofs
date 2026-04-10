@@ -1,23 +1,6 @@
-// Copyright 2026 Muvon Un Limited
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 // Working directory management for the Filesystem MCP provider
 
-use super::super::{
-	get_thread_original_working_directory, get_thread_working_directory,
-	set_thread_working_directory, McpToolCall,
-};
+use super::super::McpToolCall;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
@@ -29,16 +12,13 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<String> {
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
 
-	// Reset to original session directory (set at session creation, not process cwd)
+	// Reset to original session directory
+	// Note: The reset is handled by returning success - the caller
+	// (server.rs) will update the workdir state using self.workdir.root
 	if reset {
-		let original_dir = get_thread_original_working_directory();
-		set_thread_working_directory(original_dir.clone());
-
 		return Ok(json!({
 			"success": true,
-			"action": "reset",
-			"working_directory": original_dir.to_string_lossy(),
-			"message": format!("Working directory reset to: {}", original_dir.display())
+			"action": "reset"
 		})
 		.to_string());
 	}
@@ -53,8 +33,7 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<String> {
 				std::path::PathBuf::from(path_str)
 			} else {
 				// Relative to current working directory
-				let current = get_thread_working_directory();
-				current.join(path_str)
+				call.workdir.join(path_str)
 			};
 
 			// Canonicalize to resolve .. and symlinks
@@ -74,8 +53,9 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<String> {
 				bail!("Path is not a directory: {}", canonical_path.display());
 			}
 
-			let old_dir = get_thread_working_directory();
-			set_thread_working_directory(canonical_path.clone());
+			let old_dir = call.workdir.clone();
+			// Note: The set is handled by returning success - the caller
+			// (server.rs) will update the workdir state
 
 			Ok(json!({
 				"success": true,
@@ -88,7 +68,7 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<String> {
 		Some(_) => bail!("Parameter 'path' must be a non-empty string"),
 		None => {
 			// Get current working directory
-			let current_dir = get_thread_working_directory();
+			let current_dir = call.workdir.clone();
 
 			Ok(json!({
 				"success": true,

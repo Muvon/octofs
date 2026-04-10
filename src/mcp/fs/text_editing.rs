@@ -1001,8 +1001,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		);
 	}
 
-	let path = super::core::resolve_path(path_str);
-
+	let path = super::core::resolve_path(path_str, &call.workdir);
 	// Check if file exists
 	if !path.exists() {
 		bail!("File not found: {}", path_str);

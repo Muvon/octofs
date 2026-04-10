@@ -49,8 +49,8 @@ async fn main() -> Result<()> {
 			};
 			utils::line_hash::set_line_mode(mode);
 
-			// Set the session working directory for all tool calls
-			mcp::set_session_working_directory(working_directory.clone());
+			// Set the session root directory for all tool calls
+			mcp::set_session_root_directory(working_directory.clone());
 
 			// Create the MCP server
 			let server = mcp::server::OctofsServer::new();
@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
 			match bind {
 				Some(addr) => {
 					// HTTP mode with Streamable HTTP transport
-					run_http_server(server, &addr).await?;
+					run_http_server(&addr).await?;
 				}
 				None => {
 					// STDIO mode (default)
@@ -116,15 +116,17 @@ async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
 }
 
 /// Run the MCP server over HTTP with Streamable HTTP transport
-async fn run_http_server(server: mcp::server::OctofsServer, bind_addr: &str) -> Result<()> {
+async fn run_http_server(bind_addr: &str) -> Result<()> {
 	use rmcp::transport::streamable_http_server::{
 		session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 	};
 
 	let ct = tokio_util::sync::CancellationToken::new();
 
+	// Each HTTP session gets a fresh server instance with isolated workdir state.
+	// The factory closure creates a new OctofsServer for each session.
 	let service = StreamableHttpService::new(
-		move || Ok(server.clone()),
+		|| Ok(mcp::server::OctofsServer::new()),
 		LocalSessionManager::default().into(),
 		StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
 	);
