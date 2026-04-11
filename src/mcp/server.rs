@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use rmcp::{
-	handler::server::{router::tool::ToolRouter, wrapper::Parameters, ServerHandler},
+	handler::server::{wrapper::Parameters, ServerHandler},
 	model::{
 		Implementation, InitializeRequestParams, InitializeResult, ProtocolVersion,
 		ServerCapabilities, ServerInfo,
@@ -64,8 +64,6 @@ impl SessionWorkdir {
 pub struct OctofsServer {
 	/// Per-session working directory state.
 	workdir: Arc<SessionWorkdir>,
-	/// Tool router for dispatching tool calls.
-	tool_router: ToolRouter<OctofsServer>,
 }
 
 impl OctofsServer {
@@ -74,7 +72,6 @@ impl OctofsServer {
 		let root = super::get_session_root_directory();
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
-			tool_router: Self::tool_router(),
 		}
 	}
 
@@ -83,7 +80,6 @@ impl OctofsServer {
 	pub fn with_root(root: PathBuf) -> Self {
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
-			tool_router: Self::tool_router(),
 		}
 	}
 }
@@ -216,7 +212,7 @@ impl OctofsServer {
 	}
 }
 
-#[tool_handler]
+#[tool_handler(router = Self::tool_router())]
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
 		ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
