@@ -29,4 +29,4 @@ mod fs_tests;
 pub use core::{execute_batch_edit, execute_extract_lines, execute_text_editor, execute_view};
 
 pub use shell::execute_shell_command;
-pub use workdir::execute_workdir_command;
+pub use workdir::{execute_workdir_command, WorkdirResult};
