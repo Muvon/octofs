@@ -14,8 +14,6 @@
 
 // Core functionality and shared utilities for file system operations
 
-// Core functionality and shared utilities for file system operations
-
 use super::super::McpToolCall;
 use crate::mcp::fs::{directory, file_ops, text_editing};
 use crate::utils::truncation::format_extracted_content_smart;
