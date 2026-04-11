@@ -15,6 +15,7 @@ use serde_json::Value;
 use tracing::debug;
 
 use super::fs;
+use super::hint_accumulator;
 use super::McpToolCall;
 
 /// Per-session working directory state.
@@ -122,9 +123,10 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		fs::execute_text_editor(&call)
+		let result = fs::execute_text_editor(&call)
 			.await
-			.map_err(|e| e.to_string())
+			.map_err(|e| e.to_string())?;
+		Ok(append_hints(result))
 	}
 
 	#[tool(description = "Perform multiple insert/replace operations on a SINGLE file atomically.")]
@@ -170,9 +172,10 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		fs::execute_shell_command(&call)
+		let result = fs::execute_shell_command(&call)
 			.await
-			.map_err(|e| e.to_string())
+			.map_err(|e| e.to_string())?;
+		Ok(append_hints(result))
 	}
 
 	#[tool(description = "Get or set the working directory used by all MCP tools.")]
@@ -191,24 +194,18 @@ impl OctofsServer {
 			.await
 			.map_err(|e| e.to_string())?;
 
-		// Update the session workdir state based on the result
-		let parsed: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
-		if let Some(action) = parsed.get("action").and_then(|v| v.as_str()) {
-			match action {
-				"set" => {
-					if let Some(new_dir) = parsed.get("working_directory").and_then(|v| v.as_str())
-					{
-						self.workdir.set_current(std::path::PathBuf::from(new_dir));
-					}
-				}
-				"reset" => {
-					self.workdir.reset();
-				}
-				_ => {}
+		// Update session workdir state based on the structured result
+		match &result {
+			fs::WorkdirResult::Set { current, .. } => {
+				self.workdir.set_current(current.clone());
 			}
+			fs::WorkdirResult::Reset => {
+				self.workdir.reset();
+			}
+			fs::WorkdirResult::Get { .. } => {}
 		}
 
-		Ok(result)
+		Ok(result.to_json_string())
 	}
 }
 
@@ -256,6 +253,20 @@ impl ServerHandler for OctofsServer {
 	}
 }
 
+/// Drain any accumulated hints and append them to the tool result.
+/// Called after tool execution to surface misuse guidance to the LLM.
+fn append_hints(mut result: String) -> String {
+	let hints = hint_accumulator::drain_hints();
+	if !hints.is_empty() {
+		result.push_str("\n\n");
+		for hint in hints {
+			result.push_str("⚠️ ");
+			result.push_str(&hint);
+			result.push('\n');
+		}
+	}
+	result
+}
 // ── Tool parameter schemas ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
