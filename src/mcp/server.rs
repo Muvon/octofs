@@ -106,7 +106,8 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		fs::execute_view(&call).await.map_err(|e| e.to_string())
+		let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
+		Ok(append_hints(result))
 	}
 
 	#[tool(
@@ -141,9 +142,10 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		fs::execute_batch_edit(&call)
+		let result = fs::execute_batch_edit(&call)
 			.await
-			.map_err(|e| e.to_string())
+			.map_err(|e| e.to_string())?;
+		Ok(append_hints(result))
 	}
 
 	#[tool(description = "Copy lines from a source file and append them into a target file.")]
@@ -158,9 +160,10 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		fs::execute_extract_lines(&call)
+		let result = fs::execute_extract_lines(&call)
 			.await
-			.map_err(|e| e.to_string())
+			.map_err(|e| e.to_string())?;
+		Ok(append_hints(result))
 	}
 
 	#[tool(description = "Execute a command in the shell.")]
