@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.1] - 2026-04-19
+
+### 📋 Release Summary
+
+This release improves working directory management and introduces helpful hints across all tool responses to provide better user guidance (be6c7044, 2a897f1a). Enhancements to file system tools and output formatting provide greater flexibility when viewing files and more consistent results (800c9490, 0c3528a0, 630b2377).
+
+
+### 🚨 Breaking Changes
+
+⚠️ **Important**: This release contains breaking changes that may require code updates.
+
+- **mcp**: replace thread-local storage with call.workdir `be6c7044`
+
+### ✨ New Features & Enhancements
+
+- **mcp**: append hints to all tool responses `2a897f1a`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: use typed WorkdirResult instead of JSON parsing `630b2377`
+- remove unused tool_router field from OctofsServer `3c1b7450`
+- **fs**: remove space after colon in line number formatting `0c3528a0`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: allow null value for lines parameter `800c9490`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.3.0] - 2026-04-08
 
 ### 📋 Release Summary
