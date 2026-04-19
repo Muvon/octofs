@@ -346,10 +346,10 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		Some(Value::Array(_)) => {
 			bail!("lines must be an array with exactly 2 elements");
 		}
+		Some(Value::Null) | None => None,
 		Some(_) => {
 			bail!("lines must be an array");
 		}
-		None => None,
 	};
 
 	file_ops::view_file_spec(&resolved, lines).await
