@@ -175,14 +175,19 @@ pub async fn create_file_spec(path: &Path, content: &str) -> Result<String> {
 }
 
 // View multiple files simultaneously as part of text_editor tool
-pub async fn view_many_files_spec(paths: &[String], workdir: &Path) -> Result<String> {
+pub async fn view_many_files_spec(
+	paths: &[String],
+	workdir: &Path,
+	per_file_ranges: &[Option<(usize, i64)>],
+) -> Result<String> {
 	let mut result_parts = Vec::new();
 	let mut success_count = 0;
 
 	// Process each file in the list
-	for path_str in paths {
+	for (i, path_str) in paths.iter().enumerate() {
 		let path = resolve_path(path_str, workdir);
 		let path_display = path_str.to_string();
+		let line_range = per_file_ranges.get(i).copied().flatten();
 
 		// Add file header
 		result_parts.push(path_display.clone());
@@ -262,9 +267,9 @@ pub async fn view_many_files_spec(paths: &[String], workdir: &Path) -> Result<St
 			}
 		};
 
-		// Use the same smart truncation logic as view command
+		// Use the same smart truncation logic as view command, with per-file line range
 		let lines: Vec<&str> = content.lines().collect();
-		let content_with_numbers = format_file_content_with_numbers(&lines, None);
+		let content_with_numbers = format_file_content_with_numbers(&lines, line_range);
 
 		result_parts.push(content_with_numbers);
 		result_parts.push("".to_string()); // Empty line separator
@@ -287,14 +292,19 @@ pub async fn view_many_files_spec(paths: &[String], workdir: &Path) -> Result<St
 }
 
 // View multiple files simultaneously with optimized token usage
-pub async fn view_many_files(paths: &[String], workdir: &Path) -> Result<String> {
+pub async fn view_many_files(
+	paths: &[String],
+	workdir: &Path,
+	per_file_ranges: &[Option<(usize, i64)>],
+) -> Result<String> {
 	let mut result_parts = Vec::new();
 	let mut success_count = 0;
 
 	// Process each file in the list
-	for path_str in paths {
+	for (i, path_str) in paths.iter().enumerate() {
 		let path = resolve_path(path_str, workdir);
 		let path_display = path_str.to_string();
+		let line_range = per_file_ranges.get(i).copied().flatten();
 
 		// Add file header
 		result_parts.push(path_display.clone());
@@ -374,9 +384,9 @@ pub async fn view_many_files(paths: &[String], workdir: &Path) -> Result<String>
 			}
 		};
 
-		// Use the same smart truncation logic as view command
+		// Use the same smart truncation logic as view command, with per-file line range
 		let lines: Vec<&str> = content.lines().collect();
-		let content_with_numbers = format_file_content_with_numbers(&lines, None);
+		let content_with_numbers = format_file_content_with_numbers(&lines, line_range);
 
 		result_parts.push(content_with_numbers);
 		result_parts.push("".to_string()); // Empty line separator

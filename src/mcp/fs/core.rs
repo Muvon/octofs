@@ -243,6 +243,130 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 	}
 }
 
+/// Resolve a single line range value `[start, end]` (numbers or hash strings)
+/// into a resolved `(start, end)` tuple with 1-indexed line numbers.
+async fn resolve_single_line_range(
+	arr: &[Value],
+	resolved_path: &Path,
+) -> Result<Option<(usize, i64)>> {
+	if arr.len() != 2 {
+		bail!(
+			"Each line range must have exactly 2 elements, got {}",
+			arr.len()
+		);
+	}
+
+	// Try numbers first, then hash strings
+	if let (Some(start), Some(end)) = (arr[0].as_i64(), arr[1].as_i64()) {
+		let total_lines = match tokio_fs::read_to_string(resolved_path).await {
+			Ok(c) => c.lines().count(),
+			Err(_) => 0,
+		};
+		if total_lines > 0 {
+			match resolve_line_range(start, end, total_lines) {
+				Ok((s, e)) => Ok(Some((s, e as i64))),
+				Err(err) => bail!("Invalid lines parameter: {err}"),
+			}
+		} else {
+			Ok(Some((start as usize, end)))
+		}
+	} else if let (Some(start_hash), Some(end_hash)) = (arr[0].as_str(), arr[1].as_str()) {
+		let content = tokio_fs::read_to_string(resolved_path)
+			.await
+			.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
+		let file_lines: Vec<&str> = content.lines().collect();
+		let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, &file_lines)
+			.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
+		let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, &file_lines)
+			.map_err(|e| anyhow!("Invalid end hash: {}", e))?;
+		if start > end {
+			bail!(
+				"Start hash '{}' (line {}) is after end hash '{}' (line {}) — range must go forward",
+				start_hash, start, end_hash, end
+			);
+		}
+		Ok(Some((start, end as i64)))
+	} else {
+		bail!("Line range elements must be integers or hash strings");
+	}
+}
+
+/// Parsed `lines` parameter: either a single range applied to one/all files,
+/// or per-file ranges (one per path).
+enum ParsedLines {
+	/// No `lines` parameter — show full content.
+	None,
+	/// Single range `[start, end]` — applied to the single file or all files.
+	Single(Option<(usize, i64)>),
+	/// Per-file ranges `[[start, end], ...]` — one range per path.
+	PerFile(Vec<Option<(usize, i64)>>),
+}
+
+/// Parse the `lines` parameter from the tool call.
+/// Supports:
+/// - `[start, end]` — single range (numbers or hash strings)
+/// - `[[start, end], [start, end], ...]` — per-file ranges
+async fn parse_lines_param(
+	lines_value: Option<&Value>,
+	paths: &[String],
+	workdir: &Path,
+) -> Result<ParsedLines> {
+	let Some(lines_value) = lines_value else {
+		return Ok(ParsedLines::None);
+	};
+
+	// Treat explicit null the same as absent
+	if lines_value.is_null() {
+		return Ok(ParsedLines::None);
+	}
+
+	let Value::Array(arr) = lines_value else {
+		bail!("lines must be an array");
+	};
+
+	if arr.is_empty() {
+		return Ok(ParsedLines::None);
+	}
+
+	// Check if this is a per-file array (first element is an array)
+	if let Some(Value::Array(_)) = arr.first() {
+		// Per-file ranges: [[start, end], [start, end], ...]
+		if arr.len() > paths.len() {
+			bail!(
+				"lines has {} ranges but only {} paths provided",
+				arr.len(),
+				paths.len()
+			);
+		}
+		let mut ranges = Vec::with_capacity(paths.len());
+		for (i, range_val) in arr.iter().enumerate() {
+			let Value::Array(range_arr) = range_val else {
+				bail!("lines[{}] must be an array [start, end]", i);
+			};
+			let resolved_path = resolve_path(&paths[i], workdir);
+			let range = resolve_single_line_range(range_arr, &resolved_path).await?;
+			ranges.push(range);
+		}
+		// Fill remaining paths with None (no range)
+		while ranges.len() < paths.len() {
+			ranges.push(None);
+		}
+		Ok(ParsedLines::PerFile(ranges))
+	} else {
+		// Single range: [start, end]
+		if arr.len() != 2 {
+			bail!(
+				"Single line range must have exactly 2 elements, got {}",
+				arr.len()
+			);
+		}
+		// For single range, resolve against the first path (or the only path)
+		let resolved_path = resolve_path(&paths[0], workdir);
+		let range = resolve_single_line_range(arr, &resolved_path).await?;
+		Ok(ParsedLines::Single(range))
+	}
+}
+
 // Execute view command - unified read-only tool for files, directories, and content search
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// Extract paths array (required, one or more elements)
@@ -271,9 +395,18 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		bail!("Too many files requested. Maximum 50 files per request.");
 	}
 
+	// Parse the lines parameter (single range or per-file ranges)
+	let parsed_lines =
+		parse_lines_param(call.parameters.get("lines"), &paths, &call.workdir).await?;
+
 	// Multi-file view: more than one path
 	if paths.len() > 1 {
-		return file_ops::view_many_files_spec(&paths, &call.workdir).await;
+		let per_file_ranges = match parsed_lines {
+			ParsedLines::None => vec![None; paths.len()],
+			ParsedLines::Single(range) => vec![range; paths.len()],
+			ParsedLines::PerFile(ranges) => ranges,
+		};
+		return file_ops::view_many_files_spec(&paths, &call.workdir, &per_file_ranges).await;
 	}
 
 	// Single path
@@ -301,55 +434,11 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		}
 	}
 
-	// File: resolve optional line range with negative-index support
-	// Accepts both line numbers [10, 20] and hash identifiers ["a3bd", "c7f2"]
-	let lines = match call.parameters.get("lines") {
-		Some(Value::Array(arr)) if arr.len() == 2 => {
-			// Try numbers first, then hash strings
-			if let (Some(start), Some(end)) = (arr[0].as_i64(), arr[1].as_i64()) {
-				// Numeric line range
-				let total_lines = match tokio_fs::read_to_string(&resolved).await {
-					Ok(c) => c.lines().count(),
-					Err(_) => 0,
-				};
-				if total_lines > 0 {
-					match resolve_line_range(start, end, total_lines) {
-						Ok((s, e)) => Some((s, e as i64)),
-						Err(err) => {
-							bail!("Invalid lines parameter: {err}");
-						}
-					}
-				} else {
-					Some((start as usize, end))
-				}
-			} else if let (Some(start_hash), Some(end_hash)) = (arr[0].as_str(), arr[1].as_str()) {
-				// Hash-based line range — resolve to line numbers
-				let content = tokio_fs::read_to_string(&resolved)
-					.await
-					.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
-				let file_lines: Vec<&str> = content.lines().collect();
-				let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, &file_lines)
-					.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
-				let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, &file_lines)
-					.map_err(|e| anyhow!("Invalid end hash: {}", e))?;
-				if start > end {
-					bail!(
-						"Start hash '{}' (line {}) is after end hash '{}' (line {}) — range must go forward",
-						start_hash, start, end_hash, end
-					);
-				}
-				Some((start, end as i64))
-			} else {
-				bail!("lines array elements must be integers or hash strings");
-			}
-		}
-		Some(Value::Array(_)) => {
-			bail!("lines must be an array with exactly 2 elements");
-		}
-		Some(Value::Null) | None => None,
-		Some(_) => {
-			bail!("lines must be an array");
-		}
+	// File: resolve optional line range
+	let lines = match parsed_lines {
+		ParsedLines::None => None,
+		ParsedLines::Single(range) => range,
+		ParsedLines::PerFile(ranges) => ranges.into_iter().next().flatten(),
 	};
 
 	file_ops::view_file_spec(&resolved, lines).await

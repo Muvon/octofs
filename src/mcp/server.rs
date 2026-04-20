@@ -278,9 +278,11 @@ pub struct ViewParams {
 	#[serde(deserialize_with = "deserialize_string_or_vec")]
 	#[schemars(length(min = 1, max = 50))]
 	pub paths: Vec<String>,
-	/// Line range [start, end] for single file viewing. Accepts line numbers (1-indexed, inclusive) or line identifiers from previous `view` output.
+	/// Line range for file viewing. Accepts:
+	/// - Single range: `[start, end]` (1-indexed, inclusive) — applied to single file or all files
+	/// - Per-file ranges: `[[start, end], [start, end], ...]` — one range per path
+	///   Accepts line numbers or line identifiers from previous `view` output.
 	#[serde(default)]
-	#[schemars(length(min = 2, max = 2))]
 	pub lines: Option<Vec<Value>>,
 	/// Filename glob filter for directory listing.
 	#[serde(default)]

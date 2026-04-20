@@ -4629,4 +4629,149 @@ mod tests {
 			"content search and lines view must produce identical line format"
 		);
 	}
+
+	#[tokio::test]
+	async fn test_view_single_file_with_line_range() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_path = temp_dir.path().join("test.txt");
+		fs::write(&file_path, "line 1\nline 2\nline 3\nline 4\nline 5\n")
+			.await
+			.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_path.to_string_lossy()],
+				"lines": [2, 4]
+			}),
+		};
+
+		let content = execute_view(&call).await.unwrap();
+		assert!(
+			content.contains("2:line 2"),
+			"Should show line 2: {content}"
+		);
+		assert!(
+			content.contains("3:line 3"),
+			"Should show line 3: {content}"
+		);
+		assert!(
+			content.contains("4:line 4"),
+			"Should show line 4: {content}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_multi_file_with_per_file_ranges() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		let file_b = temp_dir.path().join("b.txt");
+		fs::write(&file_a, "a1\na2\na3\na4\na5\n").await.unwrap();
+		fs::write(&file_b, "b1\nb2\nb3\nb4\nb5\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
+				"lines": [[2, 3], [4, 5]]
+			}),
+		};
+
+		let content = execute_view(&call).await.unwrap();
+		assert!(
+			content.contains("2:a2") && content.contains("3:a3"),
+			"File A should show lines 2-3: {content}"
+		);
+		assert!(
+			content.contains("4:b4") && content.contains("5:b5"),
+			"File B should show lines 4-5: {content}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_multi_file_with_single_range_applies_to_all() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		let file_b = temp_dir.path().join("b.txt");
+		fs::write(&file_a, "a1\na2\na3\na4\na5\n").await.unwrap();
+		fs::write(&file_b, "b1\nb2\nb3\nb4\nb5\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
+				"lines": [1, 2]
+			}),
+		};
+
+		let content = execute_view(&call).await.unwrap();
+		assert!(
+			content.contains("1:a1") && content.contains("2:a2"),
+			"File A should show lines 1-2: {content}"
+		);
+		assert!(
+			content.contains("1:b1") && content.contains("2:b2"),
+			"File B should show lines 1-2: {content}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_multi_file_fewer_ranges_than_paths() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		let file_b = temp_dir.path().join("b.txt");
+		fs::write(&file_a, "a1\na2\na3\na4\na5\n").await.unwrap();
+		fs::write(&file_b, "b1\nb2\nb3\nb4\nb5\n").await.unwrap();
+
+		// Only one range for two files — second file should show full content
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
+				"lines": [[2, 3]]
+			}),
+		};
+
+		let content = execute_view(&call).await.unwrap();
+		assert!(
+			content.contains("2:a2") && content.contains("3:a3"),
+			"File A should show lines 2-3: {content}"
+		);
+		assert!(
+			content.contains("1:b1") && content.contains("5:b5"),
+			"File B should show full content: {content}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_multi_file_more_ranges_than_paths_errors() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		fs::write(&file_a, "a1\na2\na3\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy()],
+				"lines": [[1, 2], [3, 3]]
+			}),
+		};
+
+		let err = execute_view(&call).await.unwrap_err();
+		let msg = err.to_string();
+		assert!(
+			msg.contains("ranges") || msg.contains("paths"),
+			"Should error about range/path count mismatch: {msg}"
+		);
+	}
 }
