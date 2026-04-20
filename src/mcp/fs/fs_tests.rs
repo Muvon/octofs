@@ -2762,7 +2762,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_text_editor_view_negative_indexing_errors() {
+	async fn test_text_editor_view_negative_indexing_clamps_out_of_bounds() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_path = temp_dir.path().join("test.txt");
 
@@ -2771,7 +2771,7 @@ mod tests {
 			.await
 			.unwrap();
 
-		// Test negative index beyond file length
+		// Negative start beyond file length — should clamp to line 1 and return content
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
@@ -2782,12 +2782,12 @@ mod tests {
 			}),
 		};
 
-		let err = execute_view(&call).await.unwrap_err();
-		let content = err.to_string();
+		let content = execute_view(&call).await.expect("should clamp, not error");
 		assert!(
-			content.contains("exceeds file length"),
-			"Should show error: {}",
-			content
+			content.contains("1:line 1")
+				&& content.contains("2:line 2")
+				&& content.contains("3:line 3"),
+			"Should return all 3 lines after clamp: {content}"
 		);
 	}
 
@@ -3074,7 +3074,7 @@ mod tests {
 			content
 		);
 
-		// Test -2 on single line file (should fail)
+		// Test -2 on single line file (should clamp to line 1 and return the only line)
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
@@ -3085,12 +3085,10 @@ mod tests {
 			}),
 		};
 
-		let err = execute_view(&call).await.unwrap_err();
-		let content = err.to_string();
+		let content = execute_view(&call).await.expect("should clamp, not error");
 		assert!(
-			content.contains("exceeds file length"),
-			"Should show error: {}",
-			content
+			content.contains("1:only line"),
+			"Should clamp and return the only line: {content}"
 		);
 	}
 

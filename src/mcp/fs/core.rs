@@ -78,6 +78,58 @@ fn resolve_line_range(start: i64, end: i64, total_lines: usize) -> Result<(usize
 	Ok((resolved_start, resolved_end))
 }
 
+/// View-only: resolve line index while clamping out-of-bounds values to the
+/// nearest valid line. Returns (resolved_index, was_clamped).
+/// Line 0 is still rejected — it's a spec violation, not out-of-bounds.
+fn resolve_line_index_clamped(index: i64, total_lines: usize) -> Result<(usize, bool), String> {
+	if index == 0 {
+		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
+	}
+	if index > 0 {
+		let pos = index as usize;
+		if pos > total_lines {
+			Ok((total_lines, true))
+		} else {
+			Ok((pos, false))
+		}
+	} else {
+		let from_end = (-index) as usize;
+		if from_end > total_lines {
+			// Negative index past the beginning — clamp to first line
+			Ok((1, true))
+		} else {
+			Ok((total_lines - from_end + 1, false))
+		}
+	}
+}
+
+/// View-only: resolve a line range, clamping out-of-bounds to file limits.
+/// Returns (start, end, hint_message_if_clamped).
+fn resolve_line_range_clamped(
+	start: i64,
+	end: i64,
+	total_lines: usize,
+) -> Result<(usize, usize, Option<String>), String> {
+	let (resolved_start, start_clamped) = resolve_line_index_clamped(start, total_lines)?;
+	let (resolved_end, end_clamped) = resolve_line_index_clamped(end, total_lines)?;
+
+	if resolved_start > resolved_end {
+		return Err(format!(
+			"Start line ({start}) cannot be greater than end line ({end})"
+		));
+	}
+
+	let hint = if start_clamped || end_clamped {
+		Some(format!(
+			"Requested line range [{start}, {end}] was out of bounds for a {total_lines}-line file; clamped to [{resolved_start}, {resolved_end}]. Use line numbers within 1..={total_lines} (negative indices count from the end)."
+		))
+	} else {
+		None
+	};
+
+	Ok((resolved_start, resolved_end, hint))
+}
+
 // Thread-safe lazy initialization of file history using OnceLock
 static FILE_HISTORY: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
 
@@ -263,8 +315,13 @@ async fn resolve_single_line_range(
 			Err(_) => 0,
 		};
 		if total_lines > 0 {
-			match resolve_line_range(start, end, total_lines) {
-				Ok((s, e)) => Ok(Some((s, e as i64))),
+			match resolve_line_range_clamped(start, end, total_lines) {
+				Ok((s, e, hint)) => {
+					if let Some(msg) = hint {
+						crate::mcp::hint_accumulator::push_hint(&msg);
+					}
+					Ok(Some((s, e as i64)))
+				}
 				Err(err) => bail!("Invalid lines parameter: {err}"),
 			}
 		} else {
