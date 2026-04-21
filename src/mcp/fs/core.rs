@@ -297,22 +297,31 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 
 /// Resolve a single line range value `[start, end]` (numbers or hash strings)
 /// into a resolved `(start, end)` tuple with 1-indexed line numbers.
+///
+/// `cached_content` is the file's content if already read (None = read lazily).
+/// Returns the resolved range plus the content (read or passed in) so the caller
+/// can reuse it for subsequent ranges on the same file.
 async fn resolve_single_line_range(
 	arr: &[Value],
 	resolved_path: &Path,
+	cached_content: Option<&str>,
 ) -> Result<Option<(usize, i64)>> {
 	if arr.len() != 2 {
 		bail!(
-			"Each line range must have exactly 2 elements, got {}",
+			"Each line range must have exactly 2 elements [start, end], got {}. Example: [1, 50].",
 			arr.len()
 		);
 	}
 
 	// Try numbers first, then hash strings
 	if let (Some(start), Some(end)) = (arr[0].as_i64(), arr[1].as_i64()) {
-		let total_lines = match tokio_fs::read_to_string(resolved_path).await {
-			Ok(c) => c.lines().count(),
-			Err(_) => 0,
+		let total_lines = if let Some(content) = cached_content {
+			content.lines().count()
+		} else {
+			match tokio_fs::read_to_string(resolved_path).await {
+				Ok(c) => c.lines().count(),
+				Err(_) => 0,
+			}
 		};
 		if total_lines > 0 {
 			match resolve_line_range_clamped(start, end, total_lines) {
@@ -328,9 +337,15 @@ async fn resolve_single_line_range(
 			Ok(Some((start as usize, end)))
 		}
 	} else if let (Some(start_hash), Some(end_hash)) = (arr[0].as_str(), arr[1].as_str()) {
-		let content = tokio_fs::read_to_string(resolved_path)
-			.await
-			.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
+		let content_owned;
+		let content: &str = if let Some(c) = cached_content {
+			c
+		} else {
+			content_owned = tokio_fs::read_to_string(resolved_path)
+				.await
+				.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
+			&content_owned
+		};
 		let file_lines: Vec<&str> = content.lines().collect();
 		let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, &file_lines)
 			.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
@@ -344,25 +359,28 @@ async fn resolve_single_line_range(
 		}
 		Ok(Some((start, end as i64)))
 	} else {
-		bail!("Line range elements must be integers or hash strings");
+		bail!("Line range elements must both be integers or both be hash strings. Example: [1, 50] or [\"a1b2c3\", \"d4e5f6\"].");
 	}
 }
 
-/// Parsed `lines` parameter: either a single range applied to one/all files,
-/// or per-file ranges (one per path).
+/// Parsed `lines` parameter.
 enum ParsedLines {
 	/// No `lines` parameter — show full content.
 	None,
 	/// Single range `[start, end]` — applied to the single file or all files.
 	Single(Option<(usize, i64)>),
-	/// Per-file ranges `[[start, end], ...]` — one range per path.
+	/// Multiple ranges on a single file — only valid when exactly one path is given.
+	MultiRangeSingleFile(Vec<(usize, i64)>),
+	/// Per-file ranges `[[start, end], ...]` — one per path (paths.len() > 1).
 	PerFile(Vec<Option<(usize, i64)>>),
 }
 
 /// Parse the `lines` parameter from the tool call.
-/// Supports:
+///
+/// Supported shapes:
 /// - `[start, end]` — single range (numbers or hash strings)
-/// - `[[start, end], [start, end], ...]` — per-file ranges
+/// - `[[start, end], [start, end], ...]` with **one** path → multiple ranges from that file
+/// - `[[start, end], [start, end], ...]` with **multiple** paths → per-file ranges (one per path)
 async fn parse_lines_param(
 	lines_value: Option<&Value>,
 	paths: &[String],
@@ -378,50 +396,93 @@ async fn parse_lines_param(
 	}
 
 	let Value::Array(arr) = lines_value else {
-		bail!("lines must be an array");
+		bail!("`lines` must be an array. Examples: [1, 50] (single range), [[1,50],[200,250]] (multiple ranges on one file or per-file ranges when multiple paths).");
 	};
 
 	if arr.is_empty() {
 		return Ok(ParsedLines::None);
 	}
 
-	// Check if this is a per-file array (first element is an array)
-	if let Some(Value::Array(_)) = arr.first() {
-		// Per-file ranges: [[start, end], [start, end], ...]
-		if arr.len() > paths.len() {
+	// Detect array-of-arrays shape
+	let is_nested = matches!(arr.first(), Some(Value::Array(_)));
+
+	if !is_nested {
+		// Flat array → must be [start, end]
+		if arr.len() != 2 {
 			bail!(
-				"lines has {} ranges but only {} paths provided",
-				arr.len(),
-				paths.len()
+				"Single line range must have exactly 2 elements [start, end], got {}. For multiple ranges, wrap each in its own array: [[1,50],[200,250]].",
+				arr.len()
 			);
 		}
-		let mut ranges = Vec::with_capacity(paths.len());
+		let resolved_path = resolve_path(&paths[0], workdir);
+		let range = resolve_single_line_range(arr, &resolved_path, None).await?;
+		return Ok(ParsedLines::Single(range));
+	}
+
+	// Nested array → interpretation depends on path count
+	if paths.len() == 1 {
+		// Multiple ranges on a single file — read content once, resolve all ranges against it.
+		let resolved_path = resolve_path(&paths[0], workdir);
+		let cached = tokio_fs::read_to_string(&resolved_path).await.ok();
+		let mut ranges = Vec::with_capacity(arr.len());
 		for (i, range_val) in arr.iter().enumerate() {
 			let Value::Array(range_arr) = range_val else {
 				bail!("lines[{}] must be an array [start, end]", i);
 			};
-			let resolved_path = resolve_path(&paths[i], workdir);
-			let range = resolve_single_line_range(range_arr, &resolved_path).await?;
-			ranges.push(range);
+			let range =
+				resolve_single_line_range(range_arr, &resolved_path, cached.as_deref()).await?;
+			if let Some(r) = range {
+				ranges.push(r);
+			}
 		}
-		// Fill remaining paths with None (no range)
-		while ranges.len() < paths.len() {
-			ranges.push(None);
+		if ranges.is_empty() {
+			return Ok(ParsedLines::None);
 		}
-		Ok(ParsedLines::PerFile(ranges))
-	} else {
-		// Single range: [start, end]
-		if arr.len() != 2 {
-			bail!(
-				"Single line range must have exactly 2 elements, got {}",
-				arr.len()
-			);
-		}
-		// For single range, resolve against the first path (or the only path)
-		let resolved_path = resolve_path(&paths[0], workdir);
-		let range = resolve_single_line_range(arr, &resolved_path).await?;
-		Ok(ParsedLines::Single(range))
+		return Ok(ParsedLines::MultiRangeSingleFile(ranges));
 	}
+
+	// Multiple paths → per-file ranges (positional)
+	if arr.len() > paths.len() {
+		bail!(
+			"`lines` has {} range pairs but only {} paths provided. For multiple ranges on a single file, pass exactly one path. For per-file ranges, range count must not exceed path count.",
+			arr.len(),
+			paths.len()
+		);
+	}
+	let mut ranges = Vec::with_capacity(paths.len());
+	// Cache per-path content keyed by path string to avoid re-reading on hash resolution
+	let mut content_cache: std::collections::HashMap<String, Option<String>> =
+		std::collections::HashMap::new();
+	for (i, range_val) in arr.iter().enumerate() {
+		let Value::Array(range_arr) = range_val else {
+			bail!("lines[{}] must be an array [start, end]", i);
+		};
+		let resolved_path = resolve_path(&paths[i], workdir);
+		let key = paths[i].clone();
+		let cached = content_cache
+			.entry(key)
+			.or_insert_with(|| {
+				// Synchronously unavailable in async context; we'll populate below.
+				None
+			})
+			.clone();
+		let cached_ref = if cached.is_some() {
+			cached.as_deref()
+		} else {
+			// Lazy read now
+			let c = tokio_fs::read_to_string(&resolved_path).await.ok();
+			content_cache.insert(paths[i].clone(), c.clone());
+			// SAFETY: re-borrow from the map
+			content_cache.get(&paths[i]).and_then(|o| o.as_deref())
+		};
+		let range = resolve_single_line_range(range_arr, &resolved_path, cached_ref).await?;
+		ranges.push(range);
+	}
+	// Fill remaining paths with None (no range)
+	while ranges.len() < paths.len() {
+		ranges.push(None);
+	}
+	Ok(ParsedLines::PerFile(ranges))
 }
 
 // Execute view command - unified read-only tool for files, directories, and content search
@@ -462,6 +523,10 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 			ParsedLines::None => vec![None; paths.len()],
 			ParsedLines::Single(range) => vec![range; paths.len()],
 			ParsedLines::PerFile(ranges) => ranges,
+			ParsedLines::MultiRangeSingleFile(_) => {
+				// Unreachable: parse_lines_param only returns this variant when paths.len() == 1.
+				unreachable!("MultiRangeSingleFile is only produced for a single path");
+			}
 		};
 		return file_ops::view_many_files_spec(&paths, &call.workdir, &per_file_ranges).await;
 	}
@@ -491,14 +556,19 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		}
 	}
 
-	// File: resolve optional line range
-	let lines = match parsed_lines {
-		ParsedLines::None => None,
-		ParsedLines::Single(range) => range,
-		ParsedLines::PerFile(ranges) => ranges.into_iter().next().flatten(),
-	};
-
-	file_ops::view_file_spec(&resolved, lines).await
+	// File: resolve to the appropriate renderer based on parsed lines shape
+	match parsed_lines {
+		ParsedLines::None => file_ops::view_file_spec(&resolved, None).await,
+		ParsedLines::Single(range) => file_ops::view_file_spec(&resolved, range).await,
+		ParsedLines::MultiRangeSingleFile(ranges) => {
+			file_ops::view_file_multi_ranges(&resolved, &ranges).await
+		}
+		ParsedLines::PerFile(ranges) => {
+			// paths.len() == 1 here, so PerFile should really not occur, but handle defensively
+			let first = ranges.into_iter().next().flatten();
+			file_ops::view_file_spec(&resolved, first).await
+		}
+	}
 }
 
 // Execute extract_lines command - MCP compliant implementation

@@ -94,6 +94,41 @@ pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Re
 	Ok(content_with_numbers)
 }
 
+// View a single file with multiple line ranges, rendered with '--' separators
+// between ranges (same convention as content search). File is read once.
+// Ranges are applied in the order given (no dedup/merge — caller's responsibility).
+pub async fn view_file_multi_ranges(path: &Path, ranges: &[(usize, i64)]) -> Result<String> {
+	if !path.exists() {
+		bail!("File not found");
+	}
+	if !path.is_file() {
+		bail!("Path is not a file");
+	}
+
+	let metadata = tokio_fs::metadata(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	if metadata.len() > 1024 * 1024 * 5 {
+		bail!("File is too large (>5MB)");
+	}
+
+	let content = tokio_fs::read_to_string(path)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	let lines: Vec<&str> = content.lines().collect();
+
+	if ranges.is_empty() {
+		return Ok(format_file_content_with_numbers(&lines, None));
+	}
+
+	let parts: Vec<String> = ranges
+		.iter()
+		.map(|r| format_file_content_with_numbers(&lines, Some(*r)))
+		.collect();
+
+	Ok(parts.join("\n--\n"))
+}
+
 // Search a single file for a literal pattern and render results using the same
 // hash/number format as view. No external tools — pure Rust string matching.
 pub async fn view_file_with_content_search(
