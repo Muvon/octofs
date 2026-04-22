@@ -4753,15 +4753,18 @@ mod tests {
 	async fn test_view_multi_file_more_ranges_than_paths_errors() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_a = temp_dir.path().join("a.txt");
+		let file_b = temp_dir.path().join("b.txt");
 		fs::write(&file_a, "a1\na2\na3\n").await.unwrap();
+		fs::write(&file_b, "b1\nb2\nb3\n").await.unwrap();
 
+		// Two paths but three range pairs — should error on count mismatch
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"paths": [file_a.to_string_lossy()],
-				"lines": [[1, 2], [3, 3]]
+				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
+				"lines": [[1, 2], [3, 3], [1, 1]]
 			}),
 		};
 
