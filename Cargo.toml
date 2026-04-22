@@ -11,7 +11,7 @@ documentation = "https://github.com/muvon/octofs"
 keywords = ["mcp", "ai", "filesystem", "cli", "tools"]
 categories = ["development-tools", "command-line-utilities", "filesystem"]
 readme = "README.md"
-rust-version = "1.92"
+rust-version = "1.95"
 exclude = [
     "tests/fixtures/*",
     "examples/*",
