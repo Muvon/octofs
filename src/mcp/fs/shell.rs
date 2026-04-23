@@ -93,6 +93,18 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str, &str)] = &[
 	),
 ];
 
+// Force well-behaved interactive tools to fail fast instead of prompting.
+// stdin=null + process_group(0) already makes input physically impossible;
+// these env vars make cooperative tools surface a clean error instead of
+// printing a prompt and hitting EOF mid-read (or invoking a pager that
+// misbehaves without a TTY).
+static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
+	("GIT_TERMINAL_PROMPT", "0"), // git: fail instead of prompting for credentials
+	("DEBIAN_FRONTEND", "noninteractive"), // apt/dpkg: never prompt
+	("PAGER", "cat"),             // don't invoke less (hangs / garbled without TTY)
+	("GIT_PAGER", "cat"),         // same for git log/diff/show
+];
+
 // Detect shell commands that should use a dedicated MCP tool instead.
 // Returns a hint only when the recommended tool is actually enabled in the current session.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
@@ -170,6 +182,13 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 	#[cfg(unix)]
 	{
 		cmd.process_group(0);
+	}
+
+	// Inject environment variables that force non-interactive behavior.
+	// This prevents prompts for credentials (git), passwords (sudo),
+	// editor launches, and confirmation dialogs.
+	for (key, value) in NONINTERACTIVE_ENVS {
+		cmd.env(key, value);
 	}
 
 	// Configure the command based on execution mode
