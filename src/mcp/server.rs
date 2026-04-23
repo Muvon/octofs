@@ -337,29 +337,33 @@ where
 	deserializer.deserialize_any(StringOrVec)
 }
 
+/// Text editor operation. The `command` field discriminates between variants,
+/// and each variant declares exactly the fields it needs — so `old_text`/`new_text`
+/// are schema-level required for `str_replace` and absent for `create`/`undo_edit`.
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TextEditorCommand {
-	Create,
-	StrReplace,
-	UndoEdit,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct TextEditorParams {
-	/// The operation to perform: create, str_replace, undo_edit
-	pub command: TextEditorCommand,
-	/// REQUIRED. Path to the file to operate on.
-	pub path: String,
-	/// File content for create command.
-	#[serde(default)]
-	pub content: Option<String>,
-	/// Text to find (must match exactly). REQUIRED for str_replace.
-	#[serde(default)]
-	pub old_text: Option<String>,
-	/// Replacement text. REQUIRED for str_replace.
-	#[serde(default)]
-	pub new_text: Option<String>,
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum TextEditorParams {
+	/// Create a new file with the given content. Fails if the file already exists.
+	Create {
+		/// Path to the file to create.
+		path: String,
+		/// Content to write to the new file.
+		content: String,
+	},
+	/// Replace an exact text match in an existing file.
+	StrReplace {
+		/// Path to the file to edit.
+		path: String,
+		/// Text to find (must match exactly, including whitespace).
+		old_text: String,
+		/// Replacement text.
+		new_text: String,
+	},
+	/// Undo the last edit to a file (up to 10 levels of history).
+	UndoEdit {
+		/// Path to the file to revert.
+		path: String,
+	},
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
