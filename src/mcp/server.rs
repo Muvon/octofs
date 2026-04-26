@@ -11,7 +11,6 @@ use rmcp::{
 	tool, tool_handler, tool_router, RoleServer,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tracing::debug;
 
 use super::fs;
@@ -279,11 +278,11 @@ pub struct ViewParams {
 	#[schemars(length(min = 1, max = 50))]
 	pub paths: Vec<String>,
 	/// Line range for file viewing. Accepts:
-	/// - Single range: `[start, end]` (1-indexed, inclusive) — applied to single file or all files
-	/// - Per-file ranges: `[[start, end], [start, end], ...]` — one range per path
-	///   Accepts line numbers or line identifiers from previous `view` output.
+	/// - Single flat range: `[start, end]` (1-indexed, inclusive) — applied to single file or all files
+	/// - Multiple/per-file ranges: `[[start, end], [start, end], ...]`
+	///   Each endpoint is either a 1-indexed line number or a line-identifier hash from previous `view` output.
 	#[serde(default)]
-	pub lines: Option<Vec<Value>>,
+	pub lines: Option<Vec<LineSpec>>,
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
 	pub pattern: Option<String>,
@@ -299,6 +298,27 @@ pub struct ViewParams {
 	/// Context lines around content search matches.
 	#[serde(default)]
 	pub context: Option<usize>,
+}
+
+/// One endpoint of a line range — either a 1-indexed line number or a content hash.
+/// Used as element of nested-range form in `ViewParams::lines`.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum LineEndpoint {
+	Number(i64),
+	Hash(String),
+}
+
+/// Element of `ViewParams::lines`. The flat form `[Number, Number]` (or `[Hash, Hash]`)
+/// expresses a single range applied to all paths; the nested form `[Range, Range, ...]`
+/// expresses one range per path or multiple ranges in a single file. Runtime parsing in
+/// `fs::core::parse_lines_param` enforces shape and arity.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum LineSpec {
+	Number(i64),
+	Hash(String),
+	Range(Vec<LineEndpoint>),
 }
 
 /// Deserialize a value that can be either a single string or an array of strings.
