@@ -143,7 +143,9 @@ pub async fn save_file_history(path: &Path) -> Result<()> {
 	if path.exists() {
 		// First read the content
 		let content = tokio_fs::read_to_string(path).await?;
-		let path_str = path.to_string_lossy().to_string();
+		// Use the same canonicalized key as the file lock map so undo history
+		// follows the file even when callers pass aliased paths.
+		let path_str = text_editing::lock_key_for(path);
 
 		// Then update the history with the lock held
 		let file_history = get_file_history();
@@ -167,7 +169,7 @@ pub async fn save_file_history(path: &Path) -> Result<()> {
 
 // Undo the last edit to a file
 pub async fn undo_edit(path: &Path) -> Result<String> {
-	let path_str = path.to_string_lossy().to_string();
+	let path_str = text_editing::lock_key_for(path);
 
 	// First retrieve the previous content while holding the lock
 	let previous_content = {

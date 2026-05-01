@@ -1908,6 +1908,28 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_lock_key_collapses_aliased_paths() {
+		// `acquire_file_lock` keys its map by path string. If two equivalent
+		// paths produce different keys, they get separate locks and concurrent
+		// writes corrupt the file. Verify aliased forms collapse to one key.
+		let dir = tempfile::tempdir().unwrap();
+		let abs = dir.path().join("aliased.txt");
+		fs::write(&abs, "x").await.unwrap();
+
+		let raw = abs.clone();
+		let with_dot = dir.path().join(".").join("aliased.txt");
+		let with_double_slash =
+			std::path::PathBuf::from(format!("{}//aliased.txt", dir.path().to_string_lossy()));
+
+		let key_raw = crate::mcp::fs::text_editing::lock_key_for(&raw);
+		let key_dot = crate::mcp::fs::text_editing::lock_key_for(&with_dot);
+		let key_slash = crate::mcp::fs::text_editing::lock_key_for(&with_double_slash);
+
+		assert_eq!(key_raw, key_dot, "`./x` must share a lock with `x`");
+		assert_eq!(key_raw, key_slash, "`x//y` must share a lock with `x/y`");
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_diff_shows_removed_and_added() {
 		// The diff output must contain both -N: (removed) and +N: (added) markers
 		let temp_file = create_test_file("alpha\nbeta\ngamma\n").await;

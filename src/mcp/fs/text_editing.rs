@@ -32,14 +32,27 @@ static FILE_LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceL
 fn get_file_locks() -> &'static Mutex<HashMap<String, Arc<AsyncMutex<()>>>> {
 	FILE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+// Build the lock-map key for a path. Canonicalize when possible so aliases
+// (`x`, `./x`, `/abs/x`, symlinks) map to the same lock — otherwise two
+// requests targeting the same file would not serialize and could corrupt it.
+// Falls back to the raw path string if canonicalize fails (file may not exist
+// yet, e.g. for `text_editor create`).
+pub fn lock_key_for(path: &Path) -> String {
+	match path.canonicalize() {
+		Ok(canon) => canon.to_string_lossy().to_string(),
+		Err(_) => path.to_string_lossy().to_string(),
+	}
+}
+
 // Acquire a file-specific lock to prevent concurrent writes to the same file
 async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
-	let path_str = path.to_string_lossy().to_string();
+	let key = lock_key_for(path);
 
 	let file_lock = {
 		let mut locks = get_file_locks().lock().expect("file locks poisoned");
 		locks
-			.entry(path_str)
+			.entry(key)
 			.or_insert_with(|| Arc::new(AsyncMutex::new(())))
 			.clone()
 	};
