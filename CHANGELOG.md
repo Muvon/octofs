@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0] - 2026-05-02
+
+### 📋 Release Summary
+
+This release introduces enhanced file viewing capabilities with support for multi-range selection and automatic out-of-bounds clamping (6f832c54, 8e54d4d3, cbc22c56, 708ecd53). User experience is improved through a streamlined text editor interface and more robust file locking via path canonicalization (48d2f32f, 79e08c6d, 5a1e6753). Additionally, shell execution is now strictly non-interactive to ensure stability, supported by updated toolchains and improved error handling for complex file operations (cf75acda, d4169097, e5a9ea1f).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: implement structured line range types `708ecd53`
+- **mcp**: enforce non-interactive shell execution `cf75acda`
+- **mcp**: add multi-range support for file views `6f832c54`
+- **fs**: clamp out-of-bounds line ranges `8e54d4d3`
+- **mcp**: support per-file line ranges in view `cbc22c56`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: flatten text editor command schema `48d2f32f`
+- **mcp**: convert TextEditorParams to tagged enum `79e08c6d`
+- **fs**: error when line ranges exceed path count `d4169097`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: canonicalize paths for file lock keys `5a1e6753`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.3.1] - 2026-04-19
 
 ### 📋 Release Summary
