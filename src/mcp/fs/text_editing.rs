@@ -367,7 +367,68 @@ fn adjust_indentation(new_text: &str, provided_old: &str, actual_old: &str) -> S
 }
 
 /// Atomic write: write to a temp file in the same directory, then rename over the target.
-/// Guarantees the file is never in a partial/corrupt state if the process is interrupted.
+/// Build a unified-style diff for a str_replace operation showing CONTEXT lines before/after.
+// `start` is 0-indexed position of the first replaced line in `orig_lines`.
+fn build_str_replace_diff(
+	orig_lines: &[&str],
+	new_lines: &[&str],
+	start: usize,
+	old_line_count: usize,
+	new_text_lines: &[&str],
+) -> String {
+	const CONTEXT: usize = 2;
+	let mut diff: Vec<String> = Vec::new();
+
+	// Context before
+	let ctx_before_start = start.saturating_sub(CONTEXT);
+	if ctx_before_start > 0 {
+		diff.push("...".to_string());
+	}
+	for (i, line) in orig_lines
+		.iter()
+		.enumerate()
+		.take(start)
+		.skip(ctx_before_start)
+	{
+		diff.push(format!("{}: {}", i + 1, line));
+	}
+
+	// Removed lines
+	for (i, line) in orig_lines
+		.iter()
+		.enumerate()
+		.skip(start)
+		.take(old_line_count)
+	{
+		diff.push(format!("-{}: {}", i + 1, line));
+	}
+
+	// Added lines
+	// In the new file the inserted block starts at `start + 1` (1-indexed)
+	let new_block_start = start + 1;
+	for (i, line) in new_text_lines.iter().enumerate() {
+		diff.push(format!("+{}: {}", new_block_start + i, line));
+	}
+
+	// Context after: read from new_lines (already has the replacement applied)
+	let new_after_start = start + new_text_lines.len(); // 0-indexed in new_lines
+	let ctx_after_end = (new_after_start + CONTEXT).min(new_lines.len());
+	for (i, line) in new_lines
+		.iter()
+		.enumerate()
+		.take(ctx_after_end)
+		.skip(new_after_start)
+	{
+		diff.push(format!("{}: {}", i + 1, line));
+	}
+	if ctx_after_end < new_lines.len() {
+		diff.push("...".to_string());
+	}
+
+	diff.join("\n")
+}
+
+// Guarantees the file is never in a partial/corrupt state if the process is interrupted.
 pub async fn atomic_write(path: &Path, content: &str) -> Result<()> {
 	let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
 	let tmp_path = parent_dir.join(format!(
@@ -411,19 +472,33 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 
 	if occurrences == 1 {
 		// Perfect exact match — replace directly
+		let orig_lines: Vec<&str> = content.lines().collect();
+		let old_line_count = old_text.lines().count();
+		// Find the 0-indexed start line of the match
+		let match_offset = content.find(old_text).unwrap_or(0);
+		let match_start = byte_offset_to_line(&content, match_offset) - 1;
+
 		save_file_history(path).await?;
 		let new_content = content.replace(old_text, new_text);
 		atomic_write(path, &new_content).await?;
 
-		let line_count = old_text.lines().count();
-		if line_count > 1 {
+		if old_line_count > 1 {
 			crate::mcp::hint_accumulator::push_hint(&format!(
 				"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line range — it's faster and avoids content-search ambiguity.",
-				line_count
+				old_line_count
 			));
 		}
 
-		return Ok("Successfully replaced text at exactly one location.".to_string());
+		let new_lines: Vec<&str> = new_content.lines().collect();
+		let new_text_lines: Vec<&str> = new_text.lines().collect();
+		let diff = build_str_replace_diff(
+			&orig_lines,
+			&new_lines,
+			match_start,
+			old_line_count,
+			&new_text_lines,
+		);
+		return Ok(diff);
 	}
 
 	if occurrences > 1 {
@@ -494,10 +569,20 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 			let new_content = content.replace(&actual_old, &adjusted_new);
 			atomic_write(path, &new_content).await?;
 
-			return Ok(format!(
-				"Successfully replaced text via fuzzy match (whitespace-normalized) at line {}. Indentation was auto-adjusted to match the file.",
-				start + 1
-			));
+			crate::mcp::hint_accumulator::push_hint(
+				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
+			);
+
+			let new_lines: Vec<&str> = new_content.lines().collect();
+			let new_text_lines: Vec<&str> = adjusted_new.lines().collect();
+			let diff = build_str_replace_diff(
+				&content_lines,
+				&new_lines,
+				start,
+				old_line_count,
+				&new_text_lines,
+			);
+			return Ok(diff);
 		}
 	}
 
@@ -1285,7 +1370,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Build annotated diff for each operation so the AI can verify edits landed correctly.
 	// In hash mode: uses content-based hashes as line prefixes.
 	// In number mode: uses sequential line numbers as before.
-	const CONTEXT: usize = 3;
+	const CONTEXT: usize = 2;
 	let new_lines: Vec<&str> = final_content.lines().collect();
 	let new_hashes: Vec<String> = if use_hashes {
 		crate::utils::line_hash::compute_line_hashes(&new_lines)
@@ -1364,7 +1449,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				diffs.push(diff.join("\n"));
 			}
 			OperationType::Insert => {
-				// For inserts just note where lines were added
+				// For inserts show context lines before and after so the AI can verify placement
 				let after = match op.line_range {
 					LineRange::Single(line) => line,
 					LineRange::Range(start, _) => start,
@@ -1372,6 +1457,19 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				let content_lines: Vec<&str> = op.content.lines().collect();
 				let insert_at = after + 1; // new line numbers start here
 				let mut diff: Vec<String> = Vec::new();
+
+				// Context before: up to CONTEXT lines before the insertion point (in new file)
+				let ctx_before_start = insert_at.saturating_sub(CONTEXT).max(1);
+				if ctx_before_start > 1 {
+					diff.push("...".to_string());
+				}
+				for new_i in ctx_before_start..insert_at {
+					if new_i >= 1 && new_i <= new_lines.len() {
+						diff.push(format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]));
+					}
+				}
+
+				// The inserted lines
 				for (i, new_line) in content_lines.iter().enumerate() {
 					let idx = insert_at + i;
 					let pfx = if idx <= new_lines.len() {
@@ -1381,6 +1479,19 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					};
 					diff.push(format!("+{}: {}", pfx, new_line));
 				}
+
+				// Context after: up to CONTEXT lines after the inserted block (in new file)
+				let after_end = insert_at + content_lines.len();
+				let ctx_after_end = (after_end + CONTEXT - 1).min(new_lines.len());
+				for new_i in after_end..=ctx_after_end {
+					if new_i >= 1 && new_i <= new_lines.len() {
+						diff.push(format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]));
+					}
+				}
+				if ctx_after_end < new_lines.len() {
+					diff.push("...".to_string());
+				}
+
 				diffs.push(diff.join("\n"));
 			}
 		}
