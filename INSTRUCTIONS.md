@@ -1,383 +1,161 @@
-# Octofs Development Instructions
+# Octofs — MCP Filesystem Tools Server
 
-## Core Principles
-
-### Code Quality & Architecture
-- **DRY Principle**: Don't repeat yourself - reuse existing patterns
-- **KISS Principle**: Keep it simple, stupid - avoid over-engineering
-- **Zero Warnings**: All code must pass `cargo clippy` without warnings
-- **Fail Fast**: Validate inputs early and return clear error messages
-- **Pragmatic Design**: Simple, maintainable code that others can understand
-
-### Tool Design Philosophy
-- **Single Responsibility**: Each tool does one thing well
-- **Composability**: Tools work together seamlessly
-- **Predictability**: Consistent behavior across all operations
-- **Safety**: Proper error handling and validation
+Standalone Rust binary that exposes filesystem tools (view, text_editor, batch_edit, extract_lines, shell, workdir) over the Model Context Protocol. Runs as stdio or HTTP server. Built on `rmcp` 1.3, `tokio`, `axum`. Apache 2.0, maintained by Muvon Un Limited.
 
 ## Project Structure
 
-### Core Modules
-
-- `src/main.rs` - Entry point and server initialization
-- `src/cli.rs` - CLI argument parsing with clap
-- `src/mcp/` - Model Context Protocol server
-  - `server.rs` - MCP protocol handler and tool registration
-  - `mod.rs` - Module exports
-  - `fs/` - Filesystem tools implementation
-    - `core.rs` - Core file operations (read, write, create)
-    - `text_editing.rs` - Text editing operations (str_replace, batch_edit)
-    - `directory.rs` - Directory operations (list, search, traverse)
-    - `shell.rs` - Shell command execution with background support
-    - `workdir.rs` - Working directory context management
-    - `file_ops.rs` - File operation utilities
-    - `functions.rs` - Tool function definitions and schemas
-    - `fs_tests.rs` - Filesystem tests
-    - `mod.rs` - Module exports
-  - `shared_utils.rs` - Shared utility functions
-  - `hint_accumulator.rs` - Hint accumulation for tool feedback
-- `src/utils/` - Utility functions
-  - `glob.rs` - Glob pattern matching and expansion
-  - `truncation.rs` - Content truncation logic for large files
-  - `mod.rs` - Module exports
-- `Cargo.toml` - Project dependencies and metadata
-- `rustfmt.toml` - Code formatting configuration
-
-### Tool Organization
-
-Each filesystem tool is implemented as a separate function in `src/mcp/fs/functions.rs` with:
-- Clear input validation
-- Proper error handling
-- Consistent output formatting
-- Integration with MCP protocol
-
-## MCP Tools
-
-### File Operations
-
-**view** - Read files, view directories, and search file content
-- Read single file or multiple files
-- View directory structure with filtering
-- Search file content with built-in fixed-string matching
-- Support for line ranges and context
-
-**text_editor** - Create, edit, and manage file content
-- Create new files
-- Replace exact string matches
-- Undo last edit
-- Atomic operations
-
-**batch_edit** - Perform multiple atomic edits on a single file
-- Multiple insert/replace operations
-- Original line number references
-- Atomic execution
-- Diff output
-
-**extract_lines** - Copy lines from source to target file
-- Extract line ranges
-- Append to target file
-- Preserve source file
-
-### Code Analysis
-
-**view_signatures** - Extract function signatures and declarations
-- Function signatures
-- Class definitions
-- Type declarations
-- No implementation bodies
-
-### Shell & System
-
-**shell** - Execute commands with background process support
-- Command execution
-- Background process support
-- Output capture
-- Error handling
-
-**workdir** - Get or set working directory context
-- Get current working directory
-- Set new working directory
-- Reset to session root
-- Relative path resolution
-
-## Development Workflow
-
-### MANDATORY BUILD COMMANDS
-
-```bash
-# Development build
-cargo build
-
-# Check code quality
-cargo check --message-format=short
-
-# Run tests
-cargo test
-
-# Lint with clippy
-cargo clippy
-
-# Format code
-cargo fmt
+```
+src/
+  main.rs                    — Entry point: CLI dispatch, stdio/HTTP server startup, signal handling
+  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--line-mode]`
+  mcp/
+    mod.rs                   — McpToolCall struct, session root directory (OnceLock)
+    server.rs                — OctofsServer (rmcp tool impl), SessionWorkdir, all Params structs
+    hint_accumulator.rs      — Thread-local hint queue; hints appended to every tool response
+    shared_utils.rs          — apply_head_truncation helper
+    fs/
+      mod.rs                 — Re-exports: execute_view, execute_text_editor, execute_batch_edit,
+                               execute_extract_lines, execute_shell_command, execute_workdir_command
+      core.rs                — resolve_path, file history (undo), execute_view, execute_text_editor,
+                               execute_batch_edit, execute_extract_lines
+      file_ops.rs            — view_file_spec, view_file_multi_ranges, view_file_with_content_search,
+                               create_file_spec, view_many_files, view_many_files_spec
+      text_editing.rs        — str_replace_spec, batch_edit_spec, per-file async locking
+      directory.rs           — Directory listing and content search (ignore crate + pure-Rust regex)
+      search.rs              — search_content: fixed-string match with context blocks
+      shell.rs               — execute_shell_command, foreground/background, PGID process group cleanup
+      workdir.rs             — execute_workdir_command, WorkdirResult
+      fs_tests.rs            — Integration tests (cfg(test) only)
+  utils/
+    glob.rs                  — expand_glob_patterns_filtered (gitignore-aware, max 1000 files)
+    truncation.rs            — estimate_tokens, truncate_to_tokens, format_content_with_line_numbers,
+                               truncate_mcp_response_global
+    line_hash.rs             — LineMode (Number|Hash), FNV1a-16 per-line hashes, resolve_hash_to_line
 ```
 
-### Code Quality Standards
+## Where to Look
 
-- **Zero clippy warnings** - All code must pass `cargo clippy` without warnings
-- **Minimal dependencies** - Reuse existing dependencies before adding new ones
-- **Error handling** - Use proper `Result<T>` types and meaningful error messages
-- **Testing** - Unit tests for individual components, integration tests for workflows
+| Task | Start here |
+|------|------------|
+| Add a new MCP tool | `server.rs` (Params struct + `#[tool]` method) → `fs/core.rs` or new `fs/*.rs` (execute fn) → `fs/mod.rs` (re-export) → `fs/fs_tests.rs` (tests) |
+| Modify existing tool logic | `fs/core.rs` (view, text_editor, batch_edit, extract_lines) · `fs/text_editing.rs` (str_replace, batch_edit internals) · `fs/shell.rs` · `fs/workdir.rs` |
+| Change tool parameter schema | `server.rs` — Params structs with `#[schemars]` / `#[serde]` annotations |
+| File reading / formatting | `fs/file_ops.rs` — all view_file_* functions |
+| Directory listing / search | `fs/directory.rs` + `fs/search.rs` |
+| Line number vs hash mode | `utils/line_hash.rs` — set at startup via `--line-mode` CLI flag |
+| Content truncation logic | `utils/truncation.rs` — token estimation and smart truncation |
+| Glob expansion | `utils/glob.rs` — gitignore-aware, dotfile-filtered |
+| Hint messages to LLM | `mcp/hint_accumulator.rs` — push_hint(), drained after every tool call |
+| Session workdir state | `server.rs` `SessionWorkdir` — per-instance RwLock<PathBuf> |
+| Process cleanup on exit | `main.rs` signal handler + `fs/shell.rs` `kill_all_shell_children` |
 
-### Testing Approach
+## How Things Work
 
-- **Unit tests** for individual components (in `fs_tests.rs`)
-- **Integration tests** for full workflows
-- **Manual testing** with real projects during development
+### Tool Execution Flow
 
-## Common Patterns
+Every tool call goes: `server.rs #[tool] method` → builds `McpToolCall { tool_name, parameters, workdir }` → calls `execute_*` in `fs/` → result string → `append_hints()` wraps it before returning to MCP client.
+
+`McpToolCall` carries the per-session `workdir: PathBuf` so all `execute_*` functions are pure — they receive context, don't read global state.
+
+### Path Resolution
+
+All paths go through `core::resolve_path(path_str, workdir)`:
+- Relative → `workdir.join(path)` (no canonicalize — file may not exist yet)
+- Absolute → used as-is
+
+```rust
+// ✅ always resolve through workdir
+let path = resolve_path(&params.path, &call.workdir);
+
+// ❌ never construct paths directly
+let path = PathBuf::from(&params.path);
+```
+
+### File Locking
+
+Concurrent writes to the same file are serialized via per-file `tokio::sync::Mutex` stored in a `std::sync::Mutex<HashMap>`. Key is the canonicalized path (falls back to raw string). Lock is acquired in `text_editing::acquire_file_lock` before any write. Never hold the outer `std::sync::Mutex` across an `await`.
+
+### Undo History
+
+`core::save_file_history(path)` snapshots current content into `FILE_HISTORY` (OnceLock Mutex HashMap) before every write. `core::undo_edit(path)` pops the last snapshot. History is in-memory only — lost on restart.
+
+### Line Identifiers
+
+Two modes set once at startup via `--line-mode`:
+- `number` (default) — sequential 1-indexed integers
+- `hash` — 4-char lowercase hex FNV1a-16 hashes, position-dependent (same content at different lines → different hash)
+
+`utils/line_hash::is_hash_mode()` gates all formatting paths. `batch_edit` and `extract_lines` accept both numbers and hash strings in their range parameters.
+
+### Hint Accumulator
+
+Any `execute_*` function can call `hint_accumulator::push_hint("...")` to queue guidance text. After the tool returns, `server.rs::append_hints()` drains the queue and appends hints to the response. Used to surface misuse warnings to the LLM without failing the call.
+
+### Transport Modes
+
+- **stdio** (default): single `OctofsServer` instance, session root from `--path` or `cwd`
+- **HTTP** (`--bind host:port`): `axum` + `rmcp` streamable HTTP; each session gets a fresh `OctofsServer::with_root()` instance; initial workdir can be set via MCP `initialize` params
 
 ### Error Handling
 
 ```rust
-// ✅ GOOD: Proper error handling with context
-pub async fn execute(command: Commands) -> Result<()> {
-    match command {
-        Commands::Mcp => {
-            let server = McpServer::new().await?;
-            server.run().await
-        }
-    }
-}
+// ✅ anyhow::bail! for early validation exits
+anyhow::bail!("Path cannot be empty");
 
-// ✅ GOOD: Clear error messages
-anyhow::bail!("File not found: {}", path.display());
-
-// ❌ AVOID: Unwrapping without context
-let content = fs::read_to_string(path).unwrap();
-```
-
-### File Operations
-
-```rust
-// ✅ GOOD: Use proper error handling
-let content = tokio::fs::read_to_string(&path).await
-    .context("Failed to read file")?;
-
-// ✅ GOOD: Validate inputs early
-if path.is_absolute() && !path.starts_with(&workdir) {
-    anyhow::bail!("Path must be within working directory");
-}
-
-// ❌ AVOID: Assuming file operations succeed
-let _ = fs::write(path, content);
-```
-
-### Async Operations
-
-```rust
-// ✅ GOOD: Use tokio for async file operations
-let content = tokio::fs::read_to_string(path).await?;
-
-// ✅ GOOD: Proper async error handling
-tokio::spawn(async move {
-    if let Err(e) = process_file(&path).await {
-        eprintln!("Error: {}", e);
-    }
-});
-
-// ❌ AVOID: Blocking operations in async context
-let content = std::fs::read_to_string(path)?;
-```
-
-## Adding New Tools
-
-### Steps to Add a New Tool
-
-1. **Define the tool function** in `src/mcp/fs/functions.rs`
-   - Clear input validation
-   - Proper error handling
-   - Consistent output formatting
-
-2. **Add tool schema** in `src/mcp/fs/functions.rs`
-   - Input parameters with descriptions
-   - Output format specification
-   - Example usage
-
-3. **Register the tool** in `src/mcp/server.rs`
-   - Add to tool list
-   - Map to handler function
-   - Update tool descriptions
-
-4. **Add tests** in `src/mcp/fs/fs_tests.rs`
-   - Unit tests for core functionality
-   - Error case handling
-   - Integration with other tools
-
-5. **Update documentation**
-   - Add to README.md
-   - Update INSTRUCTIONS.md if needed
-   - Add inline code comments
-
-### Tool Implementation Template
-
-```rust
-pub async fn my_tool(
-    params: MyToolParams,
-    workdir: &Path,
-) -> Result<MyToolResponse> {
-    // Validate inputs
-    if params.path.is_empty() {
-        anyhow::bail!("Path cannot be empty");
-    }
-
-    // Resolve path relative to workdir
-    let resolved_path = resolve_path(&params.path, workdir)?;
-
-    // Perform operation
-    let result = perform_operation(&resolved_path).await?;
-
-    // Return result
-    Ok(MyToolResponse {
-        success: true,
-        data: result,
-    })
-}
-```
-
-## Performance Guidelines
-
-### File Operations
-- **Progressive file counting** during directory traversal
-- **Lazy loading** of file content for large files
-- **Intelligent truncation** for oversized content
-- **Batch operations** for multiple file changes
-
-### Code Analysis
-- **AST parsing** only when needed
-- **Pattern caching** for repeated searches
-- **Incremental analysis** for large codebases
-
-### Shell Execution
-- **Process pooling** for background tasks
-- **Output streaming** for long-running commands
-- **Resource cleanup** after command completion
-
-## Common Patterns
-
-### Path Resolution
-
-```rust
-// ✅ GOOD: Resolve paths relative to workdir
-fn resolve_path(path: &str, workdir: &Path) -> Result<PathBuf> {
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(workdir.join(path).canonicalize()?)
-    }
-}
-```
-
-### Content Truncation
-
-```rust
-// ✅ GOOD: Truncate large content intelligently
-fn truncate_content(content: &str, max_lines: usize) -> String {
-    content
-        .lines()
-        .take(max_lines)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-```
-
-### Error Context
-
-```rust
-// ✅ GOOD: Add context to errors
-let content = tokio::fs::read_to_string(&path)
-    .await
+// ✅ .context() to add location to propagated errors
+tokio::fs::read_to_string(&path).await
     .context(format!("Failed to read file: {}", path.display()))?;
+
+// ❌ never unwrap in non-test code (except OnceLock init patterns)
+fs::read_to_string(path).unwrap();
 ```
 
-## Quick Start Checklist
+### Async Rules
 
-1. **Code Quality**: Always run `cargo clippy` before finalizing code
-2. **Testing**: Write tests for new functionality
-3. **Documentation**: Update README.md and INSTRUCTIONS.md
-4. **Error Handling**: Use proper `Result<T>` types
-5. **Validation**: Validate inputs early and fail fast
-6. **Performance**: Consider performance implications of changes
-7. **Compatibility**: Ensure changes don't break existing tools
-8. **Copyright Header**: Every `.rs` file must have the Apache 2.0 copyright header with the current year (`Copyright 2026 Muvon Un Limited`). Verify year is up-to-date when modifying files in a new calendar year
+```rust
+// ✅ tokio::fs for all file I/O
+tokio::fs::read_to_string(&path).await?;
 
-## Development Patterns
+// ❌ std::fs blocks the async runtime
+std::fs::read_to_string(&path)?;
+```
 
-### Adding New File Operations
+### Adding a New Tool — Checklist
 
-1. Implement function in `src/mcp/fs/core.rs` or appropriate module
-2. Add tool wrapper in `src/mcp/fs/functions.rs`
-3. Register in `src/mcp/server.rs`
-4. Add tests in `src/mcp/fs/fs_tests.rs`
-5. Update README.md with usage examples
-
-### Adding New Utilities
-
-1. Create module in `src/utils/`
-2. Implement functionality with clear API
-3. Add tests in module
-4. Export from `src/utils/mod.rs`
-5. Use in appropriate tools
+1. **`server.rs`** — add `Params` struct (derive `Deserialize`, `JsonSchema`), add `#[tool]` async method on `OctofsServer`
+2. **`fs/`** — implement `execute_my_tool(call: &McpToolCall) -> Result<String>` in the appropriate module (`core.rs` for file ops, new file for distinct domains)
+3. **`fs/mod.rs`** — re-export the execute function
+4. **`fs/fs_tests.rs`** — add tests using `McpToolCall::test_call(...)` and `tempfile`
 
 ## Code Style
 
-### Naming Conventions
+- **Naming**: `snake_case` functions/variables, `PascalCase` types/enums/traits, `SCREAMING_SNAKE_CASE` constants
+- **Comments**: explain *why*, not *what*; module-level doc comment on every file; avoid obvious comments
+- **Line length**: 100 chars max (enforced by `rustfmt.toml`)
+- **Copyright header**: every `.rs` file must start with the Apache 2.0 header — `Copyright 2026 Muvon Un Limited`. Verify year when modifying files in a new calendar year.
 
-- **Functions**: `snake_case` for all functions
-- **Types**: `PascalCase` for structs, enums, traits
-- **Constants**: `SCREAMING_SNAKE_CASE` for constants
-- **Variables**: `snake_case` for all variables
+## Validation
 
-### Comments
+- Zero `cargo clippy` warnings — treat warnings as errors
+- All tests pass: `cargo test`
+- No `std::fs` blocking calls in async paths
+- No `.unwrap()` outside of test code or OnceLock init patterns
+- New tools have tests in `fs_tests.rs` covering happy path + error cases
+- Copyright header present and year correct on every modified `.rs` file
 
-- **Why not What**: Explain intent, not obvious operations
-- **Module-level**: Document module purpose and usage
-- **Complex logic**: Explain non-obvious algorithms
-- **Avoid**: Obvious comments like `// increment counter`
+## Gotchas
 
-### Formatting
+- `functions.rs` does **not exist** — tool schemas and Params structs live in `server.rs`; execute logic lives in `fs/core.rs` or domain-specific `fs/*.rs` files
+- `resolve_path` does **not** canonicalize — the file may not exist yet (e.g. `text_editor create`). Canonicalize only when building lock keys
+- `SessionWorkdir` is per-server-instance (HTTP: per-session); `SESSION_ROOT` in `mcp/mod.rs` is the startup default only
+- The outer `std::sync::Mutex` in `FILE_LOCKS` must never be held across an `.await` — acquire the inner `tokio::sync::Mutex` first, then drop the outer guard
+- Shell children are tracked by PID/PGID; `kill_all_shell_children` is called on SIGTERM/EOF — always register new child processes via `register_child(pid)`
+- `ignore` crate (gitignore-aware walker) is used for directory listing — dotfiles and `.gitignore`d paths are excluded by default
 
-- Use `cargo fmt` for consistent formatting
-- Follow `rustfmt.toml` configuration
-- Max line length: 100 characters (configured in rustfmt.toml)
+## Never
 
-## Troubleshooting
-
-### Build Issues
-
-```bash
-# Clean build
-cargo clean && cargo build
-
-# Check for clippy warnings
-cargo clippy -- -D warnings
-
-# Run tests
-cargo test
-```
-
-### Runtime Issues
-
-```bash
-# Enable debug logging
-RUST_LOG=debug octofs
-
-# Check error messages
-octofs 2>&1 | grep -i error
-```
-
-## Resources
-
-- [MCP Specification](https://modelcontextprotocol.io/)
-- [Tokio Documentation](https://tokio.rs/)
-- [Rust Error Handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html)
+- Add `std::fs` blocking calls inside `async fn` — use `tokio::fs` exclusively
+- Use `.unwrap()` in non-test, non-OnceLock-init code
+- Skip the copyright header on new `.rs` files
+- Add a new dependency without first checking if an existing one covers the need
+- Reference `functions.rs` — it was removed; tool definitions are in `server.rs`
