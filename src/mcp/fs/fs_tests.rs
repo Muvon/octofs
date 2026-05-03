@@ -4797,4 +4797,107 @@ mod tests {
 			"Should error about range/path count mismatch: {msg}"
 		);
 	}
+
+	// ── lines shape validation ────────────────────────────────────────────────
+
+	#[tokio::test]
+	async fn test_view_lines_triple_wrapped_errors_with_hint() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		fs::write(&file_a, "a1\na2\na3\na4\na5\n").await.unwrap();
+
+		// Hallucinated 3-level nesting: [[[1,3]]] — common LLM mistake.
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy()],
+				"lines": [[[1, 3]]]
+			}),
+		};
+
+		let err = execute_view(&call).await.unwrap_err();
+		let msg = err.to_string();
+		assert!(
+			msg.contains("over-wrapped") && msg.contains("2 levels"),
+			"Should hint about over-wrapping with 2-level max: {msg}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_lines_nested_non_array_element_errors_with_hint() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		fs::write(&file_a, "a1\na2\na3\n").await.unwrap();
+
+		// Mixed shape: first element is array, second is bare number — invalid.
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy()],
+				"lines": [[1, 2], 3]
+			}),
+		};
+
+		let err = execute_view(&call).await.unwrap_err();
+		let msg = err.to_string();
+		assert!(
+			msg.contains("[start, end]") && msg.contains("Max 2 levels"),
+			"Should hint about valid shapes and 2-level max: {msg}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_lines_flat_range_works() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		fs::write(&file_a, "a1\na2\na3\na4\na5\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy()],
+				"lines": [2, 4]
+			}),
+		};
+
+		let content = execute_view(&call).await.unwrap();
+		assert!(
+			content.contains("2:a2") && content.contains("4:a4"),
+			"Flat range should show lines 2-4: {content}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_lines_nested_ranges_single_path_works() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_a = temp_dir.path().join("a.txt");
+		fs::write(&file_a, "a1\na2\na3\na4\na5\na6\n")
+			.await
+			.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file_a.to_string_lossy()],
+				"lines": [[1, 2], [5, 6]]
+			}),
+		};
+
+		let content = execute_view(&call).await.unwrap();
+		assert!(
+			content.contains("1:a1")
+				&& content.contains("2:a2")
+				&& content.contains("5:a5")
+				&& content.contains("6:a6"),
+			"Nested ranges on single path should show lines 1-2 and 5-6: {content}"
+		);
+	}
 }

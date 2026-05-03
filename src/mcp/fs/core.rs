@@ -421,15 +421,36 @@ async fn parse_lines_param(
 		return Ok(ParsedLines::Single(range));
 	}
 
-	// Nested array → interpretation depends on path count
+	// Nested array → validate depth and shape, then interpret based on path count.
+	// Each element must be a 2-element array of scalar (number or string) endpoints.
+	// Reject 3+ levels of nesting (e.g. `[[[1,50]]]`) with an actionable message.
+	for (i, range_val) in arr.iter().enumerate() {
+		let Value::Array(range_arr) = range_val else {
+			bail!(
+				"lines[{i}] must be an array [start, end] (number or hash). Got non-array. \
+				 Valid shapes: [1,50] (flat) or [[1,50],[200,250]] (nested). Max 2 levels."
+			);
+		};
+		if let Some(bad_idx) = range_arr
+			.iter()
+			.position(|v| matches!(v, Value::Array(_) | Value::Object(_)))
+		{
+			bail!(
+				"lines[{i}][{bad_idx}] is itself an array/object — `lines` is over-wrapped. \
+				 Use 2 levels max: [[start,end],[start,end],...] not [[[start,end]],...]. \
+				 Each endpoint must be an integer line number or a hash string."
+			);
+		}
+	}
+
 	if paths.len() == 1 {
 		// Multiple ranges on a single file — read content once, resolve all ranges against it.
 		let resolved_path = resolve_path(&paths[0], workdir);
 		let cached = tokio_fs::read_to_string(&resolved_path).await.ok();
 		let mut ranges = Vec::with_capacity(arr.len());
-		for (i, range_val) in arr.iter().enumerate() {
+		for range_val in arr.iter() {
 			let Value::Array(range_arr) = range_val else {
-				bail!("lines[{}] must be an array [start, end]", i);
+				unreachable!("validated above");
 			};
 			let range =
 				resolve_single_line_range(range_arr, &resolved_path, cached.as_deref()).await?;
@@ -457,7 +478,7 @@ async fn parse_lines_param(
 		std::collections::HashMap::new();
 	for (i, range_val) in arr.iter().enumerate() {
 		let Value::Array(range_arr) = range_val else {
-			bail!("lines[{}] must be an array [start, end]", i);
+			unreachable!("validated above");
 		};
 		let resolved_path = resolve_path(&paths[i], workdir);
 		let key = paths[i].clone();

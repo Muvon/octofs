@@ -277,12 +277,20 @@ pub struct ViewParams {
 	#[serde(deserialize_with = "deserialize_string_or_vec")]
 	#[schemars(length(min = 1, max = 50))]
 	pub paths: Vec<String>,
-	/// Line range for file viewing. Accepts:
-	/// - Single flat range: `[start, end]` (1-indexed, inclusive) — applied to single file or all files
-	/// - Multiple/per-file ranges: `[[start, end], [start, end], ...]`
-	///   Each endpoint is either a 1-indexed line number or a line-identifier hash from previous `view` output.
+	/// Line range for file viewing. Accepts ONE of two shapes (max 2 levels of nesting):
+	///
+	/// 1. Flat range: `[start, end]` — single range applied to single file or all files.
+	///    Example: `[1, 50]` or `["a3f2", "b8c1"]` (hash endpoints).
+	///
+	/// 2. Nested ranges: `[[start, end], [start, end], ...]`
+	///    - With ONE path: multiple ranges from that file. Example: `[[1, 50], [200, 250]]`.
+	///    - With N paths: per-file ranges (one per path). Example: `[[1, 50], [10, 30]]`.
+	///
+	/// Endpoints are 1-indexed line numbers (i64) or hash strings from previous `view` output.
+	/// NEVER triple-wrap: `[[[1,50]]]` is INVALID. Maximum nesting is array-of-pairs.
 	#[serde(default)]
-	pub lines: Option<Vec<LineSpec>>,
+	#[schemars(schema_with = "lines_param_schema")]
+	pub lines: Option<serde_json::Value>,
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
 	pub pattern: Option<String>,
@@ -300,25 +308,55 @@ pub struct ViewParams {
 	pub context: Option<usize>,
 }
 
-/// One endpoint of a line range — either a 1-indexed line number or a content hash.
-/// Used as element of nested-range form in `ViewParams::lines`.
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum LineEndpoint {
-	Number(i64),
-	Hash(String),
-}
-
-/// Element of `ViewParams::lines`. The flat form `[Number, Number]` (or `[Hash, Hash]`)
-/// expresses a single range applied to all paths; the nested form `[Range, Range, ...]`
-/// expresses one range per path or multiple ranges in a single file. Runtime parsing in
-/// `fs::core::parse_lines_param` enforces shape and arity.
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum LineSpec {
-	Number(i64),
-	Hash(String),
-	Range(Vec<LineEndpoint>),
+/// JSON schema for `ViewParams::lines`.
+///
+/// Hand-written (instead of derived from an untagged enum) because schemars'
+/// auto-generated schema for `Vec<untagged enum>` confuses LLMs into over-wrapping
+/// the value (e.g. `[[[1,50]]]` instead of `[[1,50]]`). This schema makes the two
+/// accepted shapes explicit and gives concrete examples.
+///
+/// Runtime parsing in `fs::core::parse_lines_param` enforces shape and arity
+/// (and emits actionable errors on over-nesting).
+fn lines_param_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	serde_json::from_value(serde_json::json!({
+		"description": "Line range(s) for file viewing. Two accepted shapes (max 2 levels of nesting):\n\
+			1) Flat range: [start, end] — single range applied to single file or all files.\n\
+			2) Nested ranges: [[start, end], [start, end], ...] — multiple ranges (single path) or per-file ranges (multiple paths).\n\
+			Each endpoint is a 1-indexed line number (integer) or a hash string from previous view output. NEVER triple-wrap.",
+		"oneOf": [
+			{
+				"description": "Flat range [start, end] — applied to single file or all files",
+				"type": "array",
+				"minItems": 2,
+				"maxItems": 2,
+				"items": {
+					"oneOf": [
+						{ "type": "integer", "format": "int64" },
+						{ "type": "string" }
+					]
+				},
+				"examples": [[1, 50], ["a3f2", "b8c1"]]
+			},
+			{
+				"description": "Nested [[start,end], ...] — multiple ranges per file or per-file ranges",
+				"type": "array",
+				"minItems": 1,
+				"items": {
+					"type": "array",
+					"minItems": 2,
+					"maxItems": 2,
+					"items": {
+						"oneOf": [
+							{ "type": "integer", "format": "int64" },
+							{ "type": "string" }
+						]
+					}
+				},
+				"examples": [[[1, 50], [200, 250]], [[1, 30], [10, 40]]]
+			}
+		]
+	}))
+	.expect("static schema is valid JSON")
 }
 
 /// Deserialize a value that can be either a single string or an array of strings.
