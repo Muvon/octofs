@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.1] - 2026-05-03
+
+### 📋 Release Summary
+
+This release enhances the filesystem toolset with unified diff outputs for string replacements and improved line range validation for more reliable file editing (b0ce960a, 8a628812). Additionally, the project documentation has been rewritten to provide a clearer overview of the system architecture and usage instructions (86e4b7b0).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: enhance line range validation and schema clarity `8a628812`
+- **fs**: add unified diff output to str_replace `b0ce960a`
+
+### 📚 Documentation & Examples
+
+- **instructions**: rewrite for clarity and architecture `86e4b7b0`
+
 ## [0.4.0] - 2026-05-02
 
 ### 📋 Release Summary
