@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.2] - 2026-05-05
+
+### 📋 Release Summary
+
+This release improves file system reliability by ensuring original file permissions are preserved during atomic write operations (b92d43dc). This fix enhances security and consistency when editing files through the octofs server.
+
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: preserve file permissions in atomic_write `b92d43dc`
+
 ## [0.4.1] - 2026-05-03
 
 ### 📋 Release Summary
