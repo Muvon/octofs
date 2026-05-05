@@ -429,15 +429,45 @@ fn build_str_replace_diff(
 }
 
 // Guarantees the file is never in a partial/corrupt state if the process is interrupted.
+// Preserves the original file's permissions (including the executable bit) — without this,
+// the rename would replace the file with the temp file's default mode and silently strip
+// permission bits the user set deliberately.
 pub async fn atomic_write(path: &Path, content: &str) -> Result<()> {
 	let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
 	let tmp_path = parent_dir.join(format!(
 		".octofs_tmp_{}.tmp",
 		path.file_name().unwrap_or_default().to_string_lossy()
 	));
+
+	// Snapshot existing permissions before we overwrite, so we can re-apply them to the temp
+	// file before the rename swaps inodes. None means the target didn't exist yet.
+	let original_perms = match tokio_fs::metadata(path).await {
+		Ok(meta) => Some(meta.permissions()),
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+		Err(e) => {
+			return Err(anyhow!(
+				"Failed to read metadata for '{}': {}",
+				path.display(),
+				e
+			))
+		}
+	};
+
 	tokio_fs::write(&tmp_path, content)
 		.await
 		.map_err(|e| anyhow!("Failed to write temp file for '{}': {}", path.display(), e))?;
+
+	if let Some(perms) = original_perms {
+		if let Err(e) = tokio_fs::set_permissions(&tmp_path, perms).await {
+			let _ = tokio_fs::remove_file(&tmp_path).await;
+			return Err(anyhow!(
+				"Failed to preserve permissions on '{}': {}",
+				path.display(),
+				e
+			));
+		}
+	}
+
 	if let Err(e) = tokio_fs::rename(&tmp_path, path).await {
 		// Clean up temp file on rename failure
 		let _ = tokio_fs::remove_file(&tmp_path).await;

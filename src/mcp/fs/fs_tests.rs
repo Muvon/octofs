@@ -4900,4 +4900,30 @@ mod tests {
 			"Nested ranges on single path should show lines 1-2 and 5-6: {content}"
 		);
 	}
+
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn test_atomic_write_preserves_executable_bit() {
+		use crate::mcp::fs::text_editing::atomic_write;
+		use std::os::unix::fs::PermissionsExt;
+
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_path = temp_dir.path().join("script.sh");
+		fs::write(&file_path, "#!/bin/sh\necho old\n")
+			.await
+			.unwrap();
+		fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o755))
+			.await
+			.unwrap();
+
+		atomic_write(&file_path, "#!/bin/sh\necho new\n")
+			.await
+			.unwrap();
+
+		let mode = fs::metadata(&file_path).await.unwrap().permissions().mode() & 0o777;
+		assert_eq!(
+			mode, 0o755,
+			"atomic_write must preserve original mode (got {mode:o})"
+		);
+	}
 }
