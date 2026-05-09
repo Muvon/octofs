@@ -39,10 +39,18 @@ fn get_file_locks() -> &'static Mutex<HashMap<String, Arc<AsyncMutex<()>>>> {
 // Falls back to the raw path string if canonicalize fails (file may not exist
 // yet, e.g. for `text_editor create`).
 pub fn lock_key_for(path: &Path) -> String {
-	match path.canonicalize() {
-		Ok(canon) => canon.to_string_lossy().to_string(),
-		Err(_) => path.to_string_lossy().to_string(),
+	if let Ok(canon) = path.canonicalize() {
+		return canon.to_string_lossy().to_string();
 	}
+	// File may not exist yet (create) or has been removed (delete+undo).
+	// Canonicalize the parent and append the file name so the key stays
+	// consistent across the file's lifetime.
+	if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+		if let Ok(canon_parent) = parent.canonicalize() {
+			return canon_parent.join(name).to_string_lossy().to_string();
+		}
+	}
+	path.to_string_lossy().to_string()
 }
 
 // Acquire a file-specific lock to prevent concurrent writes to the same file
