@@ -4926,4 +4926,83 @@ mod tests {
 			"atomic_write must preserve original mode (got {mode:o})"
 		);
 	}
+	#[tokio::test]
+	async fn test_text_editor_delete_removes_file_and_supports_undo() {
+		let temp_file = create_test_file("hello world\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({
+				"command": "delete",
+				"path": path,
+			}),
+		};
+		let result = crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap();
+		assert!(result.contains("Successfully deleted"), "got: {result}");
+		assert!(!temp_file.path().exists(), "file should be gone");
+
+		let undo_call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({
+				"command": "undo_edit",
+				"path": path,
+			}),
+		};
+		crate::mcp::fs::core::execute_text_editor(&undo_call)
+			.await
+			.unwrap();
+		let restored = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(restored, "hello world\n");
+	}
+
+	#[tokio::test]
+	async fn test_text_editor_delete_missing_file_errors() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let path = temp_dir
+			.path()
+			.join("nope.txt")
+			.to_string_lossy()
+			.to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({
+				"command": "delete",
+				"path": path,
+			}),
+		};
+		let err = crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap_err();
+		assert!(err.to_string().contains("does not exist"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn test_text_editor_delete_directory_errors() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let path = temp_dir.path().to_string_lossy().to_string();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "text_editor".to_string(),
+			parameters: json!({
+				"command": "delete",
+				"path": path,
+			}),
+		};
+		let err = crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap_err();
+		assert!(err.to_string().contains("directory"), "got: {err}");
+	}
 }

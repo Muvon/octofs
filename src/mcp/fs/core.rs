@@ -291,8 +291,17 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 			};
 			undo_edit(&resolve_path(&path, &call.workdir)).await
 		}
+		"delete" => {
+			let path = match call.parameters.get("path") {
+				Some(Value::String(p)) => p.clone(),
+				_ => {
+					bail!("Missing or invalid 'path' parameter for delete command");
+				}
+			};
+			text_editing::delete_file_spec(&resolve_path(&path, &call.workdir)).await
+		}
 		_ => bail!(
-			"Invalid command: {command}. Allowed commands are: create, str_replace, undo_edit"
+			"Invalid command: {command}. Allowed commands are: create, str_replace, delete, undo_edit"
 		),
 	}
 }

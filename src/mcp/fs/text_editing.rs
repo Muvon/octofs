@@ -60,6 +60,35 @@ async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
 	Ok(file_lock)
 }
 
+/// Delete a file. Saves history first so `undo_edit` can restore it.
+/// Refuses directories — use shell `rm -r` for that.
+pub async fn delete_file_spec(path: &Path) -> Result<String> {
+	if !path.exists() {
+		bail!("File does not exist: {}", path.display());
+	}
+	let meta = tokio_fs::metadata(path)
+		.await
+		.map_err(|e| anyhow!("Failed to stat '{}': {}", path.display(), e))?;
+	if meta.is_dir() {
+		bail!(
+			"Path is a directory, not a file: {}. Use the shell tool with `rm -r` to remove directories.",
+			path.display()
+		);
+	}
+
+	let file_lock = acquire_file_lock(path).await?;
+	let _lock_guard = file_lock.lock().await;
+
+	// Snapshot for undo before unlinking.
+	save_file_history(path).await?;
+
+	tokio_fs::remove_file(path)
+		.await
+		.map_err(|e| anyhow!("Failed to delete '{}': {}", path.display(), e))?;
+
+	Ok(format!("Successfully deleted {}", path.display()))
+}
+
 // Helper function to resolve line indices, supporting negative indexing
 // Negative indices count from the end: -1 = last line, -2 = second-to-last, etc.
 fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize, String> {

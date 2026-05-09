@@ -110,7 +110,7 @@ impl OctofsServer {
 	}
 
 	#[tool(
-		description = "Perform text editing operations on files: create, str_replace, undo_edit."
+		description = "Perform text editing operations on files: create, str_replace, delete, undo_edit."
 	)]
 	async fn text_editor(
 		&self,
@@ -219,7 +219,7 @@ impl ServerHandler for OctofsServer {
 			.with_protocol_version(ProtocolVersion::V_2025_03_26)
 			.with_instructions(
 				"This server provides filesystem tools: view (read files/dirs), \
-				 text_editor (create/str_replace/undo), batch_edit (multi-op line edits), \
+				 text_editor (create/str_replace/delete/undo), batch_edit (multi-op line edits), \
 				 extract_lines (copy lines between files), shell (execute commands), \
 				 workdir (get/set working directory)."
 					.to_string(),
@@ -400,6 +400,7 @@ where
 pub enum TextEditorCommand {
 	Create,
 	StrReplace,
+	Delete,
 	UndoEdit,
 }
 
