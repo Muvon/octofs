@@ -571,7 +571,7 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		return directory::list_directory(call, path).await;
 	}
 
-	// File + content: search the file for a literal pattern and render with the same hash/number format
+	// File + content: search the file for a literal/regex pattern and render with the same hash/number format
 	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {
 		if !content_pattern.trim().is_empty() {
 			let context_lines = call
@@ -579,10 +579,16 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 				.get("context")
 				.and_then(|v| v.as_i64())
 				.unwrap_or(0) as usize;
+			let regex_flag = call
+				.parameters
+				.get("regex")
+				.and_then(|v| v.as_bool())
+				.unwrap_or(false);
 			return file_ops::view_file_with_content_search(
 				&resolved,
 				content_pattern,
 				context_lines,
+				regex_flag,
 			)
 			.await;
 		}

@@ -135,6 +135,7 @@ pub async fn view_file_with_content_search(
 	path: &Path,
 	pattern: &str,
 	context_lines: usize,
+	regex: bool,
 ) -> Result<String> {
 	if !path.exists() {
 		bail!("File not found");
@@ -143,9 +144,11 @@ pub async fn view_file_with_content_search(
 		bail!("Path is not a file");
 	}
 
-	let content = tokio_fs::read_to_string(path)
+	// Lossy UTF-8 read so non-UTF-8 files (UTF-16 BOM, Latin-1, etc.) still match.
+	let bytes = tokio_fs::read(path)
 		.await
 		.map_err(|e| anyhow!("Cannot read file: {}", e))?;
+	let content = String::from_utf8_lossy(&bytes).into_owned();
 	let file_lines: Vec<&str> = content.lines().collect();
 	let total = file_lines.len();
 
@@ -153,7 +156,8 @@ pub async fn view_file_with_content_search(
 		return Ok(String::new());
 	}
 
-	let blocks = search::search_content(&content, pattern, context_lines);
+	let matcher = search::Matcher::new(pattern, regex)?;
+	let blocks = search::search_lines(&content, &matcher, context_lines);
 	if blocks.is_empty() {
 		return Ok(String::new());
 	}

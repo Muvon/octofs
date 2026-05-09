@@ -15,10 +15,11 @@
 // Directory operations module — file listing and content search using ignore + pure-Rust matching.
 
 use super::super::McpToolCall;
-use super::search;
+use super::search::{self, Matcher};
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use anyhow::{bail, Result};
 use ignore::WalkBuilder;
+use rayon::prelude::*;
 use std::path::Path;
 // Convert glob pattern to regex pattern for filename filtering
 fn convert_glob_to_regex(glob_pattern: &str) -> String {
@@ -144,60 +145,76 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 	if has_content {
 		// Content search mode
 		let content_pattern = content.unwrap();
-		let content_pattern_clone = content_pattern.clone();
+		let regex_flag = call
+			.parameters
+			.get("regex")
+			.and_then(|v| v.as_bool())
+			.unwrap_or(false);
+
+		// Compile matcher up front so invalid regex fails fast with a clear error.
+		let matcher = Matcher::new(&content_pattern, regex_flag)?;
 
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
 			let files = collect_file_paths(&mut builder, &working_dir);
 
 			let hash_mode = is_hash_mode();
-			let mut file_results: Vec<String> = Vec::new();
 
-			for rel_path in &files {
-				let full_path = working_dir.join(rel_path);
-				let file_content = match std::fs::read_to_string(&full_path) {
-					Ok(c) => c,
-					Err(_) => continue, // skip unreadable files
-				};
+			// Parallel per-file scan. Each thread reads + searches independently;
+			// results carry the original index so the final output preserves
+			// the deterministic alphabetic order of `files`.
+			let mut indexed: Vec<(usize, String)> = files
+				.par_iter()
+				.enumerate()
+				.filter_map(|(i, rel_path)| {
+					let full_path = working_dir.join(rel_path);
+					let bytes = std::fs::read(&full_path).ok()?;
 
-				// Skip likely binary files
-				let sample_size = file_content.len().min(512);
-				let null_count = file_content.as_bytes()[..sample_size]
-					.iter()
-					.filter(|&&b| b == 0)
-					.count();
-				if null_count > sample_size / 10 {
-					continue;
-				}
-
-				let blocks =
-					search::search_content(&file_content, &content_pattern_clone, context_lines);
-				if blocks.is_empty() {
-					continue;
-				}
-
-				let file_lines: Vec<&str> = file_content.lines().collect();
-				let prefixes: Vec<String> = if hash_mode {
-					compute_line_hashes(&file_lines)
-				} else {
-					(1..=file_lines.len()).map(|n| n.to_string()).collect()
-				};
-
-				let mut rendered_blocks: Vec<String> = Vec::new();
-				for block in &blocks {
-					let mut rendered = Vec::new();
-					for &n in &block.line_numbers {
-						let idx = n - 1;
-						if idx < file_lines.len() {
-							rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
-						}
+					// Skip likely binary files: NUL-density check on a leading sample.
+					let sample_size = bytes.len().min(512);
+					let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
+					if null_count > sample_size / 10 {
+						return None;
 					}
-					rendered_blocks.push(rendered.join("\n"));
-				}
 
-				file_results.push(format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")));
-			}
+					// Lossy UTF-8 conversion lets us search Latin-1, mixed encodings,
+					// and BOM-prefixed UTF-8 files without panicking. Invalid byte
+					// sequences become U+FFFD; line structure is preserved.
+					let file_content = String::from_utf8_lossy(&bytes);
 
+					let blocks = search::search_lines(&file_content, &matcher, context_lines);
+					if blocks.is_empty() {
+						return None;
+					}
+
+					let file_lines: Vec<&str> = file_content.lines().collect();
+					let prefixes: Vec<String> = if hash_mode {
+						compute_line_hashes(&file_lines)
+					} else {
+						(1..=file_lines.len()).map(|n| n.to_string()).collect()
+					};
+
+					let mut rendered_blocks: Vec<String> = Vec::new();
+					for block in &blocks {
+						let mut rendered = Vec::new();
+						for &n in &block.line_numbers {
+							let idx = n - 1;
+							if idx < file_lines.len() {
+								rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
+							}
+						}
+						rendered_blocks.push(rendered.join("\n"));
+					}
+
+					Some((
+						i,
+						format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")),
+					))
+				})
+				.collect();
+
+			indexed.sort_by_key(|(i, _)| *i);
+			let file_results: Vec<String> = indexed.into_iter().map(|(_, s)| s).collect();
 			Ok(file_results.join("\n\n"))
 		})
 		.await;
