@@ -294,9 +294,14 @@ pub struct ViewParams {
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
 	pub pattern: Option<String>,
-	/// Content search string (fixed-string match). Only used when path is a directory.
+	/// Content search string. By default treated as a literal substring.
+	/// Set `regex: true` to interpret as a Rust regex (case-insensitive via `(?i)` prefix,
+	/// e.g. `(?i)error`). Only used when path is a directory or a single file.
 	#[serde(default)]
 	pub content: Option<String>,
+	/// When true, `content` is a regex pattern instead of a literal substring. Default: false.
+	#[serde(default)]
+	pub regex: Option<bool>,
 	/// Maximum directory traversal depth.
 	#[serde(default)]
 	pub max_depth: Option<usize>,

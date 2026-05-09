@@ -5005,4 +5005,184 @@ mod tests {
 			.unwrap_err();
 		assert!(err.to_string().contains("directory"), "got: {err}");
 	}
+
+	// ── Regex + encoding tests for view content search ─────────────────────────
+
+	#[tokio::test]
+	async fn test_view_regex_alternation_in_directory() {
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		stdfs::write(dir.path().join("a.txt"), "TODO: fix\nok\nFIXME: bug\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [dir.path().to_str().unwrap()],
+				"content": "TODO|FIXME",
+				"regex": true,
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("TODO: fix"), "got: {out}");
+		assert!(out.contains("FIXME: bug"), "got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_regex_case_insensitive() {
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		stdfs::write(dir.path().join("log.txt"), "ok\nERROR: boom\nError again\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [dir.path().to_str().unwrap()],
+				"content": "(?i)error",
+				"regex": true,
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("ERROR: boom"), "got: {out}");
+		assert!(out.contains("Error again"), "got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_regex_invalid_pattern_errors() {
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		std::fs::write(dir.path().join("a.txt"), "anything\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [dir.path().to_str().unwrap()],
+				"content": "[unclosed",
+				"regex": true,
+			}),
+		};
+		let err = execute_view(&call).await.unwrap_err();
+		assert!(
+			err.to_string().to_lowercase().contains("regex"),
+			"got: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_literal_treats_regex_chars_as_text() {
+		// Regression guard: with regex=false the pattern "()" must match literal parens.
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		stdfs::write(dir.path().join("a.rs"), "fn main()\nlet x = 1;\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [dir.path().to_str().unwrap()],
+				"content": "main()",
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("fn main()"), "got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_finds_match_in_latin1_file() {
+		// Latin-1 byte 0xE9 = "é". std::fs::read_to_string would have failed;
+		// from_utf8_lossy replaces it with U+FFFD but preserves line layout
+		// so the search still finds surrounding ASCII content.
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		let mut bytes = b"caf".to_vec();
+		bytes.push(0xE9); // é in Latin-1, invalid UTF-8
+		bytes.extend_from_slice(b" MARKER here\nplain ascii\n");
+		stdfs::write(dir.path().join("non_utf8.txt"), &bytes).unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [dir.path().to_str().unwrap()],
+				"content": "MARKER",
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("MARKER here"), "got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_single_file_regex_search() {
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		let file = dir.path().join("code.rs");
+		stdfs::write(&file, "fn alpha() {}\nfn beta() {}\nstruct Gamma;\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [file.to_str().unwrap()],
+				"content": r"^fn \w+",
+				"regex": true,
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("fn alpha"), "got: {out}");
+		assert!(out.contains("fn beta"), "got: {out}");
+		assert!(!out.contains("Gamma"), "regex anchored to fn — got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_parallel_scan_preserves_order() {
+		// Many files: confirm hits returned in deterministic alphabetic order.
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		for i in 0..40 {
+			stdfs::write(
+				dir.path().join(format!("file_{i:03}.txt")),
+				format!("HIT line in file {i}\n"),
+			)
+			.unwrap();
+		}
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"paths": [dir.path().to_str().unwrap()],
+				"content": "HIT",
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+
+		// Verify ordering: file_000 must appear before file_039.
+		let p000 = out.find("file_000.txt").expect("file_000 missing");
+		let p039 = out.find("file_039.txt").expect("file_039 missing");
+		assert!(p000 < p039, "ordering not preserved");
+		// All 40 files should have been matched.
+		assert_eq!(out.matches("HIT line").count(), 40);
+	}
 }
