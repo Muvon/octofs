@@ -180,7 +180,14 @@ impl OctofsServer {
 		Ok(append_hints(result))
 	}
 
-	#[tool(description = "Get or set the working directory used by all MCP tools.")]
+	#[tool(
+		description = "Change the working directory used by subsequent tool calls. \
+			Do NOT call this just to check the current directory — all tools accept \
+			both relative and absolute paths and resolve relative paths against the \
+			session's working directory automatically. Only invoke this tool when you \
+			actually need to switch to a different directory (set `path`) or revert \
+			to the session root (`reset: true`)."
+	)]
 	async fn workdir(
 		&self,
 		Parameters(params): Parameters<WorkdirParams>,
@@ -489,10 +496,11 @@ pub struct ShellParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
-	/// Optional path to set as new working directory
+	/// Absolute path or path relative to current workdir to switch into.
+	/// Required unless `reset: true`. Do not pass `"."` — that is a no-op.
 	#[serde(default)]
 	pub path: Option<String>,
-	/// If true, reset to original session working directory
+	/// If true, revert to the original session working directory.
 	#[serde(default)]
 	pub reset: Option<bool>,
 }
