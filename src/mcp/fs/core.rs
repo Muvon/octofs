@@ -406,6 +406,16 @@ async fn parse_lines_param(
 		return Ok(ParsedLines::None);
 	}
 
+	// Tolerate clients that JSON-encode the array as a string (e.g. `"[80, 170]"`).
+	// Decode once and reuse the parsed value if it yields a valid array shape.
+	let decoded_owned: Option<Value> = match lines_value {
+		Value::String(s) => serde_json::from_str::<Value>(s.trim())
+			.ok()
+			.filter(|v| matches!(v, Value::Array(_))),
+		_ => None,
+	};
+	let lines_value: &Value = decoded_owned.as_ref().unwrap_or(lines_value);
+
 	let Value::Array(arr) = lines_value else {
 		bail!("`lines` must be an array. Examples: [1, 50] (single range), [[1,50],[200,250]] (multiple ranges on one file or per-file ranges when multiple paths).");
 	};
@@ -519,8 +529,17 @@ async fn parse_lines_param(
 
 // Execute view command - unified read-only tool for files, directories, and content search
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
-	// Extract paths array (required, one or more elements)
-	let paths: Vec<String> = match call.parameters.get("paths") {
+	// Extract paths array (required, one or more elements).
+	// Tolerate clients that JSON-encode the array as a string (e.g. `"[\"a.rs\",\"b.rs\"]"`).
+	let paths_value = call.parameters.get("paths");
+	let decoded_paths: Option<Value> = match paths_value {
+		Some(Value::String(s)) => serde_json::from_str::<Value>(s.trim())
+			.ok()
+			.filter(|v| matches!(v, Value::Array(_))),
+		_ => None,
+	};
+	let paths_value = decoded_paths.as_ref().or(paths_value);
+	let paths: Vec<String> = match paths_value {
 		Some(Value::Array(arr)) => {
 			let path_strings: Result<Vec<String>, _> = arr
 				.iter()
