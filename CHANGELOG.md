@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.3] - 2026-05-13
+
+### 📋 Release Summary
+
+This release introduces high-performance file searching with regex support and expands the text editor's capabilities with a new delete command (0d9c1fcf, 3c278bc7). Reliability is improved through better handling of JSON-encoded parameters and stabilized file locking, while updated documentation provides clearer guidance on workspace tool constraints (5ec5fc7f, 37fd1a89, 6f31be19).
+
+
+### ✨ New Features & Enhancements
+
+- **fs**: add regex support and parallel file searching `0d9c1fcf`
+- **fs**: add delete command to text_editor tool `3c278bc7`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: clarify workdir tool usage constraints `6f31be19`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: support json-encoded strings for array params `5ec5fc7f`
+- **fs**: stabilize lock keys for non-existent files `37fd1a89`
+
 ## [0.4.2] - 2026-05-05
 
 ### 📋 Release Summary

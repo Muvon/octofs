@@ -1,6 +1,6 @@
 [package]
 name = "octofs"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 authors = ["Muvon Un Limited <contact@muvon.io>"]
 license = "Apache-2.0"
