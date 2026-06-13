@@ -45,7 +45,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [start_line, end_line],
+					"line_range": format!("{}-{}", start_line, end_line),
 					"content": new_str
 				}]
 			}),
@@ -237,7 +237,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [4, 6],
+					"line_range": "4-6",
 					// First line of content is `}` — same as line 3 (just before range).
 					// Must NOT be blocked because `}` is structural noise.
 					"content": "}\nfn bar() {\n\tlet y = 99;\n}"
@@ -267,7 +267,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [4, 4],
+					"line_range": "4-4",
 					// Last content line is `});` — same as line 3 (just before range end+1).
 					// Must be BLOCKED because `});` is NOT structural noise.
 					"content": "});\nnew_baz();"
@@ -297,7 +297,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [3, 4],
+					"line_range": "3-4",
 					"content": "line 2\nnew line 3\nnew line 4"
 				}]
 			}),
@@ -322,7 +322,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [1, 2],
+					"line_range": "1-2",
 					"content": "new line 1\nnew line 2\nline 3"
 				}]
 			}),
@@ -346,7 +346,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [2, 3],
+					"line_range": "2-3",
 					"content": "new line 2\nnew line 3"
 				}]
 			}),
@@ -375,7 +375,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "insert",
-					"line_range": 1,
+					"line_range": "1",
 					"content": "line 2"
 				}]
 			}),
@@ -406,7 +406,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "insert",
-					"line_range": 2,
+					"line_range": "2",
 					"content": "}"
 				}]
 			}),
@@ -431,7 +431,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "insert",
-					"line_range": 1,
+					"line_range": "1",
 					"content": "line 2\nline 3"
 				}]
 			}),
@@ -464,7 +464,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "insert",
-					"line_range": 1,
+					"line_range": "1",
 					"content": "}\n}"
 				}]
 			}),
@@ -493,7 +493,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "insert",
-					"line_range": 1,
+					"line_range": "1",
 					"content": "line 2a\nline 2b"
 				}]
 			}),
@@ -518,7 +518,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [2, 2],
+					"line_range": "2-2",
 					"content": "REPLACED"
 				}]
 			}),
@@ -541,7 +541,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [-1, -1],
+					"line_range": "-1--1",
 					"content": "NEW LAST"
 				}]
 			}),
@@ -1028,9 +1028,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [from_range.0, from_range.1],
+				"from_range": format!("{}-{}", from_range.0, from_range.1),
 				"append_path": target_path.to_string_lossy(),
-				"append_line": append_line
+				"append_line": append_line.to_string()
 			}),
 		};
 
@@ -1152,9 +1152,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [1, 5], // Line 5 doesn't exist
+				"from_range": "1-5", // Line 5 doesn't exist
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -1180,9 +1180,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [2, 1], // Start > end
+				"from_range": "2-1", // Start > end
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -1206,9 +1206,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [1, 1],
+				"from_range": "1-1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -1235,9 +1235,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [1, 1],
+				"from_range": "1-1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": 5 // Position beyond file length
+				"append_line": "5" // Position beyond file length
 			}),
 		};
 
@@ -1263,9 +1263,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [1, 1],
+				"from_range": "1-1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -1290,9 +1290,9 @@ mod tests {
 			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
-				"from_range": [1, 1],
+				"from_range": "1-1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -1311,15 +1311,15 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [1], // Only one element
+				"from_range": [1], // Wrong type: array, not a range string
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
 		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			err.to_string().contains("exactly 2 elements"),
+			err.to_string().contains("range string"),
 			"Should fail with invalid from_range: {}",
 			err
 		);
@@ -1331,9 +1331,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": "",
-				"from_range": [1, 1],
+				"from_range": "1-1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -1369,7 +1369,7 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 2,
+				"line_range": "2",
 				"content": "inserted line"
 			}
 		]);
@@ -1397,17 +1397,17 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 1,
+				"line_range": "1",
 				"content": "inserted after line 1"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 3],
+				"line_range": "3-3",
 				"content": "replaced original line 3"
 			},
 			{
 				"operation": "insert",
-				"line_range": 5,
+				"line_range": "5",
 				"content": "inserted after original line 5"
 			}
 		]);
@@ -1436,12 +1436,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 2,
+				"line_range": "2",
 				"content": "inserted after line 2"
 			},
 			{
 				"operation": "replace",
-				"line_range": [2, 2],
+				"line_range": "2-2",
 				"content": "replaced line 2"
 			}
 		]);
@@ -1469,12 +1469,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [2, 3],
+				"line_range": "2-3",
 				"content": "replaced 2-3"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 4],
+				"line_range": "3-4",
 				"content": "replaced 3-4"
 			}
 		]);
@@ -1496,7 +1496,7 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 1,
+				"line_range": "1",
 				"content": "test"
 			}
 		]);
@@ -1532,7 +1532,7 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "invalid_op",
-				"line_range": 1,
+				"line_range": "1",
 				"content": "test"
 			}
 		]);
@@ -1567,17 +1567,17 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 1,
+				"line_range": "1",
 				"content": "// Added by batch_edit"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 3],
+				"line_range": "3-3",
 				"content": "    console.log('Hello, World!');\n    console.log('Batch edit works!');"
 			},
 			{
 				"operation": "insert",
-				"line_range": 6,
+				"line_range": "6",
 				"content": "// End of file"
 			}
 		]);
@@ -1607,12 +1607,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 1,
+				"line_range": "1",
 				"content": "inserted after line 1"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 3],
+				"line_range": "3-3",
 				"content": "replaced original line 3"
 			}
 		]);
@@ -1661,7 +1661,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "insert", "line_range": 0, "content": "line 0"}]),
+			json!([{"operation": "insert", "line_range": "0", "content": "line 0"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1678,7 +1678,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "insert", "line_range": 2, "content": "line 3"}]),
+			json!([{"operation": "insert", "line_range": "2", "content": "line 3"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1695,7 +1695,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "insert", "line_range": -1, "content": "appended"}]),
+			json!([{"operation": "insert", "line_range": "-1", "content": "appended"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1712,7 +1712,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [99, 99], "content": "oops"}]),
+			json!([{"operation": "replace", "line_range": "99-99", "content": "oops"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1730,7 +1730,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [3, 1], "content": "bad"}]),
+			json!([{"operation": "replace", "line_range": "3-1", "content": "bad"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1756,7 +1756,7 @@ mod tests {
 		// Non-existent file must return a clear error without panicking
 		let call = create_batch_edit_call(
 			"/tmp/octofs_nonexistent_file_xyz_12345.txt",
-			json!([{"operation": "insert", "line_range": 1, "content": "test"}]),
+			json!([{"operation": "insert", "line_range": "1", "content": "test"}]),
 		)
 		.await;
 		let err = crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1779,9 +1779,9 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "A"},
-				{"operation": "replace", "line_range": [3, 3], "content": "C"},
-				{"operation": "replace", "line_range": [5, 5], "content": "E"}
+				{"operation": "replace", "line_range": "1-1", "content": "A"},
+				{"operation": "replace", "line_range": "3-3", "content": "C"},
+				{"operation": "replace", "line_range": "5-5", "content": "E"}
 			]),
 		)
 		.await;
@@ -1799,7 +1799,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [2, 2], "content": "new1\nnew2\nnew3"}]),
+			json!([{"operation": "replace", "line_range": "2-2", "content": "new1\nnew2\nnew3"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1816,7 +1816,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [2, 4], "content": "SINGLE"}]),
+			json!([{"operation": "replace", "line_range": "2-4", "content": "SINGLE"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1833,7 +1833,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [2, 2], "content": ""}]),
+			json!([{"operation": "replace", "line_range": "2-2", "content": ""}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1850,7 +1850,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [-1, -1], "content": "LAST"}]),
+			json!([{"operation": "replace", "line_range": "-1--1", "content": "LAST"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1878,7 +1878,7 @@ mod tests {
 					tool_name: "batch_edit".to_string(),
 					parameters: json!({
 						"path": p,
-						"operations": [{"operation": "insert", "line_range": 0, "content": format!("marker_{}", i)}]
+						"operations": [{"operation": "insert", "line_range": "0", "content": format!("marker_{}", i)}]
 					}),
 					workdir: std::env::current_dir().unwrap_or_default(),
 				};
@@ -1936,7 +1936,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [2, 2], "content": "BETA_NEW"}]),
+			json!([{"operation": "replace", "line_range": "2-2", "content": "BETA_NEW"}]),
 		)
 		.await;
 		let diff = crate::mcp::fs::core::execute_batch_edit(&call)
@@ -1968,8 +1968,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 0, "content": "// generated"},
-				{"operation": "replace", "line_range": [2, 2], "content": "    new_body();"}
+				{"operation": "insert", "line_range": "0", "content": "// generated"},
+				{"operation": "replace", "line_range": "2-2", "content": "    new_body();"}
 			]),
 		)
 		.await;
@@ -1987,7 +1987,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [1, 1], "content": "LINE ONE"}]),
+			json!([{"operation": "replace", "line_range": "1-1", "content": "LINE ONE"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -2004,7 +2004,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [0, 1], "content": "bad"}]),
+			json!([{"operation": "replace", "line_range": "0-1", "content": "bad"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -2026,8 +2026,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [2, 2], "content": "N1\nN2\nN3\nN4\nN5\nN6\nN7\nN8\nN9\nN10"},
-				{"operation": "replace", "line_range": [5, 5], "content": "REPLACED_L5"}
+				{"operation": "replace", "line_range": "2-2", "content": "N1\nN2\nN3\nN4\nN5\nN6\nN7\nN8\nN9\nN10"},
+				{"operation": "replace", "line_range": "5-5", "content": "REPLACED_L5"}
 			]),
 		)
 		.await;
@@ -2051,8 +2051,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [2, 4], "content": "MERGED"},
-				{"operation": "replace", "line_range": [6, 6], "content": "REPLACED_L6"}
+				{"operation": "replace", "line_range": "2-4", "content": "MERGED"},
+				{"operation": "replace", "line_range": "6-6", "content": "REPLACED_L6"}
 			]),
 		)
 		.await;
@@ -2071,9 +2071,9 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 0, "content": "HEADER"},
-				{"operation": "replace", "line_range": [3, 3], "content": "C_NEW"},
-				{"operation": "insert", "line_range": 5, "content": "FOOTER"}
+				{"operation": "insert", "line_range": "0", "content": "HEADER"},
+				{"operation": "replace", "line_range": "3-3", "content": "C_NEW"},
+				{"operation": "insert", "line_range": "5", "content": "FOOTER"}
 			]),
 		)
 		.await;
@@ -2091,7 +2091,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "insert", "line_range": 0, "content": "first line\nsecond line"}]),
+			json!([{"operation": "insert", "line_range": "0", "content": "first line\nsecond line"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -2108,7 +2108,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "replace", "line_range": [1, 3], "content": "new1\nnew2\nnew3\nnew4\nnew5"}]),
+			json!([{"operation": "replace", "line_range": "1-3", "content": "new1\nnew2\nnew3\nnew4\nnew5"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -2126,9 +2126,9 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "X1\nX2\nX3"},
-				{"operation": "replace", "line_range": [4, 5], "content": "MERGED_45"},
-				{"operation": "replace", "line_range": [7, 7], "content": "SAME_7"}
+				{"operation": "replace", "line_range": "1-1", "content": "X1\nX2\nX3"},
+				{"operation": "replace", "line_range": "4-5", "content": "MERGED_45"},
+				{"operation": "replace", "line_range": "7-7", "content": "SAME_7"}
 			]),
 		)
 		.await;
@@ -2147,8 +2147,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": -1, "content": "appended"},
-				{"operation": "replace", "line_range": [1, 1], "content": "FIRST"}
+				{"operation": "insert", "line_range": "-1", "content": "appended"},
+				{"operation": "replace", "line_range": "1-1", "content": "FIRST"}
 			]),
 		)
 		.await;
@@ -2168,7 +2168,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "insert", "line_range": 1, "content": null}]),
+			json!([{"operation": "insert", "line_range": "1", "content": null}]),
 		)
 		.await;
 		// Should fail because content is null, not a string
@@ -2187,7 +2187,7 @@ mod tests {
 		let temp_file = create_test_file("line 1\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call =
-			create_batch_edit_call(&path, json!([{"line_range": 1, "content": "test"}])).await;
+			create_batch_edit_call(&path, json!([{"line_range": "1", "content": "test"}])).await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
 			.unwrap_err();
@@ -2200,7 +2200,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let call = create_batch_edit_call(
 			&path,
-			json!([{"operation": "delete", "line_range": 1, "content": "test"}]),
+			json!([{"operation": "delete", "line_range": "1", "content": "test"}]),
 		)
 		.await;
 		crate::mcp::fs::core::execute_batch_edit(&call)
@@ -2215,7 +2215,7 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 		let ops: Vec<serde_json::Value> = (0..51)
 			.map(
-				|i| json!({"operation": "insert", "line_range": 0, "content": format!("op_{}", i)}),
+				|i| json!({"operation": "insert", "line_range": "0", "content": format!("op_{}", i)}),
 			)
 			.collect();
 		let call = create_batch_edit_call(&path, json!(ops)).await;
@@ -2245,11 +2245,11 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "FIRST"},
-				{"operation": "replace", "line_range": [250, 250], "content": "LINE_250"},
-				{"operation": "replace", "line_range": [500, 500], "content": "LINE_500"},
-				{"operation": "replace", "line_range": [750, 750], "content": "LINE_750"},
-				{"operation": "replace", "line_range": [1000, 1000], "content": "LAST"}
+				{"operation": "replace", "line_range": "1-1", "content": "FIRST"},
+				{"operation": "replace", "line_range": "250-250", "content": "LINE_250"},
+				{"operation": "replace", "line_range": "500-500", "content": "LINE_500"},
+				{"operation": "replace", "line_range": "750-750", "content": "LINE_750"},
+				{"operation": "replace", "line_range": "1000-1000", "content": "LAST"}
 			]),
 		)
 		.await;
@@ -2275,8 +2275,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "E1\nE2\nE3\nE4\nE5"},
-				{"operation": "replace", "line_range": [8, 10], "content": "SHRUNK"}
+				{"operation": "replace", "line_range": "1-1", "content": "E1\nE2\nE3\nE4\nE5"},
+				{"operation": "replace", "line_range": "8-10", "content": "SHRUNK"}
 			]),
 		)
 		.await;
@@ -2303,7 +2303,7 @@ mod tests {
 			tool_name: "batch_edit".to_string(),
 			parameters: json!({
 				"path": path,
-				"operations": [{"operation": "replace", "line_range": 2, "content": "B_NEW"}]
+				"operations": [{"operation": "replace", "line_range": "2", "content": "B_NEW"}]
 			}),
 		};
 		// This should work — single integer for replace means replace that one line
@@ -2327,8 +2327,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 1, "content": "after_A"},
-				{"operation": "insert", "line_range": 3, "content": "after_C"}
+				{"operation": "insert", "line_range": "1", "content": "after_A"},
+				{"operation": "insert", "line_range": "3", "content": "after_C"}
 			]),
 		)
 		.await;
@@ -2347,8 +2347,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 2, "content": "INSERTED"},
-				{"operation": "replace", "line_range": [3, 3], "content": "C_NEW"}
+				{"operation": "insert", "line_range": "2", "content": "INSERTED"},
+				{"operation": "replace", "line_range": "3-3", "content": "C_NEW"}
 			]),
 		)
 		.await;
@@ -2369,8 +2369,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [4, 4], "content": "X1\nX2\nX3\nX4\nX5"},
-				{"operation": "insert", "line_range": 1, "content": "HEADER"}
+				{"operation": "replace", "line_range": "4-4", "content": "X1\nX2\nX3\nX4\nX5"},
+				{"operation": "insert", "line_range": "1", "content": "HEADER"}
 			]),
 		)
 		.await;
@@ -2389,8 +2389,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [3, 3], "content": ""},
-				{"operation": "insert", "line_range": 1, "content": "NEW"}
+				{"operation": "replace", "line_range": "3-3", "content": ""},
+				{"operation": "insert", "line_range": "1", "content": "NEW"}
 			]),
 		)
 		.await;
@@ -2410,8 +2410,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 2, "content": "first"},
-				{"operation": "insert", "line_range": 2, "content": "second"}
+				{"operation": "insert", "line_range": "2", "content": "first"},
+				{"operation": "insert", "line_range": "2", "content": "second"}
 			]),
 		)
 		.await;
@@ -2431,8 +2431,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "NEW_FIRST"},
-				{"operation": "replace", "line_range": [5, 5], "content": "NEW_LAST"}
+				{"operation": "replace", "line_range": "1-1", "content": "NEW_FIRST"},
+				{"operation": "replace", "line_range": "5-5", "content": "NEW_LAST"}
 			]),
 		)
 		.await;
@@ -2451,8 +2451,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 0, "content": "H1\nH2\nH3"},
-				{"operation": "replace", "line_range": [3, 3], "content": "C1\nC2\nC3\nC4"}
+				{"operation": "insert", "line_range": "0", "content": "H1\nH2\nH3"},
+				{"operation": "replace", "line_range": "3-3", "content": "C1\nC2\nC3\nC4"}
 			]),
 		)
 		.await;
@@ -2471,10 +2471,10 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 0, "content": "HEADER"},
-				{"operation": "replace", "line_range": [2, 2], "content": "L2_NEW"},
-				{"operation": "replace", "line_range": [4, 4], "content": ""},
-				{"operation": "insert", "line_range": 6, "content": "FOOTER"}
+				{"operation": "insert", "line_range": "0", "content": "HEADER"},
+				{"operation": "replace", "line_range": "2-2", "content": "L2_NEW"},
+				{"operation": "replace", "line_range": "4-4", "content": ""},
+				{"operation": "insert", "line_range": "6", "content": "FOOTER"}
 			]),
 		)
 		.await;
@@ -2495,8 +2495,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "R1\nR2\nR3\nR4"},
-				{"operation": "insert", "line_range": 5, "content": "AFTER_L5"}
+				{"operation": "replace", "line_range": "1-1", "content": "R1\nR2\nR3\nR4"},
+				{"operation": "insert", "line_range": "5", "content": "AFTER_L5"}
 			]),
 		)
 		.await;
@@ -2516,8 +2516,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 3], "content": "MERGED"},
-				{"operation": "insert", "line_range": 5, "content": "AFTER_L5"}
+				{"operation": "replace", "line_range": "1-3", "content": "MERGED"},
+				{"operation": "insert", "line_range": "5", "content": "AFTER_L5"}
 			]),
 		)
 		.await;
@@ -2538,9 +2538,9 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 5, "content": "FOOTER"},
-				{"operation": "replace", "line_range": [3, 3], "content": "C_NEW"},
-				{"operation": "insert", "line_range": 0, "content": "HEADER"}
+				{"operation": "insert", "line_range": "5", "content": "FOOTER"},
+				{"operation": "replace", "line_range": "3-3", "content": "C_NEW"},
+				{"operation": "insert", "line_range": "0", "content": "HEADER"}
 			]),
 		)
 		.await;
@@ -2568,8 +2568,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [10, 15], "content": "R1\nR2\nR3\nR4\nR5\nR6\nR7\nR8\nR9\nR10"},
-				{"operation": "replace", "line_range": [30, 35], "content": "S1\nS2\nS3"}
+				{"operation": "replace", "line_range": "10-15", "content": "R1\nR2\nR3\nR4\nR5\nR6\nR7\nR8\nR9\nR10"},
+				{"operation": "replace", "line_range": "30-35", "content": "S1\nS2\nS3"}
 			]),
 		)
 		.await;
@@ -2618,11 +2618,11 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 0, "content": "I0"},
-				{"operation": "insert", "line_range": 2, "content": "I2"},
-				{"operation": "insert", "line_range": 5, "content": "I5"},
-				{"operation": "insert", "line_range": 8, "content": "I8"},
-				{"operation": "insert", "line_range": 10, "content": "I10"}
+				{"operation": "insert", "line_range": "0", "content": "I0"},
+				{"operation": "insert", "line_range": "2", "content": "I2"},
+				{"operation": "insert", "line_range": "5", "content": "I5"},
+				{"operation": "insert", "line_range": "8", "content": "I8"},
+				{"operation": "insert", "line_range": "10", "content": "I10"}
 			]),
 		)
 		.await;
@@ -2645,8 +2645,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "A_NEW"},
-				{"operation": "replace", "line_range": [99, 99], "content": "INVALID"}
+				{"operation": "replace", "line_range": "1-1", "content": "A_NEW"},
+				{"operation": "replace", "line_range": "99-99", "content": "INVALID"}
 			]),
 		)
 		.await;
@@ -2666,9 +2666,9 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "FIRST"},
-				{"operation": "insert", "line_range": 3, "content": "I1\nI2\nI3"},
-				{"operation": "replace", "line_range": [5, 5], "content": "FIFTH"}
+				{"operation": "replace", "line_range": "1-1", "content": "FIRST"},
+				{"operation": "insert", "line_range": "3", "content": "I1\nI2\nI3"},
+				{"operation": "replace", "line_range": "5-5", "content": "FIFTH"}
 			]),
 		)
 		.await;
@@ -2697,7 +2697,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [-1, -1]
+				"lines": "-1--1"
 			}),
 		};
 
@@ -2715,7 +2715,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [-2, -2]
+				"lines": "-2--2"
 			}),
 		};
 
@@ -2733,7 +2733,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [-3, -1]
+				"lines": "-3--1"
 			}),
 		};
 
@@ -2761,7 +2761,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [2, -2]
+				"lines": "2--2"
 			}),
 		};
 
@@ -2800,7 +2800,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [-5, -1]
+				"lines": "-5--1"
 			}),
 		};
 
@@ -2832,9 +2832,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [-1, -1],
+				"from_range": "-1--1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -2851,9 +2851,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [-2, -1],
+				"from_range": "-2--1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -2874,9 +2874,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [2, -2],
+				"from_range": "2--2",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -2909,9 +2909,9 @@ mod tests {
 			tool_name: "extract_lines".to_string(),
 			parameters: json!({
 				"from_path": source_path.to_string_lossy(),
-				"from_range": [-5, -1],
+				"from_range": "-5--1",
 				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
+				"append_line": "-1"
 			}),
 		};
 
@@ -2944,7 +2944,7 @@ mod tests {
 				"operations": [
 					{
 						"operation": "replace",
-						"line_range": [-1, -1],
+						"line_range": "-1--1",
 						"content": "LAST LINE REPLACED"
 					}
 				]
@@ -2977,7 +2977,7 @@ mod tests {
 				"operations": [
 					{
 						"operation": "replace",
-						"line_range": [-2, -1],
+						"line_range": "-2--1",
 						"content": "REPLACED LINES 4-5"
 					}
 				]
@@ -3015,7 +3015,7 @@ mod tests {
 				"operations": [
 					{
 						"operation": "insert",
-						"line_range": -2,
+						"line_range": "-2",
 						"content": "INSERTED AFTER LINE 4"
 					}
 				]
@@ -3054,7 +3054,7 @@ mod tests {
 				"operations": [
 					{
 						"operation": "replace",
-						"line_range": [-5, -1],
+						"line_range": "-5--1",
 						"content": "SHOULD FAIL"
 					}
 				]
@@ -3085,7 +3085,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [-1, -1]
+				"lines": "-1--1"
 			}),
 		};
 
@@ -3103,7 +3103,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": file_path.to_string_lossy(),
-				"lines": [-2, -1]
+				"lines": "-2--1"
 			}),
 		};
 
@@ -3252,22 +3252,22 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [2, 2],
+				"line_range": "2-2",
 				"content": "REPLACED LINE 2"
 			},
 			{
 				"operation": "insert",
-				"line_range": 4,
+				"line_range": "4",
 				"content": "INSERTED AFTER ORIGINAL LINE 4"
 			},
 			{
 				"operation": "replace",
-				"line_range": [6, 7],
+				"line_range": "6-7",
 				"content": "REPLACED ORIGINAL LINES 6-7"
 			},
 			{
 				"operation": "insert",
-				"line_range": 9,
+				"line_range": "9",
 				"content": "INSERTED AFTER ORIGINAL LINE 9"
 			}
 		]);
@@ -3305,12 +3305,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 3], // affects lines 1, 2, 3
+				"line_range": "1-3", // affects lines 1, 2, 3
 				"content": "REPLACED 1-3"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 5], // affects lines 3, 4, 5 - OVERLAPS with line 3!
+				"line_range": "3-5", // affects lines 3, 4, 5 - OVERLAPS with line 3!
 				"content": "REPLACED 3-5"
 			}
 		]);
@@ -3338,12 +3338,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 2,
+				"line_range": "2",
 				"content": "INSERTED AFTER 2"
 			},
 			{
 				"operation": "replace",
-				"line_range": [2, 2],
+				"line_range": "2-2",
 				"content": "REPLACED 2"
 			}
 		]);
@@ -3371,17 +3371,17 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 1], // replace line 1 with 4 lines
+				"line_range": "1-1", // replace line 1 with 4 lines
 				"content": "NEW LINE 1A\nNEW LINE 1B\nNEW LINE 1C\nNEW LINE 1D"
 			},
 			{
 				"operation": "replace",
-				"line_range": [5, 5], // replace line 5 with 3 lines
+				"line_range": "5-5", // replace line 5 with 3 lines
 				"content": "NEW LINE 5A\nNEW LINE 5B\nNEW LINE 5C"
 			},
 			{
 				"operation": "insert",
-				"line_range": 3, // insert after original line 3
+				"line_range": "3", // insert after original line 3
 				"content": "INSERTED AFTER ORIGINAL 3"
 			}
 		]);
@@ -3413,27 +3413,27 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "insert",
-				"line_range": 1, // insert after line 1 (A)
+				"line_range": "1", // insert after line 1 (A)
 				"content": "AFTER_A"
 			},
 			{
 				"operation": "replace",
-				"line_range": [2, 4], // replace B,C,D with single line
+				"line_range": "2-4", // replace B,C,D with single line
 				"content": "BCD_REPLACED"
 			},
 			{
 				"operation": "insert",
-				"line_range": 6, // insert after F
+				"line_range": "6", // insert after F
 				"content": "AFTER_F"
 			},
 			{
 				"operation": "replace",
-				"line_range": [8, 8], // replace H
+				"line_range": "8-8", // replace H
 				"content": "H1\nH2\nH3" // expand to 3 lines
 			},
 			{
 				"operation": "insert",
-				"line_range": 10, // insert after J (last line)
+				"line_range": "10", // insert after J (last line)
 				"content": "FOOTER"
 			}
 		]);
@@ -3476,22 +3476,22 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 1], // replace line 1
+				"line_range": "1-1", // replace line 1
 				"content": "REPLACED 1"
 			},
 			{
 				"operation": "replace",
-				"line_range": [2, 2], // replace line 2 (adjacent, should be OK)
+				"line_range": "2-2", // replace line 2 (adjacent, should be OK)
 				"content": "REPLACED 2"
 			},
 			{
 				"operation": "insert",
-				"line_range": 3, // insert after line 3
+				"line_range": "3", // insert after line 3
 				"content": "AFTER 3"
 			},
 			{
 				"operation": "replace",
-				"line_range": [4, 4], // replace line 4 (should be OK)
+				"line_range": "4-4", // replace line 4 (should be OK)
 				"content": "REPLACED 4"
 			}
 		]);
@@ -3521,12 +3521,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 1], // replace line 1 with 4 lines
+				"line_range": "1-1", // replace line 1 with 4 lines
 				"content": "NEW1A\nNEW1B\nNEW1C\nNEW1D"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 3], // replace line 3 with 4 lines - this is OK, no overlap
+				"line_range": "3-3", // replace line 3 with 4 lines - this is OK, no overlap
 				"content": "NEW3A\nNEW3B\nNEW3C\nNEW3D"
 			}
 		]);
@@ -3557,12 +3557,12 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 3], // replace lines 1-3
+				"line_range": "1-3", // replace lines 1-3
 				"content": "REPLACED_1_TO_3"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 5], // replace lines 3-5 - OVERLAPS at line 3!
+				"line_range": "3-5", // replace lines 3-5 - OVERLAPS at line 3!
 				"content": "REPLACED_3_TO_5"
 			}
 		]);
@@ -3589,32 +3589,32 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 1], // A -> 3 lines
+				"line_range": "1-1", // A -> 3 lines
 				"content": "A1\nA2\nA3"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 3], // C -> 5 lines
+				"line_range": "3-3", // C -> 5 lines
 				"content": "C1\nC2\nC3\nC4\nC5"
 			},
 			{
 				"operation": "insert",
-				"line_range": 5, // insert after E
+				"line_range": "5", // insert after E
 				"content": "AFTER_E1\nAFTER_E2"
 			},
 			{
 				"operation": "replace",
-				"line_range": [7, 9], // G,H,I -> 2 lines
+				"line_range": "7-9", // G,H,I -> 2 lines
 				"content": "GHI_1\nGHI_2"
 			},
 			{
 				"operation": "insert",
-				"line_range": 12, // insert after L
+				"line_range": "12", // insert after L
 				"content": "AFTER_L"
 			},
 			{
 				"operation": "replace",
-				"line_range": [15, 15], // O -> 4 lines
+				"line_range": "15-15", // O -> 4 lines
 				"content": "O1\nO2\nO3\nO4"
 			}
 		]);
@@ -3659,32 +3659,32 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 1], // L1 -> 10 LINES (massive expansion)
+				"line_range": "1-1", // L1 -> 10 LINES (massive expansion)
 				"content": "EXP1_1\nEXP1_2\nEXP1_3\nEXP1_4\nEXP1_5\nEXP1_6\nEXP1_7\nEXP1_8\nEXP1_9\nEXP1_10"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 7], // L3,L4,L5,L6,L7 -> 1 LINE (massive contraction)
+				"line_range": "3-7", // L3,L4,L5,L6,L7 -> 1 LINE (massive contraction)
 				"content": "CONTRACTED_3_TO_7"
 			},
 			{
 				"operation": "replace",
-				"line_range": [9, 9], // L9 -> 8 LINES (big expansion)
+				"line_range": "9-9", // L9 -> 8 LINES (big expansion)
 				"content": "EXP9_1\nEXP9_2\nEXP9_3\nEXP9_4\nEXP9_5\nEXP9_6\nEXP9_7\nEXP9_8"
 			},
 			{
 				"operation": "replace",
-				"line_range": [12, 16], // L12,L13,L14,L15,L16 -> 2 LINES (contraction)
+				"line_range": "12-16", // L12,L13,L14,L15,L16 -> 2 LINES (contraction)
 				"content": "CONTRACT_12_16_A\nCONTRACT_12_16_B"
 			},
 			{
 				"operation": "insert",
-				"line_range": 18, // insert after L18 -> 6 LINES
+				"line_range": "18", // insert after L18 -> 6 LINES
 				"content": "INS18_1\nINS18_2\nINS18_3\nINS18_4\nINS18_5\nINS18_6"
 			},
 			{
 				"operation": "replace",
-				"line_range": [20, 20], // L20 -> 12 LINES (extreme expansion)
+				"line_range": "20-20", // L20 -> 12 LINES (extreme expansion)
 				"content": "EXP20_1\nEXP20_2\nEXP20_3\nEXP20_4\nEXP20_5\nEXP20_6\nEXP20_7\nEXP20_8\nEXP20_9\nEXP20_10\nEXP20_11\nEXP20_12"
 			}
 		]);
@@ -3731,32 +3731,32 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [5, 5], // 1 line -> 15 lines (extreme expansion)
+				"line_range": "5-5", // 1 line -> 15 lines (extreme expansion)
 				"content": "E5_01\nE5_02\nE5_03\nE5_04\nE5_05\nE5_06\nE5_07\nE5_08\nE5_09\nE5_10\nE5_11\nE5_12\nE5_13\nE5_14\nE5_15"
 			},
 			{
 				"operation": "replace",
-				"line_range": [10, 20], // 11 lines -> 1 line (extreme contraction)
+				"line_range": "10-20", // 11 lines -> 1 line (extreme contraction)
 				"content": "MEGA_CONTRACTION_10_TO_20"
 			},
 			{
 				"operation": "insert",
-				"line_range": 25, // insert 8 lines after line 25
+				"line_range": "25", // insert 8 lines after line 25
 				"content": "I25_1\nI25_2\nI25_3\nI25_4\nI25_5\nI25_6\nI25_7\nI25_8"
 			},
 			{
 				"operation": "replace",
-				"line_range": [30, 35], // 6 lines -> 20 lines (massive expansion)
+				"line_range": "30-35", // 6 lines -> 20 lines (massive expansion)
 				"content": "M30_01\nM30_02\nM30_03\nM30_04\nM30_05\nM30_06\nM30_07\nM30_08\nM30_09\nM30_10\nM30_11\nM30_12\nM30_13\nM30_14\nM30_15\nM30_16\nM30_17\nM30_18\nM30_19\nM30_20"
 			},
 			{
 				"operation": "replace",
-				"line_range": [40, 49], // 10 lines -> 2 lines (big contraction)
+				"line_range": "40-49", // 10 lines -> 2 lines (big contraction)
 				"content": "BIG_CONTRACT_A\nBIG_CONTRACT_B"
 			},
 			{
 				"operation": "insert",
-				"line_range": 50, // insert 5 lines after last line
+				"line_range": "50", // insert 5 lines after last line
 				"content": "FINAL_1\nFINAL_2\nFINAL_3\nFINAL_4\nFINAL_5"
 			}
 		]);
@@ -3844,27 +3844,27 @@ mod tests {
 		let operations = json!([
 			{
 				"operation": "replace",
-				"line_range": [1, 1], // A -> 7 lines
+				"line_range": "1-1", // A -> 7 lines
 				"content": "A1\nA2\nA3\nA4\nA5\nA6\nA7"
 			},
 			{
 				"operation": "replace",
-				"line_range": [3, 3], // C -> 5 lines
+				"line_range": "3-3", // C -> 5 lines
 				"content": "C1\nC2\nC3\nC4\nC5"
 			},
 			{
 				"operation": "replace",
-				"line_range": [5, 5], // E -> 9 lines
+				"line_range": "5-5", // E -> 9 lines
 				"content": "E1\nE2\nE3\nE4\nE5\nE6\nE7\nE8\nE9"
 			},
 			{
 				"operation": "replace",
-				"line_range": [7, 7], // G -> 12 lines
+				"line_range": "7-7", // G -> 12 lines
 				"content": "G01\nG02\nG03\nG04\nG05\nG06\nG07\nG08\nG09\nG10\nG11\nG12"
 			},
 			{
 				"operation": "replace",
-				"line_range": [9, 9], // I -> 6 lines
+				"line_range": "9-9", // I -> 6 lines
 				"content": "I1\nI2\nI3\nI4\nI5\nI6"
 			}
 		]);
@@ -3897,8 +3897,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 2, "content": "INSERTED"},
-				{"operation": "replace", "line_range": [2, 2], "content": "REPLACED"}
+				{"operation": "insert", "line_range": "2", "content": "INSERTED"},
+				{"operation": "replace", "line_range": "2-2", "content": "REPLACED"}
 			]),
 		)
 		.await;
@@ -3922,8 +3922,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 3, "content": "NEW"},
-				{"operation": "replace", "line_range": [2, 4], "content": "X\nY\nZ"}
+				{"operation": "insert", "line_range": "3", "content": "NEW"},
+				{"operation": "replace", "line_range": "2-4", "content": "X\nY\nZ"}
 			]),
 		)
 		.await;
@@ -3948,8 +3948,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 0, "content": "HEADER"},
-				{"operation": "replace", "line_range": [1, 1], "content": "REPLACED_FIRST"}
+				{"operation": "insert", "line_range": "0", "content": "HEADER"},
+				{"operation": "replace", "line_range": "1-1", "content": "REPLACED_FIRST"}
 			]),
 		)
 		.await;
@@ -3973,8 +3973,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 3], "content": "X"},
-				{"operation": "replace", "line_range": [3, 5], "content": "Y"}
+				{"operation": "replace", "line_range": "1-3", "content": "X"},
+				{"operation": "replace", "line_range": "3-5", "content": "Y"}
 			]),
 		)
 		.await;
@@ -4002,8 +4002,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 2, "content": "I1\nI2\nI3"},
-				{"operation": "replace", "line_range": [2, 2], "content": "R1\nR2"}
+				{"operation": "insert", "line_range": "2", "content": "I1\nI2\nI3"},
+				{"operation": "replace", "line_range": "2-2", "content": "R1\nR2"}
 			]),
 		)
 		.await;
@@ -4027,9 +4027,9 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 1, "content": "AFTER_A"},
-				{"operation": "replace", "line_range": [3, 4], "content": "REPLACED_CD"},
-				{"operation": "insert", "line_range": 5, "content": "AFTER_E"}
+				{"operation": "insert", "line_range": "1", "content": "AFTER_A"},
+				{"operation": "replace", "line_range": "3-4", "content": "REPLACED_CD"},
+				{"operation": "insert", "line_range": "5", "content": "AFTER_E"}
 			]),
 		)
 		.await;
@@ -4054,8 +4054,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 2], "content": "X\nY"},
-				{"operation": "replace", "line_range": [3, 4], "content": "W\nZ"}
+				{"operation": "replace", "line_range": "1-2", "content": "X\nY"},
+				{"operation": "replace", "line_range": "3-4", "content": "W\nZ"}
 			]),
 		)
 		.await;
@@ -4076,8 +4076,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "insert", "line_range": 3, "content": "FOOTER"},
-				{"operation": "replace", "line_range": [3, 3], "content": "REPLACED_C"}
+				{"operation": "insert", "line_range": "3", "content": "FOOTER"},
+				{"operation": "replace", "line_range": "3-3", "content": "REPLACED_C"}
 			]),
 		)
 		.await;
@@ -4100,8 +4100,8 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [2, 3], "content": ""},
-				{"operation": "insert", "line_range": 2, "content": "NEW"}
+				{"operation": "replace", "line_range": "2-3", "content": ""},
+				{"operation": "insert", "line_range": "2", "content": "NEW"}
 			]),
 		)
 		.await;
@@ -4125,12 +4125,12 @@ mod tests {
 		let call = create_batch_edit_call(
 			&path,
 			json!([
-				{"operation": "replace", "line_range": [1, 1], "content": "R1"},
-				{"operation": "insert", "line_range": 1, "content": "I1"},
-				{"operation": "replace", "line_range": [3, 3], "content": "R3"},
-				{"operation": "insert", "line_range": 3, "content": "I3"},
-				{"operation": "replace", "line_range": [5, 5], "content": "R5"},
-				{"operation": "insert", "line_range": 5, "content": "I5"}
+				{"operation": "replace", "line_range": "1-1", "content": "R1"},
+				{"operation": "insert", "line_range": "1", "content": "I1"},
+				{"operation": "replace", "line_range": "3-3", "content": "R3"},
+				{"operation": "insert", "line_range": "3", "content": "I3"},
+				{"operation": "replace", "line_range": "5-5", "content": "R5"},
+				{"operation": "insert", "line_range": "5", "content": "I5"}
 			]),
 		)
 		.await;
@@ -4283,7 +4283,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [&hashes[1], &hashes[1]],
+					"line_range": format!("{}-{}", hashes[1], hashes[1]),
 					"content": "BETA_REPLACED"
 				}]
 			}),
@@ -4313,7 +4313,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "insert",
-					"line_range": &hashes[0],
+					"line_range": hashes[0].clone(),
 					"content": "INSERTED"
 				}]
 			}),
@@ -4343,7 +4343,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [&hashes[1], &hashes[3]],
+					"line_range": format!("{}-{}", hashes[1], hashes[3]),
 					"content": "REPLACED"
 				}]
 			}),
@@ -4368,7 +4368,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": ["zzzz", "zzzz"],
+					"line_range": "zzzz-zzzz",
 					"content": "nope"
 				}]
 			}),
@@ -4421,7 +4421,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [&hashes[2], &hashes[0]],
+					"line_range": format!("{}-{}", hashes[2], hashes[0]),
 					"content": "nope"
 				}]
 			}),
@@ -4479,7 +4479,7 @@ mod tests {
 				"path": path,
 				"operations": [{
 					"operation": "replace",
-					"line_range": [&hashes[1], &hashes[1]],
+					"line_range": format!("{}-{}", hashes[1], hashes[1]),
 					"content": "// replaced"
 				}]
 			}),
@@ -4629,7 +4629,7 @@ mod tests {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "paths": path, "lines": [3, 3] }),
+			parameters: json!({ "paths": path, "lines": "3-3" }),
 		};
 		let lines_output = execute_view(&lines_call).await.unwrap();
 
@@ -4664,7 +4664,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_path.to_string_lossy()],
-				"lines": [2, 4]
+				"lines": "2-4"
 			}),
 		};
 
@@ -4697,7 +4697,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
-				"lines": [[2, 3], [4, 5]]
+				"lines": ["2-3", "4-5"]
 			}),
 		};
 
@@ -4726,7 +4726,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
-				"lines": [1, 2]
+				"lines": "1-2"
 			}),
 		};
 
@@ -4756,7 +4756,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
-				"lines": [[2, 3]]
+				"lines": ["2-3"]
 			}),
 		};
 
@@ -4786,7 +4786,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy(), file_b.to_string_lossy()],
-				"lines": [[1, 2], [3, 3], [1, 1]]
+				"lines": ["1-2", "3-3", "1-1"]
 			}),
 		};
 
@@ -4801,37 +4801,37 @@ mod tests {
 	// ── lines shape validation ────────────────────────────────────────────────
 
 	#[tokio::test]
-	async fn test_view_lines_triple_wrapped_errors_with_hint() {
+	async fn test_view_lines_nested_array_element_errors_with_hint() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_a = temp_dir.path().join("a.txt");
 		fs::write(&file_a, "a1\na2\na3\na4\na5\n").await.unwrap();
 
-		// Hallucinated 3-level nesting: [[[1,3]]] — common LLM mistake.
+		// Old-style nesting: [[1, 3]] — each element must now be a range STRING, not an array.
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy()],
-				"lines": [[[1, 3]]]
+				"lines": [[1, 3]]
 			}),
 		};
 
 		let err = execute_view(&call).await.unwrap_err();
 		let msg = err.to_string();
 		assert!(
-			msg.contains("over-wrapped") && msg.contains("2 levels"),
-			"Should hint about over-wrapping with 2-level max: {msg}"
+			msg.contains("range string"),
+			"Should hint that each element must be a range string: {msg}"
 		);
 	}
 
 	#[tokio::test]
-	async fn test_view_lines_nested_non_array_element_errors_with_hint() {
+	async fn test_view_lines_non_string_element_errors_with_hint() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_a = temp_dir.path().join("a.txt");
 		fs::write(&file_a, "a1\na2\na3\n").await.unwrap();
 
-		// Mixed shape: first element is array, second is bare number — invalid.
+		// Mixed shape: first element is array, second is bare number — both invalid (need strings).
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
@@ -4845,8 +4845,8 @@ mod tests {
 		let err = execute_view(&call).await.unwrap_err();
 		let msg = err.to_string();
 		assert!(
-			msg.contains("[start, end]") && msg.contains("Max 2 levels"),
-			"Should hint about valid shapes and 2-level max: {msg}"
+			msg.contains("range string"),
+			"Should hint that each element must be a range string: {msg}"
 		);
 	}
 
@@ -4862,7 +4862,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy()],
-				"lines": [2, 4]
+				"lines": "2-4"
 			}),
 		};
 
@@ -4887,7 +4887,7 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"paths": [file_a.to_string_lossy()],
-				"lines": [[1, 2], [5, 6]]
+				"lines": ["1-2", "5-6"]
 			}),
 		};
 
