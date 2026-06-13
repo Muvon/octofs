@@ -214,7 +214,7 @@ fn resolve_unresolved_line_range(
 			if start > end {
 				return Err(format!(
 					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). \
-					Did you mean line_range: [\"{}\", \"{}\"]?",
+					Did you mean line_range: \"{}-{}\"?",
 					start_hash, start, end_hash, end, end_hash, start_hash
 				));
 			}
@@ -770,9 +770,9 @@ fn check_replace_duplicates(
 	};
 	let range_id = |s: usize, e: usize| -> String {
 		if use_hashes {
-			format!("[{},{}]", hashes[s - 1], hashes[e - 1])
+			format!("\"{}-{}\"", hashes[s - 1], hashes[e - 1])
 		} else {
-			format!("[{}-{}]", s, e)
+			format!("\"{}-{}\"", s, e)
 		}
 	};
 
@@ -849,7 +849,7 @@ fn detect_conflicts(
 					// Ranges overlap when s1 <= e2 AND s2 <= e1
 					if s1 <= e2 && s2 <= e1 {
 						return Err(format!(
-							"Conflicting operations: operation {} (replace [{},{}]) and {} (replace [{},{}]) have overlapping ranges",
+							"Conflicting operations: operation {} (replace \"{}-{}\") and {} (replace \"{}-{}\") have overlapping ranges",
 							op1.operation_index, id(s1), id(e1), op2.operation_index, id(s2), id(e2)
 						));
 					}
@@ -1061,84 +1061,61 @@ async fn apply_batch_operations(
 	}
 }
 
-// Parse line_range from JSON value (supports numbers, arrays, and hash strings)
+// Parse line_range from a JSON value. The unified format is a string:
+//   insert:  "0" (file start) | "-1" (after last line) | "N" (after line N) | "<hash>"
+//   replace: "START-END" (e.g. "10-25") | "N" | "<hash>" | "<hash>-<hash>"
+// A bare JSON number is tolerated as a single line/anchor.
 fn parse_line_range(
 	value: &Value,
 	operation_type: &OperationType,
 ) -> Result<UnresolvedLineRange, String> {
-	match value {
-		Value::Number(n) => {
-			let line = n.as_i64().ok_or("Line number must be an integer")?;
-			match operation_type {
-				// 0 is valid for insert: means "insert at beginning of file"
-				OperationType::Insert => Ok(UnresolvedLineRange::Single(line)),
-				OperationType::Replace => {
-					if line == 0 {
-						return Err(
-							"Replace line numbers are 1-indexed, use 1 for first line".to_string()
-						);
-					}
-					Ok(UnresolvedLineRange::Range(line, line)) // Single line replace
+	use crate::utils::line_hash::{parse_range_spec, RangeSpec};
+
+	let s: String = match value {
+		Value::String(s) => s.trim().to_string(),
+		Value::Number(n) => n.to_string(),
+		_ => {
+			return Err(
+				"`line_range` must be a string: a single line/anchor \"42\" (insert: \"0\"=start, \"-1\"=end), a range \"10-25\" (replace), or a hash (\"a3bd\" / \"a3bd-c7f2\")."
+					.to_string(),
+			)
+		}
+	};
+	if s.is_empty() {
+		return Err("`line_range` is empty".to_string());
+	}
+
+	match operation_type {
+		OperationType::Insert => {
+			// Structural anchors are always numeric, even in hash mode.
+			match s.as_str() {
+				"0" => return Ok(UnresolvedLineRange::Single(0)),
+				"-1" => return Ok(UnresolvedLineRange::Single(-1)),
+				_ => {}
+			}
+			match parse_range_spec(&s)? {
+				RangeSpec::Numbers(a, b) if a == b => Ok(UnresolvedLineRange::Single(a)),
+				RangeSpec::Numbers(_, _) => Err(
+					"Insert takes a single anchor line, not a range. Use \"N\" (after line N), \"0\" (file start), or \"-1\" (after last line)."
+						.to_string(),
+				),
+				RangeSpec::Hashes(a, b) if a == b => Ok(UnresolvedLineRange::Hash(a)),
+				RangeSpec::Hashes(_, _) => {
+					Err("Insert takes a single anchor hash, not a hash range.".to_string())
 				}
 			}
 		}
-		Value::String(s) => {
-			// Hash-based line identifier (e.g., "a3bd")
-			Ok(UnresolvedLineRange::Hash(s.clone()))
-		}
-		Value::Array(arr) => {
-			if arr.is_empty() {
-				return Err("Line range array must have 1 or 2 elements".to_string());
-			}
-			// Check if array contains strings (hash range) or numbers (line range)
-			if arr[0].is_string() {
-				// Hash range: ["start_hash", "end_hash"]
-				if arr.len() != 2 {
-					return Err("Hash range array must have exactly 2 elements".to_string());
-				}
-				let start_hash = arr[0].as_str().ok_or("Hash must be a string")?.to_string();
-				let end_hash = arr[1].as_str().ok_or("Hash must be a string")?.to_string();
-				match operation_type {
-					OperationType::Insert => {
-						Err("Insert operation cannot use hash range - use single hash".to_string())
-					}
-					OperationType::Replace => {
-						Ok(UnresolvedLineRange::HashRange(start_hash, end_hash))
-					}
-				}
-			} else if arr.len() == 1 {
-				let line = arr[0].as_i64().ok_or("Line number must be an integer")?;
-				match operation_type {
-					// 0 is valid for insert: means "insert at beginning of file"
-					OperationType::Insert => Ok(UnresolvedLineRange::Single(line)),
-					OperationType::Replace => {
-						if line == 0 {
-							return Err("Replace line numbers are 1-indexed, use 1 for first line"
-								.to_string());
-						}
-						Ok(UnresolvedLineRange::Range(line, line))
-					}
-				}
-			} else if arr.len() == 2 {
-				let start = arr[0].as_i64().ok_or("Start line must be an integer")?;
-				let end = arr[1].as_i64().ok_or("End line must be an integer")?;
+		OperationType::Replace => match parse_range_spec(&s)? {
+			RangeSpec::Numbers(start, end) => {
 				if start == 0 || end == 0 {
 					return Err(
 						"Replace line numbers are 1-indexed, use 1 for first line".to_string()
 					);
 				}
-				match operation_type {
-					OperationType::Insert => Err(
-						"Insert operation cannot use line range - use single line number"
-							.to_string(),
-					),
-					OperationType::Replace => Ok(UnresolvedLineRange::Range(start, end)),
-				}
-			} else {
-				Err("Line range array must have 1 or 2 elements".to_string())
+				Ok(UnresolvedLineRange::Range(start, end))
 			}
-		}
-		_ => Err("Line range must be a number, array, or hash string".to_string()),
+			RangeSpec::Hashes(start, end) => Ok(UnresolvedLineRange::HashRange(start, end)),
+		},
 	}
 }
 
@@ -1287,10 +1264,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			"operation": op_type_str,
 			"status": "parsed",
 			"line_range": match &line_range {
-				UnresolvedLineRange::Single(line) => json!(line),
-				UnresolvedLineRange::Range(start, end) => json!([start, end]),
+				UnresolvedLineRange::Single(line) => json!(line.to_string()),
+				UnresolvedLineRange::Range(start, end) => json!(format!("{start}-{end}")),
 				UnresolvedLineRange::Hash(h) => json!(h),
-				UnresolvedLineRange::HashRange(s, e) => json!([s, e]),
+				UnresolvedLineRange::HashRange(s, e) => json!(format!("{s}-{e}")),
 			}
 		}));
 	}

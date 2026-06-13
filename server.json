@@ -41,11 +41,11 @@
             "description": "Array of file paths for multi-file viewing. Max 50 files."
           },
           "lines": {
-            "type": "array",
-            "items": { "type": "integer" },
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "Line range [start, end] for single file viewing (1-indexed, inclusive). Supports negative indexing: -1 for last line."
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            ],
+            "description": "Line range(s). A single range string \"START-END\" (e.g. \"10-25\"), a single line \"42\", or an array of range strings (multiple ranges on one path, or per-file ranges across many paths). Negatives count from the end (\"-1\" = last line); 4-char hashes in hash mode (e.g. \"a3bd-c7f2\")."
           },
           "pattern": {
             "type": "string",
@@ -130,24 +130,11 @@
                 "operation": {
                   "type": "string",
                   "enum": ["insert", "replace"],
-                  "description": "Type of operation: 'insert' (after line) or 'replace' (line range)"
+                  "description": "Type of operation: 'insert' (after a line) or 'replace' (a line range)"
                 },
                 "line_range": {
-                  "oneOf": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "description": "Single line number for insert (0=beginning, N=after line N)"
-                    },
-                    {
-                      "type": "array",
-                      "items": { "type": "integer", "minimum": 1 },
-                      "minItems": 1,
-                      "maxItems": 2,
-                      "description": "Line range [start, end] for replace (1-indexed, inclusive)"
-                    }
-                  ],
-                  "description": "Line number(s) referencing original file content."
+                  "type": "string",
+                  "description": "Target in the original file, as a string. insert: a single anchor — \"0\" (file start), \"-1\" (after last line), \"N\" (after line N), or a hash. replace: a range \"START-END\" (e.g. \"10-25\"), a single line \"42\", or a hash range \"a3bd-c7f2\" (single hash \"a3bd\" allowed)."
                 },
                 "content": {
                   "type": "string",
@@ -171,19 +158,16 @@
             "description": "Path to the source file to extract lines from."
           },
           "from_range": {
-            "type": "array",
-            "items": { "type": "integer" },
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "Two-element array [start, end] with 1-indexed line numbers (inclusive)."
+            "type": "string",
+            "description": "Line range to copy, as a string: \"START-END\" (1-indexed inclusive, e.g. \"10-25\"), a single line \"42\", or a hash range \"a3bd-c7f2\" in hash mode."
           },
           "append_path": {
             "type": "string",
             "description": "Path to the target file where extracted lines will be appended (auto-created if doesn't exist)."
           },
           "append_line": {
-            "type": "integer",
-            "description": "Position where to append: 0=beginning, -1=end, N=after line N (1-indexed)."
+            "type": "string",
+            "description": "Where to append, as a string: \"0\"=beginning, \"-1\"=end, \"N\"=after line N (1-indexed), or a hash in hash mode."
           }
         }
       }

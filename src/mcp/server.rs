@@ -280,21 +280,20 @@ fn append_hints(mut result: String) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// One or more file/directory paths. Single path for file viewing or directory listing; multiple paths for multi-file viewing (max 50).
-	#[serde(deserialize_with = "deserialize_string_or_vec")]
-	#[schemars(length(min = 1, max = 50))]
-	pub paths: Vec<String>,
-	/// Line range for file viewing. Accepts ONE of two shapes (max 2 levels of nesting):
+	/// File or directory path. Pass a single path string for the common case
+	/// (e.g. "src/main.rs"); pass an array of paths for multi-file viewing (max 50).
+	/// The legacy key `paths` is also accepted.
+	#[serde(alias = "paths", deserialize_with = "deserialize_string_or_vec")]
+	#[schemars(schema_with = "path_param_schema")]
+	pub path: Vec<String>,
+	/// Line range(s) to view, as a string or an array of strings:
 	///
-	/// 1. Flat range: `[start, end]` — single range applied to single file or all files.
-	///    Example: `[1, 50]` or `["a3f2", "b8c1"]` (hash endpoints).
+	/// - Single range: `"START-END"` (e.g. `"10-25"`) or a single line `"42"`.
+	/// - Multiple ranges (ONE path): `["1-50", "200-250"]`.
+	/// - Per-file ranges (N paths): one range string per path, positionally.
 	///
-	/// 2. Nested ranges: `[[start, end], [start, end], ...]`
-	///    - With ONE path: multiple ranges from that file. Example: `[[1, 50], [200, 250]]`.
-	///    - With N paths: per-file ranges (one per path). Example: `[[1, 50], [10, 30]]`.
-	///
-	/// Endpoints are 1-indexed line numbers (i64) or hash strings from previous `view` output.
-	/// NEVER triple-wrap: `[[[1,50]]]` is INVALID. Maximum nesting is array-of-pairs.
+	/// Endpoints are 1-indexed line numbers (negatives count from the end: `"-1"` = last line)
+	/// or 4-char hashes in hash mode (e.g. `"a3bd-c7f2"`). A single range string applies to all files.
 	#[serde(default)]
 	#[schemars(schema_with = "lines_param_schema")]
 	pub lines: Option<serde_json::Value>,
@@ -320,51 +319,53 @@ pub struct ViewParams {
 	pub context: Option<usize>,
 }
 
+/// JSON schema for `ViewParams::path`.
+///
+/// Accepts a single path string (the common case) or an array of paths for
+/// multi-file viewing. Runtime parsing also accepts the legacy `paths` key.
+fn path_param_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	serde_json::from_value(serde_json::json!({
+		"description": "File or directory path. A single path string (e.g. \"src/main.rs\"), or an array of paths for multi-file viewing (max 50).",
+		"oneOf": [
+			{ "type": "string" },
+			{
+				"type": "array",
+				"items": { "type": "string" },
+				"minItems": 1,
+				"maxItems": 50
+			}
+		],
+		"examples": ["src/main.rs", ["src/main.rs", "src/lib.rs"]]
+	}))
+	.expect("static schema is valid JSON")
+}
+
 /// JSON schema for `ViewParams::lines`.
 ///
-/// Hand-written (instead of derived from an untagged enum) because schemars'
-/// auto-generated schema for `Vec<untagged enum>` confuses LLMs into over-wrapping
-/// the value (e.g. `[[[1,50]]]` instead of `[[1,50]]`). This schema makes the two
-/// accepted shapes explicit and gives concrete examples.
+/// Hand-written so the two accepted shapes are explicit with concrete examples.
+/// Ranges are compact strings ("10-25") instead of nested arrays, which avoids the
+/// over-wrapping mistakes LLMs made with the old `[[start,end]]` shape.
 ///
-/// Runtime parsing in `fs::core::parse_lines_param` enforces shape and arity
-/// (and emits actionable errors on over-nesting).
+/// Runtime parsing in `fs::core::parse_lines_param` enforces shape and arity.
 fn lines_param_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
 	serde_json::from_value(serde_json::json!({
-		"description": "Line range(s) for file viewing. Two accepted shapes (max 2 levels of nesting):\n\
-			1) Flat range: [start, end] — single range applied to single file or all files.\n\
-			2) Nested ranges: [[start, end], [start, end], ...] — multiple ranges (single path) or per-file ranges (multiple paths).\n\
-			Each endpoint is a 1-indexed line number (integer) or a hash string from previous view output. NEVER triple-wrap.",
+		"description": "Line range(s) for file viewing. Either a single range string or an array of range strings:\n\
+			- Single range: \"START-END\" (e.g. \"10-25\") or a single line \"42\". Applied to the single file or all files.\n\
+			- Multiple ranges on ONE path: [\"1-50\", \"200-250\"].\n\
+			- Per-file ranges with N paths: one range string per path, positionally.\n\
+			Endpoints are 1-indexed line numbers (negatives count from the end: \"-1\" = last line) or 4-char hashes in hash mode (e.g. \"a3bd-c7f2\").",
 		"oneOf": [
 			{
-				"description": "Flat range [start, end] — applied to single file or all files",
-				"type": "array",
-				"minItems": 2,
-				"maxItems": 2,
-				"items": {
-					"oneOf": [
-						{ "type": "integer", "format": "int64" },
-						{ "type": "string" }
-					]
-				},
-				"examples": [[1, 50], ["a3f2", "b8c1"]]
+				"description": "A single range string applied to the single file or all files",
+				"type": "string",
+				"examples": ["10-25", "42", "a3bd-c7f2"]
 			},
 			{
-				"description": "Nested [[start,end], ...] — multiple ranges per file or per-file ranges",
+				"description": "Range strings — multiple ranges (one path) or per-file ranges (many paths)",
 				"type": "array",
+				"items": { "type": "string" },
 				"minItems": 1,
-				"items": {
-					"type": "array",
-					"minItems": 2,
-					"maxItems": 2,
-					"items": {
-						"oneOf": [
-							{ "type": "integer", "format": "int64" },
-							{ "type": "string" }
-						]
-					}
-				},
-				"examples": [[[1, 50], [200, 250]], [[1, 30], [10, 40]]]
+				"examples": [["1-50", "200-250"], ["a3bd-c7f2"]]
 			}
 		]
 	}))
@@ -442,25 +443,14 @@ pub enum BatchEditOperationType {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct BatchEditOperation {
-	/// Type of operation: 'insert' (after line) or 'replace' (line range)
+	/// Type of operation: 'insert' (after a line) or 'replace' (a line range)
 	pub operation: BatchEditOperationType,
-	/// Line numbers from ORIGINAL file content.
-	pub line_range: BatchEditLineRange,
+	/// Target in the ORIGINAL file, as a string.
+	/// - insert: a single anchor — "0" (file start), "-1" (after last line), "N" (after line N), or a hash.
+	/// - replace: a range "START-END" (e.g. "10-25"), a single line "42", or a hash range "a3bd-c7f2" (single hash "a3bd" allowed).
+	pub line_range: String,
 	/// Raw content to insert or replace with.
 	pub content: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum BatchEditLineRange {
-	/// Single line number for insert (0=beginning, N=after line N, -1=after last line)
-	Single(i64),
-	/// Line range [start, end] for replace (1-indexed, inclusive)
-	Range(Vec<i64>),
-	/// Single hash identifier for insert (hash mode: insert after line with this hash)
-	Hash(String),
-	/// Hash range [start_hash, end_hash] for replace (hash mode)
-	HashRange(Vec<String>),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -476,13 +466,14 @@ pub struct BatchEditParams {
 pub struct ExtractLinesParams {
 	/// Path to the source file to extract lines from
 	pub from_path: String,
-	/// Two-element array [start, end] with 1-indexed line numbers (inclusive)
-	#[schemars(length(min = 2, max = 2))]
-	pub from_range: Vec<i64>,
+	/// Line range to copy, as a string: "START-END" (1-indexed inclusive, e.g. "10-25"),
+	/// a single line "42", or a hash range in hash mode ("a3bd-c7f2").
+	pub from_range: String,
 	/// Path to the target file where extracted lines will be appended
 	pub append_path: String,
-	/// Position where to append: 0=beginning, -1=end, N=after line N (1-indexed)
-	pub append_line: i64,
+	/// Where to append in the target, as a string: "0" = beginning, "-1" = end,
+	/// "N" = after line N (1-indexed), or a hash in hash mode.
+	pub append_line: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]

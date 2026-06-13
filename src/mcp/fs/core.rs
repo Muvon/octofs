@@ -16,6 +16,7 @@
 
 use super::super::McpToolCall;
 use crate::mcp::fs::{directory, file_ops, text_editing};
+use crate::utils::line_hash::{self, PositionSpec, RangeSpec};
 use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
@@ -306,71 +307,65 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 	}
 }
 
-/// Resolve a single line range value `[start, end]` (numbers or hash strings)
-/// into a resolved `(start, end)` tuple with 1-indexed line numbers.
+/// Resolve a single range string (e.g. `"10-25"`, `"42"`, or `"a3bd-c7f2"`) into a
+/// resolved `(start, end)` tuple with 1-indexed line numbers.
 ///
 /// `cached_content` is the file's content if already read (None = read lazily).
-/// Returns the resolved range plus the content (read or passed in) so the caller
-/// can reuse it for subsequent ranges on the same file.
-async fn resolve_single_line_range(
-	arr: &[Value],
+async fn resolve_range_str(
+	range_str: &str,
 	resolved_path: &Path,
 	cached_content: Option<&str>,
 ) -> Result<Option<(usize, i64)>> {
-	if arr.len() != 2 {
-		bail!(
-			"Each line range must have exactly 2 elements [start, end], got {}. Example: [1, 50].",
-			arr.len()
-		);
-	}
+	let spec = line_hash::parse_range_spec(range_str)
+		.map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
 
-	// Try numbers first, then hash strings
-	if let (Some(start), Some(end)) = (arr[0].as_i64(), arr[1].as_i64()) {
-		let total_lines = if let Some(content) = cached_content {
-			content.lines().count()
-		} else {
-			match tokio_fs::read_to_string(resolved_path).await {
-				Ok(c) => c.lines().count(),
-				Err(_) => 0,
-			}
-		};
-		if total_lines > 0 {
-			match resolve_line_range_clamped(start, end, total_lines) {
-				Ok((s, e, hint)) => {
-					if let Some(msg) = hint {
-						crate::mcp::hint_accumulator::push_hint(&msg);
-					}
-					Ok(Some((s, e as i64)))
+	match spec {
+		RangeSpec::Numbers(start, end) => {
+			let total_lines = if let Some(content) = cached_content {
+				content.lines().count()
+			} else {
+				match tokio_fs::read_to_string(resolved_path).await {
+					Ok(c) => c.lines().count(),
+					Err(_) => 0,
 				}
-				Err(err) => bail!("Invalid lines parameter: {err}"),
+			};
+			if total_lines > 0 {
+				match resolve_line_range_clamped(start, end, total_lines) {
+					Ok((s, e, hint)) => {
+						if let Some(msg) = hint {
+							crate::mcp::hint_accumulator::push_hint(&msg);
+						}
+						Ok(Some((s, e as i64)))
+					}
+					Err(err) => bail!("Invalid lines parameter: {err}"),
+				}
+			} else {
+				Ok(Some((start.max(0) as usize, end)))
 			}
-		} else {
-			Ok(Some((start as usize, end)))
 		}
-	} else if let (Some(start_hash), Some(end_hash)) = (arr[0].as_str(), arr[1].as_str()) {
-		let content_owned;
-		let content: &str = if let Some(c) = cached_content {
-			c
-		} else {
-			content_owned = tokio_fs::read_to_string(resolved_path)
-				.await
-				.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
-			&content_owned
-		};
-		let file_lines: Vec<&str> = content.lines().collect();
-		let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, &file_lines)
-			.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
-		let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, &file_lines)
-			.map_err(|e| anyhow!("Invalid end hash: {}", e))?;
-		if start > end {
-			bail!(
-				"Start hash '{}' (line {}) is after end hash '{}' (line {}) — range must go forward",
-				start_hash, start, end_hash, end
-			);
+		RangeSpec::Hashes(start_hash, end_hash) => {
+			let content_owned;
+			let content: &str = if let Some(c) = cached_content {
+				c
+			} else {
+				content_owned = tokio_fs::read_to_string(resolved_path)
+					.await
+					.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
+				&content_owned
+			};
+			let file_lines: Vec<&str> = content.lines().collect();
+			let start = line_hash::resolve_hash_to_line(&start_hash, &file_lines)
+				.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
+			let end = line_hash::resolve_hash_to_line(&end_hash, &file_lines)
+				.map_err(|e| anyhow!("Invalid end hash: {}", e))?;
+			if start > end {
+				bail!(
+					"Start hash '{}' (line {}) is after end hash '{}' (line {}) — range must go forward",
+					start_hash, start, end_hash, end
+				);
+			}
+			Ok(Some((start, end as i64)))
 		}
-		Ok(Some((start, end as i64)))
-	} else {
-		bail!("Line range elements must both be integers or both be hash strings. Example: [1, 50] or [\"a1b2c3\", \"d4e5f6\"].");
 	}
 }
 
@@ -378,20 +373,34 @@ async fn resolve_single_line_range(
 enum ParsedLines {
 	/// No `lines` parameter — show full content.
 	None,
-	/// Single range `[start, end]` — applied to the single file or all files.
+	/// Single range — applied to the single file or all files.
 	Single(Option<(usize, i64)>),
 	/// Multiple ranges on a single file — only valid when exactly one path is given.
 	MultiRangeSingleFile(Vec<(usize, i64)>),
-	/// Per-file ranges `[[start, end], ...]` — one per path (paths.len() > 1).
+	/// Per-file ranges — one per path (paths.len() > 1).
 	PerFile(Vec<Option<(usize, i64)>>),
+}
+
+/// Convert a JSON array of range strings into owned `String` tokens.
+fn range_tokens_from_array(arr: &[Value]) -> Result<Vec<String>> {
+	let mut out = Vec::with_capacity(arr.len());
+	for (i, v) in arr.iter().enumerate() {
+		match v {
+			Value::String(s) => out.push(s.trim().to_string()),
+			_ => bail!(
+				"lines[{i}] must be a range string like \"10-25\" (or a hash range \"a3bd-c7f2\"). Wrap each range in quotes: [\"10-25\",\"40-50\"]."
+			),
+		}
+	}
+	Ok(out)
 }
 
 /// Parse the `lines` parameter from the tool call.
 ///
 /// Supported shapes:
-/// - `[start, end]` — single range (numbers or hash strings)
-/// - `[[start, end], [start, end], ...]` with **one** path → multiple ranges from that file
-/// - `[[start, end], [start, end], ...]` with **multiple** paths → per-file ranges (one per path)
+/// - `"10-25"` / `"42"` — a single range (numbers or hashes), applied to the single file or all files
+/// - `["1-50", "200-250"]` with **one** path → multiple ranges from that file
+/// - `["1-50", "10-30"]` with **multiple** paths → per-file ranges (one per path)
 async fn parse_lines_param(
 	lines_value: Option<&Value>,
 	paths: &[String],
@@ -406,74 +415,51 @@ async fn parse_lines_param(
 		return Ok(ParsedLines::None);
 	}
 
-	// Tolerate clients that JSON-encode the array as a string (e.g. `"[80, 170]"`).
-	// Decode once and reuse the parsed value if it yields a valid array shape.
-	let decoded_owned: Option<Value> = match lines_value {
-		Value::String(s) => serde_json::from_str::<Value>(s.trim())
-			.ok()
-			.filter(|v| matches!(v, Value::Array(_))),
-		_ => None,
+	// Normalize the `lines` value into range token strings.
+	let tokens: Vec<String> = match lines_value {
+		Value::String(s) => {
+			let trimmed = s.trim();
+			if trimmed.is_empty() {
+				return Ok(ParsedLines::None);
+			}
+			// Tolerate a JSON-encoded array of range strings (e.g. `"[\"10-25\",\"40-50\"]"`).
+			if trimmed.starts_with('[') {
+				match serde_json::from_str::<Value>(trimmed) {
+					Ok(Value::Array(arr)) => range_tokens_from_array(&arr)?,
+					_ => bail!(
+						"`lines` string '{trimmed}' is not valid. Use a range like \"10-25\" or a JSON array of ranges like [\"10-25\",\"40-50\"]."
+					),
+				}
+			} else {
+				// A single range string applied to the single file or all files.
+				let range =
+					resolve_range_str(trimmed, &resolve_path(&paths[0], workdir), None).await?;
+				return Ok(ParsedLines::Single(range));
+			}
+		}
+		Value::Array(arr) => range_tokens_from_array(arr)?,
+		_ => bail!(
+			"`lines` must be a range string like \"10-25\" or an array of range strings like [\"10-25\",\"40-50\"]."
+		),
 	};
-	let lines_value: &Value = decoded_owned.as_ref().unwrap_or(lines_value);
 
-	let Value::Array(arr) = lines_value else {
-		bail!("`lines` must be an array. Examples: [1, 50] (single range), [[1,50],[200,250]] (multiple ranges on one file or per-file ranges when multiple paths).");
-	};
-
-	if arr.is_empty() {
+	if tokens.is_empty() {
 		return Ok(ParsedLines::None);
 	}
 
-	// Detect array-of-arrays shape
-	let is_nested = matches!(arr.first(), Some(Value::Array(_)));
-
-	if !is_nested {
-		// Flat array → must be [start, end]
-		if arr.len() != 2 {
-			bail!(
-				"Single line range must have exactly 2 elements [start, end], got {}. For multiple ranges, wrap each in its own array: [[1,50],[200,250]].",
-				arr.len()
-			);
-		}
-		let resolved_path = resolve_path(&paths[0], workdir);
-		let range = resolve_single_line_range(arr, &resolved_path, None).await?;
+	// A single token with a single path behaves like a single range.
+	if tokens.len() == 1 && paths.len() == 1 {
+		let range = resolve_range_str(&tokens[0], &resolve_path(&paths[0], workdir), None).await?;
 		return Ok(ParsedLines::Single(range));
 	}
 
-	// Nested array → validate depth and shape, then interpret based on path count.
-	// Each element must be a 2-element array of scalar (number or string) endpoints.
-	// Reject 3+ levels of nesting (e.g. `[[[1,50]]]`) with an actionable message.
-	for (i, range_val) in arr.iter().enumerate() {
-		let Value::Array(range_arr) = range_val else {
-			bail!(
-				"lines[{i}] must be an array [start, end] (number or hash). Got non-array. \
-				 Valid shapes: [1,50] (flat) or [[1,50],[200,250]] (nested). Max 2 levels."
-			);
-		};
-		if let Some(bad_idx) = range_arr
-			.iter()
-			.position(|v| matches!(v, Value::Array(_) | Value::Object(_)))
-		{
-			bail!(
-				"lines[{i}][{bad_idx}] is itself an array/object — `lines` is over-wrapped. \
-				 Use 2 levels max: [[start,end],[start,end],...] not [[[start,end]],...]. \
-				 Each endpoint must be an integer line number or a hash string."
-			);
-		}
-	}
-
 	if paths.len() == 1 {
-		// Multiple ranges on a single file — read content once, resolve all ranges against it.
+		// Multiple ranges on a single file — read content once, resolve all against it.
 		let resolved_path = resolve_path(&paths[0], workdir);
 		let cached = tokio_fs::read_to_string(&resolved_path).await.ok();
-		let mut ranges = Vec::with_capacity(arr.len());
-		for range_val in arr.iter() {
-			let Value::Array(range_arr) = range_val else {
-				unreachable!("validated above");
-			};
-			let range =
-				resolve_single_line_range(range_arr, &resolved_path, cached.as_deref()).await?;
-			if let Some(r) = range {
+		let mut ranges = Vec::with_capacity(tokens.len());
+		for tok in &tokens {
+			if let Some(r) = resolve_range_str(tok, &resolved_path, cached.as_deref()).await? {
 				ranges.push(r);
 			}
 		}
@@ -484,40 +470,18 @@ async fn parse_lines_param(
 	}
 
 	// Multiple paths → per-file ranges (positional)
-	if arr.len() > paths.len() {
+	if tokens.len() > paths.len() {
 		bail!(
-			"`lines` has {} range pairs but only {} paths provided. For multiple ranges on a single file, pass exactly one path. For per-file ranges, range count must not exceed path count.",
-			arr.len(),
+			"`lines` has {} ranges but only {} paths provided. For multiple ranges on a single file, pass exactly one path. For per-file ranges, range count must not exceed path count.",
+			tokens.len(),
 			paths.len()
 		);
 	}
-	let mut ranges = Vec::with_capacity(paths.len());
-	// Cache per-path content keyed by path string to avoid re-reading on hash resolution
-	let mut content_cache: std::collections::HashMap<String, Option<String>> =
-		std::collections::HashMap::new();
-	for (i, range_val) in arr.iter().enumerate() {
-		let Value::Array(range_arr) = range_val else {
-			unreachable!("validated above");
-		};
+	let mut ranges: Vec<Option<(usize, i64)>> = Vec::with_capacity(paths.len());
+	for (i, tok) in tokens.iter().enumerate() {
 		let resolved_path = resolve_path(&paths[i], workdir);
-		let key = paths[i].clone();
-		let cached = content_cache
-			.entry(key)
-			.or_insert_with(|| {
-				// Synchronously unavailable in async context; we'll populate below.
-				None
-			})
-			.clone();
-		let cached_ref = if cached.is_some() {
-			cached.as_deref()
-		} else {
-			// Lazy read now
-			let c = tokio_fs::read_to_string(&resolved_path).await.ok();
-			content_cache.insert(paths[i].clone(), c.clone());
-			// SAFETY: re-borrow from the map
-			content_cache.get(&paths[i]).and_then(|o| o.as_deref())
-		};
-		let range = resolve_single_line_range(range_arr, &resolved_path, cached_ref).await?;
+		let cached = tokio_fs::read_to_string(&resolved_path).await.ok();
+		let range = resolve_range_str(tok, &resolved_path, cached.as_deref()).await?;
 		ranges.push(range);
 	}
 	// Fill remaining paths with None (no range)
@@ -530,8 +494,12 @@ async fn parse_lines_param(
 // Execute view command - unified read-only tool for files, directories, and content search
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// Extract paths array (required, one or more elements).
+	// Accept either `path` (single, the common case) or the legacy `paths` key.
 	// Tolerate clients that JSON-encode the array as a string (e.g. `"[\"a.rs\",\"b.rs\"]"`).
-	let paths_value = call.parameters.get("paths");
+	let paths_value = call
+		.parameters
+		.get("path")
+		.or_else(|| call.parameters.get("paths"));
 	let decoded_paths: Option<Value> = match paths_value {
 		Some(Value::String(s)) => serde_json::from_str::<Value>(s.trim())
 			.ok()
@@ -553,12 +521,12 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		}
 		Some(Value::String(s)) => vec![s.clone()],
 		_ => {
-			bail!("Missing or invalid 'paths' parameter.");
+			bail!("Missing or invalid 'path' parameter. Pass a single path string (e.g. \"src/main.rs\") or an array of paths.");
 		}
 	};
 
 	if paths.is_empty() {
-		bail!("'paths' must contain at least one element.");
+		bail!("'path' must contain at least one element.");
 	}
 	if paths.len() > 50 {
 		bail!("Too many files requested. Maximum 50 files per request.");
@@ -647,49 +615,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	// Validate and extract from_range parameter.
-	// Accepts [int, int] (line numbers) or [string, string] (hash identifiers).
+	// A range string: "10-25" (line numbers) or "a3bd-c7f2" (hash identifiers).
 	// Hash resolution is deferred until after the source file is read.
-	enum FromRange {
-		Lines(i64, i64),
-		Hashes(String, String),
-	}
-	let from_range_raw = match call.parameters.get("from_range") {
-		Some(Value::Array(arr)) => {
-			if arr.len() != 2 {
-				bail!("Parameter 'from_range' must be an array with exactly 2 elements");
-			}
-			if arr[0].is_string() || arr[1].is_string() {
-				// Hash mode
-				let start = arr[0]
-					.as_str()
-					.ok_or_else(|| {
-						anyhow::anyhow!("from_range elements must both be hash strings")
-					})?
-					.to_string();
-				let end = arr[1]
-					.as_str()
-					.ok_or_else(|| {
-						anyhow::anyhow!("from_range elements must both be hash strings")
-					})?
-					.to_string();
-				FromRange::Hashes(start, end)
-			} else {
-				// Number mode
-				let start = match arr[0].as_i64() {
-					Some(0) => bail!("Line numbers are 1-indexed, use 1 for first line"),
-					Some(n) => n,
-					None => bail!("Start line number must be an integer"),
-				};
-				let end = match arr[1].as_i64() {
-					Some(0) => bail!("Line numbers are 1-indexed, use 1 for first line"),
-					Some(n) => n,
-					None => bail!("End line number must be an integer"),
-				};
-				FromRange::Lines(start, end)
-			}
+	let from_range_spec = match call.parameters.get("from_range") {
+		Some(Value::String(s)) => {
+			line_hash::parse_range_spec(s).map_err(|e| anyhow!("Invalid 'from_range': {e}"))?
 		}
 		Some(_) => {
-			bail!("Parameter 'from_range' must be an array");
+			bail!("Parameter 'from_range' must be a range string like \"10-25\" (or a hash range \"a3bd-c7f2\")");
 		}
 		None => {
 			bail!("Missing required parameter 'from_range'");
@@ -713,20 +646,19 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	// Validate and extract append_line parameter.
-	// Accepts integer (line number or 0/-1 special) or string (hash identifier).
+	// A position string: "0" (start), "-1" (end), "N" (after line N), or a hash.
 	// Hash resolution is deferred until after the target file is read.
-	enum AppendLine {
-		Position(i64),
-		Hash(String),
-	}
-	let append_line_raw = match call.parameters.get("append_line") {
+	let append_line_spec = match call.parameters.get("append_line") {
+		Some(Value::String(s)) => {
+			line_hash::parse_position_spec(s).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?
+		}
+		// Tolerate a bare JSON number (unambiguous single position).
 		Some(Value::Number(n)) => match n.as_i64() {
-			Some(line) => AppendLine::Position(line),
-			None => bail!("Parameter 'append_line' must be an integer"),
+			Some(line) => PositionSpec::Number(line),
+			None => bail!("Parameter 'append_line' must be an integer or hash string"),
 		},
-		Some(Value::String(h)) => AppendLine::Hash(h.clone()),
 		Some(_) => {
-			bail!("Parameter 'append_line' must be an integer or hash string");
+			bail!("Parameter 'append_line' must be a string: \"0\" (start), \"-1\" (end), \"N\" (after line N), or a hash");
 		}
 		None => {
 			bail!("Missing required parameter 'append_line'");
@@ -751,21 +683,21 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let total_lines = source_lines.len();
 
 	// Resolve from_range: hashes → line numbers, or resolve negative indices
-	let from_range = match from_range_raw {
-		FromRange::Hashes(start_hash, end_hash) => {
-			let start = crate::utils::line_hash::resolve_hash_to_line(&start_hash, &source_lines)
+	let from_range = match from_range_spec {
+		RangeSpec::Hashes(start_hash, end_hash) => {
+			let start = line_hash::resolve_hash_to_line(&start_hash, &source_lines)
 				.map_err(|e| anyhow::anyhow!("Invalid from_range start: {e}"))?;
-			let end = crate::utils::line_hash::resolve_hash_to_line(&end_hash, &source_lines)
+			let end = line_hash::resolve_hash_to_line(&end_hash, &source_lines)
 				.map_err(|e| anyhow::anyhow!("Invalid from_range end: {e}"))?;
 			if start > end {
 				bail!(
-					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). Did you mean from_range: [\"{}\", \"{}\"]?",
+					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). Did you mean from_range: \"{}-{}\"?",
 					start_hash, start, end_hash, end, end_hash, start_hash
 				);
 			}
 			(start, end)
 		}
-		FromRange::Lines(start_raw, end_raw) => {
+		RangeSpec::Numbers(start_raw, end_raw) => {
 			match resolve_line_range(start_raw, end_raw, total_lines) {
 				Ok(range) => range,
 				Err(err) => bail!("Invalid from_range: {err}"),
@@ -829,14 +761,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	// Resolve append_line: hash → line number, or keep integer as-is
-	let append_line: i64 = match append_line_raw {
-		AppendLine::Position(n) => n,
-		AppendLine::Hash(hash) => {
+	let append_line: i64 = match append_line_spec {
+		PositionSpec::Number(n) => n,
+		PositionSpec::Hash(hash) => {
 			if target_content.is_empty() {
-				bail!("Cannot use hash identifier for append_line on an empty or non-existent target file");
+				bail!("Cannot use a hash for append_line on an empty or non-existent target file");
 			}
 			let target_lines: Vec<&str> = target_content.lines().collect();
-			let line = crate::utils::line_hash::resolve_hash_to_line(&hash, &target_lines)
+			let line = line_hash::resolve_hash_to_line(&hash, &target_lines)
 				.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
 			line as i64
 		}

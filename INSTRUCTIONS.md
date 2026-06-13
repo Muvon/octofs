@@ -85,7 +85,11 @@ Two modes set once at startup via `--line-mode`:
 - `number` (default) — sequential 1-indexed integers
 - `hash` — 4-char lowercase hex FNV1a-16 hashes, position-dependent (same content at different lines → different hash)
 
-`utils/line_hash::is_hash_mode()` gates all formatting paths. `batch_edit` and `extract_lines` accept both numbers and hash strings in their range parameters.
+`utils/line_hash::is_hash_mode()` gates all formatting paths. Line targets are passed as compact **strings**, parsed by `utils/line_hash::parse_range_spec` / `parse_position_spec`:
+- range: `"10-25"` (start-end), `"42"` (single line), or `"a3bd-c7f2"` / `"a3bd"` (hashes); negatives count from EOF (`"-1"` = last line)
+- position (insert anchor / `append_line`): `"0"` (file start), `"-1"` (after last line), `"N"`, or a hash
+
+`view`'s `path` param accepts a single path string or an array (legacy key `paths` still works). `lines` is a single range string or an array of range strings (multiple ranges on one path, or per-file ranges across many paths).
 
 ### Hint Accumulator
 
