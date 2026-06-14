@@ -32,20 +32,15 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "File path, directory path, or glob pattern. Required unless `paths` is provided."
+            "description": "A single file or directory path (e.g. \"src/main.rs\"). To view multiple files, make separate view calls — they run in parallel."
           },
-          "paths": {
-            "type": "array",
-            "items": { "type": "string" },
-            "maxItems": 50,
-            "description": "Array of file paths for multi-file viewing. Max 50 files."
+          "start": {
+            "oneOf": [{ "type": "integer" }, { "type": "string" }],
+            "description": "First line to show (inclusive): integer line number (negative counts from the end, -1 = last line) or a string hash in hash mode. Omit to start at line 1."
           },
-          "lines": {
-            "oneOf": [
-              { "type": "string" },
-              { "type": "array", "items": { "type": "string" }, "minItems": 1 }
-            ],
-            "description": "Line range(s). A single range string \"START-END\" (e.g. \"10-25\"), a single line \"42\", or an array of range strings (multiple ranges on one path, or per-file ranges across many paths). Negatives count from the end (\"-1\" = last line); 4-char hashes in hash mode (e.g. \"a3bd-c7f2\")."
+          "end": {
+            "oneOf": [{ "type": "integer" }, { "type": "string" }],
+            "description": "Last line to show (inclusive): integer line number or string hash. Omit to read to end of file. Omit BOTH start and end to view the whole file."
           },
           "pattern": {
             "type": "string",
@@ -53,7 +48,7 @@
           },
           "content": {
             "type": "string",
-            "description": "Content search string (fixed-string match). Only used when path is a directory."
+            "description": "Content search string. Literal substring by default; set `regex: true` for a regex. Works when path is a directory or a single file."
           },
           "max_depth": {
             "type": "integer",
@@ -64,10 +59,10 @@
             "default": false,
             "description": "Include hidden files/directories starting with '.' (default: false)."
           },
-          "line_numbers": {
+          "regex": {
             "type": "boolean",
-            "default": true,
-            "description": "Show line numbers in content search results (default: true)."
+            "default": false,
+            "description": "When true, `content` is a Rust regex (case-insensitive via `(?i)`) instead of a literal substring."
           },
           "context": {
             "type": "integer",
@@ -122,19 +117,23 @@
           "operations": {
             "type": "array",
             "maxItems": 50,
-            "description": "Array of insert/replace operations. All line_range values reference original file content.",
+            "description": "Array of insert/replace operations. All line targets reference the original file content.",
             "items": {
               "type": "object",
-              "required": ["operation", "line_range", "content"],
+              "required": ["operation", "start", "content"],
               "properties": {
                 "operation": {
                   "type": "string",
                   "enum": ["insert", "replace"],
                   "description": "Type of operation: 'insert' (after a line) or 'replace' (a line range)"
                 },
-                "line_range": {
-                  "type": "string",
-                  "description": "Target in the original file, as a string. insert: a single anchor — \"0\" (file start), \"-1\" (after last line), \"N\" (after line N), or a hash. replace: a range \"START-END\" (e.g. \"10-25\"), a single line \"42\", or a hash range \"a3bd-c7f2\" (single hash \"a3bd\" allowed)."
+                "start": {
+                  "oneOf": [{ "type": "integer" }, { "type": "string" }],
+                  "description": "Start line (integer) or hash (string). insert: anchor — 0 (file start), -1 (after last line), N (after line N). replace: first line of the range."
+                },
+                "end": {
+                  "oneOf": [{ "type": "integer" }, { "type": "string" }],
+                  "description": "Last line of the range to replace (inclusive). Omit for a single-line replace (defaults to start). Ignored for insert."
                 },
                 "content": {
                   "type": "string",
@@ -151,23 +150,27 @@
       "description": "Copy lines from a source file and append them into a target file. Source is not modified.",
       "inputSchema": {
         "type": "object",
-        "required": ["from_path", "from_range", "append_path", "append_line"],
+        "required": ["from_path", "from_start", "append_path", "append_line"],
         "properties": {
           "from_path": {
             "type": "string",
             "description": "Path to the source file to extract lines from."
           },
-          "from_range": {
-            "type": "string",
-            "description": "Line range to copy, as a string: \"START-END\" (1-indexed inclusive, e.g. \"10-25\"), a single line \"42\", or a hash range \"a3bd-c7f2\" in hash mode."
+          "from_start": {
+            "oneOf": [{ "type": "integer" }, { "type": "string" }],
+            "description": "First line to copy (inclusive): integer line number or string hash."
+          },
+          "from_end": {
+            "oneOf": [{ "type": "integer" }, { "type": "string" }],
+            "description": "Last line to copy (inclusive): integer line number or string hash. Omit to copy a single line (defaults to from_start)."
           },
           "append_path": {
             "type": "string",
             "description": "Path to the target file where extracted lines will be appended (auto-created if doesn't exist)."
           },
           "append_line": {
-            "type": "string",
-            "description": "Where to append, as a string: \"0\"=beginning, \"-1\"=end, \"N\"=after line N (1-indexed), or a hash in hash mode."
+            "oneOf": [{ "type": "integer" }, { "type": "string" }],
+            "description": "Where to append: 0 = beginning, -1 = end, N = after line N (integer), or a string hash in hash mode."
           }
         }
       }

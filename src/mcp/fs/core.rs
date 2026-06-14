@@ -16,7 +16,7 @@
 
 use super::super::McpToolCall;
 use crate::mcp::fs::{directory, file_ops, text_editing};
-use crate::utils::line_hash::{self, PositionSpec, RangeSpec};
+use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
@@ -65,20 +65,6 @@ fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize, String> {
 	}
 }
 
-// Helper function to resolve line range with negative indexing support
-fn resolve_line_range(start: i64, end: i64, total_lines: usize) -> Result<(usize, usize), String> {
-	let resolved_start = resolve_line_index(start, total_lines)?;
-	let resolved_end = resolve_line_index(end, total_lines)?;
-
-	if resolved_start > resolved_end {
-		return Err(format!(
-			"Start line ({start}) cannot be greater than end line ({end})"
-		));
-	}
-
-	Ok((resolved_start, resolved_end))
-}
-
 /// View-only: resolve line index while clamping out-of-bounds values to the
 /// nearest valid line. Returns (resolved_index, was_clamped).
 /// Line 0 is still rejected — it's a spec violation, not out-of-bounds.
@@ -102,33 +88,6 @@ fn resolve_line_index_clamped(index: i64, total_lines: usize) -> Result<(usize, 
 			Ok((total_lines - from_end + 1, false))
 		}
 	}
-}
-
-/// View-only: resolve a line range, clamping out-of-bounds to file limits.
-/// Returns (start, end, hint_message_if_clamped).
-fn resolve_line_range_clamped(
-	start: i64,
-	end: i64,
-	total_lines: usize,
-) -> Result<(usize, usize, Option<String>), String> {
-	let (resolved_start, start_clamped) = resolve_line_index_clamped(start, total_lines)?;
-	let (resolved_end, end_clamped) = resolve_line_index_clamped(end, total_lines)?;
-
-	if resolved_start > resolved_end {
-		return Err(format!(
-			"Start line ({start}) cannot be greater than end line ({end})"
-		));
-	}
-
-	let hint = if start_clamped || end_clamped {
-		Some(format!(
-			"Requested line range [{start}, {end}] was out of bounds for a {total_lines}-line file; clamped to [{resolved_start}, {resolved_end}]. Use line numbers within 1..={total_lines} (negative indices count from the end)."
-		))
-	} else {
-		None
-	};
-
-	Ok((resolved_start, resolved_end, hint))
 }
 
 // Thread-safe lazy initialization of file history using OnceLock
@@ -307,255 +266,109 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 	}
 }
 
-/// Resolve a single range string (e.g. `"10-25"`, `"42"`, or `"a3bd-c7f2"`) into a
-/// resolved `(start, end)` tuple with 1-indexed line numbers.
-///
-/// `cached_content` is the file's content if already read (None = read lazily).
-async fn resolve_range_str(
-	range_str: &str,
+/// Parse an optional `start`/`end` endpoint parameter from the tool call.
+fn parse_optional_endpoint(value: Option<&Value>, name: &str) -> Result<Option<Endpoint>> {
+	match value {
+		Some(v) if !v.is_null() => Ok(Some(
+			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid '{name}': {e}"))?,
+		)),
+		_ => Ok(None),
+	}
+}
+
+/// Resolve one endpoint to a 1-indexed line. Numbers clamp to file bounds (setting
+/// `clamped`); hashes must resolve exactly.
+fn resolve_endpoint_to_line(
+	ep: &Endpoint,
+	total_lines: usize,
+	file_lines: &[&str],
+	clamped: &mut bool,
+) -> Result<usize> {
+	match ep {
+		Endpoint::Number(n) => {
+			let (line, was) = resolve_line_index_clamped(*n, total_lines)
+				.map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
+			*clamped |= was;
+			Ok(line)
+		}
+		Endpoint::Hash(h) => {
+			line_hash::resolve_hash_to_line(h, file_lines).map_err(|e| anyhow!("Invalid hash: {e}"))
+		}
+	}
+}
+
+/// Resolve a `view` line range from optional start/end endpoints into a clamped
+/// `(start, end)` 1-indexed tuple. Returns None when both endpoints are absent
+/// (whole file). Missing `start` defaults to line 1, missing `end` to the last line.
+async fn resolve_view_range(
+	start_ep: Option<Endpoint>,
+	end_ep: Option<Endpoint>,
 	resolved_path: &Path,
-	cached_content: Option<&str>,
 ) -> Result<Option<(usize, i64)>> {
-	let spec = line_hash::parse_range_spec(range_str)
-		.map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
-
-	match spec {
-		RangeSpec::Numbers(start, end) => {
-			let total_lines = if let Some(content) = cached_content {
-				content.lines().count()
-			} else {
-				match tokio_fs::read_to_string(resolved_path).await {
-					Ok(c) => c.lines().count(),
-					Err(_) => 0,
-				}
-			};
-			if total_lines > 0 {
-				match resolve_line_range_clamped(start, end, total_lines) {
-					Ok((s, e, hint)) => {
-						if let Some(msg) = hint {
-							crate::mcp::hint_accumulator::push_hint(&msg);
-						}
-						Ok(Some((s, e as i64)))
-					}
-					Err(err) => bail!("Invalid lines parameter: {err}"),
-				}
-			} else {
-				Ok(Some((start.max(0) as usize, end)))
-			}
-		}
-		RangeSpec::Hashes(start_hash, end_hash) => {
-			let content_owned;
-			let content: &str = if let Some(c) = cached_content {
-				c
-			} else {
-				content_owned = tokio_fs::read_to_string(resolved_path)
-					.await
-					.map_err(|e| anyhow!("Cannot read file for hash resolution: {}", e))?;
-				&content_owned
-			};
-			let file_lines: Vec<&str> = content.lines().collect();
-			let start = line_hash::resolve_hash_to_line(&start_hash, &file_lines)
-				.map_err(|e| anyhow!("Invalid start hash: {}", e))?;
-			let end = line_hash::resolve_hash_to_line(&end_hash, &file_lines)
-				.map_err(|e| anyhow!("Invalid end hash: {}", e))?;
-			if start > end {
-				bail!(
-					"Start hash '{}' (line {}) is after end hash '{}' (line {}) — range must go forward",
-					start_hash, start, end_hash, end
-				);
-			}
-			Ok(Some((start, end as i64)))
-		}
-	}
-}
-
-/// Parsed `lines` parameter.
-enum ParsedLines {
-	/// No `lines` parameter — show full content.
-	None,
-	/// Single range — applied to the single file or all files.
-	Single(Option<(usize, i64)>),
-	/// Multiple ranges on a single file — only valid when exactly one path is given.
-	MultiRangeSingleFile(Vec<(usize, i64)>),
-	/// Per-file ranges — one per path (paths.len() > 1).
-	PerFile(Vec<Option<(usize, i64)>>),
-}
-
-/// Convert a JSON array of range strings into owned `String` tokens.
-fn range_tokens_from_array(arr: &[Value]) -> Result<Vec<String>> {
-	let mut out = Vec::with_capacity(arr.len());
-	for (i, v) in arr.iter().enumerate() {
-		match v {
-			Value::String(s) => out.push(s.trim().to_string()),
-			_ => bail!(
-				"lines[{i}] must be a range string like \"10-25\" (or a hash range \"a3bd-c7f2\"). Wrap each range in quotes: [\"10-25\",\"40-50\"]."
-			),
-		}
-	}
-	Ok(out)
-}
-
-/// Parse the `lines` parameter from the tool call.
-///
-/// Supported shapes:
-/// - `"10-25"` / `"42"` — a single range (numbers or hashes), applied to the single file or all files
-/// - `["1-50", "200-250"]` with **one** path → multiple ranges from that file
-/// - `["1-50", "10-30"]` with **multiple** paths → per-file ranges (one per path)
-async fn parse_lines_param(
-	lines_value: Option<&Value>,
-	paths: &[String],
-	workdir: &Path,
-) -> Result<ParsedLines> {
-	let Some(lines_value) = lines_value else {
-		return Ok(ParsedLines::None);
-	};
-
-	// Treat explicit null the same as absent
-	if lines_value.is_null() {
-		return Ok(ParsedLines::None);
+	if start_ep.is_none() && end_ep.is_none() {
+		return Ok(None);
 	}
 
-	// Normalize the `lines` value into range token strings.
-	let tokens: Vec<String> = match lines_value {
-		Value::String(s) => {
-			let trimmed = s.trim();
-			if trimmed.is_empty() {
-				return Ok(ParsedLines::None);
-			}
-			// Tolerate a JSON-encoded array of range strings (e.g. `"[\"10-25\",\"40-50\"]"`).
-			if trimmed.starts_with('[') {
-				match serde_json::from_str::<Value>(trimmed) {
-					Ok(Value::Array(arr)) => range_tokens_from_array(&arr)?,
-					_ => bail!(
-						"`lines` string '{trimmed}' is not valid. Use a range like \"10-25\" or a JSON array of ranges like [\"10-25\",\"40-50\"]."
-					),
-				}
-			} else {
-				// A single range string applied to the single file or all files.
-				let range =
-					resolve_range_str(trimmed, &resolve_path(&paths[0], workdir), None).await?;
-				return Ok(ParsedLines::Single(range));
-			}
-		}
-		Value::Array(arr) => range_tokens_from_array(arr)?,
+	let content = tokio_fs::read_to_string(resolved_path).await.ok();
+	let file_lines: Vec<&str> = content
+		.as_deref()
+		.map(|c| c.lines().collect())
+		.unwrap_or_default();
+	let total_lines = file_lines.len();
+
+	let start_ep = start_ep.unwrap_or(Endpoint::Number(1));
+	let end_ep = end_ep.unwrap_or(Endpoint::Number(-1));
+
+	if total_lines == 0 {
+		// Empty/unreadable file: best-effort, nothing to clamp against.
+		let s = match start_ep {
+			Endpoint::Number(n) => n.max(1) as usize,
+			Endpoint::Hash(_) => 1,
+		};
+		let e = match end_ep {
+			Endpoint::Number(n) => n,
+			Endpoint::Hash(_) => -1,
+		};
+		return Ok(Some((s, e)));
+	}
+
+	let mut clamped = false;
+	let start = resolve_endpoint_to_line(&start_ep, total_lines, &file_lines, &mut clamped)?;
+	let end = resolve_endpoint_to_line(&end_ep, total_lines, &file_lines, &mut clamped)?;
+	if start > end {
+		bail!("Invalid lines parameter: start line {start} is after end line {end}");
+	}
+	if clamped {
+		crate::mcp::hint_accumulator::push_hint(&format!(
+			"Requested line range was out of bounds for a {total_lines}-line file; clamped to [{start}, {end}]. Use line numbers within 1..={total_lines} (negative indices count from the end)."
+		));
+	}
+	Ok(Some((start, end as i64)))
+}
+
+// Execute view command - unified read-only tool for a single file, directory, or content search.
+// To view multiple files, the caller makes multiple `view` calls (they run in parallel).
+pub async fn execute_view(call: &McpToolCall) -> Result<String> {
+	// Single path (the common case). The legacy `paths` key is accepted as a string alias.
+	let path = match call
+		.parameters
+		.get("path")
+		.or_else(|| call.parameters.get("paths"))
+	{
+		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
+		Some(Value::Array(_)) => bail!(
+			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
+		),
 		_ => bail!(
-			"`lines` must be a range string like \"10-25\" or an array of range strings like [\"10-25\",\"40-50\"]."
+			"Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."
 		),
 	};
 
-	if tokens.is_empty() {
-		return Ok(ParsedLines::None);
-	}
+	let resolved = resolve_path(&path, &call.workdir);
 
-	// A single token with a single path behaves like a single range.
-	if tokens.len() == 1 && paths.len() == 1 {
-		let range = resolve_range_str(&tokens[0], &resolve_path(&paths[0], workdir), None).await?;
-		return Ok(ParsedLines::Single(range));
-	}
-
-	if paths.len() == 1 {
-		// Multiple ranges on a single file — read content once, resolve all against it.
-		let resolved_path = resolve_path(&paths[0], workdir);
-		let cached = tokio_fs::read_to_string(&resolved_path).await.ok();
-		let mut ranges = Vec::with_capacity(tokens.len());
-		for tok in &tokens {
-			if let Some(r) = resolve_range_str(tok, &resolved_path, cached.as_deref()).await? {
-				ranges.push(r);
-			}
-		}
-		if ranges.is_empty() {
-			return Ok(ParsedLines::None);
-		}
-		return Ok(ParsedLines::MultiRangeSingleFile(ranges));
-	}
-
-	// Multiple paths → per-file ranges (positional)
-	if tokens.len() > paths.len() {
-		bail!(
-			"`lines` has {} ranges but only {} paths provided. For multiple ranges on a single file, pass exactly one path. For per-file ranges, range count must not exceed path count.",
-			tokens.len(),
-			paths.len()
-		);
-	}
-	let mut ranges: Vec<Option<(usize, i64)>> = Vec::with_capacity(paths.len());
-	for (i, tok) in tokens.iter().enumerate() {
-		let resolved_path = resolve_path(&paths[i], workdir);
-		let cached = tokio_fs::read_to_string(&resolved_path).await.ok();
-		let range = resolve_range_str(tok, &resolved_path, cached.as_deref()).await?;
-		ranges.push(range);
-	}
-	// Fill remaining paths with None (no range)
-	while ranges.len() < paths.len() {
-		ranges.push(None);
-	}
-	Ok(ParsedLines::PerFile(ranges))
-}
-
-// Execute view command - unified read-only tool for files, directories, and content search
-pub async fn execute_view(call: &McpToolCall) -> Result<String> {
-	// Extract paths array (required, one or more elements).
-	// Accept either `path` (single, the common case) or the legacy `paths` key.
-	// Tolerate clients that JSON-encode the array as a string (e.g. `"[\"a.rs\",\"b.rs\"]"`).
-	let paths_value = call
-		.parameters
-		.get("path")
-		.or_else(|| call.parameters.get("paths"));
-	let decoded_paths: Option<Value> = match paths_value {
-		Some(Value::String(s)) => serde_json::from_str::<Value>(s.trim())
-			.ok()
-			.filter(|v| matches!(v, Value::Array(_))),
-		_ => None,
-	};
-	let paths_value = decoded_paths.as_ref().or(paths_value);
-	let paths: Vec<String> = match paths_value {
-		Some(Value::Array(arr)) => {
-			let path_strings: Result<Vec<String>, _> = arr
-				.iter()
-				.map(|p| {
-					p.as_str()
-						.ok_or_else(|| anyhow!("Invalid path in array"))
-						.map(|s| s.to_string())
-				})
-				.collect();
-			path_strings?
-		}
-		Some(Value::String(s)) => vec![s.clone()],
-		_ => {
-			bail!("Missing or invalid 'path' parameter. Pass a single path string (e.g. \"src/main.rs\") or an array of paths.");
-		}
-	};
-
-	if paths.is_empty() {
-		bail!("'path' must contain at least one element.");
-	}
-	if paths.len() > 50 {
-		bail!("Too many files requested. Maximum 50 files per request.");
-	}
-
-	// Parse the lines parameter (single range or per-file ranges)
-	let parsed_lines =
-		parse_lines_param(call.parameters.get("lines"), &paths, &call.workdir).await?;
-
-	// Multi-file view: more than one path
-	if paths.len() > 1 {
-		let per_file_ranges = match parsed_lines {
-			ParsedLines::None => vec![None; paths.len()],
-			ParsedLines::Single(range) => vec![range; paths.len()],
-			ParsedLines::PerFile(ranges) => ranges,
-			ParsedLines::MultiRangeSingleFile(_) => {
-				// Unreachable: parse_lines_param only returns this variant when paths.len() == 1.
-				unreachable!("MultiRangeSingleFile is only produced for a single path");
-			}
-		};
-		return file_ops::view_many_files_spec(&paths, &call.workdir, &per_file_ranges).await;
-	}
-
-	// Single path
-	let path = &paths[0];
-	let resolved = resolve_path(path, &call.workdir);
-	// Directory: dispatch directly with the resolved path string
+	// Directory: dispatch directly with the path string
 	if resolved.is_dir() {
-		return directory::list_directory(call, path).await;
+		return directory::list_directory(call, &path).await;
 	}
 
 	// File + content: search the file for a literal/regex pattern and render with the same hash/number format
@@ -581,19 +394,11 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		}
 	}
 
-	// File: resolve to the appropriate renderer based on parsed lines shape
-	match parsed_lines {
-		ParsedLines::None => file_ops::view_file_spec(&resolved, None).await,
-		ParsedLines::Single(range) => file_ops::view_file_spec(&resolved, range).await,
-		ParsedLines::MultiRangeSingleFile(ranges) => {
-			file_ops::view_file_multi_ranges(&resolved, &ranges).await
-		}
-		ParsedLines::PerFile(ranges) => {
-			// paths.len() == 1 here, so PerFile should really not occur, but handle defensively
-			let first = ranges.into_iter().next().flatten();
-			file_ops::view_file_spec(&resolved, first).await
-		}
-	}
+	// File: optional start/end line range (both omitted → whole file).
+	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
+	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
+	let range = resolve_view_range(start_ep, end_ep, &resolved).await?;
+	file_ops::view_file_spec(&resolved, range).await
 }
 
 // Execute extract_lines command - MCP compliant implementation
@@ -614,20 +419,17 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Validate and extract from_range parameter.
-	// A range string: "10-25" (line numbers) or "a3bd-c7f2" (hash identifiers).
-	// Hash resolution is deferred until after the source file is read.
-	let from_range_spec = match call.parameters.get("from_range") {
-		Some(Value::String(s)) => {
-			line_hash::parse_range_spec(s).map_err(|e| anyhow!("Invalid 'from_range': {e}"))?
+	// Validate and extract from_start / from_end endpoints (line number or hash).
+	// from_end omitted → single line (defaults to from_start). Resolution is deferred
+	// until after the source file is read.
+	let from_start_ep = match call.parameters.get("from_start") {
+		Some(v) if !v.is_null() => {
+			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'from_start': {e}"))?
 		}
-		Some(_) => {
-			bail!("Parameter 'from_range' must be a range string like \"10-25\" (or a hash range \"a3bd-c7f2\")");
-		}
-		None => {
-			bail!("Missing required parameter 'from_range'");
-		}
+		_ => bail!("Missing required parameter 'from_start' (line number or hash)"),
 	};
+	let from_end_ep = parse_optional_endpoint(call.parameters.get("from_end"), "from_end")?
+		.unwrap_or_else(|| from_start_ep.clone());
 
 	// Validate and extract append_path parameter
 	let append_path = match call.parameters.get("append_path") {
@@ -645,24 +447,13 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Validate and extract append_line parameter.
-	// A position string: "0" (start), "-1" (end), "N" (after line N), or a hash.
-	// Hash resolution is deferred until after the target file is read.
-	let append_line_spec = match call.parameters.get("append_line") {
-		Some(Value::String(s)) => {
-			line_hash::parse_position_spec(s).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?
+	// Validate and extract append_line parameter: 0 (start), -1 (end), N (after line N),
+	// or a hash. Hash resolution is deferred until after the target file is read.
+	let append_line_ep = match call.parameters.get("append_line") {
+		Some(v) if !v.is_null() => {
+			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?
 		}
-		// Tolerate a bare JSON number (unambiguous single position).
-		Some(Value::Number(n)) => match n.as_i64() {
-			Some(line) => PositionSpec::Number(line),
-			None => bail!("Parameter 'append_line' must be an integer or hash string"),
-		},
-		Some(_) => {
-			bail!("Parameter 'append_line' must be a string: \"0\" (start), \"-1\" (end), \"N\" (after line N), or a hash");
-		}
-		None => {
-			bail!("Missing required parameter 'append_line'");
-		}
+		_ => bail!("Missing required parameter 'append_line' (0 = start, -1 = end, N, or a hash)"),
 	};
 
 	// Read source file
@@ -682,28 +473,23 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let source_lines: Vec<&str> = source_content.lines().collect();
 	let total_lines = source_lines.len();
 
-	// Resolve from_range: hashes → line numbers, or resolve negative indices
-	let from_range = match from_range_spec {
-		RangeSpec::Hashes(start_hash, end_hash) => {
-			let start = line_hash::resolve_hash_to_line(&start_hash, &source_lines)
-				.map_err(|e| anyhow::anyhow!("Invalid from_range start: {e}"))?;
-			let end = line_hash::resolve_hash_to_line(&end_hash, &source_lines)
-				.map_err(|e| anyhow::anyhow!("Invalid from_range end: {e}"))?;
-			if start > end {
-				bail!(
-					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). Did you mean from_range: \"{}-{}\"?",
-					start_hash, start, end_hash, end, end_hash, start_hash
-				);
-			}
-			(start, end)
-		}
-		RangeSpec::Numbers(start_raw, end_raw) => {
-			match resolve_line_range(start_raw, end_raw, total_lines) {
-				Ok(range) => range,
-				Err(err) => bail!("Invalid from_range: {err}"),
-			}
+	// Resolve from_start / from_end endpoints to 1-indexed line numbers (strict — no clamping).
+	let resolve_extract_endpoint = |ep: &Endpoint, which: &str| -> Result<usize> {
+		match ep {
+			Endpoint::Number(n) => resolve_line_index(*n, total_lines)
+				.map_err(|e| anyhow!("Invalid from_{which}: {e}")),
+			Endpoint::Hash(h) => line_hash::resolve_hash_to_line(h, &source_lines)
+				.map_err(|e| anyhow!("Invalid from_{which}: {e}")),
 		}
 	};
+	let from_start = resolve_extract_endpoint(&from_start_ep, "start")?;
+	let from_end = resolve_extract_endpoint(&from_end_ep, "end")?;
+	if from_start > from_end {
+		bail!(
+			"from_start (line {from_start}) is after from_end (line {from_end}) — the range must go forward"
+		);
+	}
+	let from_range = (from_start, from_end);
 
 	// Extract the specified lines (convert to 0-indexed)
 	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1].to_vec();
@@ -760,10 +546,10 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		String::new()
 	};
 
-	// Resolve append_line: hash → line number, or keep integer as-is
-	let append_line: i64 = match append_line_spec {
-		PositionSpec::Number(n) => n,
-		PositionSpec::Hash(hash) => {
+	// Resolve append_line: hash → line number, or keep integer as-is (0/-1/N).
+	let append_line: i64 = match append_line_ep {
+		Endpoint::Number(n) => n,
+		Endpoint::Hash(hash) => {
 			if target_content.is_empty() {
 				bail!("Cannot use a hash for append_line on an empty or non-existent target file");
 			}

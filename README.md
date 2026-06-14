@@ -240,20 +240,16 @@ By default, Octofs operates in the current directory. Specify a different root:
 
 ### `view` — Read files, list directories, search content
 
-**File reading:** (`path` takes a single path string; `lines` is a range string)
+**File reading:** (`path` is a single path; `start`/`end` are line numbers or hashes)
 ```json
-{"path": "src/main.rs"}
-{"path": "src/main.rs", "lines": "10-20"}
-{"path": "src/main.rs", "lines": "42"}            // single line
-{"path": "src/main.rs", "lines": ["1-20", "80-95"]}  // multiple ranges
-{"path": "src/main.rs", "lines": "a3bd-c7f2"}     // hash mode
+{"path": "src/main.rs"}                          // whole file
+{"path": "src/main.rs", "start": 10, "end": 20}  // lines 10–20
+{"path": "src/main.rs", "start": 42, "end": 42}  // single line
+{"path": "src/main.rs", "start": 80}             // line 80 → end of file
+{"path": "src/main.rs", "start": "a3bd", "end": "c7f2"}  // hash mode
 ```
 
-**Multi-file reading (max 50):** (pass an array to `path`)
-```json
-{"path": ["src/main.rs", "src/lib.rs", "src/cli.rs"]}
-{"path": ["src/main.rs", "src/lib.rs"], "lines": ["1-20", "1-10"]}  // per-file ranges
-```
+To read several files, make multiple `view` calls — they run in parallel.
 
 **Directory listing:**
 ```json
@@ -298,15 +294,16 @@ By default, Octofs operates in the current directory. Specify a different root:
 
 Perform multiple insert/replace operations on a single file atomically.
 
-`line_range` is a string: an anchor for insert (`"0"` = file start, `"-1"` = after last line,
-`"N"` = after line N) or a range for replace (`"10-15"`, single line `"42"`, or hashes).
+Each operation has a `start` (line number or hash). For `insert` it's the anchor
+(`0` = file start, `-1` = after last line, `N` = after line N). For `replace` add `end`
+for a range (omit `end` for a single line).
 
 **Insert at beginning:**
 ```json
 {
   "path": "src/main.rs",
   "operations": [
-    {"operation": "insert", "line_range": "0", "content": "// Header\n"}
+    {"operation": "insert", "start": 0, "content": "// Header\n"}
   ]
 }
 ```
@@ -316,7 +313,7 @@ Perform multiple insert/replace operations on a single file atomically.
 {
   "path": "src/main.rs",
   "operations": [
-    {"operation": "replace", "line_range": "10-15", "content": "new code here"}
+    {"operation": "replace", "start": 10, "end": 15, "content": "new code here"}
   ]
 }
 ```
@@ -326,7 +323,7 @@ Perform multiple insert/replace operations on a single file atomically.
 {
   "path": "src/main.rs",
   "operations": [
-    {"operation": "replace", "line_range": "a3bd-c7f2", "content": "new code"}
+    {"operation": "replace", "start": "a3bd", "end": "c7f2", "content": "new code"}
   ]
 }
 ```
@@ -338,9 +335,10 @@ Perform multiple insert/replace operations on a single file atomically.
 ```json
 {
   "from_path": "src/utils.rs",
-  "from_range": "10-25",
+  "from_start": 10,
+  "from_end": 25,
   "append_path": "src/new.rs",
-  "append_line": "-1"
+  "append_line": -1
 }
 ```
 

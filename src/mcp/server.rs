@@ -280,23 +280,20 @@ fn append_hints(mut result: String) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// File or directory path. Pass a single path string for the common case
-	/// (e.g. "src/main.rs"); pass an array of paths for multi-file viewing (max 50).
-	/// The legacy key `paths` is also accepted.
-	#[serde(alias = "paths", deserialize_with = "deserialize_string_or_vec")]
-	#[schemars(schema_with = "path_param_schema")]
-	pub path: Vec<String>,
-	/// Line range(s) to view, as a string or an array of strings:
-	///
-	/// - Single range: `"START-END"` (e.g. `"10-25"`) or a single line `"42"`.
-	/// - Multiple ranges (ONE path): `["1-50", "200-250"]`.
-	/// - Per-file ranges (N paths): one range string per path, positionally.
-	///
-	/// Endpoints are 1-indexed line numbers (negatives count from the end: `"-1"` = last line)
-	/// or 4-char hashes in hash mode (e.g. `"a3bd-c7f2"`). A single range string applies to all files.
+	/// A single file or directory path (e.g. "src/main.rs"). To view several files,
+	/// make multiple `view` calls — they run in parallel.
+	pub path: String,
+	/// First line to show (inclusive). Integer line number (negative counts from the
+	/// end: -1 = last line) or a string hash in hash mode. Omit to start at line 1.
 	#[serde(default)]
-	#[schemars(schema_with = "lines_param_schema")]
-	pub lines: Option<serde_json::Value>,
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub start: Option<serde_json::Value>,
+	/// Last line to show (inclusive). Integer line number (negative counts from the end)
+	/// or a string hash in hash mode. Omit to read to the end of the file.
+	/// Omit BOTH `start` and `end` to view the whole file.
+	#[serde(default)]
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub end: Option<serde_json::Value>,
 	/// Filename glob filter for directory listing.
 	#[serde(default)]
 	pub pattern: Option<String>,
@@ -319,93 +316,20 @@ pub struct ViewParams {
 	pub context: Option<usize>,
 }
 
-/// JSON schema for `ViewParams::path`.
+/// JSON schema for a single line endpoint (`start`/`end`/`append_line`/op `start`/`end`).
 ///
-/// Accepts a single path string (the common case) or an array of paths for
-/// multi-file viewing. Runtime parsing also accepts the legacy `paths` key.
-fn path_param_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+/// An endpoint is either an integer line number or a string hash. The JSON type
+/// disambiguates the two — no range strings, no ambiguity for all-digit hashes.
+fn line_endpoint_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
 	serde_json::from_value(serde_json::json!({
-		"description": "File or directory path. A single path string (e.g. \"src/main.rs\"), or an array of paths for multi-file viewing (max 50).",
+		"description": "A line endpoint: an integer line number (negative counts from the end, -1 = last line), or a string hash in hash mode (e.g. \"a3bd\").",
 		"oneOf": [
-			{ "type": "string" },
-			{
-				"type": "array",
-				"items": { "type": "string" },
-				"minItems": 1,
-				"maxItems": 50
-			}
+			{ "type": "integer", "format": "int64" },
+			{ "type": "string" }
 		],
-		"examples": ["src/main.rs", ["src/main.rs", "src/lib.rs"]]
+		"examples": [10, -1, "a3bd"]
 	}))
 	.expect("static schema is valid JSON")
-}
-
-/// JSON schema for `ViewParams::lines`.
-///
-/// Hand-written so the two accepted shapes are explicit with concrete examples.
-/// Ranges are compact strings ("10-25") instead of nested arrays, which avoids the
-/// over-wrapping mistakes LLMs made with the old `[[start,end]]` shape.
-///
-/// Runtime parsing in `fs::core::parse_lines_param` enforces shape and arity.
-fn lines_param_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-	serde_json::from_value(serde_json::json!({
-		"description": "Line range(s) for file viewing. Either a single range string or an array of range strings:\n\
-			- Single range: \"START-END\" (e.g. \"10-25\") or a single line \"42\". Applied to the single file or all files.\n\
-			- Multiple ranges on ONE path: [\"1-50\", \"200-250\"].\n\
-			- Per-file ranges with N paths: one range string per path, positionally.\n\
-			Endpoints are 1-indexed line numbers (negatives count from the end: \"-1\" = last line) or 4-char hashes in hash mode (e.g. \"a3bd-c7f2\").",
-		"oneOf": [
-			{
-				"description": "A single range string applied to the single file or all files",
-				"type": "string",
-				"examples": ["10-25", "42", "a3bd-c7f2"]
-			},
-			{
-				"description": "Range strings — multiple ranges (one path) or per-file ranges (many paths)",
-				"type": "array",
-				"items": { "type": "string" },
-				"minItems": 1,
-				"examples": [["1-50", "200-250"], ["a3bd-c7f2"]]
-			}
-		]
-	}))
-	.expect("static schema is valid JSON")
-}
-
-/// Deserialize a value that can be either a single string or an array of strings.
-fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-	D: serde::Deserializer<'de>,
-{
-	use serde::de;
-
-	struct StringOrVec;
-
-	impl<'de> de::Visitor<'de> for StringOrVec {
-		type Value = Vec<String>;
-
-		fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-			formatter.write_str("a string or an array of strings")
-		}
-
-		fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-			Ok(vec![value.to_string()])
-		}
-
-		fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
-			Ok(vec![value])
-		}
-
-		fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-			let mut vec = Vec::new();
-			while let Some(elem) = seq.next_element::<String>()? {
-				vec.push(elem);
-			}
-			Ok(vec)
-		}
-	}
-
-	deserializer.deserialize_any(StringOrVec)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -445,10 +369,16 @@ pub enum BatchEditOperationType {
 pub struct BatchEditOperation {
 	/// Type of operation: 'insert' (after a line) or 'replace' (a line range)
 	pub operation: BatchEditOperationType,
-	/// Target in the ORIGINAL file, as a string.
-	/// - insert: a single anchor — "0" (file start), "-1" (after last line), "N" (after line N), or a hash.
-	/// - replace: a range "START-END" (e.g. "10-25"), a single line "42", or a hash range "a3bd-c7f2" (single hash "a3bd" allowed).
-	pub line_range: String,
+	/// Start line in the ORIGINAL file. Integer line number or a string hash.
+	/// For `insert` this is the anchor: 0 = file start, -1 = after last line, N = after line N.
+	/// For `replace` this is the first line of the range to replace.
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub start: serde_json::Value,
+	/// Last line of the range to replace (inclusive), for `replace` only.
+	/// Omit for a single-line replace (defaults to `start`). Ignored for `insert`.
+	#[serde(default)]
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub end: Option<serde_json::Value>,
 	/// Raw content to insert or replace with.
 	pub content: String,
 }
@@ -466,14 +396,20 @@ pub struct BatchEditParams {
 pub struct ExtractLinesParams {
 	/// Path to the source file to extract lines from
 	pub from_path: String,
-	/// Line range to copy, as a string: "START-END" (1-indexed inclusive, e.g. "10-25"),
-	/// a single line "42", or a hash range in hash mode ("a3bd-c7f2").
-	pub from_range: String,
+	/// First line to copy (inclusive). Integer line number or a string hash.
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub from_start: serde_json::Value,
+	/// Last line to copy (inclusive). Integer line number or a string hash.
+	/// Omit to copy a single line (defaults to `from_start`).
+	#[serde(default)]
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub from_end: Option<serde_json::Value>,
 	/// Path to the target file where extracted lines will be appended
 	pub append_path: String,
-	/// Where to append in the target, as a string: "0" = beginning, "-1" = end,
-	/// "N" = after line N (1-indexed), or a hash in hash mode.
-	pub append_line: String,
+	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N
+	/// (integer), or a string hash in hash mode.
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub append_line: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
