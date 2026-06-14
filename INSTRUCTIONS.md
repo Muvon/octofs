@@ -85,11 +85,12 @@ Two modes set once at startup via `--line-mode`:
 - `number` (default) — sequential 1-indexed integers
 - `hash` — 4-char lowercase hex FNV1a-16 hashes, position-dependent (same content at different lines → different hash)
 
-`utils/line_hash::is_hash_mode()` gates all formatting paths. Line targets are passed as compact **strings**, parsed by `utils/line_hash::parse_range_spec` / `parse_position_spec`:
-- range: `"10-25"` (start-end), `"42"` (single line), or `"a3bd-c7f2"` / `"a3bd"` (hashes); negatives count from EOF (`"-1"` = last line)
-- position (insert anchor / `append_line`): `"0"` (file start), `"-1"` (after last line), `"N"`, or a hash
+`utils/line_hash::is_hash_mode()` gates output rendering. Line targets are scalar params, each parsed by `utils/line_hash::parse_endpoint` into an `Endpoint` (line number or hash) — the **JSON type disambiguates**: integer → line number, string → hash. Mode no longer affects input parsing (only rendering), so all-digit hashes are unambiguous.
+- `view`: `path` (single string), optional `start`/`end` (omit both → whole file; `start` only → to EOF). Numbers clamp to bounds; negatives count from EOF.
+- `batch_edit` op: `start` (+ optional `end`). insert anchor: `0` = file start, `-1` = after last line, `N`; replace: `start..end` (end omitted → single line).
+- `extract_lines`: `from_start`/`from_end` and `append_line` (`0`/`-1`/`N`/hash).
 
-`view`'s `path` param accepts a single path string or an array (legacy key `paths` still works). `lines` is a single range string or an array of range strings (multiple ranges on one path, or per-file ranges across many paths).
+Multi-file view was removed — the caller makes parallel `view` calls instead.
 
 ### Hint Accumulator
 

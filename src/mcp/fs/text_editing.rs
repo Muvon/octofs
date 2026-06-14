@@ -214,7 +214,7 @@ fn resolve_unresolved_line_range(
 			if start > end {
 				return Err(format!(
 					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). \
-					Did you mean line_range: \"{}-{}\"?",
+					Did you mean start: \"{}\", end: \"{}\"?",
 					start_hash, start, end_hash, end, end_hash, start_hash
 				));
 			}
@@ -830,7 +830,13 @@ fn detect_conflicts(
 ) -> Result<(), String> {
 	let id = |line_1idx: usize| -> String {
 		if use_hashes {
-			hashes[line_1idx - 1].clone()
+			// Anchor 0 means "file start" — there is no line to hash, and `0 - 1`
+			// would underflow the usize index.
+			if line_1idx == 0 {
+				"the start of the file".to_string()
+			} else {
+				hashes[line_1idx - 1].clone()
+			}
 		} else {
 			format!("{}", line_1idx)
 		}
@@ -1061,61 +1067,46 @@ async fn apply_batch_operations(
 	}
 }
 
-// Parse line_range from a JSON value. The unified format is a string:
-//   insert:  "0" (file start) | "-1" (after last line) | "N" (after line N) | "<hash>"
-//   replace: "START-END" (e.g. "10-25") | "N" | "<hash>" | "<hash>-<hash>"
-// A bare JSON number is tolerated as a single line/anchor.
+// Parse an operation's `start` (+ optional `end`) into an unresolved line range.
+// Each endpoint is a JSON integer (line number) or string (hash) — JSON type disambiguates.
+//   insert:  start is the anchor (0 = file start, -1 = after last line, N = after line N, or hash).
+//   replace: start..end (end omitted → single line). Both endpoints must be the same kind.
 fn parse_line_range(
-	value: &Value,
+	start_val: &Value,
+	end_val: Option<&Value>,
 	operation_type: &OperationType,
 ) -> Result<UnresolvedLineRange, String> {
-	use crate::utils::line_hash::{parse_range_spec, RangeSpec};
+	use crate::utils::line_hash::{parse_endpoint, Endpoint};
 
-	let s: String = match value {
-		Value::String(s) => s.trim().to_string(),
-		Value::Number(n) => n.to_string(),
-		_ => {
-			return Err(
-				"`line_range` must be a string: a single line/anchor \"42\" (insert: \"0\"=start, \"-1\"=end), a range \"10-25\" (replace), or a hash (\"a3bd\" / \"a3bd-c7f2\")."
-					.to_string(),
-			)
-		}
-	};
-	if s.is_empty() {
-		return Err("`line_range` is empty".to_string());
-	}
+	let start = parse_endpoint(start_val).map_err(|e| format!("invalid `start`: {e}"))?;
 
 	match operation_type {
-		OperationType::Insert => {
-			// Structural anchors are always numeric, even in hash mode.
-			match s.as_str() {
-				"0" => return Ok(UnresolvedLineRange::Single(0)),
-				"-1" => return Ok(UnresolvedLineRange::Single(-1)),
-				_ => {}
-			}
-			match parse_range_spec(&s)? {
-				RangeSpec::Numbers(a, b) if a == b => Ok(UnresolvedLineRange::Single(a)),
-				RangeSpec::Numbers(_, _) => Err(
-					"Insert takes a single anchor line, not a range. Use \"N\" (after line N), \"0\" (file start), or \"-1\" (after last line)."
+		OperationType::Insert => match start {
+			// Number covers the 0 (file start) / -1 (after last) / N anchors.
+			Endpoint::Number(n) => Ok(UnresolvedLineRange::Single(n)),
+			Endpoint::Hash(h) => Ok(UnresolvedLineRange::Hash(h)),
+		},
+		OperationType::Replace => {
+			let end = match end_val {
+				Some(v) => parse_endpoint(v).map_err(|e| format!("invalid `end`: {e}"))?,
+				None => start.clone(), // single-line replace
+			};
+			match (start, end) {
+				(Endpoint::Number(a), Endpoint::Number(b)) => {
+					if a == 0 || b == 0 {
+						return Err(
+							"Replace line numbers are 1-indexed, use 1 for first line".to_string()
+						);
+					}
+					Ok(UnresolvedLineRange::Range(a, b))
+				}
+				(Endpoint::Hash(a), Endpoint::Hash(b)) => Ok(UnresolvedLineRange::HashRange(a, b)),
+				_ => Err(
+					"`start` and `end` must both be line numbers or both be hashes (no mixing)."
 						.to_string(),
 				),
-				RangeSpec::Hashes(a, b) if a == b => Ok(UnresolvedLineRange::Hash(a)),
-				RangeSpec::Hashes(_, _) => {
-					Err("Insert takes a single anchor hash, not a hash range.".to_string())
-				}
 			}
 		}
-		OperationType::Replace => match parse_range_spec(&s)? {
-			RangeSpec::Numbers(start, end) => {
-				if start == 0 || end == 0 {
-					return Err(
-						"Replace line numbers are 1-indexed, use 1 for first line".to_string()
-					);
-				}
-				Ok(UnresolvedLineRange::Range(start, end))
-			}
-			RangeSpec::Hashes(start, end) => Ok(UnresolvedLineRange::HashRange(start, end)),
-		},
 	}
 }
 
@@ -1207,28 +1198,30 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			}
 		};
 
-		// Extract line_range
-		let line_range = match operation_obj.get("line_range") {
-			Some(range_value) => match parse_line_range(range_value, &operation_type) {
-				Ok(range) => range,
-				Err(e) => {
-					failed_operations += 1;
-					operation_details.push(json!({
-						"operation_index": index,
-						"operation": op_type_str,
-						"status": "failed",
-						"error": format!("Invalid 'line_range': {}", e)
-					}));
-					continue;
+		// Extract start (required) and optional end endpoints.
+		let line_range = match operation_obj.get("start") {
+			Some(start_value) => {
+				match parse_line_range(start_value, operation_obj.get("end"), &operation_type) {
+					Ok(range) => range,
+					Err(e) => {
+						failed_operations += 1;
+						operation_details.push(json!({
+							"operation_index": index,
+							"operation": op_type_str,
+							"status": "failed",
+							"error": format!("Invalid line target: {}", e)
+						}));
+						continue;
+					}
 				}
-			},
+			}
 			None => {
 				failed_operations += 1;
 				operation_details.push(json!({
 					"operation_index": index,
 					"operation": op_type_str,
 					"status": "failed",
-					"error": "Missing 'line_range' field"
+					"error": "Missing 'start' field"
 				}));
 				continue;
 			}
@@ -1263,7 +1256,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			"operation_index": index,
 			"operation": op_type_str,
 			"status": "parsed",
-			"line_range": match &line_range {
+			"target": match &line_range {
 				UnresolvedLineRange::Single(line) => json!(line.to_string()),
 				UnresolvedLineRange::Range(start, end) => json!(format!("{start}-{end}")),
 				UnresolvedLineRange::Hash(h) => json!(h),
@@ -1328,7 +1321,12 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Helper: format a line reference as hash or number for error messages
 	let orig_line_id = |line_1idx: usize| -> String {
 		if use_hashes {
-			orig_hashes[line_1idx - 1].clone()
+			// Anchor 0 means "file start" — no line to hash, and `0 - 1` underflows.
+			if line_1idx == 0 {
+				"the start of the file".to_string()
+			} else {
+				orig_hashes[line_1idx - 1].clone()
+			}
 		} else {
 			format!("line {}", line_1idx)
 		}
