@@ -17,6 +17,7 @@
 use super::super::McpToolCall;
 use super::search::{self, Matcher};
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
+use crate::utils::truncation::estimate_tokens;
 use anyhow::{bail, Result};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
@@ -225,7 +226,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			Err(join_err) => bail!("Failed to execute content search: {}", join_err),
 		}
 	} else {
-		// File listing mode
+		// File listing mode — annotate each file with line count + estimated tokens.
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
 			let mut files = collect_file_paths(&mut builder, &working_dir);
@@ -238,7 +239,36 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 				}
 			}
 
-			Ok(files.join("\n"))
+			// Parallel stat: read each file to count lines and estimate tokens.
+			// Order is preserved via the carried index so output stays alphabetic.
+			let mut indexed: Vec<(usize, String)> = files
+				.par_iter()
+				.enumerate()
+				.map(|(i, rel_path)| {
+					let full_path = working_dir.join(rel_path);
+					let line = match std::fs::read(&full_path) {
+						Ok(bytes) => {
+							// Skip likely binary files: NUL-density check on a leading sample.
+							let sample_size = bytes.len().min(512);
+							let null_count =
+								bytes[..sample_size].iter().filter(|&&b| b == 0).count();
+							if null_count > sample_size / 10 {
+								format!("{}\t(binary)", rel_path)
+							} else {
+								let text = String::from_utf8_lossy(&bytes);
+								let lines = text.lines().count();
+								format!("{}\t{}L\t~{}t", rel_path, lines, estimate_tokens(&text))
+							}
+						}
+						Err(_) => rel_path.clone(),
+					};
+					(i, line)
+				})
+				.collect();
+
+			indexed.sort_by_key(|(i, _)| *i);
+			let lines: Vec<String> = indexed.into_iter().map(|(_, s)| s).collect();
+			Ok(lines.join("\n"))
 		})
 		.await;
 
