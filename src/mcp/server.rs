@@ -95,7 +95,7 @@ use std::path::PathBuf;
 #[tool_router]
 impl OctofsServer {
 	#[tool(
-		description = "Read files, view directories, and search file content. Unified read-only tool."
+		description = "Read files, view directories, and search file content. Unified read-only tool. Listing a directory returns each file with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope unfamiliar trees and budget reads before opening files."
 	)]
 	async fn view(&self, Parameters(params): Parameters<ViewParams>) -> Result<String, String> {
 		let workdir = self.workdir.get_current();
