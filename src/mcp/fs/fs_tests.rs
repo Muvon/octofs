@@ -5066,4 +5066,282 @@ mod tests {
 		// All 40 files should have been matched.
 		assert_eq!(out.matches("HIT line").count(), 40);
 	}
+
+	// ===== SIMPLIFIED LINE-TARGETING COVERAGE =====
+
+	// Pick a line whose hash contains a hex letter, so the hash is unambiguous as a string
+	// endpoint even in number mode (an all-digit hash would parse back as a line number).
+	fn non_numeric_hash_index(hashes: &[String]) -> usize {
+		hashes
+			.iter()
+			.position(|h| h.chars().any(|c| c.is_ascii_alphabetic()))
+			.expect("expected at least one hash with a hex letter")
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_rejects_mixed_number_and_hash() {
+		// A replace with a numeric `start` and a hash `end` (or vice versa) must be rejected,
+		// and the file left untouched.
+		let content = "alpha\nbeta\ngamma\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"start": 2, "end": "zzzz",
+					"content": "NOPE"
+				}]
+			}),
+		};
+		let err = execute_batch_edit(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("both") || err.contains("mixing"),
+			"should reject mixed number+hash: {err}"
+		);
+		let after = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(after, content, "file must be unchanged on rejected op");
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_with_hash_endpoints() {
+		// from_start/from_end as content hashes resolve against the source file.
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		let source_content = "l1\nl2\nl3\nl4\n";
+		fs::write(&source, source_content).await.unwrap();
+
+		let lines: Vec<&str> = source_content.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+		let idx = non_numeric_hash_index(&hashes); // single-line extract of this line
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": hashes[idx].clone(),
+				"from_end": hashes[idx].clone(),
+				"append_path": target.to_string_lossy(),
+				"append_line": -1
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, lines[idx], "should extract exactly the hashed line");
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_append_line_hash() {
+		// append_line as a hash resolves against the TARGET file.
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "EXTRACTED\n").await.unwrap();
+		let target_content = "x\ny\nz\n";
+		fs::write(&target, target_content).await.unwrap();
+
+		let tlines: Vec<&str> = target_content.lines().collect();
+		let thashes = crate::utils::line_hash::compute_line_hashes(&tlines);
+		let anchor = non_numeric_hash_index(&thashes); // insert after this target line
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"append_path": target.to_string_lossy(),
+				"append_line": thashes[anchor].clone()
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+
+		// Expected: EXTRACTED spliced in after target line `anchor` (0-indexed).
+		let mut expected: Vec<&str> = tlines.clone();
+		expected.insert(anchor + 1, "EXTRACTED");
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, format!("{}\n", expected.join("\n")));
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_append_line_hash_empty_target_errors() {
+		// A hash append_line against an empty/new target has nothing to resolve → clear error.
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "a\nb\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"append_path": target.to_string_lossy(),
+				"append_line": "abcd"
+			}),
+		};
+		let err = execute_extract_lines(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("empty"),
+			"should reject hash on empty target: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_from_end_omitted_is_single_line() {
+		// Omitting from_end copies exactly one line (defaults to from_start).
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "one\ntwo\nthree\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 2,
+				"append_path": target.to_string_lossy(),
+				"append_line": -1
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, "two");
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_append_line_negative_invalid() {
+		// append_line < -1 is out of spec and must produce a clear error (not a wrapped usize).
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "a\nb\n").await.unwrap();
+		fs::write(&target, "x\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"append_path": target.to_string_lossy(),
+				"append_line": -2
+			}),
+		};
+		let err = execute_extract_lines(&call).await.unwrap_err().to_string();
+		assert!(err.contains("Invalid append_line"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn test_view_with_hash_endpoints() {
+		// view start/end as content hashes resolve the line span.
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("v.txt");
+		let body = "v1\nv2\nv3\nv4\nv5\n";
+		fs::write(&file, body).await.unwrap();
+
+		let lines: Vec<&str> = body.lines().collect();
+		let hashes = crate::utils::line_hash::compute_line_hashes(&lines);
+		let idx = non_numeric_hash_index(&hashes);
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": file.to_string_lossy(),
+				"start": hashes[idx].clone(),
+				"end": hashes[idx].clone()
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(
+			out.contains(lines[idx]),
+			"should render the hashed line: {out}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_start_after_end_errors() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("v.txt");
+		fs::write(&file, "a\nb\nc\nd\ne\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": file.to_string_lossy(), "start": 4, "end": 2 }),
+		};
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.contains("after"), "start>end should error: {err}");
+	}
+
+	#[tokio::test]
+	async fn test_view_range_on_empty_file_is_graceful() {
+		// A range on an empty file renders the (empty) whole file rather than erroring.
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("empty.txt");
+		fs::write(&file, "").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": file.to_string_lossy(), "start": 5, "end": 10 }),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(
+			out.is_empty(),
+			"empty file with range should be empty: {out:?}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_multi_op_diff_uses_final_positions() {
+		// Regression: with two replaces where the earlier one changes the line count, the
+		// diff for the later op must reference its FINAL line position, not its original one.
+		let content = "a\nb\nc\nd\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [
+					{"operation": "replace", "start": 1, "end": 1, "content": "X\nY"},
+					{"operation": "replace", "start": 3, "end": 3, "content": "Z"}
+				]
+			}),
+		};
+		let diff = execute_batch_edit(&call).await.unwrap();
+
+		// On-disk content is correct: a→X,Y (line-count +1) shifts c→Z to line 4.
+		let after = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(after, "X\nY\nb\nZ\nd\n");
+
+		// Diff reflects final positions: X@1, Y@2, Z@4 — never the pre-shift Z@3.
+		assert!(diff.contains("+1: X"), "diff: {diff}");
+		assert!(diff.contains("+2: Y"), "diff: {diff}");
+		assert!(diff.contains("+4: Z"), "diff: {diff}");
+		assert!(
+			!diff.contains("+3: Z"),
+			"stale pre-shift position in diff: {diff}"
+		);
+	}
 }

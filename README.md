@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.Muvon/octofs -->
+
 <div align="center">
 
 # 🐙 Octofs
@@ -7,7 +9,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.92+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-2025--03--26-green.svg)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/Version-0.2.1-blue.svg)](https://github.com/muvon/octofs)
+[![Version](https://img.shields.io/crates/v/octofs.svg)](https://crates.io/crates/octofs)
 
 *The fastest, most capable filesystem MCP server. Built in Rust for AI agents that actually ship.*
 
@@ -134,7 +136,7 @@ Ask your AI assistant to:
 
 ### 📁 Filesystem Operations
 
-- **View Files & Directories** — Read single/multiple files, list directories with glob patterns, search content
+- **View Files & Directories** — Read a single file (call `view` in parallel for several), list directories with glob patterns, search content
 - **Smart Truncation** — Large files are truncated intelligently to avoid overwhelming context
 - **Gitignore-Aware** — Respects `.gitignore` patterns during directory traversal
 - **Line Ranges** — Read specific line ranges with negative indexing support (`-1` = last line)
@@ -143,6 +145,7 @@ Ask your AI assistant to:
 
 - **Create Files** — Create new files with automatic parent directory creation
 - **String Replace** — Replace exact string matches with fuzzy fallback for whitespace
+- **Delete** — Remove a file (recoverable via undo)
 - **Undo** — Revert last edit (up to 10 undo levels per file)
 - **Batch Edit** — Perform multiple insert/replace operations atomically on a single file
 
@@ -258,11 +261,14 @@ To read several files, make multiple `view` calls — they run in parallel.
 {"path": "src/", "max_depth": 2, "include_hidden": true}
 ```
 
-**Content search:**
+**Content search:** (literal by default; set `regex: true` for a Rust regex, `(?i)` = case-insensitive)
 ```json
 {"path": "src", "content": "fn main"}
 {"path": "src", "content": "unwrap()", "context": 3}
+{"path": "src", "content": "(?i)error", "regex": true}
 ```
+
+Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + estimated tokens) so you can budget reads before opening files; binary files show `path<TAB>(binary)`.
 
 ---
 
@@ -283,6 +289,11 @@ To read several files, make multiple `view` calls — they run in parallel.
 }
 ```
 
+**Delete file:** (recoverable with `undo_edit`)
+```json
+{"command": "delete", "path": "src/old.rs"}
+```
+
 **Undo last edit:**
 ```json
 {"command": "undo_edit", "path": "src/main.rs"}
@@ -296,7 +307,8 @@ Perform multiple insert/replace operations on a single file atomically.
 
 Each operation has a `start` (line number or hash). For `insert` it's the anchor
 (`0` = file start, `-1` = after last line, `N` = after line N). For `replace` add `end`
-for a range (omit `end` for a single line).
+for a range (omit `end` for a single line). `start` and `end` must be the same kind —
+both line numbers or both hashes (no mixing).
 
 **Insert at beginning:**
 ```json
@@ -341,6 +353,10 @@ for a range (omit `end` for a single line).
   "append_line": -1
 }
 ```
+
+`from_end` is optional (omit to copy a single line). `from_start`, `from_end`, and
+`append_line` each accept a line number or a content hash. `append_line` positions the
+copy in the target: `0` = beginning, `-1` = end, `N` = after line N.
 
 ---
 

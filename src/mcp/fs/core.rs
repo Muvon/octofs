@@ -38,57 +38,9 @@ pub fn resolve_path(path_str: &str, workdir: &Path) -> std::path::PathBuf {
 	}
 }
 
-// Helper function to resolve line indices, supporting negative indexing
-// Negative indices count from the end: -1 = last line, -2 = second-to-last, etc.
-fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize, String> {
-	if index == 0 {
-		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
-	}
-
-	if index > 0 {
-		let pos_index = index as usize;
-		if pos_index > total_lines {
-			return Err(format!(
-				"Line {index} exceeds file length ({total_lines} lines)"
-			));
-		}
-		Ok(pos_index)
-	} else {
-		// Negative indexing: -1 = last line, -2 = second-to-last, etc.
-		let from_end = (-index) as usize;
-		if from_end > total_lines {
-			return Err(format!(
-				"Negative index {index} exceeds file length ({total_lines} lines)"
-			));
-		}
-		Ok(total_lines - from_end + 1)
-	}
-}
-
-/// View-only: resolve line index while clamping out-of-bounds values to the
-/// nearest valid line. Returns (resolved_index, was_clamped).
-/// Line 0 is still rejected — it's a spec violation, not out-of-bounds.
-fn resolve_line_index_clamped(index: i64, total_lines: usize) -> Result<(usize, bool), String> {
-	if index == 0 {
-		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
-	}
-	if index > 0 {
-		let pos = index as usize;
-		if pos > total_lines {
-			Ok((total_lines, true))
-		} else {
-			Ok((pos, false))
-		}
-	} else {
-		let from_end = (-index) as usize;
-		if from_end > total_lines {
-			// Negative index past the beginning — clamp to first line
-			Ok((1, true))
-		} else {
-			Ok((total_lines - from_end + 1, false))
-		}
-	}
-}
+// Line-index resolution (negative indexing, clamping) lives in utils::line_hash so it is
+// shared with text_editing — see line_hash::resolve_line_index / resolve_line_index_clamped.
+use crate::utils::line_hash::{resolve_line_index, resolve_line_index_clamped};
 
 // Thread-safe lazy initialization of file history using OnceLock
 static FILE_HISTORY: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
@@ -316,21 +268,14 @@ async fn resolve_view_range(
 		.unwrap_or_default();
 	let total_lines = file_lines.len();
 
+	if total_lines == 0 {
+		// Empty/unreadable file: there is nothing to clamp a range against, so render the
+		// (empty) whole file rather than erroring on an out-of-bounds line.
+		return Ok(None);
+	}
+
 	let start_ep = start_ep.unwrap_or(Endpoint::Number(1));
 	let end_ep = end_ep.unwrap_or(Endpoint::Number(-1));
-
-	if total_lines == 0 {
-		// Empty/unreadable file: best-effort, nothing to clamp against.
-		let s = match start_ep {
-			Endpoint::Number(n) => n.max(1) as usize,
-			Endpoint::Hash(_) => 1,
-		};
-		let e = match end_ep {
-			Endpoint::Number(n) => n,
-			Endpoint::Hash(_) => -1,
-		};
-		return Ok(Some((s, e)));
-	}
 
 	let mut clamped = false;
 	let start = resolve_endpoint_to_line(&start_ep, total_lines, &file_lines, &mut clamped)?;
@@ -349,12 +294,8 @@ async fn resolve_view_range(
 // Execute view command - unified read-only tool for a single file, directory, or content search.
 // To view multiple files, the caller makes multiple `view` calls (they run in parallel).
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
-	// Single path (the common case). The legacy `paths` key is accepted as a string alias.
-	let path = match call
-		.parameters
-		.get("path")
-		.or_else(|| call.parameters.get("paths"))
-	{
+	// Single path (the common case). An array is rejected with a pointer to parallel calls.
+	let path = match call.parameters.get("path") {
 		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
 		Some(Value::Array(_)) => bail!(
 			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
@@ -548,7 +489,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 
 	// Resolve append_line: hash → line number, or keep integer as-is (0/-1/N).
 	let append_line: i64 = match append_line_ep {
-		Endpoint::Number(n) => n,
+		Endpoint::Number(n) => {
+			if n < -1 {
+				bail!(
+					"Invalid append_line {n}: use 0 (beginning), -1 (end), N (after line N), or a hash"
+				);
+			}
+			n
+		}
 		Endpoint::Hash(hash) => {
 			if target_content.is_empty() {
 				bail!("Cannot use a hash for append_line on an empty or non-existent target file");
@@ -589,7 +537,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 
 		if insert_after > target_lines.len() {
 			bail!(
-				"Insert position {insert_after} exceeds target file length ({}) lines) in '{append_path}'",
+				"Insert position {insert_after} exceeds target file length ({} lines) in '{append_path}'",
 				target_lines.len()
 			);
 		}
@@ -636,45 +584,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	))
 }
 
-// Execute batch_edit operations on a single file
+// Execute batch_edit operations on a single file.
+// `operations` is a typed `Vec<BatchEditOperation>` in the tool schema, so rmcp guarantees
+// it arrives as a JSON array here; the operation-count limit is enforced in batch_edit_spec.
 pub async fn execute_batch_edit(call: &McpToolCall) -> Result<String> {
-	let (operations_vec, ai_format_warning) = match call.parameters.get("operations") {
-		Some(Value::Array(ops)) => {
-			// Correct format - AI passed array directly
-			if ops.len() > 50 {
-				bail!("Too many operations in batch. Maximum 50 operations allowed.");
-			}
-			(ops.clone(), false)
-		}
-		Some(Value::String(ops_str)) => {
-			// AI incorrectly passed operations as JSON string - try to parse it
-			match serde_json::from_str::<Vec<Value>>(ops_str) {
-				Ok(parsed_ops) => {
-					if parsed_ops.len() > 50 {
-						bail!("Too many operations in batch. Maximum 50 operations allowed.");
-					}
-					tracing::debug!("AI passed operations as JSON string instead of array - parsing defensively");
-					(parsed_ops, true)
-				}
-				Err(_) => {
-					bail!("Invalid 'operations' parameter for batch_edit - must be an array or valid JSON array string");
-				}
-			}
-		}
-		_ => {
-			bail!("Missing or invalid 'operations' parameter for batch_edit - must be an array");
-		}
+	let operations_vec = match call.parameters.get("operations") {
+		Some(Value::Array(ops)) => ops.clone(),
+		_ => bail!("Missing or invalid 'operations' parameter for batch_edit - must be an array"),
 	};
 
-	// Create a modified call with the AI format warning flag
-	let mut modified_call = call.clone();
-	if ai_format_warning {
-		modified_call
-			.parameters
-			.as_object_mut()
-			.unwrap()
-			.insert("_ai_format_warning".to_string(), Value::Bool(true));
-	}
-
-	text_editing::batch_edit_spec(&modified_call, &operations_vec).await
+	text_editing::batch_edit_spec(call, &operations_vec).await
 }

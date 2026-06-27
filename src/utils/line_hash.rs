@@ -93,12 +93,77 @@ pub fn resolve_hash_to_line(hash: &str, lines: &[&str]) -> Result<usize, String>
 		.ok_or_else(|| format!("Hash '{}' not found in file content", hash))
 }
 
+// ── Line number resolution ─────────────────────────────────────────────────────────
+//
+// Shared by every tool that targets lines by number. Negative indices count from the
+// end (-1 = last line). `checked_neg` guards i64::MIN, whose negation overflows.
+
+/// Resolve a possibly-negative line index to a 1-indexed line number (strict).
+/// Line 0 and out-of-range indices are errors.
+pub(crate) fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize, String> {
+	if index == 0 {
+		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
+	}
+	if index > 0 {
+		let pos_index = index as usize;
+		if pos_index > total_lines {
+			return Err(format!(
+				"Line {index} exceeds file length ({total_lines} lines)"
+			));
+		}
+		Ok(pos_index)
+	} else {
+		let from_end = index
+			.checked_neg()
+			.map(|v| v as usize)
+			.unwrap_or(usize::MAX);
+		if from_end > total_lines {
+			return Err(format!(
+				"Negative index {index} exceeds file length ({total_lines} lines)"
+			));
+		}
+		Ok(total_lines - from_end + 1)
+	}
+}
+
+/// View-only variant: clamp out-of-bounds indices to the nearest valid line instead of
+/// erroring. Returns `(resolved_index, was_clamped)`. Line 0 is still rejected — it's a
+/// spec violation, not out-of-bounds.
+pub(crate) fn resolve_line_index_clamped(
+	index: i64,
+	total_lines: usize,
+) -> Result<(usize, bool), String> {
+	if index == 0 {
+		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
+	}
+	if index > 0 {
+		let pos = index as usize;
+		if pos > total_lines {
+			Ok((total_lines, true))
+		} else {
+			Ok((pos, false))
+		}
+	} else {
+		let from_end = index
+			.checked_neg()
+			.map(|v| v as usize)
+			.unwrap_or(usize::MAX);
+		if from_end > total_lines {
+			// Negative index past the beginning — clamp to first line.
+			Ok((1, true))
+		} else {
+			Ok((total_lines - from_end + 1, false))
+		}
+	}
+}
+
 // ── Line endpoint parsing ────────────────────────────────────────────────────────
 //
 // Tools take line targets as scalar params (`start`/`end`, `append_line`, …). Each
 // endpoint is either a line NUMBER (JSON integer) or a content HASH (JSON string), so
 // the JSON type itself disambiguates — no range-string parsing, and no ambiguity for
-// all-digit hashes. The active LineMode only affects how lines are RENDERED in output.
+// all-digit hashes. LineMode affects how lines are RENDERED, and (in number mode only)
+// whether a numeric STRING is tolerated as a line number — see parse_endpoint.
 
 /// A single line endpoint parsed from a JSON value: a line number or a content hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,12 +174,21 @@ pub enum Endpoint {
 	Hash(String),
 }
 
-/// Parse a JSON value into a line [`Endpoint`].
+/// Parse a JSON value into a line [`Endpoint`] using the active [`LineMode`].
 ///
 /// - JSON integer → [`Endpoint::Number`] (a line number).
 /// - JSON string → [`Endpoint::Hash`], EXCEPT in number mode a purely-numeric string
 ///   is accepted as a line number (tolerates clients that stringify integers).
 pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
+	parse_endpoint_with_mode(value, is_hash_mode())
+}
+
+/// Mode-explicit core of [`parse_endpoint`], split out so the hash-mode branch is
+/// unit-testable without mutating the process-global [`LineMode`] (a write-once `OnceLock`).
+fn parse_endpoint_with_mode(
+	value: &serde_json::Value,
+	hash_mode: bool,
+) -> Result<Endpoint, String> {
 	match value {
 		serde_json::Value::Number(n) => n
 			.as_i64()
@@ -125,7 +199,7 @@ pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 			if s.is_empty() {
 				return Err("line value is empty".to_string());
 			}
-			if !is_hash_mode() {
+			if !hash_mode {
 				if let Ok(n) = s.parse::<i64>() {
 					return Ok(Endpoint::Number(n));
 				}
@@ -268,6 +342,63 @@ mod tests {
 		assert!(parse_endpoint(&json!("")).is_err());
 		assert!(parse_endpoint(&json!([1, 2])).is_err());
 		assert!(parse_endpoint(&json!(null)).is_err());
+	}
+
+	#[test]
+	fn test_parse_endpoint_hash_mode() {
+		use serde_json::json;
+		// In hash mode an all-digit string is a HASH, not a line number — this is the whole
+		// point of JSON-type disambiguation (a hex hash like "1024" must not become line 1024).
+		assert_eq!(
+			parse_endpoint_with_mode(&json!("1024"), true).unwrap(),
+			Endpoint::Hash("1024".to_string())
+		);
+		assert_eq!(
+			parse_endpoint_with_mode(&json!("a3bd"), true).unwrap(),
+			Endpoint::Hash("a3bd".to_string())
+		);
+		// Integers are always line numbers, even in hash mode (anchors 0/-1/N).
+		assert_eq!(
+			parse_endpoint_with_mode(&json!(0), true).unwrap(),
+			Endpoint::Number(0)
+		);
+		assert_eq!(
+			parse_endpoint_with_mode(&json!(-1), true).unwrap(),
+			Endpoint::Number(-1)
+		);
+		// Number mode keeps the stringified-integer tolerance.
+		assert_eq!(
+			parse_endpoint_with_mode(&json!("10"), false).unwrap(),
+			Endpoint::Number(10)
+		);
+	}
+
+	#[test]
+	fn test_resolve_line_index_basic_and_negative() {
+		assert_eq!(resolve_line_index(1, 5).unwrap(), 1);
+		assert_eq!(resolve_line_index(5, 5).unwrap(), 5);
+		assert_eq!(resolve_line_index(-1, 5).unwrap(), 5);
+		assert_eq!(resolve_line_index(-5, 5).unwrap(), 1);
+		assert!(resolve_line_index(0, 5).is_err());
+		assert!(resolve_line_index(6, 5).is_err());
+		assert!(resolve_line_index(-6, 5).is_err());
+	}
+
+	#[test]
+	fn test_resolve_line_index_i64_min_does_not_panic() {
+		// i64::MIN negation overflows; checked_neg must turn it into a clean out-of-range error
+		// (and the clamped variant into a clamp) in every build profile, never a panic.
+		assert!(resolve_line_index(i64::MIN, 5).is_err());
+		assert_eq!(resolve_line_index_clamped(i64::MIN, 5).unwrap(), (1, true));
+	}
+
+	#[test]
+	fn test_resolve_line_index_clamped() {
+		assert_eq!(resolve_line_index_clamped(3, 5).unwrap(), (3, false));
+		assert_eq!(resolve_line_index_clamped(99, 5).unwrap(), (5, true));
+		assert_eq!(resolve_line_index_clamped(-1, 5).unwrap(), (5, false));
+		assert_eq!(resolve_line_index_clamped(-99, 5).unwrap(), (1, true));
+		assert!(resolve_line_index_clamped(0, 5).is_err());
 	}
 
 	#[test]

@@ -21,44 +21,17 @@ use anyhow::{anyhow, bail, Result};
 use std::path::Path;
 use tokio::fs as tokio_fs;
 
-// Helper function to format file content with line numbers and smart truncation
-// This is the core logic shared between view and view_many commands
+// Helper function to format file content with line numbers (or hashes) and smart truncation.
 fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i64)>) -> String {
 	format_content_with_line_numbers(lines, 1, line_range)
 }
 
-// View the content of a file following Anthropic specification - with line numbers and line_range support
+// View the content of a file with line identifiers and an optional line range.
+// Directories are dispatched to `directory::list_directory` upstream in `execute_view`,
+// so this only ever handles regular files.
 pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Result<String> {
 	if !path.exists() {
 		bail!("File not found");
-	}
-
-	if path.is_dir() {
-		// List directory contents
-		let mut entries = Vec::new();
-		let read_dir = tokio_fs::read_dir(path)
-			.await
-			.map_err(|e| anyhow!("Permission denied. Cannot read directory: {}", e))?;
-		let mut dir_entries = read_dir;
-
-		while let Some(entry) = dir_entries
-			.next_entry()
-			.await
-			.map_err(|e| anyhow!("Error reading directory: {}", e))?
-		{
-			let name = entry.file_name().to_string_lossy().to_string();
-			let is_dir = entry
-				.file_type()
-				.await
-				.map_err(|e| anyhow!("Error reading file type: {}", e))?
-				.is_dir();
-			entries.push(if is_dir { format!("{}/", name) } else { name });
-		}
-
-		entries.sort();
-		let content = entries.join("\n");
-
-		return Ok(content);
 	}
 
 	if !path.is_file() {
@@ -82,10 +55,9 @@ pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Re
 
 	let content_with_numbers = format_file_content_with_numbers(&lines, line_range);
 
-	// Check if this is an error message from the helper function
-	if content_with_numbers.starts_with("Start line")
-		|| content_with_numbers.starts_with("Start line")
-	{
+	// Defensive: the range is pre-clamped in resolve_view_range, but if the formatter ever
+	// returns its out-of-range error string, surface it as an error rather than content.
+	if content_with_numbers.starts_with("Start line") {
 		bail!("{}", content_with_numbers);
 	}
 
@@ -93,7 +65,7 @@ pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Re
 	Ok(content_with_numbers)
 }
 
-// Search a single file for a literal pattern and render results using the same
+// Search a single file for a pattern and render results using the same
 // hash/number format as view. No external tools — pure Rust string matching.
 pub async fn view_file_with_content_search(
 	path: &Path,
@@ -147,12 +119,12 @@ pub async fn view_file_with_content_search(
 	Ok(parts.join("\n--\n"))
 }
 
-// Create a new file following Anthropic specification
+// Create a new file.
 pub async fn create_file_spec(path: &Path, content: &str) -> Result<String> {
 	// Check if file already exists — guide the AI toward the right edit tool instead of retrying create
 	if path.exists() {
 		bail!(
-			"File already exists: {}. Do NOT retry `create` — use `str_replace` to replace specific content, `line_replace` to replace specific lines, or `insert` to add new content at a position.",
+			"File already exists: {}. Do NOT retry `create` — use `text_editor` str_replace to swap specific content, or `batch_edit` insert/replace operations to edit by line.",
 			path.display()
 		);
 	}
