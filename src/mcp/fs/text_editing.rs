@@ -97,34 +97,8 @@ pub async fn delete_file_spec(path: &Path) -> Result<String> {
 	Ok(format!("Successfully deleted {}", path.display()))
 }
 
-// Helper function to resolve line indices, supporting negative indexing
-// Negative indices count from the end: -1 = last line, -2 = second-to-last, etc.
-fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize, String> {
-	if index == 0 {
-		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
-	}
-
-	if index > 0 {
-		let pos_index = index as usize;
-		if pos_index > total_lines {
-			return Err(format!(
-				"Line {} exceeds file length ({} lines)",
-				index, total_lines
-			));
-		}
-		Ok(pos_index)
-	} else {
-		// Negative indexing: -1 = last line, -2 = second-to-last, etc.
-		let from_end = (-index) as usize;
-		if from_end > total_lines {
-			return Err(format!(
-				"Negative index {} exceeds file length ({} lines)",
-				index, total_lines
-			));
-		}
-		Ok(total_lines - from_end + 1)
-	}
-}
+// Line-index resolution (negative indexing) is shared from utils::line_hash.
+use crate::utils::line_hash::resolve_line_index;
 
 // Helper function to resolve line range with negative indexing support
 fn resolve_line_range_batch(
@@ -192,8 +166,9 @@ fn resolve_unresolved_line_range(
 ) -> Result<LineRange, String> {
 	match unresolved {
 		UnresolvedLineRange::Single(line) => {
-			// Insert: 0 = before line 1 (beginning of file) — valid special case
-			if *line == 0 {
+			// Insert anchor 0 = beginning of file. On an empty file, -1 ("after last line")
+			// also means the beginning — there is no last line to anchor to.
+			if *line == 0 || (*line < 0 && total_lines == 0) {
 				return Ok(LineRange::Single(0));
 			}
 			let resolved = resolve_line_index(*line, total_lines)?;
@@ -1265,11 +1240,24 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}));
 	}
 
-	// If all operations failed during parsing, return error
+	// If all operations failed during parsing, return error — include each op's reason so the
+	// caller can actually fix the call (e.g. mixed number+hash endpoints), not just a count.
 	if unresolved_operations.is_empty() {
+		let reasons: Vec<String> = operation_details
+			.iter()
+			.filter(|d| d["status"] == "failed")
+			.map(|d| {
+				format!(
+					"  op {}: {}",
+					d["operation_index"],
+					d["error"].as_str().unwrap_or("invalid operation")
+				)
+			})
+			.collect();
 		bail!(
-			"No valid operations found. {} operations failed during parsing.",
-			failed_operations
+			"No valid operations found — {} operations failed during parsing:\n{}",
+			failed_operations,
+			reasons.join("\n")
 		);
 	}
 
@@ -1445,6 +1433,25 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		LineRange::Range(start, _) => *start,
 	});
 
+	// Each op references ORIGINAL line numbers, but the diff is rendered against the FINAL
+	// file (`new_lines`/`new_prefix`). Walking ops ascending and accumulating each op's
+	// line-count delta keeps every later op's rendered positions (and hash prefixes) aligned
+	// with where its content actually landed — without this, every op after the first
+	// length-changing one shows wrong line numbers/hashes.
+	// ponytail: assumes non-overlapping ops (guaranteed by detect_conflicts for replaces and
+	// equal-anchor inserts); an insert anchored strictly inside a replaced range renders
+	// approximately. The on-disk write is always correct regardless.
+	let mut offset: i64 = 0;
+
+	// 1-indexed position in the final file = original position + offset of prior ops.
+	let shift =
+		|orig_1idx: usize, offset: i64| -> usize { (orig_1idx as i64 + offset).max(1) as usize };
+	// Render context line `new_i` from the final file, if in range.
+	let ctx_line = |new_i: usize| -> Option<String> {
+		(new_i >= 1 && new_i <= new_lines.len())
+			.then(|| format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]))
+	};
+
 	for op in &display_ops {
 		match op.operation_type {
 			OperationType::Replace => {
@@ -1453,24 +1460,26 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Single(line) => (line, line),
 				};
 				let content_lines: Vec<&str> = op.content.lines().collect();
-				let removed: Vec<String> = original_lines[start - 1..end]
-					.iter()
-					.map(|l| l.to_string())
-					.collect();
+				let old_count = end - start + 1;
+				let new_count = content_lines.len();
+				let new_start = shift(start, offset);
 
 				let mut diff: Vec<String> = Vec::new();
-				let ctx_before_start = start.saturating_sub(CONTEXT).max(1);
+				// Context before — from the final file, at shifted positions.
+				let ctx_before_start = new_start.saturating_sub(CONTEXT).max(1);
 				if ctx_before_start > 1 {
 					diff.push("...".to_string());
 				}
-				for i in ctx_before_start..start {
-					diff.push(format!("{}: {}", orig_prefix(i), original_lines[i - 1]));
+				for new_i in ctx_before_start..new_start {
+					diff.extend(ctx_line(new_i));
 				}
-				for (i, old_line) in removed.iter().enumerate() {
+				// Removed lines — original content at ORIGINAL coordinates.
+				for (i, old_line) in original_lines[start - 1..end].iter().enumerate() {
 					diff.push(format!("-{}: {}", orig_prefix(start + i), old_line));
 				}
+				// Added lines — at their FINAL positions.
 				for (i, new_line) in content_lines.iter().enumerate() {
-					let idx = start + i;
+					let idx = new_start + i;
 					let pfx = if idx <= new_lines.len() {
 						new_prefix(idx)
 					} else {
@@ -1478,17 +1487,17 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					};
 					diff.push(format!("+{}: {}", pfx, new_line));
 				}
-				let new_after_start = start + content_lines.len();
+				// Context after — from the final file.
+				let new_after_start = new_start + new_count;
 				let new_after_end = (new_after_start + CONTEXT - 1).min(new_lines.len());
 				for new_i in new_after_start..=new_after_end {
-					if new_i >= 1 && new_i <= new_lines.len() {
-						diff.push(format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]));
-					}
+					diff.extend(ctx_line(new_i));
 				}
 				if new_after_end < new_lines.len() {
 					diff.push("...".to_string());
 				}
 				diffs.push(diff.join("\n"));
+				offset += new_count as i64 - old_count as i64;
 			}
 			OperationType::Insert => {
 				// For inserts show context lines before and after so the AI can verify placement
@@ -1497,21 +1506,18 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Range(start, _) => start,
 				};
 				let content_lines: Vec<&str> = op.content.lines().collect();
-				let insert_at = after + 1; // new line numbers start here
+				// First inserted line's position in the final file.
+				let insert_at = shift(after, offset) + if after == 0 { 0 } else { 1 };
 				let mut diff: Vec<String> = Vec::new();
 
-				// Context before: up to CONTEXT lines before the insertion point (in new file)
 				let ctx_before_start = insert_at.saturating_sub(CONTEXT).max(1);
 				if ctx_before_start > 1 {
 					diff.push("...".to_string());
 				}
 				for new_i in ctx_before_start..insert_at {
-					if new_i >= 1 && new_i <= new_lines.len() {
-						diff.push(format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]));
-					}
+					diff.extend(ctx_line(new_i));
 				}
 
-				// The inserted lines
 				for (i, new_line) in content_lines.iter().enumerate() {
 					let idx = insert_at + i;
 					let pfx = if idx <= new_lines.len() {
@@ -1522,19 +1528,17 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					diff.push(format!("+{}: {}", pfx, new_line));
 				}
 
-				// Context after: up to CONTEXT lines after the inserted block (in new file)
 				let after_end = insert_at + content_lines.len();
 				let ctx_after_end = (after_end + CONTEXT - 1).min(new_lines.len());
 				for new_i in after_end..=ctx_after_end {
-					if new_i >= 1 && new_i <= new_lines.len() {
-						diff.push(format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]));
-					}
+					diff.extend(ctx_line(new_i));
 				}
 				if ctx_after_end < new_lines.len() {
 					diff.push("...".to_string());
 				}
 
 				diffs.push(diff.join("\n"));
+				offset += content_lines.len() as i64;
 			}
 		}
 	}

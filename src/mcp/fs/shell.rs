@@ -89,7 +89,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str, &str)] = &[
 	(
 		&["sed", "awk"],
 		"text_editor",
-		"⚠️ Prefer `text_editor` str_replace/line_replace for file edits (atomic, tracked). Use sed/awk only for stream transforms in pipelines.",
+		"⚠️ Prefer `text_editor` str_replace or `batch_edit` for file edits (atomic, tracked). Use sed/awk only for stream transforms in pipelines.",
 	),
 ];
 

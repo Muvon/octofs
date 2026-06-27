@@ -300,6 +300,7 @@ pub struct ViewParams {
 	/// Content search string. By default treated as a literal substring.
 	/// Set `regex: true` to interpret as a Rust regex (case-insensitive via `(?i)` prefix,
 	/// e.g. `(?i)error`). Only used when path is a directory or a single file.
+	/// When set, `start`/`end` are ignored (the whole file/tree is searched).
 	#[serde(default)]
 	pub content: Option<String>,
 	/// When true, `content` is a regex pattern instead of a literal substring. Default: false.
@@ -318,18 +319,31 @@ pub struct ViewParams {
 
 /// JSON schema for a single line endpoint (`start`/`end`/`append_line`/op `start`/`end`).
 ///
-/// An endpoint is either an integer line number or a string hash. The JSON type
-/// disambiguates the two — no range strings, no ambiguity for all-digit hashes.
+/// The shape is mode-aware (line mode is fixed at startup before schema generation):
+/// - number mode (default): a plain `integer`. No union — maximally portable across every
+///   tool-calling stack (OpenAI strict structured outputs and Gemini both reject unions).
+/// - hash mode: `anyOf:[integer, string]` — integers are line numbers / anchors, strings are
+///   content hashes; the JSON type disambiguates (no ambiguity for all-digit hashes).
+///   `anyOf` (not `oneOf`) is used because it has strictly wider cross-stack support.
 fn line_endpoint_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-	serde_json::from_value(serde_json::json!({
-		"description": "A line endpoint: an integer line number (negative counts from the end, -1 = last line), or a string hash in hash mode (e.g. \"a3bd\").",
-		"oneOf": [
-			{ "type": "integer", "format": "int64" },
-			{ "type": "string" }
-		],
-		"examples": [10, -1, "a3bd"]
-	}))
-	.expect("static schema is valid JSON")
+	let schema = if crate::utils::line_hash::is_hash_mode() {
+		serde_json::json!({
+			"description": "A line endpoint: an integer line number (negative counts from the end, -1 = last line) or a string content hash from previous output (e.g. \"a3bd\").",
+			"anyOf": [
+				{ "type": "integer", "format": "int64" },
+				{ "type": "string" }
+			],
+			"examples": ["a3bd", -1]
+		})
+	} else {
+		serde_json::json!({
+			"description": "A line number (1-indexed; negative counts from the end, -1 = last line).",
+			"type": "integer",
+			"format": "int64",
+			"examples": [10, 42, -1]
+		})
+	};
+	serde_json::from_value(schema).expect("static schema is valid JSON")
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -343,7 +357,7 @@ pub enum TextEditorCommand {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct TextEditorParams {
-	/// The operation to perform: create, str_replace, undo_edit
+	/// The operation to perform: create, str_replace, delete, undo_edit
 	pub command: TextEditorCommand,
 	/// REQUIRED. Path to the file to operate on.
 	pub path: String,
@@ -376,6 +390,7 @@ pub struct BatchEditOperation {
 	pub start: serde_json::Value,
 	/// Last line of the range to replace (inclusive), for `replace` only.
 	/// Omit for a single-line replace (defaults to `start`). Ignored for `insert`.
+	/// Must be the same kind as `start` — both line numbers or both hashes (no mixing).
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,

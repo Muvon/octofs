@@ -18,8 +18,7 @@ src/
                                execute_extract_lines, execute_shell_command, execute_workdir_command
       core.rs                — resolve_path, file history (undo), execute_view, execute_text_editor,
                                execute_batch_edit, execute_extract_lines
-      file_ops.rs            — view_file_spec, view_file_multi_ranges, view_file_with_content_search,
-                               create_file_spec, view_many_files, view_many_files_spec
+      file_ops.rs            — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs        — str_replace_spec, batch_edit_spec, per-file async locking
       directory.rs           — Directory listing and content search (ignore crate + pure-Rust regex)
       search.rs              — search_content: fixed-string match with context blocks
@@ -85,7 +84,7 @@ Two modes set once at startup via `--line-mode`:
 - `number` (default) — sequential 1-indexed integers
 - `hash` — 4-char lowercase hex FNV1a-16 hashes, position-dependent (same content at different lines → different hash)
 
-`utils/line_hash::is_hash_mode()` gates output rendering. Line targets are scalar params, each parsed by `utils/line_hash::parse_endpoint` into an `Endpoint` (line number or hash) — the **JSON type disambiguates**: integer → line number, string → hash. Mode no longer affects input parsing (only rendering), so all-digit hashes are unambiguous.
+`utils/line_hash::is_hash_mode()` gates output rendering and the emitted endpoint schema (plain `integer` in number mode; `anyOf:[integer,string]` in hash mode). Line targets are scalar params, each parsed by `utils/line_hash::parse_endpoint` into an `Endpoint` (line number or hash) — the **JSON type disambiguates**: integer → line number, string → hash (so all-digit hashes are unambiguous). Mode affects input parsing only in one narrow way: in number mode a numeric *string* like `"10"` is also accepted as a line number (client convenience); in hash mode it is treated as a hash.
 - `view`: `path` (single string), optional `start`/`end` (omit both → whole file; `start` only → to EOF). Numbers clamp to bounds; negatives count from EOF.
 - `batch_edit` op: `start` (+ optional `end`). insert anchor: `0` = file start, `-1` = after last line, `N`; replace: `start..end` (end omitted → single line).
 - `extract_lines`: `from_start`/`from_end` and `append_line` (`0`/`-1`/`N`/hash).
