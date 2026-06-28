@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.5.0] - 2026-06-28
+
+### 📋 Release Summary
+
+This release introduces a simplified API for file access and line targeting, though these changes include breaking updates to how lines are specified (6a820ba9, eef5227c). New capabilities include a dedicated delete command, enhanced file listings, and an updated configuration schema (c7fd6a4e, 13f7fa5f). Additionally, CI workflows have been streamlined for improved project maintenance (11e1b8db, 0cb07e07).
+
+
+### 🚨 Breaking Changes
+
+⚠️ **Important**: This release contains breaking changes that may require code updates.
+
+- **api**: simplify line targeting and file access `6a820ba9`
+
+### ✨ New Features & Enhancements
+
+- **fs**: implement delete command and enhance line targeting `c7fd6a4e`
+- **mcp**: update config schema and enhance file listings `13f7fa5f`
+- **api**: unify line targeting using string specs `eef5227c`
+
+### 🔧 Improvements & Optimizations
+
+- **workflow**: migrate pr brief to reusable workflow `0cb07e07`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.4.3] - 2026-05-13
 
 ### 📋 Release Summary
