@@ -1,5 +1,3 @@
-<!-- mcp-name: io.github.Muvon/octofs -->
-
 <div align="center">
 
 # 🐙 Octofs
@@ -14,6 +12,8 @@
 *The fastest, most capable filesystem MCP server. Built in Rust for AI agents that actually ship.*
 
 [Installation](#installation) • [Quick Start](#quick-start) • [Features](#features) • [Tools Reference](#mcp-tools-reference)
+
+MCP Registry name: `mcp-name: io.github.Muvon/octofs`
 
 </div>
 

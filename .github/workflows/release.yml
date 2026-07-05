@@ -120,6 +120,14 @@ jobs:
         cd target/${{ matrix.target }}/release
         7z a ../../../dist/octofs-${{ inputs.tag || github.ref_name }}-${{ matrix.target }}.zip octofs.exe
 
+    - name: Create MCPB bundle
+      uses: muvon/ci-workflow/actions/mcpb@master
+      with:
+        version: ${{ inputs.tag || github.ref_name }}
+        target: ${{ matrix.target }}
+        description: 'Standalone MCP filesystem tools server — view, edit, shell, workdir.'
+        args: '["mcp"]'
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -145,6 +153,13 @@ jobs:
       tag: ${{ inputs.tag }}
       artifacts: 'release-*'
       draft: false
+
+  publish-mcp:
+    name: Publish to MCP Registry
+    needs: release
+    uses: muvon/ci-workflow/.github/workflows/mcp-publish.yml@master
+    with:
+      tag: ${{ inputs.tag }}
 
   notify-homebrew:
     name: Notify Homebrew Tap
