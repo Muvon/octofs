@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.1] - 2026-07-05
+
+### 📋 Release Summary
+
+This release streamlines the distribution process by automating publishing to the MCP registry (ef694c63). These updates ensure faster access to the latest version of the filesystem tools for all users.
+
+
+### 🔧 Improvements & Optimizations
+
+- **release**: automate MCP registry publishing `ef694c63`
+
 ## [0.5.0] - 2026-06-28
 
 ### 📋 Release Summary
