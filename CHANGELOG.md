@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.2] - 2026-07-06
+
+### 📋 Release Summary
+
+This release includes internal configuration updates to streamline server dependencies (b4fdfd8b).
+
+
+### 🔧 Improvements & Optimizations
+
+- **server**: remove package definitions `b4fdfd8b`
+
 ## [0.5.1] - 2026-07-05
 
 ### 📋 Release Summary
