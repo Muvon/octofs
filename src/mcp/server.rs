@@ -157,7 +157,13 @@ impl OctofsServer {
 		Ok(append_hints(result))
 	}
 
-	#[tool(description = "Execute a command in the shell.")]
+	#[tool(
+		description = "Execute a command in the shell. Output is what a real terminal would \
+			display: ANSI escapes and progress-bar redraw frames are removed, and runs of \
+			identical consecutive lines collapse to the line plus a repeat count. For \
+			byte-exact inspection (line endings, control bytes) pipe through `od -c`, `xxd`, \
+			or `cat -v` — their printable output passes through untouched."
+	)]
 	async fn shell(&self, Parameters(params): Parameters<ShellParams>) -> Result<String, String> {
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {

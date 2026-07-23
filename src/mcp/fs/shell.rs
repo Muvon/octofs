@@ -18,7 +18,7 @@ use super::super::McpToolCall;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 // Track PIDs of in-flight foreground shell children.
 // Each child is spawned with process_group(0) so PGID == child PID.
 // On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
@@ -98,7 +98,86 @@ static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
 	("DEBIAN_FRONTEND", "noninteractive"), // apt/dpkg: never prompt
 	("PAGER", "cat"),             // don't invoke less (hangs / garbled without TTY)
 	("GIT_PAGER", "cat"),         // same for git log/diff/show
+	("NO_COLOR", "1"),            // suppress ANSI colors at the source (no-color.org)
 ];
+
+// Matches terminal escape sequences: CSI (colors, cursor movement), OSC (titles,
+// hyperlinks; BEL- or ST-terminated), and any other two-char ESC sequence.
+// ponytail: regex covers real-world output; swap in the `strip-ansi-escapes` crate
+// (vte parser) if exotic partial sequences ever survive.
+static ANSI_ESCAPES: OnceLock<regex::Regex> = OnceLock::new();
+
+fn ansi_re() -> &'static regex::Regex {
+	ANSI_ESCAPES.get_or_init(|| {
+		regex::Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)").unwrap()
+	})
+}
+
+// Compact captured output to exactly what a human would see on the terminal after
+// the command finished — nothing a tool printed as a real line is dropped:
+//   - ANSI escape sequences (colors, cursor movement, OSC links) render as nothing
+//   - \r-overwritten progress frames: only the final frame is visible
+//     (curl/pip/wget redraw the same line hundreds of times into captured stderr)
+//   - backspaces erase the character before them (spinner animations)
+//   - remaining control chars (BEL, NUL, …) render nothing
+//   - trailing whitespace is invisible (progress frames pad with spaces to erase
+//     longer previous frames); leading/trailing blank lines carry no information
+//   - runs of identical consecutive lines (repeated warnings, wget dots, retry
+//     loops) collapse to the line plus a repeat count — the count preserves the
+//     information, the repeats were pure token cost
+// Leading spaces on the first content line are kept — they may be table alignment.
+fn clean_terminal_noise(raw: &str) -> String {
+	let stripped = ansi_re().replace_all(raw, "");
+	let mut lines: Vec<String> = Vec::new();
+	let mut repeats = 0usize;
+	for line in stripped.split('\n') {
+		// CRLF: the trailing \r is a line ending, not a progress redraw.
+		let line = line.strip_suffix('\r').unwrap_or(line);
+		// A mid-line \r overwrites everything before it — keep the final frame.
+		let line = line.rsplit('\r').next().unwrap_or(line);
+		let mut out = String::with_capacity(line.len());
+		for ch in line.chars() {
+			match ch {
+				'\u{8}' => {
+					out.pop();
+				}
+				c if c.is_control() && c != '\t' => {}
+				c => out.push(c),
+			}
+		}
+		out.truncate(out.trim_end().len());
+
+		// Blank lines are exempt from run-collapsing — a marker after a blank
+		// line reads as nonsense and blank runs are cheap anyway.
+		if !out.is_empty() && lines.last() == Some(&out) {
+			repeats += 1;
+			continue;
+		}
+		flush_repeats(&mut lines, &mut repeats);
+		lines.push(out);
+	}
+	flush_repeats(&mut lines, &mut repeats);
+	lines
+		.join("\n")
+		.trim_start_matches('\n')
+		.trim_end()
+		.to_string()
+}
+
+// Emit the pending duplicate-run count from clean_terminal_noise.
+fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
+	match *repeats {
+		0 => {}
+		// A single duplicate is kept verbatim — the marker would cost more.
+		1 => {
+			if let Some(last) = lines.last().cloned() {
+				lines.push(last);
+			}
+		}
+		n => lines.push(format!("[... last line repeated {n} more times]")),
+	}
+	*repeats = 0;
+}
 
 // Detect shell commands that should use a dedicated MCP tool instead.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
@@ -233,8 +312,8 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 
 	match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
 		Ok(output) => {
-			let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+			let stdout = clean_terminal_noise(&String::from_utf8_lossy(&output.stdout));
+			let stderr = clean_terminal_noise(&String::from_utf8_lossy(&output.stderr));
 
 			// Format the output more clearly with error handling
 			let final_output = if stderr.is_empty() {
@@ -258,11 +337,54 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 			if success {
 				Ok(final_output)
 			} else {
-				bail!(
-					"Command failed with exit code {status_code}\nCommand: {command}\n\nOutput:\n{final_output}"
-				)
+				// No command echo: the model just wrote the command and results are
+				// matched by tool id — repeating it back is pure token cost.
+				bail!("Command failed with exit code {status_code}\n\n{final_output}")
 			}
 		}
 		Err(e) => bail!("Error: {e}"),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_clean_terminal_noise() {
+		// ANSI colors and cursor codes stripped
+		assert_eq!(clean_terminal_noise("\x1b[1;32mok\x1b[0m"), "ok");
+		assert_eq!(clean_terminal_noise("\x1b[2K\x1b[1Adone"), "done");
+		// OSC hyperlink wrapper stripped, visible text kept
+		assert_eq!(
+			clean_terminal_noise("\x1b]8;;http://x\x07link\x1b]8;;\x07"),
+			"link"
+		);
+		// \r progress frames collapse to the final visible frame
+		assert_eq!(
+			clean_terminal_noise("Downloading 10%\rDownloading 55%\rDone.\n"),
+			"Done."
+		);
+		// CRLF line endings are line endings, not progress redraws
+		assert_eq!(clean_terminal_noise("a\r\nb\r\n"), "a\nb");
+		// Backspaces erase like on a real terminal; stray BEL renders nothing
+		assert_eq!(clean_terminal_noise("abcd\x08\x08X"), "abX");
+		assert_eq!(clean_terminal_noise("ding\x07!"), "ding!");
+		// Invisible trailing padding and blank lines around output are dropped;
+		// leading spaces on the first content line survive (table alignment)
+		assert_eq!(clean_terminal_noise("Done.   \t\n\n\n"), "Done.");
+		assert_eq!(
+			clean_terminal_noise("\n\n  % Total\nbody"),
+			"  % Total\nbody"
+		);
+		// Runs of identical lines collapse to line + count; info is preserved
+		assert_eq!(
+			clean_terminal_noise("same\nsame\nsame\nsame\nnext"),
+			"same\n[... last line repeated 3 more times]\nnext"
+		);
+		// A line appearing just twice stays verbatim (marker would cost more)
+		assert_eq!(clean_terminal_noise("dup\ndup\nend"), "dup\ndup\nend");
+		// Plain output passes through untouched
+		assert_eq!(clean_terminal_noise("hello\nworld"), "hello\nworld");
 	}
 }
