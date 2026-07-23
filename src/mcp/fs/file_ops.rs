@@ -82,6 +82,14 @@ pub async fn view_file_with_content_search(
 		bail!("Path is not a file");
 	}
 
+	// Same cap as view — searching loads the whole file (plus a lossy copy).
+	let metadata = tokio_fs::metadata(path)
+		.await
+		.map_err(|e| anyhow!("Cannot read file: {}", e))?;
+	if metadata.len() > MAX_VIEW_FILE_BYTES {
+		bail!("File is too large to search (>5MB). Use the shell tool (`grep -n ...`) for files this size.");
+	}
+
 	// Lossy UTF-8 read so non-UTF-8 files (UTF-16 BOM, Latin-1, etc.) still match.
 	let bytes = tokio_fs::read(path)
 		.await

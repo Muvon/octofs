@@ -286,7 +286,7 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Filename glob filter for directory listing.
+	/// Filename glob filter for directory listing and directory content search.
 	#[serde(default)]
 	pub pattern: Option<String>,
 	/// Content search string. By default treated as a literal substring.

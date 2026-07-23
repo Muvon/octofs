@@ -160,7 +160,16 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
-			let files = collect_file_paths(&mut builder, &working_dir);
+			let mut files = collect_file_paths(&mut builder, &working_dir);
+
+			// The `pattern` glob narrows content search the same way it narrows listing —
+			// silently ignoring it here would search files the caller explicitly excluded.
+			if let Some(ref name_pattern) = pattern {
+				let regex_pattern = convert_glob_to_regex(name_pattern);
+				let regex = regex::Regex::new(&regex_pattern)
+					.map_err(|e| format!("Invalid `pattern` glob '{}': {}", name_pattern, e))?;
+				files.retain(|file| regex.is_match(file));
+			}
 
 			let hash_mode = is_hash_mode();
 
@@ -172,6 +181,15 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 				.enumerate()
 				.filter_map(|(i, rel_path)| {
 					let full_path = working_dir.join(rel_path);
+
+					// ponytail: files over the view cap are skipped like binaries — loading
+					// a multi-GB artifact into memory (twice, with the lossy copy) is an OOM
+					// hazard, and no real source file is that large.
+					let meta = std::fs::metadata(&full_path).ok()?;
+					if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES {
+						return None;
+					}
+
 					let bytes = std::fs::read(&full_path).ok()?;
 
 					// Skip likely binary files: NUL-density check on a leading sample.
@@ -250,6 +268,16 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 				.enumerate()
 				.map(|(i, rel_path)| {
 					let full_path = working_dir.join(rel_path);
+					// Annotate oversized files from metadata alone — reading a huge
+					// artifact just to count its lines wastes I/O and memory.
+					if let Ok(meta) = std::fs::metadata(&full_path) {
+						if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES {
+							return (
+								i,
+								format!("{}\t(large: {}MB)", rel_path, meta.len() / (1024 * 1024)),
+							);
+						}
+					}
 					let line = match std::fs::read(&full_path) {
 						Ok(bytes) => {
 							// Skip likely binary files: NUL-density check on a leading sample.
@@ -309,6 +337,37 @@ mod tests {
 		let blocks = search::search_content(content, "backward_step()", 0);
 		assert_eq!(blocks.len(), 1);
 		assert_eq!(blocks[0].line_numbers, vec![2]);
+	}
+
+	#[tokio::test]
+	async fn test_content_search_respects_pattern_filter() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		fs::write(temp_path.join("code.rs"), "let needle = 1;\n").unwrap();
+		fs::write(temp_path.join("notes.txt"), "needle here too\n").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"pattern": "*.rs",
+				"content": "needle"
+			}),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let result = list_directory(&call, temp_path.to_str().unwrap())
+			.await
+			.unwrap();
+
+		assert!(result.contains("code.rs"), "got: {result}");
+		assert!(
+			!result.contains("notes.txt"),
+			"pattern must filter content search too: {result}"
+		);
 	}
 
 	#[tokio::test]
