@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Position-aware line hashing for stable, unique line identifiers.
+// Position-aware line hashing for stable line identifiers.
 // Each line gets a 4-char hex hash derived from its 1-indexed position AND content.
-// Including position guarantees uniqueness for duplicate lines without any collision
-// resolution — no two lines can share a hash because their positions differ.
+// Including position keeps duplicate content at different positions on distinct keys,
+// but the 16-bit fold can still collide between different keys — resolve_hash_to_line
+// detects that and errors instead of silently picking a line.
 
 use std::sync::OnceLock;
 
@@ -60,9 +61,9 @@ fn fnv1a_16(content: &str) -> u16 {
 }
 
 /// Compute 4-char hex hashes for all lines.
-/// Each hash is derived from `"<1-indexed-position>:<content>"`, which guarantees
-/// uniqueness across all lines — duplicate content at different positions always
-/// produces different hashes, with no collision-resolution bookkeeping needed.
+/// Each hash is derived from `"<1-indexed-position>:<content>"`, so duplicate content
+/// at different positions gets distinct keys. The 16-bit output can still collide;
+/// [`resolve_hash_to_line`] treats an ambiguous hash as a hard error.
 pub fn compute_line_hashes(lines: &[&str]) -> Vec<String> {
 	lines
 		.iter()
