@@ -17,7 +17,7 @@
 use super::super::McpToolCall;
 use super::core::save_file_history;
 use anyhow::{anyhow, bail, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -54,7 +54,7 @@ pub fn lock_key_for(path: &Path) -> String {
 }
 
 // Acquire a file-specific lock to prevent concurrent writes to the same file
-async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
+pub(crate) async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
 	let key = lock_key_for(path);
 
 	let file_lock = {
@@ -1126,19 +1126,13 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 	// Parse and validate all operations (with unresolved line ranges)
 	let mut unresolved_operations = Vec::new();
-	let mut failed_operations = 0;
-	let mut operation_details = Vec::new();
+	let mut parse_failures: Vec<String> = Vec::new();
 
 	for (index, operation) in operations.iter().enumerate() {
 		let operation_obj = match operation.as_object() {
 			Some(obj) => obj,
 			None => {
-				failed_operations += 1;
-				operation_details.push(json!({
-					"operation_index": index,
-					"status": "failed",
-					"error": "Operation must be an object"
-				}));
+				parse_failures.push(format!("  op {index}: Operation must be an object"));
 				continue;
 			}
 		};
@@ -1147,12 +1141,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		let op_type_str = match operation_obj.get("operation").and_then(|v| v.as_str()) {
 			Some(op) => op,
 			None => {
-				failed_operations += 1;
-				operation_details.push(json!({
-					"operation_index": index,
-					"status": "failed",
-					"error": "Missing 'operation' field"
-				}));
+				parse_failures.push(format!("  op {index}: Missing 'operation' field"));
 				continue;
 			}
 		};
@@ -1162,13 +1151,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			"insert" => OperationType::Insert,
 			"replace" => OperationType::Replace,
 			_ => {
-				failed_operations += 1;
-				operation_details.push(json!({
-					"operation_index": index,
-					"operation": op_type_str,
-					"status": "failed",
-					"error": format!("Unsupported operation type: '{}'. Supported operations: insert, replace", op_type_str)
-				}));
+				parse_failures.push(format!(
+					"  op {index}: Unsupported operation type: '{op_type_str}'. Supported operations: insert, replace"
+				));
 				continue;
 			}
 		};
@@ -1179,25 +1164,13 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				match parse_line_range(start_value, operation_obj.get("end"), &operation_type) {
 					Ok(range) => range,
 					Err(e) => {
-						failed_operations += 1;
-						operation_details.push(json!({
-							"operation_index": index,
-							"operation": op_type_str,
-							"status": "failed",
-							"error": format!("Invalid line target: {}", e)
-						}));
+						parse_failures.push(format!("  op {index}: Invalid line target: {e}"));
 						continue;
 					}
 				}
 			}
 			None => {
-				failed_operations += 1;
-				operation_details.push(json!({
-					"operation_index": index,
-					"operation": op_type_str,
-					"status": "failed",
-					"error": "Missing 'start' field"
-				}));
+				parse_failures.push(format!("  op {index}: Missing 'start' field"));
 				continue;
 			}
 		};
@@ -1206,58 +1179,27 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		let content = match operation_obj.get("content").and_then(|v| v.as_str()) {
 			Some(c) => c.to_string(),
 			None => {
-				failed_operations += 1;
-				operation_details.push(json!({
-					"operation_index": index,
-					"operation": op_type_str,
-					"status": "failed",
-					"error": "Missing 'content' field"
-				}));
+				parse_failures.push(format!("  op {index}: Missing 'content' field"));
 				continue;
 			}
 		};
 
-		// Create unresolved batch operation
-		let unresolved_op = UnresolvedBatchOperation {
+		unresolved_operations.push(UnresolvedBatchOperation {
 			operation_type,
-			line_range: line_range.clone(),
+			line_range,
 			content,
 			operation_index: index,
-		};
-
-		unresolved_operations.push(unresolved_op);
-
-		operation_details.push(json!({
-			"operation_index": index,
-			"operation": op_type_str,
-			"status": "parsed",
-			"target": match &line_range {
-				UnresolvedLineRange::Single(line) => json!(line.to_string()),
-				UnresolvedLineRange::Range(start, end) => json!(format!("{start}-{end}")),
-				UnresolvedLineRange::Hash(h) => json!(h),
-				UnresolvedLineRange::HashRange(s, e) => json!(format!("{s}-{e}")),
-			}
-		}));
+		});
 	}
 
-	// If all operations failed during parsing, return error — include each op's reason so the
-	// caller can actually fix the call (e.g. mixed number+hash endpoints), not just a count.
-	if unresolved_operations.is_empty() {
-		let reasons: Vec<String> = operation_details
-			.iter()
-			.filter(|d| d["status"] == "failed")
-			.map(|d| {
-				format!(
-					"  op {}: {}",
-					d["operation_index"],
-					d["error"].as_str().unwrap_or("invalid operation")
-				)
-			})
-			.collect();
+	// Atomic contract: if ANY operation is malformed, apply nothing. Silently dropping
+	// a bad op while applying the rest would half-execute the caller's intent.
+	if !parse_failures.is_empty() {
 		bail!(
-			"No valid operations found — {} operations failed during parsing:\n{}",
-			failed_operations,
-			reasons.join("\n")
+			"No operations were applied — {} of {} operations failed during parsing:\n{}",
+			parse_failures.len(),
+			operations.len(),
+			parse_failures.join("\n")
 		);
 	}
 
@@ -1389,13 +1331,6 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	atomic_write(&path, &final_content)
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
-
-	// Update operation details with success status
-	for detail in &mut operation_details {
-		if detail["status"] == "parsed" {
-			detail["status"] = json!("success");
-		}
-	}
 
 	// Build annotated diff for each operation so the AI can verify edits landed correctly.
 	// In hash mode: uses content-based hashes as line prefixes.

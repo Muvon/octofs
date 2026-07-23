@@ -26,7 +26,7 @@ use std::path::Path;
 fn convert_glob_to_regex(glob_pattern: &str) -> String {
 	let patterns: Vec<&str> = glob_pattern.split('|').collect();
 
-	if patterns.len() > 1 {
+	let body = if patterns.len() > 1 {
 		let regex_patterns: Vec<String> = patterns
 			.iter()
 			.map(|p| convert_single_glob_to_regex(p.trim()))
@@ -34,7 +34,10 @@ fn convert_glob_to_regex(glob_pattern: &str) -> String {
 		format!("({})", regex_patterns.join("|"))
 	} else {
 		convert_single_glob_to_regex(glob_pattern)
-	}
+	};
+	// Anchored: the glob must match the whole relative path, not a substring —
+	// unanchored, `*.rs` also matched `main.rsx`.
+	format!("^(?:{body})$")
 }
 
 fn convert_single_glob_to_regex(pattern: &str) -> String {
@@ -57,7 +60,7 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 					regex.push(']');
 				}
 			}
-			c if "(){}^$+|\\".contains(c) => {
+			c if "(){}^$+|\\.".contains(c) => {
 				regex.push('\\');
 				regex.push(c);
 			}
@@ -231,12 +234,13 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
 			let mut files = collect_file_paths(&mut builder, &working_dir);
 
-			// Apply glob pattern filter if provided
+			// Apply glob pattern filter if provided — an unparseable pattern is a caller
+			// error, not a reason to silently return the unfiltered listing.
 			if let Some(ref name_pattern) = pattern {
 				let regex_pattern = convert_glob_to_regex(name_pattern);
-				if let Ok(regex) = regex::Regex::new(&regex_pattern) {
-					files.retain(|file| regex.is_match(file));
-				}
+				let regex = regex::Regex::new(&regex_pattern)
+					.map_err(|e| format!("Invalid `pattern` glob '{}': {}", name_pattern, e))?;
+				files.retain(|file| regex.is_match(file));
 			}
 
 			// Parallel stat: read each file to count lines and estimate tokens.
@@ -284,6 +288,19 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 mod tests {
 	use super::*;
 	use serde_json::json;
+
+	#[test]
+	fn test_glob_regex_is_anchored_and_escapes_dot() {
+		let re = regex::Regex::new(&convert_glob_to_regex("*.rs")).unwrap();
+		assert!(re.is_match("main.rs"));
+		assert!(re.is_match("src/main.rs"));
+		assert!(!re.is_match("main.rsx"), "unanchored regex matched suffix");
+		assert!(!re.is_match("mainxrs"), "unescaped '.' matched any char");
+
+		let multi = regex::Regex::new(&convert_glob_to_regex("*.rs|*.toml")).unwrap();
+		assert!(multi.is_match("Cargo.toml"));
+		assert!(!multi.is_match("Cargo.toml.bak"));
+	}
 
 	#[test]
 	fn test_content_search_with_special_chars() {

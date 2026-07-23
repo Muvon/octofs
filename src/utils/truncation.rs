@@ -19,21 +19,6 @@ pub fn estimate_tokens(content: &str) -> usize {
 	content.len().div_ceil(4)
 }
 
-/// Truncate content to approximately `max_tokens` tokens, preserving whole lines.
-pub fn truncate_to_tokens(content: &str, max_tokens: usize) -> String {
-	let max_chars = max_tokens * 4;
-	if content.len() <= max_chars {
-		return content.to_string();
-	}
-	// Find a clean line boundary near the limit
-	let truncated = &content[..max_chars.min(content.len())];
-	if let Some(last_newline) = truncated.rfind('\n') {
-		content[..last_newline].to_string()
-	} else {
-		truncated.to_string()
-	}
-}
-
 /// Format content with line identifiers (numbers or hashes) and smart elision for display.
 pub fn format_content_with_line_numbers(
 	lines: &[&str],
@@ -179,63 +164,5 @@ pub fn format_extracted_content_smart(
 		}
 
 		result_lines.join("\n")
-	}
-}
-
-/// Truncate content based on token count with smart boundary detection.
-pub fn truncate_content_smart(content: &str, max_tokens: usize) -> String {
-	let token_count = estimate_tokens(content);
-	if token_count <= max_tokens {
-		return content.to_string();
-	}
-	let truncated = truncate_to_tokens(content, max_tokens);
-	format!(
-		"{truncated}\n\n⚠️ **MCP RESPONSE TRUNCATED** - Original: {token_count} tokens estimated, max {max_tokens} allowed. Use more specific commands to reduce output size]"
-	)
-}
-
-/// Global MCP response truncation.
-/// Returns `(content, was_truncated)`.
-pub fn truncate_mcp_response_global(content: &str, max_tokens: usize) -> (String, bool) {
-	if max_tokens == 0 {
-		return (content.to_string(), false);
-	}
-
-	let token_count = estimate_tokens(content);
-	if token_count <= max_tokens {
-		return (content.to_string(), false);
-	}
-
-	let truncated = truncate_content_smart(content, max_tokens);
-	(truncated, true)
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_mcp_truncation_unlimited() {
-		let content = "This is a test content";
-		let (result, was_truncated) = truncate_mcp_response_global(content, 0);
-		assert_eq!(result, content);
-		assert!(!was_truncated);
-	}
-
-	#[test]
-	fn test_mcp_truncation_under_limit() {
-		let content = "Short content";
-		let (result, was_truncated) = truncate_mcp_response_global(content, 1000);
-		assert_eq!(result, content);
-		assert!(!was_truncated);
-	}
-
-	#[test]
-	fn test_mcp_truncation_over_limit() {
-		let content = "This is a very long content that should be truncated when it exceeds the token limit. ".repeat(100);
-		let (result, was_truncated) = truncate_mcp_response_global(&content, 50);
-		assert!(result.contains("⚠️ **MCP RESPONSE TRUNCATED**"));
-		assert!(result.len() < content.len());
-		assert!(was_truncated);
 	}
 }

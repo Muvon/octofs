@@ -20,7 +20,6 @@ use std::sync::OnceLock;
 pub mod fs;
 pub mod hint_accumulator;
 pub mod server;
-pub mod shared_utils;
 
 // Session working directory is now stored per-server-instance (see server.rs).
 // This module only provides helper functions for the session root directory.

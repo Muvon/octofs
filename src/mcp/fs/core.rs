@@ -81,6 +81,11 @@ pub async fn save_file_history(path: &Path) -> Result<()> {
 
 // Undo the last edit to a file
 pub async fn undo_edit(path: &Path) -> Result<String> {
+	// Serialize with other writers on the same file — without this, an undo racing a
+	// concurrent str_replace/batch_edit could interleave the pop and write and lose data.
+	let file_lock = text_editing::acquire_file_lock(path).await?;
+	let _lock_guard = file_lock.lock().await;
+
 	let path_str = text_editing::lock_key_for(path);
 
 	// First retrieve the previous content while holding the lock
@@ -108,31 +113,6 @@ pub async fn undo_edit(path: &Path) -> Result<String> {
 		))
 	} else {
 		bail!("No more undo history for this file (up to 10 levels are stored per file).");
-	}
-}
-
-// Helper function to detect language based on file extension
-pub fn detect_language(ext: &str) -> &str {
-	match ext {
-		"rs" => "rust",
-		"py" => "python",
-		"js" => "javascript",
-		"ts" => "typescript",
-		"jsx" => "jsx",
-		"tsx" => "tsx",
-		"html" => "html",
-		"css" => "css",
-		"json" => "json",
-		"md" => "markdown",
-		"go" => "go",
-		"java" => "java",
-		"c" | "h" | "cpp" => "cpp",
-		"toml" => "toml",
-		"yaml" | "yml" => "yaml",
-		"php" => "php",
-		"xml" => "xml",
-		"sh" => "bash",
-		_ => "text",
 	}
 }
 
@@ -259,6 +239,14 @@ async fn resolve_view_range(
 ) -> Result<Option<(usize, i64)>> {
 	if start_ep.is_none() && end_ep.is_none() {
 		return Ok(None);
+	}
+
+	// Same limit view_file_spec enforces — check before loading so a huge file isn't
+	// read fully here just to resolve a range and then be rejected downstream.
+	if let Ok(meta) = tokio_fs::metadata(resolved_path).await {
+		if meta.len() > file_ops::MAX_VIEW_FILE_BYTES {
+			bail!("File is too large (>5MB)");
+		}
 	}
 
 	let content = tokio_fs::read_to_string(resolved_path).await.ok();
@@ -475,6 +463,11 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	}
 
+	// extract_lines modifies the target just like text_editor/batch_edit do — take the
+	// same per-file lock so concurrent writers serialize instead of clobbering each other.
+	let file_lock = text_editing::acquire_file_lock(&append_path_obj).await?;
+	let _lock_guard = file_lock.lock().await;
+
 	// Read existing target file content or create empty if doesn't exist
 	let target_content = if append_path_obj.exists() {
 		match tokio_fs::read_to_string(&append_path_obj).await {
@@ -564,8 +557,10 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Write the final content to target file
-	if let Err(e) = tokio_fs::write(&append_path_obj, &final_content).await {
+	// Snapshot the target for undo_edit, then write atomically — same guarantees as
+	// every other edit path (no partial file on interruption, permissions preserved).
+	save_file_history(&append_path_obj).await?;
+	if let Err(e) = text_editing::atomic_write(&append_path_obj, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}
 

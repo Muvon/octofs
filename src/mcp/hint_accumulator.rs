@@ -39,8 +39,3 @@ pub fn drain_hints() -> Vec<String> {
 	let mut seen = std::collections::HashSet::new();
 	hints.drain(..).filter(|h| seen.insert(h.clone())).collect()
 }
-
-/// Returns true if there are any pending hints (without draining).
-pub fn has_hints() -> bool {
-	HINTS.lock().is_ok_and(|h| !h.is_empty())
-}

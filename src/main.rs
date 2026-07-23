@@ -52,9 +52,6 @@ async fn main() -> Result<()> {
 			// Set the session root directory for all tool calls
 			mcp::set_session_root_directory(working_directory.clone());
 
-			// Create the MCP server
-			let server = mcp::server::OctofsServer::new();
-
 			match bind {
 				Some(addr) => {
 					// HTTP mode with Streamable HTTP transport
@@ -62,7 +59,7 @@ async fn main() -> Result<()> {
 				}
 				None => {
 					// STDIO mode (default)
-					run_stdio_server(server).await?;
+					run_stdio_server(mcp::server::OctofsServer::new()).await?;
 				}
 			}
 		}
@@ -148,6 +145,9 @@ async fn run_http_server(bind_addr: &str) -> Result<()> {
 			ct.cancel();
 		})
 		.await;
+
+	// Same orphan cleanup as STDIO shutdown — in-flight shell children must not survive.
+	mcp::fs::shell::kill_all_shell_children();
 
 	Ok(())
 }

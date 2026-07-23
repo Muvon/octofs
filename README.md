@@ -4,7 +4,7 @@
 
 **Give your AI assistant filesystem superpowers**
 
-[![Rust](https://img.shields.io/badge/Rust-1.92+-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-2025--03--26-green.svg)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/crates/v/octofs.svg)](https://crates.io/crates/octofs)
@@ -62,7 +62,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart—but it's **
 
 ### From Source
 
-Requires Rust 1.92+.
+Requires Rust 1.95+.
 
 ```bash
 # Clone and build
@@ -404,7 +404,6 @@ octofs/
 │   ├── cli.rs               # CLI argument parsing (clap)
 │   └── mcp/
 │       ├── server.rs        # MCP protocol handler (rmcp SDK)
-│       ├── shared_utils.rs  # Shared utilities
 │       ├── hint_accumulator.rs  # Tool feedback hints
 │       └── fs/              # Filesystem tools
 │           ├── core.rs          # view, batch_edit, extract_lines, text_editor
@@ -416,7 +415,6 @@ octofs/
 │           ├── workdir.rs         # Working directory management
 │           └── fs_tests.rs        # Unit tests
 └── src/utils/
-    ├── glob.rs              # Glob pattern matching
     ├── line_hash.rs         # Content-based line hashing
     └── truncation.rs        # Smart content truncation
 ```

@@ -68,27 +68,22 @@ pub fn kill_all_shell_children() {
 	}
 }
 
-// Each entry: (triggering programs, required tool name, hint message).
-// The hint is only shown when the recommended tool is actually enabled.
-static SHELL_MISUSE_HINTS: &[(&[&str], &str, &str)] = &[
+// Each entry: (triggering programs, hint message).
+static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"view",
 		"⚠️ Prefer `view` for reading files (line-numbered, supports ranges). Use shell only when piping output.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"view",
 		"⚠️ Use `view` with content= to search for text in files or directories (gitignore-aware, context lines, line numbers).",
 	),
 	(
 		&["find", "ls"],
-		"view",
 		"⚠️ Prefer `view` for directory listing (.gitignore-aware, pattern/content filtering). Use shell only for system paths outside the project.",
 	),
 	(
 		&["sed", "awk"],
-		"text_editor",
 		"⚠️ Prefer `text_editor` str_replace or `batch_edit` for file edits (atomic, tracked). Use sed/awk only for stream transforms in pipelines.",
 	),
 ];
@@ -106,7 +101,6 @@ static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
 ];
 
 // Detect shell commands that should use a dedicated MCP tool instead.
-// Returns a hint only when the recommended tool is actually enabled in the current session.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	let cmd = command.trim();
 
@@ -115,9 +109,8 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 		cmd == prog || cmd.starts_with(&format!("{prog} ")) || cmd.starts_with(&format!("{prog}\t"))
 	};
 
-	for (progs, _tool, hint) in SHELL_MISUSE_HINTS {
+	for (progs, hint) in SHELL_MISUSE_HINTS {
 		if progs.iter().any(|p| is_prog(p)) {
-			// Always emit hint — no tool_map in octofs
 			return Some(hint);
 		}
 	}
@@ -151,11 +144,6 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 		.get("background")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
-
-	// NOTE: We do NOT add MCP tool commands to shell history
-	// NOTE: We do NOT add MCP tool commands to shell history
-	// Only direct user commands via `octomind shell` CLI should persist to history
-	// (see src/commands/shell.rs for user-initiated shell history)
 
 	// Get the working directory from the call context
 	let working_dir = call.workdir.clone();
@@ -218,12 +206,13 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 			.id()
 			.ok_or_else(|| anyhow!("Failed to get process ID"))?;
 
-		// Detach the child process so it continues running independently
-		// We do this by forgetting the child handle, which prevents kill_on_drop
-		std::mem::forget(child);
+		// Drop (don't forget) the handle: kill_on_drop is false so the child keeps
+		// running, and tokio's background reaper collects its exit status — forgetting
+		// the handle would leave a zombie behind once the child exits.
+		drop(child);
 
 		return Ok(format!(
-			"Command started in background with PID {pid}\nUse 'kill {pid}' to terminate this background process if needed"
+			"Command started in background with PID {pid}\nTo terminate it later run: kill -- -{pid} (negative PID kills its whole process group)"
 		));
 	}
 
@@ -248,16 +237,13 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 			let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
 			// Format the output more clearly with error handling
-			let combined = if stderr.is_empty() {
+			let final_output = if stderr.is_empty() {
 				stdout
 			} else if stdout.is_empty() {
 				stderr
 			} else {
 				format!("{stdout}\n\nError: {stderr}")
 			};
-
-			// Apply global truncation (handled by global MCP response truncation)
-			let final_output = combined;
 
 			// Add detailed execution results including status code
 			let status_code = output.status.code().unwrap_or(-1);

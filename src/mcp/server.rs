@@ -74,14 +74,6 @@ impl OctofsServer {
 			workdir: Arc::new(SessionWorkdir::new(root)),
 		}
 	}
-
-	/// Create a new server instance with an explicit root directory.
-	/// Used by HTTP mode to create fresh instances per session.
-	pub fn with_root(root: PathBuf) -> Self {
-		Self {
-			workdir: Arc::new(SessionWorkdir::new(root)),
-		}
-	}
 }
 
 impl Default for OctofsServer {
