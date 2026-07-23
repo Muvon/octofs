@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::fs;
-use super::hint_accumulator;
+use super::request_ctx;
 use super::McpToolCall;
 
 /// Per-session working directory state.
@@ -64,6 +64,8 @@ impl SessionWorkdir {
 pub struct OctofsServer {
 	/// Per-session working directory state.
 	workdir: Arc<SessionWorkdir>,
+	/// Per-session file fingerprints for stale-write detection (see request_ctx).
+	stamps: request_ctx::FileStamps,
 }
 
 impl OctofsServer {
@@ -72,6 +74,7 @@ impl OctofsServer {
 		let root = super::get_session_root_directory();
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
+			stamps: request_ctx::FileStamps::default(),
 		}
 	}
 }
@@ -97,8 +100,11 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
-		Ok(append_hints(result))
+		request_ctx::with_request_context(self.stamps.clone(), async move {
+			let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
+			Ok(append_hints(result))
+		})
+		.await
 	}
 
 	#[tool(
@@ -115,10 +121,13 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let result = fs::execute_text_editor(&call)
-			.await
-			.map_err(|e| e.to_string())?;
-		Ok(append_hints(result))
+		request_ctx::with_request_context(self.stamps.clone(), async move {
+			let result = fs::execute_text_editor(&call)
+				.await
+				.map_err(|e| e.to_string())?;
+			Ok(append_hints(result))
+		})
+		.await
 	}
 
 	#[tool(description = "Perform multiple insert/replace operations on a SINGLE file atomically.")]
@@ -133,10 +142,13 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let result = fs::execute_batch_edit(&call)
-			.await
-			.map_err(|e| e.to_string())?;
-		Ok(append_hints(result))
+		request_ctx::with_request_context(self.stamps.clone(), async move {
+			let result = fs::execute_batch_edit(&call)
+				.await
+				.map_err(|e| e.to_string())?;
+			Ok(append_hints(result))
+		})
+		.await
 	}
 
 	#[tool(description = "Copy lines from a source file and append them into a target file.")]
@@ -151,10 +163,13 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let result = fs::execute_extract_lines(&call)
-			.await
-			.map_err(|e| e.to_string())?;
-		Ok(append_hints(result))
+		request_ctx::with_request_context(self.stamps.clone(), async move {
+			let result = fs::execute_extract_lines(&call)
+				.await
+				.map_err(|e| e.to_string())?;
+			Ok(append_hints(result))
+		})
+		.await
 	}
 
 	#[tool(
@@ -172,10 +187,13 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let result = fs::execute_shell_command(&call)
-			.await
-			.map_err(|e| e.to_string())?;
-		Ok(append_hints(result))
+		request_ctx::with_request_context(self.stamps.clone(), async move {
+			let result = fs::execute_shell_command(&call)
+				.await
+				.map_err(|e| e.to_string())?;
+			Ok(append_hints(result))
+		})
+		.await
 	}
 
 	#[tool(
@@ -260,10 +278,10 @@ impl ServerHandler for OctofsServer {
 	}
 }
 
-/// Drain any accumulated hints and append them to the tool result.
-/// Called after tool execution to surface misuse guidance to the LLM.
+/// Drain this request's hints and append them to the tool result.
+/// Called after tool execution (inside the request scope) to surface guidance to the LLM.
 fn append_hints(mut result: String) -> String {
-	let hints = hint_accumulator::drain_hints();
+	let hints = request_ctx::drain_hints();
 	if !hints.is_empty() {
 		result.push_str("\n\n");
 		for hint in hints {

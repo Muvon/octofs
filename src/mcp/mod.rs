@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 pub mod fs;
-pub mod hint_accumulator;
+pub mod request_ctx;
 pub mod server;
 
 // Session working directory is now stored per-server-instance (see server.rs).

@@ -42,39 +42,81 @@ pub fn resolve_path(path_str: &str, workdir: &Path) -> std::path::PathBuf {
 // shared with text_editing — see line_hash::resolve_line_index / resolve_line_index_clamped.
 use crate::utils::line_hash::{resolve_line_index, resolve_line_index_clamped};
 
-// Thread-safe lazy initialization of file history using OnceLock
-static FILE_HISTORY: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+// Undo history: per-file snapshots with a global byte budget so a long-lived
+// server (HTTP mode, days of edits) cannot grow without bound.
+const MAX_HISTORY_PER_FILE: usize = 10;
+const MAX_HISTORY_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 
-// Thread-safe way to get the file history
-pub fn get_file_history() -> &'static Mutex<HashMap<String, Vec<String>>> {
-	FILE_HISTORY.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+struct HistoryStore {
+	files: HashMap<String, Vec<String>>,
+	// One entry per snapshot push, oldest first. May reference paths whose oldest
+	// snapshot is already gone (undo pops, per-file cap) — eviction skips those.
+	order: std::collections::VecDeque<String>,
+	total_bytes: usize,
+}
+
+impl HistoryStore {
+	fn push(&mut self, key: String, content: String, byte_cap: usize) {
+		self.total_bytes += content.len();
+		let history = self.files.entry(key.clone()).or_default();
+		if history.len() >= MAX_HISTORY_PER_FILE {
+			let removed = history.remove(0);
+			self.total_bytes -= removed.len();
+		}
+		history.push(content);
+		self.order.push_back(key);
+
+		// Over budget: drop the globally oldest snapshots. `len() > 1` keeps the
+		// snapshot just pushed even if it alone exceeds the cap — evicting it
+		// would silently break undo for the file being edited right now.
+		while self.total_bytes > byte_cap && self.order.len() > 1 {
+			let Some(oldest) = self.order.pop_front() else {
+				break;
+			};
+			let Some(history) = self.files.get_mut(&oldest) else {
+				continue;
+			};
+			if history.is_empty() {
+				self.files.remove(&oldest);
+				continue;
+			}
+			let removed = history.remove(0);
+			self.total_bytes -= removed.len();
+			if history.is_empty() {
+				self.files.remove(&oldest);
+			}
+		}
+	}
+
+	fn pop(&mut self, key: &str) -> Option<String> {
+		let history = self.files.get_mut(key)?;
+		let content = history.pop()?;
+		self.total_bytes -= content.len();
+		if history.is_empty() {
+			self.files.remove(key);
+		}
+		Some(content)
+	}
+}
+
+static FILE_HISTORY: OnceLock<Mutex<HistoryStore>> = OnceLock::new();
+
+fn file_history() -> &'static Mutex<HistoryStore> {
+	FILE_HISTORY.get_or_init(|| Mutex::new(HistoryStore::default()))
 }
 
 // Save the current content of a file for undo
 pub async fn save_file_history(path: &Path) -> Result<()> {
 	if path.exists() {
-		// First read the content
 		let content = tokio_fs::read_to_string(path).await?;
 		// Use the same canonicalized key as the file lock map so undo history
 		// follows the file even when callers pass aliased paths.
 		let path_str = text_editing::lock_key_for(path);
-
-		// Then update the history with the lock held
-		let file_history = get_file_history();
-		{
-			let mut history_guard = file_history
-				.lock()
-				.map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
-
-			let history = history_guard.entry(path_str).or_insert_with(Vec::new);
-
-			// Limit history size to avoid excessive memory usage
-			if history.len() >= 10 {
-				history.remove(0);
-			}
-
-			history.push(content);
-		} // Lock is released here
+		file_history()
+			.lock()
+			.map_err(|_| anyhow!("Failed to acquire lock on file history"))?
+			.push(path_str, content, MAX_HISTORY_TOTAL_BYTES);
 	}
 	Ok(())
 }
@@ -86,26 +128,19 @@ pub async fn undo_edit(path: &Path) -> Result<String> {
 	let file_lock = text_editing::acquire_file_lock(path).await?;
 	let _lock_guard = file_lock.lock().await;
 
+	// An undo would clobber an external edit just like any other write.
+	// Check BEFORE popping so a stale error doesn't consume an undo level.
+	crate::mcp::request_ctx::ensure_not_stale(path)?;
+
 	let path_str = text_editing::lock_key_for(path);
+	let previous_content = file_history()
+		.lock()
+		.map_err(|_| anyhow!("Failed to acquire lock on file history"))?
+		.pop(&path_str);
 
-	// First retrieve the previous content while holding the lock
-	let previous_content = {
-		let file_history = get_file_history();
-		let mut history_guard = file_history
-			.lock()
-			.map_err(|_| anyhow!("Failed to acquire lock on file history"))?;
-
-		if let Some(history) = history_guard.get_mut(&path_str) {
-			history.pop()
-		} else {
-			None
-		}
-	}; // Lock is released here when history_guard goes out of scope
-
-	// Now we have the previous content or None, and we've released the lock
 	if let Some(prev_content) = previous_content {
-		// Atomic write for undo
 		text_editing::atomic_write(path, &prev_content).await?;
+		crate::mcp::request_ctx::record_stamp(path);
 
 		Ok(format!(
 			"Successfully undid the last edit to {}",
@@ -146,7 +181,11 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'content' parameter for create command");
 				}
 			};
-			file_ops::create_file_spec(&resolve_path(&path, &call.workdir), &content).await
+			let resolved = resolve_path(&path, &call.workdir);
+			let result = file_ops::create_file_spec(&resolved, &content).await?;
+			// The model wrote this content — stamp it so it can edit without re-viewing.
+			crate::mcp::request_ctx::record_stamp(&resolved);
+			Ok(result)
 		}
 		"str_replace" => {
 			let path = match call.parameters.get("path") {
@@ -272,7 +311,7 @@ async fn resolve_view_range(
 		bail!("Invalid lines parameter: start line {start} is after end line {end}");
 	}
 	if clamped {
-		crate::mcp::hint_accumulator::push_hint(&format!(
+		crate::mcp::request_ctx::push_hint(&format!(
 			"Requested line range was out of bounds for a {total_lines}-line file; clamped to [{start}, {end}]. Use line numbers within 1..={total_lines} (negative indices count from the end)."
 		));
 	}
@@ -327,7 +366,11 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
 	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
 	let range = resolve_view_range(start_ep, end_ep, &resolved).await?;
-	file_ops::view_file_spec(&resolved, range).await
+	let result = file_ops::view_file_spec(&resolved, range).await?;
+	// The model has now seen this file's content — stamp it so a later edit can
+	// detect an external change in between.
+	crate::mcp::request_ctx::record_stamp(&resolved);
+	Ok(result)
 }
 
 // Execute extract_lines command - MCP compliant implementation
@@ -390,6 +433,8 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	if !from_path_obj.exists() {
 		bail!("Source file does not exist: {from_path}");
 	}
+	// Line numbers/hashes were chosen against viewed content — refuse if it shifted.
+	crate::mcp::request_ctx::ensure_not_stale(&from_path_obj)?;
 
 	let source_content = match tokio_fs::read_to_string(&from_path_obj).await {
 		Ok(content) => content,
@@ -434,7 +479,10 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let extracted_content_display = format_extracted_content_smart(
 		&extracted_lines,
 		from_range.0, // Start line number (1-indexed)
-		Some(30),     // Limit display to 30 lines with smart truncation
+		// Deliberate 30-line cap: this is a confirmation echo, not data transfer —
+		// the model chose this exact content, the marker preserves the hidden count,
+		// and the full result is on disk behind `view`.
+		Some(30),
 		extracted_hashes.as_deref(),
 	);
 
@@ -467,6 +515,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// same per-file lock so concurrent writers serialize instead of clobbering each other.
 	let file_lock = text_editing::acquire_file_lock(&append_path_obj).await?;
 	let _lock_guard = file_lock.lock().await;
+	crate::mcp::request_ctx::ensure_not_stale(&append_path_obj)?;
 
 	// Read existing target file content or create empty if doesn't exist
 	let target_content = if append_path_obj.exists() {
@@ -563,6 +612,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	if let Err(e) = text_editing::atomic_write(&append_path_obj, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}
+	crate::mcp::request_ctx::record_stamp(&append_path_obj);
 
 	// Return success result with useful information
 	let lines_extracted = from_range.1 - from_range.0 + 1;
@@ -589,4 +639,43 @@ pub async fn execute_batch_edit(call: &McpToolCall) -> Result<String> {
 	};
 
 	text_editing::batch_edit_spec(call, &operations_vec).await
+}
+
+#[cfg(test)]
+mod history_tests {
+	use super::*;
+
+	#[test]
+	fn test_history_store_byte_cap_evicts_globally_oldest() {
+		let mut store = HistoryStore::default();
+		store.push("a".to_string(), "x".repeat(100), 250);
+		store.push("b".to_string(), "y".repeat(100), 250);
+		store.push("c".to_string(), "z".repeat(100), 250);
+		assert!(store.pop("a").is_none(), "oldest snapshot must be evicted");
+		assert!(store.pop("b").is_some());
+		assert!(store.pop("c").is_some());
+	}
+
+	#[test]
+	fn test_history_store_never_evicts_the_snapshot_just_pushed() {
+		let mut store = HistoryStore::default();
+		store.push("big".to_string(), "x".repeat(1000), 250);
+		assert!(
+			store.pop("big").is_some(),
+			"the newest snapshot survives even when it alone exceeds the cap"
+		);
+	}
+
+	#[test]
+	fn test_history_store_per_file_cap() {
+		let mut store = HistoryStore::default();
+		for i in 0..12 {
+			store.push("f".to_string(), format!("v{i}"), usize::MAX);
+		}
+		let mut n = 0;
+		while store.pop("f").is_some() {
+			n += 1;
+		}
+		assert_eq!(n, 10);
+	}
 }

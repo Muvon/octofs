@@ -21,7 +21,59 @@ use crate::utils::truncation::estimate_tokens;
 use anyhow::{bail, Result};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
+
+// Listing annotations are a pure function of file content; keying on (mtime, len)
+// makes a repeat listing of an unchanged tree stat-only instead of re-reading every
+// file. Same fingerprint editors use for external-change detection.
+type AnnotationCache = HashMap<PathBuf, (SystemTime, u64, String)>;
+static ANNOTATIONS: OnceLock<Mutex<AnnotationCache>> = OnceLock::new();
+const ANNOTATION_CACHE_MAX: usize = 100_000;
+
+fn annotation_cache() -> &'static Mutex<AnnotationCache> {
+	ANNOTATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Annotation suffix for a listed file: "NL\t~Nt" or "(binary)". None = unreadable.
+fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> Option<String> {
+	if let Some(mt) = mtime {
+		if let Some((c_mt, c_len, suffix)) = annotation_cache()
+			.lock()
+			.expect("annotation cache poisoned")
+			.get(full_path)
+		{
+			if *c_mt == mt && *c_len == len {
+				return Some(suffix.clone());
+			}
+		}
+	}
+
+	let bytes = std::fs::read(full_path).ok()?;
+	// Skip likely binary files: NUL-density check on a leading sample.
+	let sample_size = bytes.len().min(512);
+	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
+	let suffix = if null_count > sample_size / 10 {
+		"(binary)".to_string()
+	} else {
+		let text = String::from_utf8_lossy(&bytes);
+		format!("{}L\t~{}t", text.lines().count(), estimate_tokens(&text))
+	};
+
+	if let Some(mt) = mtime {
+		let mut cache = annotation_cache()
+			.lock()
+			.expect("annotation cache poisoned");
+		// ponytail: crude bound — clear and rebuild lazily instead of tracking LRU.
+		if cache.len() >= ANNOTATION_CACHE_MAX {
+			cache.clear();
+		}
+		cache.insert(full_path.to_path_buf(), (mt, len, suffix.clone()));
+	}
+	Some(suffix)
+}
 // Convert glob pattern to regex pattern for filename filtering
 fn convert_glob_to_regex(glob_pattern: &str) -> String {
 	let patterns: Vec<&str> = glob_pattern.split('|').collect();
@@ -261,35 +313,23 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 				files.retain(|file| regex.is_match(file));
 			}
 
-			// Parallel stat: read each file to count lines and estimate tokens.
+			// Parallel annotation (cached by mtime+len — see annotation_suffix).
 			// Order is preserved via the carried index so output stays alphabetic.
 			let mut indexed: Vec<(usize, String)> = files
 				.par_iter()
 				.enumerate()
 				.map(|(i, rel_path)| {
 					let full_path = working_dir.join(rel_path);
-					// Annotate oversized files from metadata alone — reading a huge
-					// artifact just to count its lines wastes I/O and memory.
-					if let Ok(meta) = std::fs::metadata(&full_path) {
-						if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES {
-							return (
-								i,
-								format!("{}\t(large: {}MB)", rel_path, meta.len() / (1024 * 1024)),
-							);
+					let line = match std::fs::metadata(&full_path) {
+						// Annotate oversized files from metadata alone — reading a huge
+						// artifact just to count its lines wastes I/O and memory.
+						Ok(meta) if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES => {
+							format!("{}\t(large: {}MB)", rel_path, meta.len() / (1024 * 1024))
 						}
-					}
-					let line = match std::fs::read(&full_path) {
-						Ok(bytes) => {
-							// Skip likely binary files: NUL-density check on a leading sample.
-							let sample_size = bytes.len().min(512);
-							let null_count =
-								bytes[..sample_size].iter().filter(|&&b| b == 0).count();
-							if null_count > sample_size / 10 {
-								format!("{}\t(binary)", rel_path)
-							} else {
-								let text = String::from_utf8_lossy(&bytes);
-								let lines = text.lines().count();
-								format!("{}\t{}L\t~{}t", rel_path, lines, estimate_tokens(&text))
+						Ok(meta) => {
+							match annotation_suffix(&full_path, meta.modified().ok(), meta.len()) {
+								Some(suffix) => format!("{}\t{}", rel_path, suffix),
+								None => rel_path.clone(),
 							}
 						}
 						Err(_) => rel_path.clone(),
@@ -337,6 +377,38 @@ mod tests {
 		let blocks = search::search_content(content, "backward_step()", 0);
 		assert_eq!(blocks.len(), 1);
 		assert_eq!(blocks[0].line_numbers, vec![2]);
+	}
+
+	#[tokio::test]
+	async fn test_listing_annotation_updates_after_modification() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		let file = temp_path.join("data.txt");
+		fs::write(&file, "a\nb\n").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({}),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let first = list_directory(&call, temp_path.to_str().unwrap())
+			.await
+			.unwrap();
+		assert!(first.contains("2L"), "got: {first}");
+
+		fs::write(&file, "a\nb\nc\nd\n").unwrap();
+		let second = list_directory(&call, temp_path.to_str().unwrap())
+			.await
+			.unwrap();
+		assert!(
+			second.contains("4L"),
+			"cache must not serve a stale annotation: {second}"
+		);
 	}
 
 	#[tokio::test]
