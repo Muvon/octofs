@@ -17,7 +17,6 @@
 // Including position guarantees uniqueness for duplicate lines without any collision
 // resolution — no two lines can share a hash because their positions differ.
 
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Line identifier mode: sequential numbers or content-based hashes.
@@ -75,22 +74,25 @@ pub fn compute_line_hashes(lines: &[&str]) -> Vec<String> {
 		.collect()
 }
 
-/// Build a reverse lookup map: hash string → 1-indexed line number.
-pub fn build_hash_to_line_map(lines: &[&str]) -> HashMap<String, usize> {
-	let hashes = compute_line_hashes(lines);
-	let mut map = HashMap::with_capacity(hashes.len());
-	for (i, hash) in hashes.into_iter().enumerate() {
-		map.insert(hash, i + 1);
-	}
-	map
-}
-
 /// Resolve a single hash string to a 1-indexed line number.
+/// 16-bit hashes can collide in larger files; an ambiguous hash is a hard error —
+/// silently picking one of the colliding lines would edit the wrong line.
 pub fn resolve_hash_to_line(hash: &str, lines: &[&str]) -> Result<usize, String> {
-	let map = build_hash_to_line_map(lines);
-	map.get(hash)
-		.copied()
-		.ok_or_else(|| format!("Hash '{}' not found in file content", hash))
+	let mut found: Option<usize> = None;
+	for (i, h) in compute_line_hashes(lines).iter().enumerate() {
+		if h == hash {
+			if let Some(first) = found {
+				return Err(format!(
+					"Hash '{}' is ambiguous: lines {} and {} share it. Use line numbers for this edit instead.",
+					hash,
+					first,
+					i + 1
+				));
+			}
+			found = Some(i + 1);
+		}
+	}
+	found.ok_or_else(|| format!("Hash '{}' not found in file content", hash))
 }
 
 // ── Line number resolution ─────────────────────────────────────────────────────────
@@ -272,15 +274,21 @@ mod tests {
 	}
 
 	#[test]
-	fn test_reverse_lookup() {
-		let lines = vec!["first", "second", "third"];
-		let map = build_hash_to_line_map(&lines);
-		assert_eq!(map.len(), 3);
+	fn test_ambiguous_hash_is_an_error() {
+		// Brute-force a real 16-bit collision: content at line 2 whose hash equals line 1's.
+		let base = "line-0";
+		let target = fnv1a_16("1:line-0");
+		let collider = (0..1_000_000)
+			.map(|k| format!("line-{k}"))
+			.find(|cand| fnv1a_16(&format!("2:{cand}")) == target)
+			.expect("collision must exist in 16-bit space");
 
+		let lines = vec![base, collider.as_str()];
 		let hashes = compute_line_hashes(&lines);
-		assert_eq!(map[&hashes[0]], 1);
-		assert_eq!(map[&hashes[1]], 2);
-		assert_eq!(map[&hashes[2]], 3);
+		assert_eq!(hashes[0], hashes[1]);
+
+		let err = resolve_hash_to_line(&hashes[0], &lines).unwrap_err();
+		assert!(err.contains("ambiguous"), "got: {err}");
 	}
 
 	#[test]

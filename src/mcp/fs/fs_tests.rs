@@ -1544,8 +1544,8 @@ mod tests {
 
 		let msg = err.to_string();
 		assert!(
-			msg.contains("No valid operations found"),
-			"Should indicate no valid operations: {}",
+			msg.contains("No operations were applied"),
+			"Should indicate nothing was applied: {}",
 			msg
 		);
 		assert!(
@@ -1553,6 +1553,27 @@ mod tests {
 			"Should indicate parsing failure: {}",
 			msg
 		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_is_atomic_when_one_op_is_malformed() {
+		// One valid replace + one malformed op: NOTHING must be applied.
+		let temp_file = create_test_file("line 1\nline 2\n").await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		let operations = json!([
+			{"operation": "replace", "start": 1, "content": "changed"},
+			{"operation": "bogus", "start": 2, "content": "x"}
+		]);
+
+		let call = create_batch_edit_call(&path, operations).await;
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap_err();
+		assert!(err.to_string().contains("No operations were applied"));
+
+		let content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(content, "line 1\nline 2\n", "valid op must NOT be applied");
 	}
 
 	#[tokio::test]

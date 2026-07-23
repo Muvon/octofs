@@ -21,6 +21,9 @@ use anyhow::{anyhow, bail, Result};
 use std::path::Path;
 use tokio::fs as tokio_fs;
 
+/// Refuse to load files larger than this into memory for viewing.
+pub(crate) const MAX_VIEW_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
 // Helper function to format file content with line numbers (or hashes) and smart truncation.
 fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i64)>) -> String {
 	format_content_with_line_numbers(lines, 1, line_range)
@@ -42,8 +45,7 @@ pub async fn view_file_spec(path: &Path, line_range: Option<(usize, i64)>) -> Re
 	let metadata = tokio_fs::metadata(path)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
-	if metadata.len() > 1024 * 1024 * 5 {
-		// 5MB limit
+	if metadata.len() > MAX_VIEW_FILE_BYTES {
 		bail!("File is too large (>5MB)");
 	}
 

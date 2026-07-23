@@ -12,6 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod glob;
 pub mod line_hash;
 pub mod truncation;
