@@ -53,12 +53,22 @@ pub fn lock_key_for(path: &Path) -> String {
 	path.to_string_lossy().to_string()
 }
 
+// Sweep threshold for the lock map — far above any realistic in-flight file count.
+const LOCK_MAP_SWEEP_THRESHOLD: usize = 1024;
+
 // Acquire a file-specific lock to prevent concurrent writes to the same file
 pub(crate) async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
 	let key = lock_key_for(path);
 
 	let file_lock = {
 		let mut locks = get_file_locks().lock().expect("file locks poisoned");
+		// Bound the map for long-lived sessions: an entry whose Arc strong_count is 1
+		// is held ONLY by the map itself — we hold the map mutex, so no task can be
+		// cloning it concurrently, hence nobody owns or awaits that lock. Dropping it
+		// is safe; the next acquire of that path simply creates a fresh one.
+		if locks.len() > LOCK_MAP_SWEEP_THRESHOLD {
+			locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+		}
 		locks
 			.entry(key)
 			.or_insert_with(|| Arc::new(AsyncMutex::new(())))
@@ -66,6 +76,12 @@ pub(crate) async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>
 	};
 
 	Ok(file_lock)
+}
+
+/// Test-only visibility into the lock map size (sweep behavior assertions).
+#[cfg(test)]
+pub(crate) fn file_lock_map_len() -> usize {
+	get_file_locks().lock().expect("file locks poisoned").len()
 }
 
 /// Delete a file. Saves history first so `undo_edit` can restore it.
@@ -86,6 +102,7 @@ pub async fn delete_file_spec(path: &Path) -> Result<String> {
 
 	let file_lock = acquire_file_lock(path).await?;
 	let _lock_guard = file_lock.lock().await;
+	crate::mcp::request_ctx::ensure_not_stale(path)?;
 
 	// Snapshot for undo before unlinking.
 	save_file_history(path).await?;
@@ -93,6 +110,7 @@ pub async fn delete_file_spec(path: &Path) -> Result<String> {
 	tokio_fs::remove_file(path)
 		.await
 		.map_err(|e| anyhow!("Failed to delete '{}': {}", path.display(), e))?;
+	crate::mcp::request_ctx::forget_stamp(path);
 
 	Ok(format!("Successfully deleted {}", path.display()))
 }
@@ -503,6 +521,7 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 	// Acquire file lock to prevent concurrent writes
 	let file_lock = acquire_file_lock(path).await?;
 	let _lock_guard = file_lock.lock().await;
+	crate::mcp::request_ctx::ensure_not_stale(path)?;
 
 	// Read the file content
 	let content = tokio_fs::read_to_string(path)
@@ -523,9 +542,10 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 		save_file_history(path).await?;
 		let new_content = content.replace(old_text, new_text);
 		atomic_write(path, &new_content).await?;
+		crate::mcp::request_ctx::record_stamp(path);
 
 		if old_line_count > 1 {
-			crate::mcp::hint_accumulator::push_hint(&format!(
+			crate::mcp::request_ctx::push_hint(&format!(
 				"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line range — it's faster and avoids content-search ambiguity.",
 				old_line_count
 			));
@@ -610,8 +630,9 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 			save_file_history(path).await?;
 			let new_content = content.replace(&actual_old, &adjusted_new);
 			atomic_write(path, &new_content).await?;
+			crate::mcp::request_ctx::record_stamp(path);
 
-			crate::mcp::hint_accumulator::push_hint(
+			crate::mcp::request_ctx::push_hint(
 				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
 			);
 
@@ -1118,6 +1139,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Acquire file lock to prevent concurrent writes
 	let file_lock = acquire_file_lock(&path).await?;
 	let _lock_guard = file_lock.lock().await;
+	// batch_edit targets lines by number/hash chosen against VIEWED content — an
+	// external change shifts lines and would make this silently edit the wrong ones.
+	crate::mcp::request_ctx::ensure_not_stale(&path)?;
 
 	// Read original file content
 	let original_content = tokio_fs::read_to_string(&path)
@@ -1331,6 +1355,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	atomic_write(&path, &final_content)
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
+	crate::mcp::request_ctx::record_stamp(&path);
 
 	// Build annotated diff for each operation so the AI can verify edits landed correctly.
 	// In hash mode: uses content-based hashes as line prefixes.

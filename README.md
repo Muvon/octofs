@@ -148,6 +148,7 @@ Ask your AI assistant to:
 - **Delete** — Remove a file (recoverable via undo)
 - **Undo** — Revert last edit (up to 10 undo levels per file)
 - **Batch Edit** — Perform multiple insert/replace operations atomically on a single file
+- **Stale-Write Protection** — Edits fail fast if the file changed on disk since it was last viewed (external-edit detection, like an IDE's "file changed on disk" guard)
 
 ### 🔍 Code Intelligence
 
@@ -371,8 +372,11 @@ copy in the target: `0` = beginning, `-1` = end, `N` = after line N.
 **Background:**
 ```json
 {"command": "python -m http.server 8000", "background": true}
-// Returns PID, kill later with: {"command": "kill 12345"}
+// Returns PID; the response includes the platform-specific kill command
 ```
+
+> On Windows, shutdown cleanup terminates only direct child processes (no Unix
+> process-group semantics); use `taskkill /PID <pid> /T` for process trees.
 
 ---
 
@@ -404,7 +408,7 @@ octofs/
 │   ├── cli.rs               # CLI argument parsing (clap)
 │   └── mcp/
 │       ├── server.rs        # MCP protocol handler (rmcp SDK)
-│       ├── hint_accumulator.rs  # Tool feedback hints
+│       ├── request_ctx.rs   # Per-request hints + stale-file stamps
 │       └── fs/              # Filesystem tools
 │           ├── core.rs          # view, batch_edit, extract_lines, text_editor
 │           ├── text_editing.rs  # str_replace, undo, batch operations

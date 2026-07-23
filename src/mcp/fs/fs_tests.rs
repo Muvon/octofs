@@ -27,6 +27,71 @@ mod tests {
 		temp_file
 	}
 
+	#[tokio::test]
+	async fn test_edit_fails_when_file_changed_since_view() {
+		use crate::mcp::request_ctx;
+
+		let temp_file = create_test_file("alpha\nbeta\n").await;
+		let path_str = temp_file.path().to_string_lossy().to_string();
+		let stamps: request_ctx::FileStamps = Default::default();
+
+		let view_call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path_str }),
+		};
+
+		// Viewing records the file's fingerprint into the session stamps.
+		request_ctx::with_request_context(stamps.clone(), async {
+			execute_view(&view_call).await.unwrap();
+		})
+		.await;
+
+		// External modification (size changes too, so the fingerprint mismatches
+		// even on filesystems with coarse mtime resolution).
+		fs::write(temp_file.path(), "alpha\nbeta\nEXTERNAL\n")
+			.await
+			.unwrap();
+
+		// The edit must fail fast instead of applying against unseen content.
+		request_ctx::with_request_context(stamps.clone(), async {
+			let err =
+				crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "beta", "BETA")
+					.await
+					.unwrap_err();
+			assert!(err.to_string().contains("changed on disk"), "got: {err}");
+		})
+		.await;
+
+		// Re-viewing refreshes the stamp; the same edit then succeeds.
+		request_ctx::with_request_context(stamps.clone(), async {
+			execute_view(&view_call).await.unwrap();
+			crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "beta", "BETA")
+				.await
+				.unwrap();
+		})
+		.await;
+
+		let content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert!(content.contains("BETA") && content.contains("EXTERNAL"));
+	}
+
+	#[tokio::test]
+	async fn test_file_lock_map_is_bounded() {
+		use crate::mcp::fs::text_editing;
+
+		// Acquire (and immediately drop) far more locks than the sweep threshold —
+		// dead entries must be evicted instead of accumulating forever.
+		for i in 0..1200 {
+			let p = std::env::temp_dir().join(format!("octofs_lock_bound_test_{i}"));
+			let lock = text_editing::acquire_file_lock(&p).await.unwrap();
+			drop(lock);
+		}
+		let len = text_editing::file_lock_map_len();
+		assert!(len < 1200, "lock map not swept: {len} entries");
+	}
+
 	// Helper: run a single-replace batch_edit and assert file content
 	async fn test_batch_replace(
 		content: &str,

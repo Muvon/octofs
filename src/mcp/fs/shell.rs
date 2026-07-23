@@ -290,8 +290,13 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 		// the handle would leave a zombie behind once the child exits.
 		drop(child);
 
+		#[cfg(unix)]
+		let kill_hint = format!("kill -- -{pid} (negative PID kills its whole process group)");
+		#[cfg(not(unix))]
+		let kill_hint = format!("taskkill /PID {pid} /T /F (/T kills the whole process tree)");
+
 		return Ok(format!(
-			"Command started in background with PID {pid}\nTo terminate it later run: kill -- -{pid} (negative PID kills its whole process group)"
+			"Command started in background with PID {pid}\nTo terminate it later run: {kill_hint}"
 		));
 	}
 
@@ -330,7 +335,7 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 
 			// Push misuse hint into accumulator — injected as a user message after all tools finish
 			if let Some(hint) = detect_shell_misuse(&command) {
-				crate::mcp::hint_accumulator::push_hint(hint);
+				crate::mcp::request_ctx::push_hint(hint);
 			}
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
