@@ -28,10 +28,12 @@ path = "src/main.rs"
 
 # Enable static linking
 [profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
+lto = true              # Enable Link Time Optimization
+codegen-units = 1       # Reduce parallel code generation units for better optimization
+panic = "abort"         # Abort on panic for smaller binary size
+strip = true            # Strip symbols from binary
+opt-level = "s"         # Optimize for size, but keep loop vectorization ("z" disables it)
+overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "process", "fs", "sync", "signal", "io-std", "io-util", "net"] }
