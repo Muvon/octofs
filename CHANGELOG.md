@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0] - 2026-07-29
+
+### 📋 Release Summary
+
+This release introduces stale-write protection, history management, and cleaner shell command outputs (1094a3cd, 63ae5c1d). File system operations are now more robust with improved path resolution, safer cleanup utilities, and optimized memory usage during content searches (eadcbae5, 8176151c, 0cbb2093). Additionally, several fixes resolve Windows path compatibility issues and overall binary performance has been optimized (291fdc6c, 67cc0107).
+
+
+### ✨ New Features & Enhancements
+
+- **fs**: implement stale-write protection and history management `1094a3cd`
+- **shell**: strip terminal noise from command output `63ae5c1d`
+
+### 🔧 Improvements & Optimizations
+
+- **release**: optimize binary size and performance `67cc0107`
+- **fs**: enhance file safety and cleanup utilities `0cbb2093`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: normalize windows path separators `291fdc6c`
+- **fs**: improve path resolution errors and glob filtering `eadcbae5`
+- **fs**: prevent OOM and apply pattern to content search `8176151c`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.5.2] - 2026-07-06
 
 ### 📋 Release Summary
