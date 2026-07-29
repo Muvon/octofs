@@ -334,6 +334,16 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 
 	let resolved = resolve_path(&path, &call.workdir);
 
+	// Name the path and where it resolved to — a bare "File not found" hides
+	// workdir mismatches (relative path resolved against an unexpected root).
+	if !resolved.exists() {
+		bail!(
+			"Path not found: {} (resolved to {})",
+			path,
+			resolved.display()
+		);
+	}
+
 	// Directory: dispatch directly with the path string
 	if resolved.is_dir() {
 		return directory::list_directory(call, &path).await;

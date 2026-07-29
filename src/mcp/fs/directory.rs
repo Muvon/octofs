@@ -124,6 +124,24 @@ fn convert_single_glob_to_regex(pattern: &str) -> String {
 	regex
 }
 
+// A glob with no '/' matches the file name at any depth (gitignore semantics) —
+// `Model.php` finds `app/src/Plugin/Foo/Model.php`. A glob containing '/' matches
+// the workdir-relative path.
+fn filter_by_pattern(files: &mut Vec<String>, glob: &str) -> Result<(), String> {
+	let regex = regex::Regex::new(&convert_glob_to_regex(glob))
+		.map_err(|e| format!("Invalid `pattern` glob '{}': {}", glob, e))?;
+	if glob.contains('/') {
+		files.retain(|file| regex.is_match(file));
+	} else {
+		files.retain(|file| {
+			Path::new(file)
+				.file_name()
+				.is_some_and(|n| regex.is_match(&n.to_string_lossy()))
+		});
+	}
+	Ok(())
+}
+
 // Build an ignore::WalkBuilder with the given options
 fn build_walker(directory: &str, max_depth: Option<usize>, include_hidden: bool) -> WalkBuilder {
 	let mut builder = WalkBuilder::new(directory);
@@ -217,10 +235,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			// The `pattern` glob narrows content search the same way it narrows listing —
 			// silently ignoring it here would search files the caller explicitly excluded.
 			if let Some(ref name_pattern) = pattern {
-				let regex_pattern = convert_glob_to_regex(name_pattern);
-				let regex = regex::Regex::new(&regex_pattern)
-					.map_err(|e| format!("Invalid `pattern` glob '{}': {}", name_pattern, e))?;
-				files.retain(|file| regex.is_match(file));
+				filter_by_pattern(&mut files, name_pattern)?;
 			}
 
 			let hash_mode = is_hash_mode();
@@ -307,10 +322,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			// Apply glob pattern filter if provided — an unparseable pattern is a caller
 			// error, not a reason to silently return the unfiltered listing.
 			if let Some(ref name_pattern) = pattern {
-				let regex_pattern = convert_glob_to_regex(name_pattern);
-				let regex = regex::Regex::new(&regex_pattern)
-					.map_err(|e| format!("Invalid `pattern` glob '{}': {}", name_pattern, e))?;
-				files.retain(|file| regex.is_match(file));
+				filter_by_pattern(&mut files, name_pattern)?;
 			}
 
 			// Parallel annotation (cached by mtime+len — see annotation_suffix).
@@ -409,6 +421,98 @@ mod tests {
 			second.contains("4L"),
 			"cache must not serve a stale annotation: {second}"
 		);
+	}
+
+	#[tokio::test]
+	async fn test_pattern_matches_filename_in_subdirectories() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		let nested = temp_path.join("app/src/Plugin/Order");
+		fs::create_dir_all(&nested).unwrap();
+		fs::write(nested.join("Model.php"), "<?php\n").unwrap();
+		fs::write(nested.join("Controller.php"), "<?php\n").unwrap();
+		fs::write(temp_path.join("Model.php"), "<?php\n").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({ "pattern": "Model.php" }),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let result = list_directory(&call, temp_path.to_str().unwrap())
+			.await
+			.unwrap();
+
+		assert!(
+			result.contains("app/src/Plugin/Order/Model.php"),
+			"bare filename pattern must match in subdirectories: {result}"
+		);
+		assert!(result.contains("Model.php\t"), "top-level match: {result}");
+		assert!(!result.contains("Controller.php"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn test_pattern_with_slash_matches_relative_path() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		let sub = temp_path.join("sub");
+		fs::create_dir_all(&sub).unwrap();
+		fs::write(sub.join("a.rs"), "fn main() {}\n").unwrap();
+		fs::write(temp_path.join("b.rs"), "fn main() {}\n").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({ "pattern": "sub/*.rs" }),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let result = list_directory(&call, temp_path.to_str().unwrap())
+			.await
+			.unwrap();
+
+		assert!(result.contains("sub/a.rs"), "got: {result}");
+		assert!(!result.contains("b.rs"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn test_content_search_pattern_matches_filename_in_subdirectories() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		let nested = temp_path.join("app/src");
+		fs::create_dir_all(&nested).unwrap();
+		fs::write(nested.join("Model.php"), "class Model { needle }\n").unwrap();
+		fs::write(nested.join("Other.php"), "needle here too\n").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"pattern": "Model.php",
+				"content": "needle"
+			}),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let result = list_directory(&call, temp_path.to_str().unwrap())
+			.await
+			.unwrap();
+
+		assert!(
+			result.contains("app/src/Model.php"),
+			"bare filename pattern must narrow content search in subdirectories: {result}"
+		);
+		assert!(!result.contains("Other.php"), "got: {result}");
 	}
 
 	#[tokio::test]

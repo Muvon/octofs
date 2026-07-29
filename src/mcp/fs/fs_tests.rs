@@ -5377,6 +5377,27 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_view_nonexistent_path_names_path_and_resolution() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: temp_dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": "app/src/Plugin", "pattern": "Model.php" }),
+		};
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("Path not found") && err.contains("app/src/Plugin"),
+			"error must name the missing path: {err}"
+		);
+		assert!(
+			err.contains(temp_dir.path().to_string_lossy().as_ref()),
+			"error must show the resolved absolute path: {err}"
+		);
+	}
+
+	#[tokio::test]
 	async fn test_view_range_on_empty_file_is_graceful() {
 		// A range on an empty file renders the (empty) whole file rather than erroring.
 		let temp_dir = tempfile::TempDir::new().unwrap();
