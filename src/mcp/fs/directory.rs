@@ -167,11 +167,17 @@ fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<Stri
 		if !path.is_file() {
 			continue;
 		}
-		let rel = path
+		let mut rel = path
 			.strip_prefix(working_dir)
 			.unwrap_or(path)
 			.to_string_lossy()
 			.to_string();
+		// Normalize Windows separators so listings and `/`-containing glob patterns
+		// behave identically on all platforms ('\' is a legal filename char on Unix,
+		// so only rewrite it where it is a separator).
+		if cfg!(windows) {
+			rel = rel.replace('\\', "/");
+		}
 		files.push(rel);
 	}
 	files.sort();
