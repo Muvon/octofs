@@ -2,10 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
-	model::{
-		Implementation, InitializeRequestParams, InitializeResult, ProtocolVersion,
-		ServerCapabilities, ServerInfo,
-	},
+	model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
 	schemars,
 	service::RequestContext,
 	tool, tool_handler, tool_router, RoleServer,
@@ -66,6 +63,10 @@ pub struct OctofsServer {
 	workdir: Arc<SessionWorkdir>,
 	/// Per-session file fingerprints for stale-write detection (see request_ctx).
 	stamps: request_ctx::FileStamps,
+	/// Whether the session context (workdir) has been applied from client
+	/// capabilities. Applied once on the first tool call so a later `workdir`
+	/// tool change is not overwritten by subsequent requests.
+	session_applied: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl OctofsServer {
@@ -75,6 +76,43 @@ impl OctofsServer {
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
 			stamps: request_ctx::FileStamps::default(),
+			session_applied: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+		}
+	}
+
+	/// Apply the octomind session context from client capabilities
+	/// (`experimental.session.workdir`) on the first tool call.
+	///
+	/// Works for both protocol eras: modern clients (2026-07-28) carry
+	/// capabilities in every request's `_meta`, legacy clients set them during
+	/// the `initialize` handshake — `RequestContext::client_capabilities()`
+	/// resolves both.
+	fn ensure_session_workdir(&self, context: &RequestContext<RoleServer>) {
+		if self
+			.session_applied
+			.swap(true, std::sync::atomic::Ordering::SeqCst)
+		{
+			return;
+		}
+		let Some(capabilities) = context.client_capabilities() else {
+			return;
+		};
+		let Some(experimental) = &capabilities.experimental else {
+			return;
+		};
+		if let Some(session_obj) = experimental.get("session") {
+			if let Some(workdir_str) = session_obj.get("workdir").and_then(|v| v.as_str()) {
+				let path = std::path::PathBuf::from(workdir_str);
+				if path.is_absolute() && path.is_dir() {
+					self.workdir.set_current(path.clone());
+					debug!("Session workdir set from capabilities: {}", path.display());
+				} else {
+					debug!(
+						"Session workdir '{}' is not an absolute directory path, ignoring",
+						workdir_str
+					);
+				}
+			}
 		}
 	}
 }
@@ -92,7 +130,12 @@ impl OctofsServer {
 	#[tool(
 		description = "Read files, view directories, and search file content. Unified read-only tool. Listing a directory returns each file with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope unfamiliar trees and budget reads before opening files."
 	)]
-	async fn view(&self, Parameters(params): Parameters<ViewParams>) -> Result<String, String> {
+	async fn view(
+		&self,
+		context: RequestContext<RoleServer>,
+		Parameters(params): Parameters<ViewParams>,
+	) -> Result<String, String> {
+		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
@@ -112,8 +155,10 @@ impl OctofsServer {
 	)]
 	async fn text_editor(
 		&self,
+		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<TextEditorParams>,
 	) -> Result<String, String> {
+		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "text_editor".to_string(),
@@ -133,8 +178,10 @@ impl OctofsServer {
 	#[tool(description = "Perform multiple insert/replace operations on a SINGLE file atomically.")]
 	async fn batch_edit(
 		&self,
+		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<BatchEditParams>,
 	) -> Result<String, String> {
+		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "batch_edit".to_string(),
@@ -154,8 +201,10 @@ impl OctofsServer {
 	#[tool(description = "Copy lines from a source file and append them into a target file.")]
 	async fn extract_lines(
 		&self,
+		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ExtractLinesParams>,
 	) -> Result<String, String> {
+		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "extract_lines".to_string(),
@@ -179,7 +228,12 @@ impl OctofsServer {
 			byte-exact inspection (line endings, control bytes) pipe through `od -c`, `xxd`, \
 			or `cat -v` — their printable output passes through untouched."
 	)]
-	async fn shell(&self, Parameters(params): Parameters<ShellParams>) -> Result<String, String> {
+	async fn shell(
+		&self,
+		context: RequestContext<RoleServer>,
+		Parameters(params): Parameters<ShellParams>,
+	) -> Result<String, String> {
+		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "shell".to_string(),
@@ -206,8 +260,10 @@ impl OctofsServer {
 	)]
 	async fn workdir(
 		&self,
+		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<WorkdirParams>,
 	) -> Result<String, String> {
+		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "workdir".to_string(),
@@ -239,7 +295,7 @@ impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
 		ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
 			.with_server_info(Implementation::from_build_env())
-			.with_protocol_version(ProtocolVersion::V_2025_03_26)
+			.with_protocol_version(ProtocolVersion::V_2026_07_28)
 			.with_instructions(
 				"This server provides filesystem tools: view (read files/dirs), \
 				 text_editor (create/str_replace/delete/undo), batch_edit (multi-op line edits), \
@@ -249,33 +305,10 @@ impl ServerHandler for OctofsServer {
 			)
 	}
 
-	/// Extract workdir from experimental capabilities during initialize handshake.
-	/// For HTTP mode, each session can specify its initial working directory.
-	async fn initialize(
-		&self,
-		request: InitializeRequestParams,
-		_context: RequestContext<RoleServer>,
-	) -> Result<InitializeResult, rmcp::ErrorData> {
-		// Extract workdir from capabilities.experimental.session
-		if let Some(experimental) = &request.capabilities.experimental {
-			if let Some(session_obj) = experimental.get("session") {
-				if let Some(workdir_str) = session_obj.get("workdir").and_then(|v| v.as_str()) {
-					let path = std::path::PathBuf::from(workdir_str);
-					if path.is_absolute() && path.is_dir() {
-						self.workdir.set_current(path.clone());
-						debug!("Session workdir set from capabilities: {}", path.display());
-					} else {
-						debug!(
-							"Session workdir '{}' is not an absolute directory path, ignoring",
-							workdir_str
-						);
-					}
-				}
-			}
-		}
-
-		Ok(self.get_info())
-	}
+	// The default `initialize` (legacy clients) and `discover` (2026-07-28
+	// clients) implementations handle version negotiation; the session
+	// workdir from client capabilities is applied per-request in
+	// `ensure_session_workdir`, which covers both eras.
 }
 
 /// Drain this request's hints and append them to the tool result.
