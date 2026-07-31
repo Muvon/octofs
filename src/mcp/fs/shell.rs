@@ -68,23 +68,24 @@ pub fn kill_all_shell_children() {
 	}
 }
 
-// Each entry: (triggering programs, hint message).
+// Each entry: (triggering programs, error message with usage example).
+// Checked before execution — these commands are hard errors, not warnings.
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"⚠️ Prefer `view` for reading files (line-numbered, supports ranges). Use shell only when piping output.",
+		"Reading files with this command is forbidden — use `view` instead (line-numbered, supports ranges).\n\n  Example:\n    view path=\"src/main.rs\"                # read whole file\n    view path=\"src/main.rs\" start=10 end=50  # read lines 10–50\n\n  Shell is allowed only for pipelines or system paths outside the project.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"⚠️ Use `view` with content= to search for text in files or directories (gitignore-aware, context lines, line numbers).",
+		"Searching file text with this command is forbidden — use `view` with content= instead (gitignore-aware, context lines, line numbers).\n\n  Example:\n    view path=\"src/main.rs\" content=\"fulfill_input_requests\"\n    view path=\"src/\" content=\"TODO\" regex=true\n\n  Shell is allowed only for pipelines or system paths outside the project.",
 	),
 	(
 		&["find", "ls"],
-		"⚠️ Prefer `view` for directory listing (.gitignore-aware, pattern/content filtering). Use shell only for system paths outside the project.",
+		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # list with glob filter\n\n  Shell is allowed only for system paths outside the project.",
 	),
 	(
 		&["sed", "awk"],
-		"⚠️ Prefer `text_editor` str_replace or `batch_edit` for file edits (atomic, tracked). Use sed/awk only for stream transforms in pipelines.",
+		"Editing files with this command is forbidden — use `text_editor` str_replace or `batch_edit` instead (atomic, tracked).\n\n  Example:\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Shell is allowed only for stream transforms in pipelines.",
 	),
 ];
 
@@ -180,6 +181,7 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 }
 
 // Detect shell commands that should use a dedicated MCP tool instead.
+// Returns a hard error message — the caller should bail! before execution.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	let cmd = command.trim();
 
@@ -216,6 +218,11 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 			bail!("Missing required 'command' parameter");
 		}
 	};
+
+	// Hard error: reject commands that can be done with dedicated MCP tools.
+	if let Some(msg) = detect_shell_misuse(&command) {
+		bail!("{msg}");
+	}
 
 	// Extract background parameter
 	let background = call
@@ -332,11 +339,6 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 			// Add detailed execution results including status code
 			let status_code = output.status.code().unwrap_or(-1);
 			let success = output.status.success();
-
-			// Push misuse hint into accumulator — injected as a user message after all tools finish
-			if let Some(hint) = detect_shell_misuse(&command) {
-				crate::mcp::request_ctx::push_hint(hint);
-			}
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
 			if success {
