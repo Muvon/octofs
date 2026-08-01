@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.0] - 2026-08-01
+
+### 📋 Release Summary
+
+This release introduces session working directories and configurable hint enforcement for improved MCP tool control (6c107ac2, 5d6d43e4). Security and reliability enhancements include refined shell command validation and clearer feedback for empty file searches (d4f95849, 4748e9e1, 9e86d8ac). Additionally, agent instructions have been updated for better clarity (e6f5a08e).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: add configurable hint enforcement mode `5d6d43e4`
+- **mcp**: implement session workdir and update deps `6c107ac2`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: improve shell misuse detection logic `d4f95849`
+- **fs**: notify when no files match glob pattern `9e86d8ac`
+- **mcp**: block shell commands that overlap with tools `4748e9e1`
+
+### 📚 Documentation & Examples
+
+- **root**: rename instructions to agents `e6f5a08e`
+
 ## [0.6.0] - 2026-07-29
 
 ### 📋 Release Summary
