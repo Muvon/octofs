@@ -183,16 +183,30 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 // Detect shell commands that should use a dedicated MCP tool instead.
 // Returns a hard error message — the caller should bail! before execution.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
-	let cmd = command.trim();
+	// Split into individual commands on shell separators so that compound
+	// commands like `cd /path && grep -rn ...` are caught the same as a
+	// bare `grep`. Pipelines (`|`) are intentionally NOT split: stream
+	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
+	let normalized = command
+		.replace("&&", ";")
+		.replace("||", ";")
+		.replace("$(", ";")
+		.replace('`', ";");
 
-	// Check if cmd is exactly `prog` or starts with `prog ` / `prog\t`
-	let is_prog = |prog: &str| -> bool {
-		cmd == prog || cmd.starts_with(&format!("{prog} ")) || cmd.starts_with(&format!("{prog}\t"))
-	};
+	for segment in normalized.split([';', '\n']) {
+		let segment = segment.trim();
+		// Skip leading env assignments (FOO=bar cmd ...) to reach the program.
+		let prog = segment
+			.split_whitespace()
+			.find(|tok| !tok.contains('='))
+			.unwrap_or("");
+		// Strip any path prefix: /bin/grep -> grep
+		let prog = prog.rsplit('/').next().unwrap_or(prog);
 
-	for (progs, hint) in SHELL_MISUSE_HINTS {
-		if progs.iter().any(|p| is_prog(p)) {
-			return Some(hint);
+		for (progs, hint) in SHELL_MISUSE_HINTS {
+			if progs.contains(&prog) {
+				return Some(hint);
+			}
 		}
 	}
 
@@ -393,5 +407,33 @@ mod tests {
 		assert_eq!(clean_terminal_noise("dup\ndup\nend"), "dup\ndup\nend");
 		// Plain output passes through untouched
 		assert_eq!(clean_terminal_noise("hello\nworld"), "hello\nworld");
+	}
+
+	#[test]
+	fn test_detect_shell_misuse() {
+		// Bare commands are caught
+		assert!(detect_shell_misuse("grep -rn foo src/").is_some());
+		assert!(detect_shell_misuse("cat src/main.rs").is_some());
+		assert!(detect_shell_misuse("ls -la").is_some());
+		assert!(detect_shell_misuse("find . -name '*.rs'").is_some());
+
+		// Compound commands: forbidden tool after a separator is caught
+		assert!(detect_shell_misuse("cd /path && grep -rn foo").is_some());
+		assert!(detect_shell_misuse("cd /path; cat file.rs").is_some());
+		assert!(detect_shell_misuse("true || ls -la").is_some());
+		assert!(detect_shell_misuse("echo $(grep foo bar)").is_some());
+		assert!(detect_shell_misuse("echo `cat file`").is_some());
+		assert!(detect_shell_misuse("cd /path\ngrep -rn foo").is_some());
+
+		// Path-qualified and env-prefixed invocations are caught
+		assert!(detect_shell_misuse("/bin/grep foo bar").is_some());
+		assert!(detect_shell_misuse("FOO=bar grep x y").is_some());
+
+		// Pipelines stay allowed (stream transforms)
+		assert!(detect_shell_misuse("cargo build 2>&1 | grep error").is_none());
+		// Legitimate commands pass
+		assert!(detect_shell_misuse("cargo test").is_none());
+		assert!(detect_shell_misuse("git status && git diff").is_none());
+		assert!(detect_shell_misuse("echo grep").is_none());
 	}
 }
