@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
 			path,
 			bind,
 			line_mode,
+			hint_mode,
 		} => {
 			// Resolve working directory
 			let working_directory = if let Some(p) = path {
@@ -48,6 +49,13 @@ async fn main() -> Result<()> {
 				_ => utils::line_hash::LineMode::Number,
 			};
 			utils::line_hash::set_line_mode(mode);
+
+			// Set hint enforcement mode
+			let hmode = match hint_mode.as_str() {
+				"soft" => mcp::HintMode::Soft,
+				_ => mcp::HintMode::Hard,
+			};
+			mcp::set_hint_mode(hmode);
 
 			// Set the session root directory for all tool calls
 			mcp::set_session_root_directory(working_directory.clone());

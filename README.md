@@ -203,6 +203,30 @@ Use for: Complex multi-step edits where line numbers would shift. Hashes stay st
 }
 ```
 
+### Hint Modes
+
+Octofs detects shell misuse — commands like `cat`, `grep`, `find`, or `sed` that should use the dedicated MCP tools instead — and can enforce it in two modes:
+
+#### Hard Mode (default)
+
+The command is rejected with an error explaining which tool to use instead. The call fails; nothing executes.
+
+#### Soft Mode
+
+The command runs anyway, and the guidance is appended to the tool response as a ⚠️ hint.
+
+**Enable soft mode:**
+```json
+{
+  "mcpServers": {
+    "octofs": {
+      "command": "/path/to/octofs",
+      "args": ["--hint-mode", "soft"]
+    }
+  }
+}
+```
+
 ### Transport Modes
 
 #### STDIO (default)
