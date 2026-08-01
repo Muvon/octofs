@@ -343,7 +343,10 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Filename glob filter for directory listing and directory content search.
+	/// Filename glob filter for directory listing and directory content search. Patterns
+	/// without `/` match the whole filename at any depth; patterns containing `/` match
+	/// the workdir-relative path. Supports `*`, `?`, character classes (`[abc]`), and
+	/// `|` alternatives (for example, `*.rs|*.toml`).
 	#[serde(default)]
 	pub pattern: Option<String>,
 	/// Content search string. By default treated as a literal substring.

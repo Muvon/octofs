@@ -242,6 +242,9 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			// silently ignoring it here would search files the caller explicitly excluded.
 			if let Some(ref name_pattern) = pattern {
 				filter_by_pattern(&mut files, name_pattern)?;
+				if files.is_empty() {
+					return Ok(format!("No files matched pattern \"{name_pattern}\"."));
+				}
 			}
 
 			let hash_mode = is_hash_mode();
@@ -329,6 +332,9 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			// error, not a reason to silently return the unfiltered listing.
 			if let Some(ref name_pattern) = pattern {
 				filter_by_pattern(&mut files, name_pattern)?;
+				if files.is_empty() {
+					return Ok(format!("No files matched pattern \"{name_pattern}\"."));
+				}
 			}
 
 			// Parallel annotation (cached by mtime+len — see annotation_suffix).
@@ -459,6 +465,33 @@ mod tests {
 		);
 		assert!(result.contains("Model.php\t"), "top-level match: {result}");
 		assert!(!result.contains("Controller.php"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn test_pattern_no_matches_returns_explicit_message() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		fs::write(temp_path.join("main.rs"), "fn main() {}\n").unwrap();
+
+		for parameters in [
+			json!({ "pattern": "*lighthouse*" }),
+			json!({ "pattern": "*lighthouse*", "content": "fn main" }),
+		] {
+			let call = McpToolCall {
+				tool_name: "view".to_string(),
+				parameters,
+				tool_id: "test-call-id".to_string(),
+				workdir: temp_path.to_path_buf(),
+			};
+
+			let result = list_directory(&call, temp_path.to_str().unwrap())
+				.await
+				.unwrap();
+			assert_eq!(result, "No files matched pattern \"*lighthouse*\".");
+		}
 	}
 
 	#[tokio::test]
