@@ -69,7 +69,8 @@ pub fn kill_all_shell_children() {
 }
 
 // Each entry: (triggering programs, error message with usage example).
-// Checked before execution — these commands are hard errors, not warnings.
+// Checked before execution — hard error in --hint-mode=hard (default),
+// soft hint appended to the response in --hint-mode=soft.
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
@@ -181,7 +182,8 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 }
 
 // Detect shell commands that should use a dedicated MCP tool instead.
-// Returns a hard error message — the caller should bail! before execution.
+// Returns the misuse guidance message — the caller either bails (hard mode)
+// or pushes it as a hint and proceeds (soft mode).
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	// Split into individual commands on shell separators so that compound
 	// commands like `cd /path && grep -rn ...` are caught the same as a
@@ -233,9 +235,14 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Hard error: reject commands that can be done with dedicated MCP tools.
+	// Reject or warn on commands that can be done with dedicated MCP tools,
+	// depending on the configured hint mode (--hint-mode).
 	if let Some(msg) = detect_shell_misuse(&command) {
-		bail!("{msg}");
+		if crate::mcp::is_soft_hint_mode() {
+			crate::mcp::request_ctx::push_hint(msg);
+		} else {
+			bail!("{msg}");
+		}
 	}
 
 	// Extract background parameter

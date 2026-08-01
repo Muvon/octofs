@@ -40,6 +40,32 @@ pub fn get_session_root_directory() -> PathBuf {
 		.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
+/// How tool-misuse hints are enforced: hard error or soft warning.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HintMode {
+	/// Misuse is rejected with an error; the call fails.
+	Hard,
+	/// Misuse is allowed; guidance is appended to the response as a hint.
+	Soft,
+}
+
+static HINT_MODE: OnceLock<HintMode> = OnceLock::new();
+
+/// Set the global hint mode. Call once at startup.
+pub fn set_hint_mode(mode: HintMode) {
+	HINT_MODE.set(mode).ok();
+}
+
+/// Get the current hint mode (defaults to Hard).
+pub fn get_hint_mode() -> HintMode {
+	HINT_MODE.get().copied().unwrap_or(HintMode::Hard)
+}
+
+/// Returns true if misuse should surface as a soft hint instead of an error.
+pub fn is_soft_hint_mode() -> bool {
+	get_hint_mode() == HintMode::Soft
+}
+
 /// MCP tool call with per-session working directory context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCall {

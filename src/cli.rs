@@ -39,5 +39,9 @@ pub enum Commands {
 		/// Line identifier mode: "number" (default) for sequential line numbers, "hash" for content-based 4-char hex hashes
 		#[arg(long, value_name = "MODE", default_value = "number")]
 		line_mode: String,
+
+		/// Hint enforcement mode: "hard" (default) rejects tool misuse with an error, "soft" appends guidance to the response and runs the command anyway
+		#[arg(long, value_name = "MODE", default_value = "hard")]
+		hint_mode: String,
 	},
 }

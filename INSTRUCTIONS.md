@@ -7,11 +7,11 @@ Standalone Rust binary that exposes filesystem tools (view, text_editor, batch_e
 ```
 src/
   main.rs                    — Entry point: CLI dispatch, stdio/HTTP server startup, signal handling
-  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--line-mode]`
+  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--line-mode] [--hint-mode]`
   mcp/
     mod.rs                   — McpToolCall struct, session root directory (OnceLock)
     server.rs                — OctofsServer (rmcp tool impl), SessionWorkdir, all Params structs
-    hint_accumulator.rs      — Thread-local hint queue; hints appended to every tool response
+    request_ctx.rs           — Per-request hint queue (appended to every tool response) + stale-file stamps
     shared_utils.rs          — apply_head_truncation helper
     fs/
       mod.rs                 — Re-exports: execute_view, execute_text_editor, execute_batch_edit,
@@ -44,7 +44,7 @@ src/
 | Line number vs hash mode | `utils/line_hash.rs` — set at startup via `--line-mode` CLI flag |
 | Content truncation logic | `utils/truncation.rs` — token estimation and smart truncation |
 | Glob expansion | `utils/glob.rs` — gitignore-aware, dotfile-filtered |
-| Hint messages to LLM | `mcp/hint_accumulator.rs` — push_hint(), drained after every tool call |
+| Hint messages to LLM | `mcp/request_ctx.rs` — push_hint(), drained after every tool call; hard/soft enforcement set via `--hint-mode` |
 | Session workdir state | `server.rs` `SessionWorkdir` — per-instance RwLock<PathBuf> |
 | Process cleanup on exit | `main.rs` signal handler + `fs/shell.rs` `kill_all_shell_children` |
 
@@ -93,7 +93,15 @@ Multi-file view was removed — the caller makes parallel `view` calls instead.
 
 ### Hint Accumulator
 
-Any `execute_*` function can call `hint_accumulator::push_hint("...")` to queue guidance text. After the tool returns, `server.rs::append_hints()` drains the queue and appends hints to the response. Used to surface misuse warnings to the LLM without failing the call.
+Any `execute_*` function can call `request_ctx::push_hint("...")` to queue guidance text. After the tool returns, `server.rs::append_hints()` drains the queue and appends hints to the response. Used to surface misuse warnings to the LLM without failing the call.
+
+### Hint Mode
+
+Two modes set once at startup via `--hint-mode` (`mcp::HintMode`, default `hard`):
+- `hard` — shell misuse (cat/grep/find/sed/awk instead of dedicated tools) is rejected with an error; the call fails.
+- `soft` — the misuse guidance is appended to the response as a ⚠️ hint and the command runs anyway.
+
+Enforced in `fs/shell.rs::execute_shell_command` via `mcp::is_soft_hint_mode()`.
 
 ### Transport Modes
 
