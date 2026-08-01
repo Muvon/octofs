@@ -262,6 +262,8 @@ To read several files, make multiple `view` calls — they run in parallel.
 {"path": "src/", "max_depth": 2, "include_hidden": true}
 ```
 
+`pattern` is a glob, not a content search: without `/` it matches the whole filename at any depth; with `/` it matches the workdir-relative path. It supports `*`, `?`, character classes such as `[abc]`, and `|` alternatives such as `*.rs|*.toml`.
+
 **Content search:** (literal by default; set `regex: true` for a Rust regex, `(?i)` = case-insensitive)
 ```json
 {"path": "src", "content": "fn main"}
