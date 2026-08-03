@@ -364,14 +364,15 @@ mod sftp {
 			match keyword.to_ascii_lowercase().as_str() {
 				"host" => applies = host_line_matches(value, host),
 				"match" => applies = false,
-				"identityagent" if applies && cfg.identity_agent.is_none() => {
-					// `none` disables the agent; SSH_AUTH_SOCK means the env
-					// default, which is our fallback anyway.
-					if !value.eq_ignore_ascii_case("none")
-						&& !value.eq_ignore_ascii_case("SSH_AUTH_SOCK")
-					{
-						cfg.identity_agent = Some(expand_tilde(value, &home));
-					}
+				// `none` disables the agent; SSH_AUTH_SOCK means the env
+				// default, which is our fallback anyway.
+				"identityagent"
+					if applies
+						&& cfg.identity_agent.is_none()
+						&& !value.eq_ignore_ascii_case("none")
+						&& !value.eq_ignore_ascii_case("SSH_AUTH_SOCK") =>
+				{
+					cfg.identity_agent = Some(expand_tilde(value, &home));
 				}
 				"identityfile" if applies => {
 					cfg.identity_files.push(expand_tilde(value, &home));
@@ -482,20 +483,24 @@ mod sftp {
 				..Default::default()
 			};
 
-			let setup = async {
-				tracing::debug!("ssh: connecting to {host}:{port}");
-				let mut handle = client::connect(
+			tracing::debug!("ssh: connecting to {host}:{port}");
+			let mut handle = tokio::time::timeout(
+				self.config.timeout,
+				client::connect(
 					Arc::new(config),
 					(host, port),
 					SshHandler {
 						host: host.to_string(),
 						port,
 					},
-				)
-				.await
-				.map_err(|e| anyhow!("SSH connect to {host}:{port} failed: {e}"))?;
-				tracing::debug!("ssh: connected, starting auth");
+				),
+			)
+			.await
+			.map_err(|_| anyhow!("SSH connect to {host}:{port} timed out"))?
+			.map_err(|e| anyhow!("SSH connect to {host}:{port} failed: {e}"))?;
+			tracing::debug!("ssh: connected, starting auth");
 
+			let setup = async {
 				self.try_auth(&mut handle, host, user).await.map_err(|e| {
 					anyhow!("SSH authentication failed for {user}@{host}:{port}: {e}")
 				})?;
@@ -512,21 +517,36 @@ mod sftp {
 					.map_err(|e| anyhow!("Failed to request SFTP subsystem: {e}"))?;
 				tracing::debug!("ssh: sftp subsystem up, starting sftp handshake");
 
-				let session = SftpSession::new(channel.into_stream())
+				SftpSession::new(channel.into_stream())
 					.await
-					.map_err(|e| anyhow!("Failed to create SFTP session: {e}"))?;
-				tracing::debug!("ssh: sftp session ready for {host}:{port}");
-				Ok((handle, session))
+					.map_err(|e| anyhow!("Failed to create SFTP session: {e}"))
 			};
 
-			tokio::time::timeout(self.config.timeout, setup)
-				.await
-				.map_err(|_| {
-					anyhow!(
+			// On timeout or failure, disconnect explicitly. Abandoned half-open
+			// connections (e.g. an agent holding a signature request) otherwise
+			// pile up server-side until sshd starts dropping ALL new connections
+			// from this address.
+			match tokio::time::timeout(self.config.timeout, setup).await {
+				Ok(Ok(session)) => {
+					tracing::debug!("ssh: sftp session ready for {host}:{port}");
+					Ok((handle, session))
+				}
+				Ok(Err(e)) => {
+					let _ = handle
+						.disconnect(russh::Disconnect::ByApplication, "", "en")
+						.await;
+					Err(e)
+				}
+				Err(_) => {
+					let _ = handle
+						.disconnect(russh::Disconnect::ByApplication, "", "en")
+						.await;
+					Err(anyhow!(
 						"SSH session setup for {host}:{port} timed out after {}s. Most likely your SSH agent (e.g. 1Password) is holding the signature request until you authorize octofs: unlock the agent app, look for its authorization prompt, approve it, and retry — later calls are instant. --ssh-timeout raises the limit",
 						self.config.timeout.as_secs()
-					)
-				})?
+					))
+				}
+			}
 		}
 
 		/// Authenticate automatically, the way OpenSSH does. Agent first — the

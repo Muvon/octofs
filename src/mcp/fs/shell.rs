@@ -74,19 +74,19 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with this command is forbidden — use `view` instead (line-numbered, supports ranges).\n\n  Example:\n    view path=\"src/main.rs\"                # read whole file\n    view path=\"src/main.rs\" start=10 end=50  # read lines 10–50\n\n  Shell is allowed only for pipelines or system paths outside the project.",
+		"Reading files with this command is forbidden — use `view` instead (line-numbered, supports ranges, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\"                # read whole file\n    view path=\"src/main.rs\" start=10 end=50  # read lines 10–50\n    view path=\"ssh://user@host/path/file\"   # remote file — no `ssh cat` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching file text with this command is forbidden — use `view` with content= instead (gitignore-aware, context lines, line numbers).\n\n  Example:\n    view path=\"src/main.rs\" content=\"fulfill_input_requests\"\n    view path=\"src/\" content=\"TODO\" regex=true\n\n  Shell is allowed only for pipelines or system paths outside the project.",
+		"Searching file text with this command is forbidden — use `view` with content= instead (gitignore-aware, context lines, line numbers, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\" content=\"fulfill_input_requests\"\n    view path=\"src/\" content=\"TODO\" regex=true\n    view path=\"ssh://user@host/dir\" content=\"TODO\"  # remote search — no `ssh grep` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
 	),
 	(
 		&["find", "ls"],
-		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # glob-filter by filename (`*`, `?`, `[abc]`, `|`)\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the workdir-relative path.\n  Shell is allowed only for system paths outside the project.",
+		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering, works on remote hosts).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # glob-filter by filename (`*`, `?`, `[abc]`, `|`)\n    view path=\"ssh://user@host/dir\"  # remote listing — no `ssh ls` needed\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the workdir-relative path.\n  Shell is allowed only for system paths outside the project.",
 	),
 	(
 		&["sed", "awk"],
-		"Editing files with this command is forbidden — use `text_editor` str_replace or `batch_edit` instead (atomic, tracked).\n\n  Example:\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Shell is allowed only for stream transforms in pipelines.",
+		"Editing files with this command is forbidden — use `text_editor` str_replace or `batch_edit` instead (atomic, tracked, works on remote hosts via ssh:// paths).\n\n  Example:\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Shell is allowed only for stream transforms in pipelines.",
 	),
 ];
 

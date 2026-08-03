@@ -5814,7 +5814,7 @@ mod tests {
 		let undone = crate::mcp::fs::core::undo_edit(&source)
 			.await
 			.expect("undo failed");
-		assert!(undone.contains("original"), "undone: {undone}");
+		assert!(undone.contains("Successfully undid"), "undone: {undone}");
 
 		// Verify on disk
 		let content = crate::mcp::fs::remote::io_read_to_string(&source)
