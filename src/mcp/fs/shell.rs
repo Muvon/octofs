@@ -311,6 +311,17 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 
 	// Get the working directory from the call context
 	let working_dir = call.workdir.clone();
+
+	// Shell commands always execute on the LOCAL machine. With a remote (ssh://)
+	// workdir there is nowhere sane to run them — fail with guidance instead of a
+	// cryptic spawn failure on the URL-shaped cwd.
+	if crate::mcp::fs::parse_path_source(&working_dir.to_string_lossy()).is_remote() {
+		bail!(
+			"The shell tool runs commands on the local machine only, but the working directory is remote ({}). Use view/text_editor/batch_edit/extract_lines for remote file access.",
+			working_dir.display()
+		);
+	}
+
 	// Use tokio::process::Command for better cancellation support
 	let mut cmd = if cfg!(target_os = "windows") {
 		let mut cmd = TokioCommand::new("cmd");
@@ -434,6 +445,19 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[tokio::test]
+	async fn test_rejects_remote_workdir() {
+		let mut call = crate::mcp::McpToolCall::test_call(
+			"shell",
+			serde_json::json!({ "command": "echo hi" }),
+		);
+		call.workdir = std::path::PathBuf::from("ssh://user@host:22/tmp");
+		let err = execute_shell_command(&call)
+			.await
+			.expect_err("remote workdir must be rejected");
+		assert!(err.to_string().contains("local machine"), "err: {err}");
+	}
 
 	#[test]
 	fn test_clean_terminal_noise() {
