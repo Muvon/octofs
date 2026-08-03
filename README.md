@@ -140,6 +140,7 @@ Ask your AI assistant to:
 - **Smart Truncation** — Large files are truncated intelligently to avoid overwhelming context
 - **Gitignore-Aware** — Respects `.gitignore` patterns during directory traversal
 - **Line Ranges** — Read specific line ranges with negative indexing support (`-1` = last line)
+- **Remote Files (SSH/SFTP)** — With the optional `remote` feature, every file tool accepts `ssh://user@host:port/path` URLs (see [Remote Filesystem](#remote-filesystem-sshsftp))
 
 ### ✏️ Text Editing
 
@@ -261,6 +262,30 @@ By default, Octofs operates in the current directory. Specify a different root:
   }
 }
 ```
+
+### Remote Filesystem (SSH/SFTP)
+
+Build with the `remote` feature to operate on files over SSH:
+
+```bash
+cargo build --release --features remote
+```
+
+All path parameters — and `--path` itself — then accept `ssh://` or `sftp://` URLs:
+
+```bash
+# Remote session root: relative paths resolve on the remote host
+octofs --path ssh://deploy@example.com/var/www/app --ssh-key ~/.ssh/id_ed25519
+```
+
+```
+view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
+```
+
+- **Authentication** — ssh-agent identities are tried first, then the `--ssh-key` file. Passphrase-protected key files are not supported directly; load them into ssh-agent instead.
+- **Host keys** — verified against `~/.ssh/known_hosts` with the OpenSSH `accept-new` policy: unknown hosts are recorded on first use, a changed key fails closed.
+- **`--ssh-timeout SECS`** — connection timeout (default 30). Connections are pooled per host, kept alive with transport keepalives, and reconnected automatically if they drop.
+- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `workdir`) reach remote hosts.
 
 ---
 

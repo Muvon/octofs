@@ -497,6 +497,7 @@ pub struct ShellParams {
 pub struct WorkdirParams {
 	/// Absolute path or path relative to current workdir to switch into.
 	/// Required unless `reset: true`. Do not pass `"."` — that is a no-op.
+	/// Supports ssh://user@host:port/path for remote filesystem access.
 	#[serde(default)]
 	pub path: Option<String>,
 	/// If true, revert to the original session working directory.

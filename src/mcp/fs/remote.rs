@@ -189,13 +189,35 @@ pub fn parse_path_source(path: &str) -> PathSource {
 /// resolved against the workdir (same as `core::resolve_path`).
 ///
 /// The workdir itself may be a remote URL (`--path ssh://...`), carried as a
-/// PathBuf — re-parse the joined result so relative paths under a remote
-/// workdir resolve to Remote sources. Absolute local paths stay local; use a
+/// PathBuf — relative paths under a remote workdir are joined with '/' manually
+/// (PathBuf::join would insert '\' on Windows and corrupt the URL) and resolve
+/// to Remote sources. Absolute local paths stay local; use a
 /// full ssh:// URL to address a remote absolute path explicitly.
 pub fn resolve_path_source(path_str: &str, workdir: &Path) -> PathSource {
 	match parse_path_source(path_str) {
 		PathSource::Local(p) if p.is_absolute() => PathSource::Local(p),
-		PathSource::Local(p) => parse_path_source(&workdir.join(p).to_string_lossy()),
+		PathSource::Local(p) => match parse_path_source(&workdir.to_string_lossy()) {
+			PathSource::Remote {
+				host,
+				port,
+				user,
+				path,
+			} => {
+				let rel = path_str.replace('\\', "/");
+				let joined = if path.ends_with('/') {
+					format!("{path}{rel}")
+				} else {
+					format!("{path}/{rel}")
+				};
+				PathSource::Remote {
+					host,
+					port,
+					user,
+					path: joined,
+				}
+			}
+			_ => PathSource::Local(workdir.join(p)),
+		},
 		remote => remote,
 	}
 }
@@ -237,14 +259,18 @@ mod sftp {
 			match russh::keys::check_known_hosts(&self.host, self.port, server_public_key) {
 				Ok(true) => Ok(true),
 				Ok(false) => {
-					russh::keys::learn_known_hosts(&self.host, self.port, server_public_key)
-						.map_err(|e| {
-							anyhow!(
-								"Failed to record host key for {}:{} in known_hosts: {e}",
-								self.host,
-								self.port
-							)
-						})?;
+					russh::keys::known_hosts::learn_known_hosts(
+						&self.host,
+						self.port,
+						server_public_key,
+					)
+					.map_err(|e| {
+						anyhow!(
+							"Failed to record host key for {}:{} in known_hosts: {e}",
+							self.host,
+							self.port
+						)
+					})?;
 					Ok(true)
 				}
 				Err(e) => Err(anyhow!(
@@ -261,7 +287,6 @@ mod sftp {
 	#[derive(Clone)]
 	pub struct SshConfig {
 		pub key_path: Option<String>,
-		pub password: Option<String>,
 		pub timeout: Duration,
 	}
 
@@ -269,10 +294,20 @@ mod sftp {
 		fn default() -> Self {
 			Self {
 				key_path: None,
-				password: None,
 				timeout: Duration::from_secs(30),
 			}
 		}
+	}
+
+	/// Transport keepalive frequency; a dead peer is detected after
+	/// `keepalive_max` (russh default: 3) missed replies.
+	const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+	/// A pooled connection: the transport handle is kept alongside the SFTP
+	/// session so liveness can be checked without a network round trip.
+	struct PooledSession {
+		handle: client::Handle<SshHandler>,
+		sftp: Arc<Mutex<SftpSession>>,
 	}
 
 	/// SFTP connection pool caching sessions per (host, port, user).
@@ -280,7 +315,7 @@ mod sftp {
 	/// Sessions are wrapped in `Arc<Mutex<SftpSession>>` so concurrent tool
 	/// calls targeting the same host serialize on the same SSH channel.
 	pub struct SftpPool {
-		sessions: Mutex<HashMap<String, Arc<Mutex<SftpSession>>>>,
+		sessions: Mutex<HashMap<String, PooledSession>>,
 		config: SshConfig,
 	}
 
@@ -293,6 +328,9 @@ mod sftp {
 		}
 
 		/// Get a cached SFTP session or establish a new connection.
+		/// Sessions whose SSH transport has died (network drop, server restart,
+		/// keepalive_max exceeded) are evicted and replaced — without this a
+		/// cached dead session would fail every call to that host forever.
 		pub async fn get_or_connect(
 			&self,
 			host: &str,
@@ -301,23 +339,44 @@ mod sftp {
 		) -> Result<Arc<Mutex<SftpSession>>> {
 			let key = format!("{user}@{host}:{port}");
 			{
-				let sessions = self.sessions.lock().await;
-				if let Some(session) = sessions.get(&key) {
-					return Ok(session.clone());
+				let mut sessions = self.sessions.lock().await;
+				match sessions.get(&key) {
+					Some(pooled) if !pooled.handle.is_closed() => {
+						return Ok(pooled.sftp.clone());
+					}
+					Some(_) => {
+						sessions.remove(&key);
+					}
+					None => {}
 				}
 			}
 
-			let session = self.connect_sftp(host, port, user).await?;
-			let session = Arc::new(Mutex::new(session));
+			let (handle, session) = self.connect_sftp(host, port, user).await?;
+			let sftp = Arc::new(Mutex::new(session));
 
 			let mut sessions = self.sessions.lock().await;
-			sessions.insert(key, session.clone());
-			Ok(session)
+			sessions.insert(
+				key,
+				PooledSession {
+					handle,
+					sftp: sftp.clone(),
+				},
+			);
+			Ok(sftp)
 		}
 
-		async fn connect_sftp(&self, host: &str, port: u16, user: &str) -> Result<SftpSession> {
+		async fn connect_sftp(
+			&self,
+			host: &str,
+			port: u16,
+			user: &str,
+		) -> Result<(client::Handle<SshHandler>, SftpSession)> {
+			// Keepalives keep idle NAT/firewall paths open and let russh detect a
+			// dead peer (the transport closes after keepalive_max missed replies,
+			// which get_or_connect turns into a reconnect). config.timeout bounds
+			// connection establishment only — never idle session lifetime.
 			let config = client::Config {
-				inactivity_timeout: Some(self.config.timeout),
+				keepalive_interval: Some(KEEPALIVE_INTERVAL),
 				..Default::default()
 			};
 
@@ -336,10 +395,9 @@ mod sftp {
 			.map_err(|_| anyhow!("SSH connect to {host}:{port} timed out"))?
 			.map_err(|e| anyhow!("SSH connect to {host}:{port} failed: {e}"))?;
 
-			let authed = self.try_auth(&mut handle, user).await?;
-			if !authed {
-				anyhow::bail!("SSH authentication failed for {user}@{host}:{port}");
-			}
+			self.try_auth(&mut handle, user)
+				.await
+				.map_err(|e| anyhow!("SSH authentication failed for {user}@{host}:{port}: {e}"))?;
 
 			let channel = handle
 				.channel_open_session()
@@ -350,66 +408,86 @@ mod sftp {
 				.await
 				.map_err(|e| anyhow!("Failed to request SFTP subsystem: {e}"))?;
 
-			SftpSession::new(channel.into_stream())
+			let session = SftpSession::new(channel.into_stream())
 				.await
-				.map_err(|e| anyhow!("Failed to create SFTP session: {e}"))
+				.map_err(|e| anyhow!("Failed to create SFTP session: {e}"))?;
+			Ok((handle, session))
 		}
 
-		/// Try authentication methods in order: SSH agent → key file → password.
+		/// Try authentication methods in order: SSH agent → key file.
+		/// On failure the error lists why each method didn't work — a swallowed
+		/// key-load error (wrong path, passphrase-protected key) is otherwise
+		/// indistinguishable from a server-side rejection.
 		async fn try_auth(
 			&self,
 			handle: &mut client::Handle<SshHandler>,
 			user: &str,
-		) -> Result<bool> {
+		) -> Result<()> {
+			let mut reasons: Vec<String> = Vec::new();
+
 			// 1. SSH agent (SSH_AUTH_SOCK)
-			if let Ok(mut agent) = AgentClient::connect_env().await {
-				if let Ok(identities) = agent.request_identities().await {
-					for identity in &identities {
-						let pub_key = identity.public_key().into_owned();
-						if let Ok(auth) = handle
-							.authenticate_publickey_with(user, pub_key, None, &mut agent)
-							.await
-						{
-							if auth.success() {
-								return Ok(true);
+			match AgentClient::connect_env().await {
+				Ok(mut agent) => match agent.request_identities().await {
+					Ok(identities) => {
+						if identities.is_empty() {
+							reasons.push("ssh-agent has no identities loaded".to_string());
+						}
+						for identity in &identities {
+							let pub_key = identity.public_key().into_owned();
+							if let Ok(auth) = handle
+								.authenticate_publickey_with(user, pub_key, None, &mut agent)
+								.await
+							{
+								if auth.success() {
+									return Ok(());
+								}
 							}
 						}
-					}
-				}
-			}
-
-			// 2. Private key file
-			if let Some(key_path) = &self.config.key_path {
-				if let Ok(key) = russh::keys::load_secret_key(key_path, None) {
-					let hash_alg = if matches!(key.algorithm(), ssh_key::Algorithm::Rsa { .. }) {
-						handle
-							.best_supported_rsa_hash()
-							.await
-							.ok()
-							.flatten()
-							.flatten()
-					} else {
-						None
-					};
-					let key_with_hash = PrivateKeyWithHashAlg::new(key.into(), hash_alg);
-					if let Ok(auth) = handle.authenticate_publickey(user, key_with_hash).await {
-						if auth.success() {
-							return Ok(true);
+						if !identities.is_empty() {
+							reasons.push(format!(
+								"ssh-agent: none of {} identities accepted by server",
+								identities.len()
+							));
 						}
 					}
-				}
+					Err(e) => reasons.push(format!("ssh-agent: failed to list identities: {e}")),
+				},
+				Err(e) => reasons.push(format!("ssh-agent unavailable: {e}")),
 			}
 
-			// 3. Password
-			if let Some(password) = &self.config.password {
-				if let Ok(auth) = handle.authenticate_password(user, password).await {
-					if auth.success() {
-						return Ok(true);
+			// 2. Private key file (--ssh-key)
+			if let Some(key_path) = &self.config.key_path {
+				match russh::keys::load_secret_key(key_path, None) {
+					Ok(key) => {
+						let hash_alg =
+							if matches!(key.algorithm(), ssh_key::Algorithm::Rsa { .. }) {
+								handle
+									.best_supported_rsa_hash()
+									.await
+									.ok()
+									.flatten()
+									.flatten()
+							} else {
+								None
+							};
+						let key_with_hash = PrivateKeyWithHashAlg::new(key.into(), hash_alg);
+						match handle.authenticate_publickey(user, key_with_hash).await {
+							Ok(auth) if auth.success() => return Ok(()),
+							Ok(_) => {
+								reasons.push(format!("key '{key_path}' rejected by server"))
+							}
+							Err(e) => reasons.push(format!("key '{key_path}': {e}")),
+						}
 					}
+					Err(e) => reasons.push(format!(
+						"failed to load key '{key_path}': {e} (passphrase-protected keys are not supported — add the key to ssh-agent instead)"
+					)),
 				}
+			} else {
+				reasons.push("no --ssh-key configured".to_string());
 			}
 
-			Ok(false)
+			Err(anyhow!("{}", reasons.join("; ")))
 		}
 	}
 

@@ -5510,7 +5510,6 @@ mod tests {
 			let key_path = std::env::var("OCTOFS_TEST_SSH_KEY").ok();
 			let config = crate::mcp::fs::remote::SshConfig {
 				key_path,
-				password: None,
 				timeout: std::time::Duration::from_secs(30),
 			};
 			crate::mcp::fs::remote::init_sftp_pool(config);
@@ -5541,7 +5540,7 @@ mod tests {
 	#[tokio::test]
 	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
 	async fn remote_view_create_and_read() {
-		let Some(prefix) = remote_test_prefix() else {
+		let Some(_) = remote_test_prefix() else {
 			return;
 		};
 		let dir = setup_remote_dir().await;
@@ -5602,6 +5601,7 @@ mod tests {
 			json!({
 			"path": file_path }),
 		);
+		execute_view(&view_call).await.expect("view failed");
 
 		// Replace beta -> BETA
 		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
@@ -5649,6 +5649,7 @@ mod tests {
 			json!({
 			"path": file_path }),
 		);
+		execute_view(&view_call).await.expect("view failed");
 
 		// Replace lines 2-3 (two -> THREE, three -> replaced)
 		let batch_call = McpToolCall::test_call(
@@ -5712,6 +5713,7 @@ mod tests {
 			json!({
 			"path": dir }),
 		);
+		let listing = execute_view(&list_call).await.expect("listing failed");
 		assert!(listing.contains("a.txt"), "listing: {listing}");
 		assert!(listing.contains("b.txt"), "listing: {listing}");
 
@@ -5748,6 +5750,7 @@ mod tests {
 			json!({
 			"path": src_path }),
 		);
+		execute_view(&view_call).await.expect("view failed");
 
 		// Extract lines 2-3 into dst
 		let extract_call = McpToolCall::test_call(
@@ -5803,6 +5806,7 @@ mod tests {
 			json!({
 			"path": file_path }),
 		);
+		execute_view(&view_call).await.expect("view failed");
 
 		// Replace original -> modified
 		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
@@ -5828,6 +5832,37 @@ mod tests {
 			.unwrap();
 		assert!(content.contains("original"), "content: {content}");
 		assert!(!content.contains("modified"), "content: {content}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_workdir_set() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+
+		let call = McpToolCall::test_call(
+			"workdir",
+			json!({
+			"path": dir }),
+		);
+		let result = crate::mcp::fs::execute_workdir_command(&call)
+			.await
+			.expect("workdir set failed");
+		match result {
+			crate::mcp::fs::WorkdirResult::Set { current, .. } => {
+				let current = current.to_string_lossy();
+				assert!(
+					current.starts_with("ssh://") || current.starts_with("sftp://"),
+					"expected remote workdir URL, got: {current}"
+				);
+			}
+			_ => panic!("expected WorkdirResult::Set"),
+		}
 
 		cleanup_remote_dir(&dir).await;
 	}

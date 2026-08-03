@@ -68,7 +68,6 @@ async fn main() -> Result<()> {
 			{
 				let config = mcp::fs::remote::SshConfig {
 					key_path: ssh_key,
-					password: None,
 					timeout: std::time::Duration::from_secs(ssh_timeout.unwrap_or(30)),
 				};
 				mcp::fs::remote::init_sftp_pool(config);

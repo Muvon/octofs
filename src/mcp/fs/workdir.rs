@@ -1,6 +1,7 @@
 // Working directory management for the Filesystem MCP provider
 
 use super::super::McpToolCall;
+use super::remote::{io_canonicalize, io_is_dir, resolve_path_source, PathSource};
 use anyhow::{bail, Result};
 use serde_json::json;
 use std::path::PathBuf;
@@ -63,35 +64,68 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<WorkdirResult
 		Some(serde_json::Value::String(path_str)) if !path_str.trim().is_empty() => {
 			let path_str = path_str.trim();
 
-			// Resolve the path (handle relative paths)
-			let new_path = if std::path::Path::new(path_str).is_absolute() {
-				PathBuf::from(path_str)
-			} else {
-				// Relative to current working directory
-				call.workdir.join(path_str)
-			};
+			// Resolve against the current workdir (which itself may be remote)
+			match resolve_path_source(path_str, &call.workdir) {
+				PathSource::Local(new_path) => {
+					// Canonicalize to resolve .. and symlinks
+					let canonical_path = match new_path.canonicalize() {
+						Ok(p) => p,
+						Err(e) => {
+							bail!(
+								"Path does not exist or is not accessible: {} (error: {})",
+								new_path.display(),
+								e
+							);
+						}
+					};
 
-			// Canonicalize to resolve .. and symlinks
-			let canonical_path = match new_path.canonicalize() {
-				Ok(p) => p,
-				Err(e) => {
-					bail!(
-						"Path does not exist or is not accessible: {} (error: {})",
-						new_path.display(),
-						e
-					);
+					// Verify it's a directory
+					if !canonical_path.is_dir() {
+						bail!("Path is not a directory: {}", canonical_path.display());
+					}
+
+					Ok(WorkdirResult::Set {
+						previous: call.workdir.clone(),
+						current: canonical_path,
+					})
 				}
-			};
+				source @ PathSource::Remote { .. } => {
+					// Canonicalize server-side to resolve .. and symlinks
+					let canonical = match io_canonicalize(&source).await {
+						Ok(p) => p,
+						Err(e) => {
+							bail!(
+								"Path does not exist or is not accessible: {} (error: {})",
+								source.display(),
+								e
+							);
+						}
+					};
+					let canonical_source = match &source {
+						PathSource::Remote {
+							host, port, user, ..
+						} => PathSource::Remote {
+							host: host.clone(),
+							port: *port,
+							user: user.clone(),
+							path: canonical.to_string_lossy().to_string(),
+						},
+						PathSource::Local(_) => unreachable!(),
+					};
 
-			// Verify it's a directory
-			if !canonical_path.is_dir() {
-				bail!("Path is not a directory: {}", canonical_path.display());
+					// Verify it's a directory
+					if !io_is_dir(&canonical_source).await? {
+						bail!("Path is not a directory: {}", canonical_source.display());
+					}
+
+					// The workdir travels as a PathBuf holding the ssh:// URL;
+					// display() round-trips through parse_path_source on later calls.
+					Ok(WorkdirResult::Set {
+						previous: call.workdir.clone(),
+						current: PathBuf::from(canonical_source.display()),
+					})
+				}
 			}
-
-			Ok(WorkdirResult::Set {
-				previous: call.workdir.clone(),
-				current: canonical_path,
-			})
 		}
 		Some(_) => bail!("Parameter 'path' must be a non-empty string"),
 		None => {
