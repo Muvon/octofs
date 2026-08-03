@@ -185,17 +185,12 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 // Returns the misuse guidance message — the caller either bails (hard mode)
 // or pushes it as a hint and proceeds (soft mode).
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
-	// Split into individual commands on shell separators so that compound
-	// commands like `cd /path && grep -rn ...` are caught the same as a
-	// bare `grep`. Pipelines (`|`) are intentionally NOT split: stream
+	// Split into individual commands on shell separators, respecting
+	// quoting so that `&&`/`||`/`;` inside quoted strings (e.g. SSH remote
+	// commands: `ssh host 'cd /path && ls'`) are not treated as local
+	// separators. Pipelines (`|`) are intentionally NOT split: stream
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
-	let normalized = command
-		.replace("&&", ";")
-		.replace("||", ";")
-		.replace("$(", ";")
-		.replace('`', ";");
-
-	for segment in normalized.split([';', '\n']) {
+	for segment in split_shell_segments(command) {
 		let segment = segment.trim();
 		// Skip leading env assignments (FOO=bar cmd ...) to reach the program.
 		let prog = segment
@@ -213,6 +208,68 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	}
 
 	None
+}
+
+/// Split a shell command string into segments on `;`, `&&`, `||`, `\n`,
+/// `$(`, and backticks — but only when those separators appear *outside*
+/// single or double quotes. This prevents false positives where a quoted
+/// remote command (e.g. `ssh host 'cd /x && ls'`) contains `&&` that is
+/// part of the remote command, not a local shell separator.
+fn split_shell_segments(command: &str) -> Vec<&str> {
+	let bytes = command.as_bytes();
+	let mut segments = Vec::new();
+	let mut start = 0;
+	let mut i = 0;
+	let mut in_single = false;
+	let mut in_double = false;
+
+	while i < bytes.len() {
+		let b = bytes[i];
+		if in_single {
+			if b == b'\'' {
+				in_single = false;
+			}
+		} else if in_double {
+			if b == b'\\' && i + 1 < bytes.len() {
+				i += 1; // skip escaped char inside double quotes
+			} else if b == b'"' {
+				in_double = false;
+			}
+		} else {
+			match b {
+				b'\'' => in_single = true,
+				b'"' => in_double = true,
+				b'\\' if i + 1 < bytes.len() => i += 1, // skip escaped char
+				b';' | b'\n' => {
+					segments.push(&command[start..i]);
+					start = i + 1;
+				}
+				b'&' if i + 1 < bytes.len() && bytes[i + 1] == b'&' => {
+					segments.push(&command[start..i]);
+					i += 1;
+					start = i + 1;
+				}
+				b'|' if i + 1 < bytes.len() && bytes[i + 1] == b'|' => {
+					segments.push(&command[start..i]);
+					i += 1;
+					start = i + 1;
+				}
+				b'$' if i + 1 < bytes.len() && bytes[i + 1] == b'(' => {
+					segments.push(&command[start..i]);
+					i += 1;
+					start = i + 1;
+				}
+				b'`' => {
+					segments.push(&command[start..i]);
+					start = i + 1;
+				}
+				_ => {}
+			}
+		}
+		i += 1;
+	}
+	segments.push(&command[start..]);
+	segments
 }
 
 // Execute a shell command
@@ -442,5 +499,20 @@ mod tests {
 		assert!(detect_shell_misuse("cargo test").is_none());
 		assert!(detect_shell_misuse("git status && git diff").is_none());
 		assert!(detect_shell_misuse("echo grep").is_none());
+
+		// Quoted separators are not treated as local command separators
+		// (e.g. SSH remote commands with && inside quotes)
+		assert!(detect_shell_misuse("ssh host 'cd /path && ls'").is_none());
+		assert!(detect_shell_misuse("ssh host 'cat file'").is_none());
+		assert!(detect_shell_misuse("ssh host \"cd /path && grep foo\"").is_none());
+		assert!(detect_shell_misuse("echo \"hello && ls\"").is_none());
+		assert!(detect_shell_misuse("bash -lc 'cd /x && git log && ls'").is_none());
+		assert!(
+			detect_shell_misuse(
+				"ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'"
+			).is_none()
+		);
+		// Unquoted separators after a quoted block are still caught
+		assert!(detect_shell_misuse("ssh host 'ls' && cat file").is_some());
 	}
 }
