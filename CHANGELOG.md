@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.8.0] - 2026-08-03
+
+### 📋 Release Summary
+
+This release introduces comprehensive remote filesystem support via SSH and SFTP, including host key verification and SSH agent support for Windows (648c53c5, a1906ecc, ebd5f91e, ffd937a5, 09b3e5e9). Additionally, updates to shell interaction and misuse detection provide a more reliable and intuitive user experience (63e9e215, de17cf79).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: enable SSH agent support on Windows `09b3e5e9`
+- **remote**: make remote filesystem support mandatory `648c53c5`
+- **remote**: implement SSH and SFTP filesystem support `a1906ecc`
+- **mcp**: implement SSH host key verification `ebd5f91e`
+- **mcp**: implement remote filesystem support via SSH/SFTP `ffd937a5`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: improve ssh connections and shell hints `63e9e215`
+- **mcp**: respect quotes in shell misuse detection `de17cf79`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.7.0] - 2026-08-01
 
 ### 📋 Release Summary
