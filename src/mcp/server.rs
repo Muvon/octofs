@@ -332,7 +332,7 @@ pub struct ViewParams {
 	/// A single file or directory path (e.g. "src/main.rs"). To view several files,
 	/// make multiple `view` calls — they run in parallel.
 	/// Supports ssh://user@host:port/path or sftp://user@host:port/path for remote
-	/// filesystem access (requires --features remote at build time).
+	/// filesystem access.
 	pub path: String,
 	/// First line to show (inclusive). Integer line number (negative counts from the
 	/// end: -1 = last line) or a string hash in hash mode. Omit to start at line 1.

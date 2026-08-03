@@ -59,19 +59,12 @@ async fn main() -> Result<()> {
 			};
 			mcp::set_hint_mode(hmode);
 
-			// Suppress unused-variable warnings when the remote feature is disabled.
-			#[cfg(not(feature = "remote"))]
-			let _ = (ssh_key, ssh_timeout);
-
 			// Initialize SFTP pool for remote filesystem support.
-			#[cfg(feature = "remote")]
-			{
-				let config = mcp::fs::remote::SshConfig {
-					key_path: ssh_key,
-					timeout: std::time::Duration::from_secs(ssh_timeout.unwrap_or(30)),
-				};
-				mcp::fs::remote::init_sftp_pool(config);
-			}
+			let config = mcp::fs::remote::SshConfig {
+				key_path: ssh_key,
+				timeout: std::time::Duration::from_secs(ssh_timeout.unwrap_or(30)),
+			};
+			mcp::fs::remote::init_sftp_pool(config);
 
 			// Set the session root directory for all tool calls
 			mcp::set_session_root_directory(working_directory.clone());

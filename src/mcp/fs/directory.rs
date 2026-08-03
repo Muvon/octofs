@@ -16,7 +16,7 @@
 
 use super::super::McpToolCall;
 use super::remote::{
-	io_list_dir, io_metadata, io_read, resolve_path_source, IoMetadata, PathSource,
+	io_list_dir, io_read, io_read_to_string, resolve_path_source, IoMetadata, PathSource,
 };
 use super::search::{self, Matcher};
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
@@ -214,18 +214,23 @@ fn remote_child(source: &PathSource, name: &str) -> PathSource {
 	}
 }
 
-// Recursively list remote files, returning relative paths sorted alphabetically.
+// Recursively list remote files, returning relative paths with the metadata
+// the directory listing already provided — one read_dir round trip per
+// directory and NOTHING per file. Directories matching the root .gitignore
+// are pruned BEFORE recursing: without this a repo listing walks target/,
+// node_modules/ etc, thousands of round trips.
 async fn collect_remote_files(
 	source: &PathSource,
 	base_rel: &str,
 	max_depth: Option<usize>,
 	include_hidden: bool,
+	gitignore: Option<&ignore::gitignore::Gitignore>,
 	current_depth: usize,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, IoMetadata)>> {
 	let mut files = Vec::new();
 	let entries = io_list_dir(source).await?;
 
-	for (name, meta) in &entries {
+	for (name, meta) in entries {
 		if !include_hidden && name.starts_with('.') {
 			continue;
 		}
@@ -236,54 +241,55 @@ async fn collect_remote_files(
 			format!("{base_rel}/{name}")
 		};
 
+		if let Some(gi) = gitignore {
+			if gi
+				.matched_path_or_any_parents(&rel_path, meta.is_dir)
+				.is_ignore()
+			{
+				continue;
+			}
+		}
+
 		if meta.is_dir {
 			if let Some(max_d) = max_depth {
 				if current_depth >= max_d {
 					continue;
 				}
 			}
-			let sub_source = remote_child(source, name);
+			let sub_source = remote_child(source, &name);
 			let sub_files = Box::pin(collect_remote_files(
 				&sub_source,
 				&rel_path,
 				max_depth,
 				include_hidden,
+				gitignore,
 				current_depth + 1,
 			))
 			.await?;
 			files.extend(sub_files);
 		} else {
-			files.push(rel_path);
+			files.push((rel_path, meta));
 		}
 	}
 
-	files.sort();
+	files.sort_by(|a, b| a.0.cmp(&b.0));
 	Ok(files)
 }
 
-// Annotation suffix for a remote file: "NL\t~Nt", "(binary)", or "(large: NMB)".
-async fn annotation_suffix_remote(source: &PathSource, meta: &IoMetadata) -> String {
+// Annotation suffix for a remote file, from metadata ONLY — downloading each
+// file for line/token counts made listing a large tree take minutes.
+fn annotation_suffix_remote(meta: &IoMetadata) -> String {
 	if meta.size > super::file_ops::MAX_VIEW_FILE_BYTES {
-		return format!("(large: {}MB)", meta.size / (1024 * 1024));
+		format!("(large: {}MB)", meta.size / (1024 * 1024))
+	} else if meta.size >= 1024 {
+		format!("{}KB", meta.size / 1024)
+	} else {
+		format!("{}B", meta.size)
 	}
-
-	let bytes = match io_read(source).await {
-		Ok(b) => b,
-		Err(_) => return String::new(),
-	};
-
-	let sample_size = bytes.len().min(512);
-	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
-	if null_count > sample_size / 10 {
-		return "(binary)".to_string();
-	}
-
-	let text = String::from_utf8_lossy(&bytes);
-	format!("{}L\t~{}t", text.lines().count(), estimate_tokens(&text))
 }
 
 // List a remote directory — file listing or content search via SFTP.
-// No gitignore support (remote repos rarely have .gitignore at the listed root);
+// Honors the .gitignore at the listed root (nested ones are not consulted);
 // hidden files are controlled by `include_hidden` like the local path.
 async fn list_directory_remote(
 	source: &PathSource,
@@ -296,13 +302,31 @@ async fn list_directory_remote(
 ) -> Result<String> {
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
 
-	let mut files = collect_remote_files(source, "", max_depth, include_hidden, 0).await?;
+	// Root .gitignore (repo checkouts always have one) — parsed with the same
+	// `ignore` crate the local walker uses. ponytail: root file only; nested
+	// .gitignore support if someone actually hits it.
+	let gitignore = match io_read_to_string(&remote_child(source, ".gitignore")).await {
+		Ok(text) => {
+			let mut builder = ignore::gitignore::GitignoreBuilder::new("");
+			for line in text.lines() {
+				let _ = builder.add_line(None, line);
+			}
+			builder.build().ok()
+		}
+		Err(_) => None,
+	};
+
+	let mut files =
+		collect_remote_files(source, "", max_depth, include_hidden, gitignore.as_ref(), 0).await?;
 
 	if let Some(ref name_pattern) = pattern {
-		filter_by_pattern(&mut files, name_pattern).map_err(|e| anyhow::anyhow!("{e}"))?;
-		if files.is_empty() {
+		let mut names: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+		filter_by_pattern(&mut names, name_pattern).map_err(|e| anyhow::anyhow!("{e}"))?;
+		if names.is_empty() {
 			return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 		}
+		let keep: std::collections::HashSet<String> = names.into_iter().collect();
+		files.retain(|(n, _)| keep.contains(n));
 	}
 
 	if has_content {
@@ -311,16 +335,11 @@ async fn list_directory_remote(
 		let hash_mode = is_hash_mode();
 
 		let mut results: Vec<String> = Vec::new();
-		for rel_path in &files {
-			let file_source = remote_child(source, rel_path);
-
-			let meta = match io_metadata(&file_source).await {
-				Ok(m) => m,
-				Err(_) => continue,
-			};
+		for (rel_path, meta) in &files {
 			if meta.size > super::file_ops::MAX_VIEW_FILE_BYTES {
 				continue;
 			}
+			let file_source = remote_child(source, rel_path);
 
 			let bytes = match io_read(&file_source).await {
 				Ok(b) => b,
@@ -364,17 +383,8 @@ async fn list_directory_remote(
 		Ok(results.join("\n\n"))
 	} else {
 		let mut lines: Vec<String> = Vec::new();
-		for rel_path in &files {
-			let file_source = remote_child(source, rel_path);
-			let suffix = match io_metadata(&file_source).await {
-				Ok(meta) => annotation_suffix_remote(&file_source, &meta).await,
-				Err(_) => String::new(),
-			};
-			if suffix.is_empty() {
-				lines.push(rel_path.clone());
-			} else {
-				lines.push(format!("{}\t{}", rel_path, suffix));
-			}
+		for (rel_path, meta) in &files {
+			lines.push(format!("{}\t{}", rel_path, annotation_suffix_remote(meta)));
 		}
 		Ok(lines.join("\n"))
 	}

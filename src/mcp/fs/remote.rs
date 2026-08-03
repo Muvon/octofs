@@ -15,8 +15,8 @@
 //! Remote filesystem support — SSH/SFTP path abstraction.
 //!
 //! Paths prefixed with `ssh://` or `sftp://` are parsed into [`PathSource::Remote`];
-//! all other paths are [`PathSource::Local`]. The SFTP connection pool and remote
-//! file operations are gated behind the `remote` feature flag.
+//! all other paths are [`PathSource::Local`]. Remote is a native capability —
+//! always compiled in, exactly like local file access.
 
 use anyhow::{anyhow, bail, Result};
 use std::path::{Path, PathBuf};
@@ -222,9 +222,8 @@ pub fn resolve_path_source(path_str: &str, workdir: &Path) -> PathSource {
 	}
 }
 
-// ── SFTP connection pool (feature-gated) ──────────────────────────────
+// ── SFTP connection pool ──────────────────────────────────────────────
 
-#[cfg(feature = "remote")]
 mod sftp {
 	use std::collections::HashMap;
 	use std::sync::Arc;
@@ -283,6 +282,106 @@ mod sftp {
 		}
 	}
 
+	/// The bits of `~/.ssh/config` we honor for a host: `IdentityAgent`
+	/// (e.g. the 1Password agent socket) and `IdentityFile` entries.
+	/// This is what makes octofs authenticate exactly where plain `ssh`
+	/// would, with zero octofs-specific setup.
+	#[derive(Default)]
+	struct SshHostConfig {
+		identity_agent: Option<String>,
+		identity_files: Vec<String>,
+	}
+
+	fn home_dir() -> Option<std::path::PathBuf> {
+		std::env::var_os("HOME")
+			.or_else(|| std::env::var_os("USERPROFILE"))
+			.map(std::path::PathBuf::from)
+	}
+
+	fn expand_tilde(value: &str, home: &std::path::Path) -> String {
+		match value.strip_prefix("~/") {
+			Some(rest) => home.join(rest).to_string_lossy().to_string(),
+			None => value.to_string(),
+		}
+	}
+
+	/// Minimal `*`/`?` glob for OpenSSH Host patterns (host names are short,
+	/// so the naive recursion is fine).
+	fn glob_match(pat: &str, text: &str) -> bool {
+		fn rec(p: &[u8], t: &[u8]) -> bool {
+			match p.first() {
+				None => t.is_empty(),
+				Some(b'*') => (0..=t.len()).any(|i| rec(&p[1..], &t[i..])),
+				Some(b'?') => !t.is_empty() && rec(&p[1..], &t[1..]),
+				Some(c) => t.first() == Some(c) && rec(&p[1..], &t[1..]),
+			}
+		}
+		rec(pat.as_bytes(), text.as_bytes())
+	}
+
+	/// OpenSSH `Host` line: space-separated patterns, `!` negates, matching
+	/// is case-insensitive.
+	fn host_line_matches(patterns: &str, host: &str) -> bool {
+		let host = host.to_ascii_lowercase();
+		let mut matched = false;
+		for pat in patterns.split_whitespace() {
+			let pat = pat.trim_matches('"').to_ascii_lowercase();
+			if let Some(neg) = pat.strip_prefix('!') {
+				if glob_match(neg, &host) {
+					return false;
+				}
+			} else if glob_match(&pat, &host) {
+				matched = true;
+			}
+		}
+		matched
+	}
+
+	/// Parse `~/.ssh/config` for `host` — the same lookup plain `ssh` does,
+	/// with OpenSSH semantics: first obtained value wins for IdentityAgent,
+	/// IdentityFile entries accumulate. `Match` blocks are not supported and
+	/// conservatively end applicability.
+	fn ssh_host_config(host: &str) -> SshHostConfig {
+		let mut cfg = SshHostConfig::default();
+		let Some(home) = home_dir() else {
+			return cfg;
+		};
+		let Ok(text) = std::fs::read_to_string(home.join(".ssh").join("config")) else {
+			return cfg;
+		};
+		// Options before the first Host line apply to every host.
+		let mut applies = true;
+		for line in text.lines() {
+			let line = line.trim();
+			if line.is_empty() || line.starts_with('#') {
+				continue;
+			}
+			let Some((keyword, value)) = line.split_once(|c: char| c.is_whitespace() || c == '=')
+			else {
+				continue;
+			};
+			let value = value.trim().trim_matches('"');
+			match keyword.to_ascii_lowercase().as_str() {
+				"host" => applies = host_line_matches(value, host),
+				"match" => applies = false,
+				"identityagent" if applies && cfg.identity_agent.is_none() => {
+					// `none` disables the agent; SSH_AUTH_SOCK means the env
+					// default, which is our fallback anyway.
+					if !value.eq_ignore_ascii_case("none")
+						&& !value.eq_ignore_ascii_case("SSH_AUTH_SOCK")
+					{
+						cfg.identity_agent = Some(expand_tilde(value, &home));
+					}
+				}
+				"identityfile" if applies => {
+					cfg.identity_files.push(expand_tilde(value, &home));
+				}
+				_ => {}
+			}
+		}
+		cfg
+	}
+
 	/// SSH connection configuration for the SFTP pool.
 	#[derive(Clone)]
 	pub struct SshConfig {
@@ -331,6 +430,10 @@ mod sftp {
 		/// Sessions whose SSH transport has died (network drop, server restart,
 		/// keepalive_max exceeded) are evicted and replaced — without this a
 		/// cached dead session would fail every call to that host forever.
+		///
+		/// The pool lock is held across connection setup on purpose: concurrent
+		/// calls to the same host would otherwise each open a connection and
+		/// each trigger an agent approval prompt (e.g. 1Password).
 		pub async fn get_or_connect(
 			&self,
 			host: &str,
@@ -338,23 +441,19 @@ mod sftp {
 			user: &str,
 		) -> Result<Arc<Mutex<SftpSession>>> {
 			let key = format!("{user}@{host}:{port}");
-			{
-				let mut sessions = self.sessions.lock().await;
-				match sessions.get(&key) {
-					Some(pooled) if !pooled.handle.is_closed() => {
-						return Ok(pooled.sftp.clone());
-					}
-					Some(_) => {
-						sessions.remove(&key);
-					}
-					None => {}
+			let mut sessions = self.sessions.lock().await;
+			match sessions.get(&key) {
+				Some(pooled) if !pooled.handle.is_closed() => {
+					return Ok(pooled.sftp.clone());
 				}
+				Some(_) => {
+					sessions.remove(&key);
+				}
+				None => {}
 			}
 
 			let (handle, session) = self.connect_sftp(host, port, user).await?;
 			let sftp = Arc::new(Mutex::new(session));
-
-			let mut sessions = self.sessions.lock().await;
 			sessions.insert(
 				key,
 				PooledSession {
@@ -374,89 +473,175 @@ mod sftp {
 			// Keepalives keep idle NAT/firewall paths open and let russh detect a
 			// dead peer (the transport closes after keepalive_max missed replies,
 			// which get_or_connect turns into a reconnect). config.timeout bounds
-			// connection establishment only — never idle session lifetime.
+			// the WHOLE session setup below — TCP connect, auth (including a
+			// possibly-pending agent approval prompt), and the SFTP handshake —
+			// never idle session lifetime. Without the auth being under the
+			// timeout, an unanswered agent prompt hangs the tool call forever.
 			let config = client::Config {
 				keepalive_interval: Some(KEEPALIVE_INTERVAL),
 				..Default::default()
 			};
 
-			let mut handle = tokio::time::timeout(
-				self.config.timeout,
-				client::connect(
+			let setup = async {
+				tracing::debug!("ssh: connecting to {host}:{port}");
+				let mut handle = client::connect(
 					Arc::new(config),
 					(host, port),
 					SshHandler {
 						host: host.to_string(),
 						port,
 					},
-				),
-			)
-			.await
-			.map_err(|_| anyhow!("SSH connect to {host}:{port} timed out"))?
-			.map_err(|e| anyhow!("SSH connect to {host}:{port} failed: {e}"))?;
+				)
+				.await
+				.map_err(|e| anyhow!("SSH connect to {host}:{port} failed: {e}"))?;
+				tracing::debug!("ssh: connected, starting auth");
 
-			self.try_auth(&mut handle, user)
-				.await
-				.map_err(|e| anyhow!("SSH authentication failed for {user}@{host}:{port}: {e}"))?;
+				self.try_auth(&mut handle, host, user).await.map_err(|e| {
+					anyhow!("SSH authentication failed for {user}@{host}:{port}: {e}")
+				})?;
+				tracing::debug!("ssh: auth ok, opening channel");
 
-			let channel = handle
-				.channel_open_session()
-				.await
-				.map_err(|e| anyhow!("Failed to open SSH channel: {e}"))?;
-			channel
-				.request_subsystem(true, "sftp")
-				.await
-				.map_err(|e| anyhow!("Failed to request SFTP subsystem: {e}"))?;
+				let channel = handle
+					.channel_open_session()
+					.await
+					.map_err(|e| anyhow!("Failed to open SSH channel: {e}"))?;
+				tracing::debug!("ssh: channel open, requesting sftp subsystem");
+				channel
+					.request_subsystem(true, "sftp")
+					.await
+					.map_err(|e| anyhow!("Failed to request SFTP subsystem: {e}"))?;
+				tracing::debug!("ssh: sftp subsystem up, starting sftp handshake");
 
-			let session = SftpSession::new(channel.into_stream())
+				let session = SftpSession::new(channel.into_stream())
+					.await
+					.map_err(|e| anyhow!("Failed to create SFTP session: {e}"))?;
+				tracing::debug!("ssh: sftp session ready for {host}:{port}");
+				Ok((handle, session))
+			};
+
+			tokio::time::timeout(self.config.timeout, setup)
 				.await
-				.map_err(|e| anyhow!("Failed to create SFTP session: {e}"))?;
-			Ok((handle, session))
+				.map_err(|_| {
+					anyhow!(
+						"SSH session setup for {host}:{port} timed out after {}s. Most likely your SSH agent (e.g. 1Password) is holding the signature request until you authorize octofs: unlock the agent app, look for its authorization prompt, approve it, and retry — later calls are instant. --ssh-timeout raises the limit",
+						self.config.timeout.as_secs()
+					)
+				})?
 		}
 
-		/// Try authentication methods in order: SSH agent → key file.
+		/// Authenticate automatically, the way OpenSSH does. Agent first — the
+		/// one `~/.ssh/config` names for this host via `IdentityAgent` (e.g.
+		/// the 1Password agent), else `$SSH_AUTH_SOCK`. Then key files:
+		/// `--ssh-key` if given, the host's `IdentityFile` entries, then the
+		/// default identities in `~/.ssh`. If plain `ssh host` works in a
+		/// terminal, this works with zero configuration.
 		/// On failure the error lists why each method didn't work — a swallowed
 		/// key-load error (wrong path, passphrase-protected key) is otherwise
 		/// indistinguishable from a server-side rejection.
 		async fn try_auth(
 			&self,
 			handle: &mut client::Handle<SshHandler>,
+			host: &str,
 			user: &str,
 		) -> Result<()> {
 			let mut reasons: Vec<String> = Vec::new();
+			let host_cfg = ssh_host_config(host);
 
-			// 1. SSH agent (SSH_AUTH_SOCK)
-			match AgentClient::connect_env().await {
+			// 1. SSH agent
+			#[cfg(unix)]
+			let (agent_result, agent_label) = match &host_cfg.identity_agent {
+				Some(sock) => (
+					AgentClient::connect_uds(sock).await,
+					format!("agent '{sock}'"),
+				),
+				None => (AgentClient::connect_env().await, "ssh-agent".to_string()),
+			};
+			#[cfg(not(unix))]
+			let (agent_result, agent_label) = {
+				if host_cfg.identity_agent.is_some() {
+					reasons.push(
+						"IdentityAgent from ~/.ssh/config is only supported on unix".to_string(),
+					);
+				}
+				(AgentClient::connect_env().await, "ssh-agent".to_string())
+			};
+
+			match agent_result {
 				Ok(mut agent) => match agent.request_identities().await {
 					Ok(identities) => {
+						tracing::debug!(
+							"ssh: {agent_label}: {} identities offered",
+							identities.len()
+						);
 						if identities.is_empty() {
-							reasons.push("ssh-agent has no identities loaded".to_string());
+							reasons.push(format!("{agent_label} has no identities loaded"));
 						}
 						for identity in &identities {
 							let pub_key = identity.public_key().into_owned();
-							if let Ok(auth) = handle
+							tracing::debug!(
+								"ssh: trying agent identity {} via {agent_label}",
+								pub_key.algorithm()
+							);
+							match handle
 								.authenticate_publickey_with(user, pub_key, None, &mut agent)
 								.await
 							{
-								if auth.success() {
+								Ok(auth) if auth.success() => {
+									tracing::debug!("ssh: agent identity accepted");
 									return Ok(());
+								}
+								Ok(auth) => {
+									tracing::debug!("ssh: agent identity not accepted: {auth:?}")
+								}
+								Err(e) => {
+									tracing::debug!("ssh: agent auth attempt errored: {e}")
 								}
 							}
 						}
 						if !identities.is_empty() {
 							reasons.push(format!(
-								"ssh-agent: none of {} identities accepted by server",
+								"{agent_label}: none of {} identities accepted by server",
 								identities.len()
 							));
 						}
 					}
-					Err(e) => reasons.push(format!("ssh-agent: failed to list identities: {e}")),
+					Err(e) => {
+						reasons.push(format!("{agent_label}: failed to list identities: {e}"))
+					}
 				},
-				Err(e) => reasons.push(format!("ssh-agent unavailable: {e}")),
+				Err(e) => reasons.push(format!("{agent_label} unavailable: {e}")),
 			}
 
-			// 2. Private key file (--ssh-key)
-			if let Some(key_path) = &self.config.key_path {
+			// 2. Key files: --ssh-key override, then ssh-config IdentityFile
+			// entries for this host, then OpenSSH default identities.
+			let mut candidates: Vec<String> = Vec::new();
+			if let Some(p) = &self.config.key_path {
+				candidates.push(p.clone());
+			}
+			candidates.extend(host_cfg.identity_files.iter().cloned());
+			if let Some(home) = home_dir() {
+				for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
+					let p = home.join(".ssh").join(name);
+					if p.exists() {
+						candidates.push(p.to_string_lossy().to_string());
+					}
+				}
+			}
+			let mut key_paths: Vec<String> = Vec::new();
+			for k in candidates {
+				if !key_paths.contains(&k) {
+					key_paths.push(k);
+				}
+			}
+			if key_paths.is_empty() {
+				reasons.push(
+					"no key files: --ssh-key not set, no IdentityFile in ~/.ssh/config and ~/.ssh has no id_ed25519, id_ecdsa or id_rsa"
+						.to_string(),
+				);
+			}
+
+			for key_path in &key_paths {
+				tracing::debug!("ssh: trying key file '{key_path}'");
 				match russh::keys::load_secret_key(key_path, None) {
 					Ok(key) => {
 						let hash_alg =
@@ -483,8 +668,6 @@ mod sftp {
 						"failed to load key '{key_path}': {e} (passphrase-protected keys are not supported — add the key to ssh-agent instead)"
 					)),
 				}
-			} else {
-				reasons.push("no --ssh-key configured".to_string());
 			}
 
 			Err(anyhow!("{}", reasons.join("; ")))
@@ -679,7 +862,6 @@ mod sftp {
 	}
 }
 
-#[cfg(feature = "remote")]
 pub use sftp::{
 	init_sftp_pool, remote_canonicalize, remote_create_dir_all, remote_exists, remote_fingerprint,
 	remote_list_dir, remote_metadata, remote_read, remote_read_to_string, remote_remove_file,
@@ -688,8 +870,7 @@ pub use sftp::{
 
 // ── Unified I/O dispatch layer ─────────────────────────────────────────
 // These functions accept &PathSource and dispatch to tokio::fs for local
-// paths or SFTP for remote paths. When the `remote` feature is disabled,
-// remote paths return an error.
+// paths or SFTP for remote paths.
 
 /// Unified metadata mirroring the fields we need from std::fs::Metadata.
 #[derive(Debug, Clone)]
@@ -706,16 +887,7 @@ pub async fn io_read_to_string(source: &PathSource) -> Result<String> {
 		PathSource::Local(p) => tokio::fs::read_to_string(p)
 			.await
 			.map_err(|e| anyhow!("Failed to read '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_read_to_string(source).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_read_to_string(source).await,
 	}
 }
 
@@ -725,16 +897,7 @@ pub async fn io_read(source: &PathSource) -> Result<Vec<u8>> {
 		PathSource::Local(p) => tokio::fs::read(p)
 			.await
 			.map_err(|e| anyhow!("Failed to read '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_read(source).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_read(source).await,
 	}
 }
 
@@ -744,16 +907,7 @@ pub async fn io_write(source: &PathSource, content: &[u8]) -> Result<()> {
 		PathSource::Local(p) => tokio::fs::write(p, content)
 			.await
 			.map_err(|e| anyhow!("Failed to write '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_write(source, content).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_write(source, content).await,
 	}
 }
 
@@ -761,16 +915,7 @@ pub async fn io_write(source: &PathSource, content: &[u8]) -> Result<()> {
 pub async fn io_exists(source: &PathSource) -> Result<bool> {
 	match source {
 		PathSource::Local(p) => Ok(p.exists()),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_exists(source).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_exists(source).await,
 	}
 }
 
@@ -778,16 +923,7 @@ pub async fn io_exists(source: &PathSource) -> Result<bool> {
 pub async fn io_is_dir(source: &PathSource) -> Result<bool> {
 	match source {
 		PathSource::Local(p) => Ok(p.is_dir()),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				Ok(sftp::remote_metadata(source).await?.is_dir)
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => Ok(sftp::remote_metadata(source).await?.is_dir),
 	}
 }
 
@@ -795,16 +931,7 @@ pub async fn io_is_dir(source: &PathSource) -> Result<bool> {
 pub async fn io_is_file(source: &PathSource) -> Result<bool> {
 	match source {
 		PathSource::Local(p) => Ok(p.is_file()),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				Ok(sftp::remote_metadata(source).await?.is_file)
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => Ok(sftp::remote_metadata(source).await?.is_file),
 	}
 }
 
@@ -823,20 +950,13 @@ pub async fn io_metadata(source: &PathSource) -> Result<IoMetadata> {
 			})
 		}
 		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				let m = sftp::remote_metadata(source).await?;
-				Ok(IoMetadata {
-					size: m.size,
-					is_dir: m.is_dir,
-					is_file: m.is_file,
-					modified: m.modified,
-				})
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
+			let m = sftp::remote_metadata(source).await?;
+			Ok(IoMetadata {
+				size: m.size,
+				is_dir: m.is_dir,
+				is_file: m.is_file,
+				modified: m.modified,
+			})
 		}
 	}
 }
@@ -847,16 +967,7 @@ pub async fn io_create_dir_all(source: &PathSource) -> Result<()> {
 		PathSource::Local(p) => tokio::fs::create_dir_all(p)
 			.await
 			.map_err(|e| anyhow!("Failed to create dirs for '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_create_dir_all(source).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_create_dir_all(source).await,
 	}
 }
 
@@ -866,16 +977,7 @@ pub async fn io_remove_file(source: &PathSource) -> Result<()> {
 		PathSource::Local(p) => tokio::fs::remove_file(p)
 			.await
 			.map_err(|e| anyhow!("Failed to remove '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_remove_file(source).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_remove_file(source).await,
 	}
 }
 
@@ -886,16 +988,7 @@ pub async fn io_fingerprint(source: &PathSource) -> Option<(SystemTime, u64)> {
 			let meta = std::fs::metadata(p).ok()?;
 			Some((meta.modified().ok()?, meta.len()))
 		}
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_fingerprint(source).await
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				None
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_fingerprint(source).await,
 	}
 }
 
@@ -905,16 +998,7 @@ pub async fn io_canonicalize(source: &PathSource) -> Result<PathBuf> {
 		PathSource::Local(p) => tokio::fs::canonicalize(p)
 			.await
 			.map_err(|e| anyhow!("Failed to canonicalize '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				sftp::remote_canonicalize(source).await.map(PathBuf::from)
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
-		}
+		PathSource::Remote { .. } => sftp::remote_canonicalize(source).await.map(PathBuf::from),
 	}
 }
 
@@ -925,28 +1009,21 @@ pub async fn io_list_dir(source: &PathSource) -> Result<Vec<(String, IoMetadata)
 			bail!("io_list_dir is for remote paths only; use directory::list_directory for local")
 		}
 		PathSource::Remote { .. } => {
-			#[cfg(feature = "remote")]
-			{
-				let entries = sftp::remote_list_dir(source).await?;
-				Ok(entries
-					.into_iter()
-					.map(|(name, m)| {
-						(
-							name,
-							IoMetadata {
-								size: m.size,
-								is_dir: m.is_dir,
-								is_file: m.is_file,
-								modified: m.modified,
-							},
-						)
-					})
-					.collect())
-			}
-			#[cfg(not(feature = "remote"))]
-			{
-				bail!("Remote filesystem support is not enabled (rebuild with --features remote)")
-			}
+			let entries = sftp::remote_list_dir(source).await?;
+			Ok(entries
+				.into_iter()
+				.map(|(name, m)| {
+					(
+						name,
+						IoMetadata {
+							size: m.size,
+							is_dir: m.is_dir,
+							is_file: m.is_file,
+							modified: m.modified,
+						},
+					)
+				})
+				.collect())
 		}
 	}
 }
