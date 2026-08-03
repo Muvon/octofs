@@ -22,6 +22,8 @@ exclude = [
     "install.sh"
 ]
 
+[features]
+remote = ["dep:russh", "dep:russh-sftp"]
 [[bin]]
 name = "octofs"
 path = "src/main.rs"
@@ -50,6 +52,10 @@ clap = { version = "4.6.1", features = ["derive"] }
 rmcp = { version = "3.0.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio-util = { version = "0.7", features = ["codec"] }
+
+# Remote filesystem support (SSH/SFTP)
+russh = { version = "0.62", optional = true }
+russh-sftp = { version = "2.3", optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

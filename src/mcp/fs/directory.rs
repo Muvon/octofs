@@ -15,6 +15,9 @@
 // Directory operations module — file listing and content search using ignore + pure-Rust matching.
 
 use super::super::McpToolCall;
+use super::remote::{
+	io_list_dir, io_metadata, io_read, resolve_path_source, IoMetadata, PathSource,
+};
 use super::search::{self, Matcher};
 use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
 use crate::utils::truncation::estimate_tokens;
@@ -184,6 +187,199 @@ fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<Stri
 	files
 }
 
+// --- Remote directory listing (SFTP) ---
+
+// Construct a child PathSource for a remote directory entry.
+fn remote_child(source: &PathSource, name: &str) -> PathSource {
+	match source {
+		PathSource::Remote {
+			host,
+			port,
+			user,
+			path,
+		} => {
+			let new_path = if path.ends_with('/') {
+				format!("{path}{name}")
+			} else {
+				format!("{path}/{name}")
+			};
+			PathSource::Remote {
+				host: host.clone(),
+				port: *port,
+				user: user.clone(),
+				path: new_path,
+			}
+		}
+		_ => unreachable!("remote_child called on non-remote source"),
+	}
+}
+
+// Recursively list remote files, returning relative paths sorted alphabetically.
+async fn collect_remote_files(
+	source: &PathSource,
+	base_rel: &str,
+	max_depth: Option<usize>,
+	include_hidden: bool,
+	current_depth: usize,
+) -> Result<Vec<String>> {
+	let mut files = Vec::new();
+	let entries = io_list_dir(source).await?;
+
+	for (name, meta) in &entries {
+		if !include_hidden && name.starts_with('.') {
+			continue;
+		}
+
+		let rel_path = if base_rel.is_empty() {
+			name.clone()
+		} else {
+			format!("{base_rel}/{name}")
+		};
+
+		if meta.is_dir {
+			if let Some(max_d) = max_depth {
+				if current_depth >= max_d {
+					continue;
+				}
+			}
+			let sub_source = remote_child(source, name);
+			let sub_files = Box::pin(collect_remote_files(
+				&sub_source,
+				&rel_path,
+				max_depth,
+				include_hidden,
+				current_depth + 1,
+			))
+			.await?;
+			files.extend(sub_files);
+		} else {
+			files.push(rel_path);
+		}
+	}
+
+	files.sort();
+	Ok(files)
+}
+
+// Annotation suffix for a remote file: "NL\t~Nt", "(binary)", or "(large: NMB)".
+async fn annotation_suffix_remote(source: &PathSource, meta: &IoMetadata) -> String {
+	if meta.size > super::file_ops::MAX_VIEW_FILE_BYTES {
+		return format!("(large: {}MB)", meta.size / (1024 * 1024));
+	}
+
+	let bytes = match io_read(source).await {
+		Ok(b) => b,
+		Err(_) => return String::new(),
+	};
+
+	let sample_size = bytes.len().min(512);
+	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
+	if null_count > sample_size / 10 {
+		return "(binary)".to_string();
+	}
+
+	let text = String::from_utf8_lossy(&bytes);
+	format!("{}L\t~{}t", text.lines().count(), estimate_tokens(&text))
+}
+
+// List a remote directory — file listing or content search via SFTP.
+// No gitignore support (remote repos rarely have .gitignore at the listed root);
+// hidden files are controlled by `include_hidden` like the local path.
+async fn list_directory_remote(
+	source: &PathSource,
+	pattern: Option<String>,
+	content: Option<String>,
+	max_depth: Option<usize>,
+	include_hidden: bool,
+	context_lines: usize,
+	regex_flag: bool,
+) -> Result<String> {
+	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
+
+	let mut files = collect_remote_files(source, "", max_depth, include_hidden, 0).await?;
+
+	if let Some(ref name_pattern) = pattern {
+		filter_by_pattern(&mut files, name_pattern).map_err(|e| anyhow::anyhow!("{e}"))?;
+		if files.is_empty() {
+			return Ok(format!("No files matched pattern \"{name_pattern}\"."));
+		}
+	}
+
+	if has_content {
+		let content_pattern = content.unwrap();
+		let matcher = Matcher::new(&content_pattern, regex_flag)?;
+		let hash_mode = is_hash_mode();
+
+		let mut results: Vec<String> = Vec::new();
+		for rel_path in &files {
+			let file_source = remote_child(source, rel_path);
+
+			let meta = match io_metadata(&file_source).await {
+				Ok(m) => m,
+				Err(_) => continue,
+			};
+			if meta.size > super::file_ops::MAX_VIEW_FILE_BYTES {
+				continue;
+			}
+
+			let bytes = match io_read(&file_source).await {
+				Ok(b) => b,
+				Err(_) => continue,
+			};
+
+			let sample_size = bytes.len().min(512);
+			let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
+			if null_count > sample_size / 10 {
+				continue;
+			}
+
+			let file_content = String::from_utf8_lossy(&bytes);
+			let blocks = search::search_lines(&file_content, &matcher, context_lines);
+			if blocks.is_empty() {
+				continue;
+			}
+
+			let file_lines: Vec<&str> = file_content.lines().collect();
+			let prefixes: Vec<String> = if hash_mode {
+				compute_line_hashes(&file_lines)
+			} else {
+				(1..=file_lines.len()).map(|n| n.to_string()).collect()
+			};
+
+			let mut rendered_blocks: Vec<String> = Vec::new();
+			for block in &blocks {
+				let mut rendered = Vec::new();
+				for &n in &block.line_numbers {
+					let idx = n - 1;
+					if idx < file_lines.len() {
+						rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
+					}
+				}
+				rendered_blocks.push(rendered.join("\n"));
+			}
+
+			results.push(format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")));
+		}
+
+		Ok(results.join("\n\n"))
+	} else {
+		let mut lines: Vec<String> = Vec::new();
+		for rel_path in &files {
+			let file_source = remote_child(source, rel_path);
+			let suffix = match io_metadata(&file_source).await {
+				Ok(meta) => annotation_suffix_remote(&file_source, &meta).await,
+				Err(_) => String::new(),
+			};
+			if suffix.is_empty() {
+				lines.push(rel_path.clone());
+			} else {
+				lines.push(format!("{}\t{}", rel_path, suffix));
+			}
+		}
+		Ok(lines.join("\n"))
+	}
+}
+
 // Execute list_directory — file listing or content search
 pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<String> {
 	let pattern = call
@@ -213,6 +409,27 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.unwrap_or(0) as usize;
 
 	let working_dir = call.workdir.clone();
+
+	// Remote paths (ssh://, sftp://) dispatch to the SFTP listing path.
+	let source = resolve_path_source(directory, &working_dir);
+	if source.is_remote() {
+		let regex_flag = call
+			.parameters
+			.get("regex")
+			.and_then(|v| v.as_bool())
+			.unwrap_or(false);
+		return list_directory_remote(
+			&source,
+			pattern,
+			content,
+			max_depth,
+			include_hidden,
+			context_lines,
+			regex_flag,
+		)
+		.await;
+	}
+
 	let abs_dir = if Path::new(directory).is_absolute() {
 		std::path::PathBuf::from(directory)
 	} else {

@@ -16,14 +16,15 @@
 
 use super::super::McpToolCall;
 use super::core::save_file_history;
+use super::remote::{
+	io_exists, io_metadata, io_read_to_string, io_remove_file, io_write, PathSource,
+};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::fs as tokio_fs;
 use tokio::sync::Mutex as AsyncMutex;
-
 // Thread-safe file locking infrastructure for concurrent write protection.
 // Outer map uses std::sync::Mutex (held briefly, no await while locked).
 // Per-file locks use tokio::sync::Mutex (held across async file I/O).
@@ -53,12 +54,22 @@ pub fn lock_key_for(path: &Path) -> String {
 	path.to_string_lossy().to_string()
 }
 
+/// Build the lock-map key for a PathSource. For local paths, delegates to
+/// `lock_key_for` (canonicalize when possible). For remote paths, uses
+/// `host:port/path` to avoid cross-host collisions.
+pub fn lock_key_for_source(source: &PathSource) -> String {
+	match source {
+		PathSource::Local(p) => lock_key_for(p),
+		PathSource::Remote { .. } => source.lock_key(),
+	}
+}
+
 // Sweep threshold for the lock map — far above any realistic in-flight file count.
 const LOCK_MAP_SWEEP_THRESHOLD: usize = 1024;
 
 // Acquire a file-specific lock to prevent concurrent writes to the same file
-pub(crate) async fn acquire_file_lock(path: &Path) -> Result<Arc<AsyncMutex<()>>> {
-	let key = lock_key_for(path);
+pub(crate) async fn acquire_file_lock(source: &PathSource) -> Result<Arc<AsyncMutex<()>>> {
+	let key = lock_key_for_source(source);
 
 	let file_lock = {
 		let mut locks = get_file_locks().lock().expect("file locks poisoned");
@@ -86,33 +97,31 @@ pub(crate) fn file_lock_map_len() -> usize {
 
 /// Delete a file. Saves history first so `undo_edit` can restore it.
 /// Refuses directories — use shell `rm -r` for that.
-pub async fn delete_file_spec(path: &Path) -> Result<String> {
-	if !path.exists() {
-		bail!("File does not exist: {}", path.display());
+pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
+	if !io_exists(source).await? {
+		bail!("File does not exist: {}", source.display());
 	}
-	let meta = tokio_fs::metadata(path)
-		.await
-		.map_err(|e| anyhow!("Failed to stat '{}': {}", path.display(), e))?;
-	if meta.is_dir() {
+	let meta = io_metadata(source).await?;
+	if meta.is_dir {
 		bail!(
 			"Path is a directory, not a file: {}. Use the shell tool with `rm -r` to remove directories.",
-			path.display()
+			source.display()
 		);
 	}
 
-	let file_lock = acquire_file_lock(path).await?;
+	let file_lock = acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
-	crate::mcp::request_ctx::ensure_not_stale(path)?;
+	crate::mcp::request_ctx::ensure_not_stale(source).await?;
 
 	// Snapshot for undo before unlinking.
-	save_file_history(path).await?;
+	save_file_history(source).await?;
 
-	tokio_fs::remove_file(path)
+	io_remove_file(source)
 		.await
-		.map_err(|e| anyhow!("Failed to delete '{}': {}", path.display(), e))?;
-	crate::mcp::request_ctx::forget_stamp(path);
+		.map_err(|e| anyhow!("Failed to delete '{}': {}", source.display(), e))?;
+	crate::mcp::request_ctx::forget_stamp(source);
 
-	Ok(format!("Successfully deleted {}", path.display()))
+	Ok(format!("Successfully deleted {}", source.display()))
 }
 
 // Line-index resolution (negative indexing) is shared from utils::line_hash.
@@ -396,7 +405,6 @@ fn adjust_indentation(new_text: &str, provided_old: &str, actual_old: &str) -> S
 		.join("\n")
 }
 
-/// Atomic write: write to a temp file in the same directory, then rename over the target.
 /// Build a unified-style diff for a str_replace operation showing CONTEXT lines before/after.
 // `start` is 0-indexed position of the first replaced line in `orig_lines`.
 fn build_str_replace_diff(
@@ -458,73 +466,89 @@ fn build_str_replace_diff(
 	diff.join("\n")
 }
 
-// Guarantees the file is never in a partial/corrupt state if the process is interrupted.
-// Preserves the original file's permissions (including the executable bit) — without this,
-// the rename would replace the file with the temp file's default mode and silently strip
-// permission bits the user set deliberately.
-pub async fn atomic_write(path: &Path, content: &str) -> Result<()> {
-	let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-	let tmp_path = parent_dir.join(format!(
-		".octofs_tmp_{}.tmp",
-		path.file_name().unwrap_or_default().to_string_lossy()
-	));
-
-	// Snapshot existing permissions before we overwrite, so we can re-apply them to the temp
-	// file before the rename swaps inodes. None means the target didn't exist yet.
-	let original_perms = match tokio_fs::metadata(path).await {
-		Ok(meta) => Some(meta.permissions()),
-		Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-		Err(e) => {
-			return Err(anyhow!(
-				"Failed to read metadata for '{}': {}",
-				path.display(),
-				e
-			))
-		}
-	};
-
-	tokio_fs::write(&tmp_path, content)
-		.await
-		.map_err(|e| anyhow!("Failed to write temp file for '{}': {}", path.display(), e))?;
-
-	if let Some(perms) = original_perms {
-		if let Err(e) = tokio_fs::set_permissions(&tmp_path, perms).await {
-			let _ = tokio_fs::remove_file(&tmp_path).await;
-			return Err(anyhow!(
-				"Failed to preserve permissions on '{}': {}",
-				path.display(),
-				e
+/// Atomic write: write to a temp file in the same directory, then rename over the target.
+/// Guarantees the file is never in a partial/corrupt state if the process is interrupted.
+/// Preserves the original file's permissions (including the executable bit) — without this,
+/// the rename would replace the file with the temp file's default mode and silently strip
+/// permission bits the user set deliberately.
+///
+/// For remote paths, falls back to direct write (SFTP has no atomic rename-to-temp in our
+/// abstraction layer; the connection-level lock serializes concurrent writes anyway).
+pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
+	match source {
+		PathSource::Local(path) => {
+			let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+			let tmp_path = parent_dir.join(format!(
+				".octofs_tmp_{}.tmp",
+				path.file_name().unwrap_or_default().to_string_lossy()
 			));
+
+			// Snapshot existing permissions before we overwrite, so we can re-apply them to the temp
+			// file before the rename swaps inodes. None means the target didn't exist yet.
+			let original_perms = match tokio::fs::metadata(path).await {
+				Ok(meta) => Some(meta.permissions()),
+				Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+				Err(e) => {
+					return Err(anyhow!(
+						"Failed to read metadata for '{}': {}",
+						path.display(),
+						e
+					))
+				}
+			};
+
+			tokio::fs::write(&tmp_path, content).await.map_err(|e| {
+				anyhow!("Failed to write temp file for '{}': {}", path.display(), e)
+			})?;
+
+			if let Some(perms) = original_perms {
+				if let Err(e) = tokio::fs::set_permissions(&tmp_path, perms).await {
+					let _ = tokio::fs::remove_file(&tmp_path).await;
+					return Err(anyhow!(
+						"Failed to preserve permissions on '{}': {}",
+						path.display(),
+						e
+					));
+				}
+			}
+
+			if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
+				// Clean up temp file on rename failure
+				let _ = tokio::fs::remove_file(&tmp_path).await;
+				return Err(anyhow!(
+					"Failed to atomically replace '{}': {}",
+					path.display(),
+					e
+				));
+			}
+			Ok(())
+		}
+		PathSource::Remote { .. } => {
+			io_write(source, content.as_bytes()).await?;
+			Ok(())
 		}
 	}
-
-	if let Err(e) = tokio_fs::rename(&tmp_path, path).await {
-		// Clean up temp file on rename failure
-		let _ = tokio_fs::remove_file(&tmp_path).await;
-		return Err(anyhow!(
-			"Failed to atomically replace '{}': {}",
-			path.display(),
-			e
-		));
-	}
-	Ok(())
 }
 // Replace a string in a file with progressive matching strategy:
 // 1. Exact match (original behavior)
 // 2. Whitespace-normalized fuzzy match with indentation adjustment
 // 3. Rich diagnostics with closest candidates on failure
-pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Result<String> {
-	if !path.exists() {
+pub async fn str_replace_spec(
+	source: &PathSource,
+	old_text: &str,
+	new_text: &str,
+) -> Result<String> {
+	if !io_exists(source).await? {
 		bail!("File not found");
 	}
 
 	// Acquire file lock to prevent concurrent writes
-	let file_lock = acquire_file_lock(path).await?;
+	let file_lock = acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
-	crate::mcp::request_ctx::ensure_not_stale(path)?;
+	crate::mcp::request_ctx::ensure_not_stale(source).await?;
 
 	// Read the file content
-	let content = tokio_fs::read_to_string(path)
+	let content = io_read_to_string(source)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 
@@ -539,10 +563,10 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 		let match_offset = content.find(old_text).unwrap_or(0);
 		let match_start = byte_offset_to_line(&content, match_offset) - 1;
 
-		save_file_history(path).await?;
+		save_file_history(source).await?;
 		let new_content = content.replace(old_text, new_text);
-		atomic_write(path, &new_content).await?;
-		crate::mcp::request_ctx::record_stamp(path);
+		atomic_write(source, &new_content).await?;
+		crate::mcp::request_ctx::record_stamp(source).await;
 
 		if old_line_count > 1 {
 			crate::mcp::request_ctx::push_hint(&format!(
@@ -627,10 +651,10 @@ pub async fn str_replace_spec(path: &Path, old_text: &str, new_text: &str) -> Re
 			let actual_old = content_lines[start..start + old_line_count].join("\n");
 			let adjusted_new = adjust_indentation(new_text, old_text, &actual_old);
 
-			save_file_history(path).await?;
+			save_file_history(source).await?;
 			let new_content = content.replace(&actual_old, &adjusted_new);
-			atomic_write(path, &new_content).await?;
-			crate::mcp::request_ctx::record_stamp(path);
+			atomic_write(source, &new_content).await?;
+			crate::mcp::request_ctx::record_stamp(source).await;
 
 			crate::mcp::request_ctx::push_hint(
 				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
@@ -1130,21 +1154,21 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		);
 	}
 
-	let path = super::core::resolve_path(path_str, &call.workdir);
+	let source = super::remote::resolve_path_source(path_str, &call.workdir);
 	// Check if file exists
-	if !path.exists() {
+	if !io_exists(&source).await? {
 		bail!("File not found: {}", path_str);
 	}
 
 	// Acquire file lock to prevent concurrent writes
-	let file_lock = acquire_file_lock(&path).await?;
+	let file_lock = acquire_file_lock(&source).await?;
 	let _lock_guard = file_lock.lock().await;
 	// batch_edit targets lines by number/hash chosen against VIEWED content — an
 	// external change shifts lines and would make this silently edit the wrong ones.
-	crate::mcp::request_ctx::ensure_not_stale(&path)?;
+	crate::mcp::request_ctx::ensure_not_stale(&source).await?;
 
 	// Read original file content
-	let original_content = tokio_fs::read_to_string(&path)
+	let original_content = io_read_to_string(&source)
 		.await
 		.map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
 
@@ -1350,12 +1374,12 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		.map_err(|e| anyhow!("Failed to apply operations: {}", e))?;
 
 	// Save file history for undo functionality
-	save_file_history(&path).await?;
+	save_file_history(&source).await?;
 
-	atomic_write(&path, &final_content)
+	atomic_write(&source, &final_content)
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
-	crate::mcp::request_ctx::record_stamp(&path);
+	crate::mcp::request_ctx::record_stamp(&source).await;
 
 	// Build annotated diff for each operation so the AI can verify edits landed correctly.
 	// In hash mode: uses content-based hashes as line prefixes.
