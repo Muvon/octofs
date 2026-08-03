@@ -576,14 +576,19 @@ mod sftp {
 				),
 				None => (AgentClient::connect_env().await, "ssh-agent".to_string()),
 			};
+			// Windows has no unix sockets (russh's connect_env is unix-only):
+			// the OpenSSH agent listens on a named pipe. IdentityAgent from
+			// ssh config overrides the standard pipe path.
 			#[cfg(not(unix))]
 			let (agent_result, agent_label) = {
-				if host_cfg.identity_agent.is_some() {
-					reasons.push(
-						"IdentityAgent from ~/.ssh/config is only supported on unix".to_string(),
-					);
-				}
-				(AgentClient::connect_env().await, "ssh-agent".to_string())
+				let pipe = host_cfg
+					.identity_agent
+					.clone()
+					.unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".to_string());
+				(
+					AgentClient::connect_named_pipe(&pipe).await,
+					format!("agent '{pipe}'"),
+				)
 			};
 
 			match agent_result {
