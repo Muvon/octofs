@@ -331,6 +331,8 @@ fn append_hints(mut result: String) -> String {
 pub struct ViewParams {
 	/// A single file or directory path (e.g. "src/main.rs"). To view several files,
 	/// make multiple `view` calls — they run in parallel.
+	/// Supports ssh://user@host:port/path or sftp://user@host:port/path for remote
+	/// filesystem access (requires --features remote at build time).
 	pub path: String,
 	/// First line to show (inclusive). Integer line number (negative counts from the
 	/// end: -1 = last line) or a string hash in hash mode. Omit to start at line 1.
@@ -412,6 +414,7 @@ pub struct TextEditorParams {
 	/// The operation to perform: create, str_replace, delete, undo_edit
 	pub command: TextEditorCommand,
 	/// REQUIRED. Path to the file to operate on.
+	/// Supports ssh://user@host:port/path for remote filesystem access.
 	pub path: String,
 	/// File content for create command.
 	#[serde(default)]
@@ -452,7 +455,7 @@ pub struct BatchEditOperation {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct BatchEditParams {
-	/// Path to the file to edit
+	/// Path to the file to edit. Supports ssh://user@host:port/path for remote access.
 	pub path: String,
 	/// Array of operations for batch_edit on SINGLE file. Max 50 operations.
 	#[schemars(length(max = 50))]
@@ -461,7 +464,8 @@ pub struct BatchEditParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ExtractLinesParams {
-	/// Path to the source file to extract lines from
+	/// Path to the source file to extract lines from.
+	/// Supports ssh://user@host:port/path for remote filesystem access.
 	pub from_path: String,
 	/// First line to copy (inclusive). Integer line number or a string hash.
 	#[schemars(schema_with = "line_endpoint_schema")]
@@ -471,7 +475,8 @@ pub struct ExtractLinesParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub from_end: Option<serde_json::Value>,
-	/// Path to the target file where extracted lines will be appended
+	/// Path to the target file where extracted lines will be appended.
+	/// Supports ssh://user@host:port/path for remote filesystem access.
 	pub append_path: String,
 	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N
 	/// (integer), or a string hash in hash mode.

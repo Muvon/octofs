@@ -508,9 +508,7 @@ mod tests {
 		assert!(detect_shell_misuse("echo \"hello && ls\"").is_none());
 		assert!(detect_shell_misuse("bash -lc 'cd /x && git log && ls'").is_none());
 		assert!(
-			detect_shell_misuse(
-				"ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'"
-			).is_none()
+			detect_shell_misuse("ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'").is_none()
 		);
 		// Unquoted separators after a quoted block are still caught
 		assert!(detect_shell_misuse("ssh host 'ls' && cat file").is_some());

@@ -15,6 +15,10 @@
 // Core functionality and shared utilities for file system operations
 
 use super::super::McpToolCall;
+use super::remote::{
+	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_to_string, resolve_path_source,
+	PathSource,
+};
 use crate::mcp::fs::{directory, file_ops, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::format_extracted_content_smart;
@@ -24,7 +28,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use tokio::fs as tokio_fs;
 
 /// Resolve a path relative to the session working directory
 /// If the path is absolute, returns it as-is
@@ -107,12 +110,12 @@ fn file_history() -> &'static Mutex<HistoryStore> {
 }
 
 // Save the current content of a file for undo
-pub async fn save_file_history(path: &Path) -> Result<()> {
-	if path.exists() {
-		let content = tokio_fs::read_to_string(path).await?;
+pub async fn save_file_history(source: &PathSource) -> Result<()> {
+	if io_exists(source).await? {
+		let content = io_read_to_string(source).await?;
 		// Use the same canonicalized key as the file lock map so undo history
 		// follows the file even when callers pass aliased paths.
-		let path_str = text_editing::lock_key_for(path);
+		let path_str = text_editing::lock_key_for_source(source);
 		file_history()
 			.lock()
 			.map_err(|_| anyhow!("Failed to acquire lock on file history"))?
@@ -122,29 +125,29 @@ pub async fn save_file_history(path: &Path) -> Result<()> {
 }
 
 // Undo the last edit to a file
-pub async fn undo_edit(path: &Path) -> Result<String> {
+pub async fn undo_edit(source: &PathSource) -> Result<String> {
 	// Serialize with other writers on the same file — without this, an undo racing a
 	// concurrent str_replace/batch_edit could interleave the pop and write and lose data.
-	let file_lock = text_editing::acquire_file_lock(path).await?;
+	let file_lock = text_editing::acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
 
 	// An undo would clobber an external edit just like any other write.
 	// Check BEFORE popping so a stale error doesn't consume an undo level.
-	crate::mcp::request_ctx::ensure_not_stale(path)?;
+	crate::mcp::request_ctx::ensure_not_stale(source).await?;
 
-	let path_str = text_editing::lock_key_for(path);
+	let path_str = text_editing::lock_key_for_source(source);
 	let previous_content = file_history()
 		.lock()
 		.map_err(|_| anyhow!("Failed to acquire lock on file history"))?
 		.pop(&path_str);
 
 	if let Some(prev_content) = previous_content {
-		text_editing::atomic_write(path, &prev_content).await?;
-		crate::mcp::request_ctx::record_stamp(path);
+		text_editing::atomic_write(source, &prev_content).await?;
+		crate::mcp::request_ctx::record_stamp(source).await;
 
 		Ok(format!(
 			"Successfully undid the last edit to {}",
-			path.to_string_lossy()
+			source.display()
 		))
 	} else {
 		bail!("No more undo history for this file (up to 10 levels are stored per file).");
@@ -181,10 +184,10 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'content' parameter for create command");
 				}
 			};
-			let resolved = resolve_path(&path, &call.workdir);
-			let result = file_ops::create_file_spec(&resolved, &content).await?;
+			let source = resolve_path_source(&path, &call.workdir);
+			let result = file_ops::create_file_spec(&source, &content).await?;
 			// The model wrote this content — stamp it so it can edit without re-viewing.
-			crate::mcp::request_ctx::record_stamp(&resolved);
+			crate::mcp::request_ctx::record_stamp(&source).await;
 			Ok(result)
 		}
 		"str_replace" => {
@@ -206,12 +209,8 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'new_text' parameter");
 				}
 			};
-			text_editing::str_replace_spec(
-				&resolve_path(&path, &call.workdir),
-				&old_text,
-				&new_text,
-			)
-			.await
+			let source = resolve_path_source(&path, &call.workdir);
+			text_editing::str_replace_spec(&source, &old_text, &new_text).await
 		}
 		"undo_edit" => {
 			let path = match call.parameters.get("path") {
@@ -220,7 +219,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'path' parameter for undo_edit command");
 				}
 			};
-			undo_edit(&resolve_path(&path, &call.workdir)).await
+			undo_edit(&resolve_path_source(&path, &call.workdir)).await
 		}
 		"delete" => {
 			let path = match call.parameters.get("path") {
@@ -229,7 +228,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'path' parameter for delete command");
 				}
 			};
-			text_editing::delete_file_spec(&resolve_path(&path, &call.workdir)).await
+			text_editing::delete_file_spec(&resolve_path_source(&path, &call.workdir)).await
 		}
 		_ => bail!(
 			"Invalid command: {command}. Allowed commands are: create, str_replace, delete, undo_edit"
@@ -274,7 +273,7 @@ fn resolve_endpoint_to_line(
 async fn resolve_view_range(
 	start_ep: Option<Endpoint>,
 	end_ep: Option<Endpoint>,
-	resolved_path: &Path,
+	source: &PathSource,
 ) -> Result<Option<(usize, i64)>> {
 	if start_ep.is_none() && end_ep.is_none() {
 		return Ok(None);
@@ -282,13 +281,13 @@ async fn resolve_view_range(
 
 	// Same limit view_file_spec enforces — check before loading so a huge file isn't
 	// read fully here just to resolve a range and then be rejected downstream.
-	if let Ok(meta) = tokio_fs::metadata(resolved_path).await {
-		if meta.len() > file_ops::MAX_VIEW_FILE_BYTES {
+	if let Ok(meta) = io_metadata(source).await {
+		if meta.size > file_ops::MAX_VIEW_FILE_BYTES {
 			bail!("File is too large (>5MB)");
 		}
 	}
 
-	let content = tokio_fs::read_to_string(resolved_path).await.ok();
+	let content = io_read_to_string(source).await.ok();
 	let file_lines: Vec<&str> = content
 		.as_deref()
 		.map(|c| c.lines().collect())
@@ -332,20 +331,20 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		),
 	};
 
-	let resolved = resolve_path(&path, &call.workdir);
+	let source = resolve_path_source(&path, &call.workdir);
 
 	// Name the path and where it resolved to — a bare "File not found" hides
 	// workdir mismatches (relative path resolved against an unexpected root).
-	if !resolved.exists() {
+	if !io_exists(&source).await? {
 		bail!(
 			"Path not found: {} (resolved to {})",
 			path,
-			resolved.display()
+			source.display()
 		);
 	}
 
 	// Directory: dispatch directly with the path string
-	if resolved.is_dir() {
+	if io_is_dir(&source).await? {
 		return directory::list_directory(call, &path).await;
 	}
 
@@ -363,7 +362,7 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 				.and_then(|v| v.as_bool())
 				.unwrap_or(false);
 			return file_ops::view_file_with_content_search(
-				&resolved,
+				&source,
 				content_pattern,
 				context_lines,
 				regex_flag,
@@ -375,11 +374,11 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// File: optional start/end line range (both omitted → whole file).
 	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
 	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
-	let range = resolve_view_range(start_ep, end_ep, &resolved).await?;
-	let result = file_ops::view_file_spec(&resolved, range).await?;
+	let range = resolve_view_range(start_ep, end_ep, &source).await?;
+	let result = file_ops::view_file_spec(&source, range).await?;
 	// The model has now seen this file's content — stamp it so a later edit can
 	// detect an external change in between.
-	crate::mcp::request_ctx::record_stamp(&resolved);
+	crate::mcp::request_ctx::record_stamp(&source).await;
 	Ok(result)
 }
 
@@ -439,14 +438,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	// Read source file
-	let from_path_obj = resolve_path(&from_path, &call.workdir);
-	if !from_path_obj.exists() {
+	let from_source = resolve_path_source(&from_path, &call.workdir);
+	if !io_exists(&from_source).await? {
 		bail!("Source file does not exist: {from_path}");
 	}
 	// Line numbers/hashes were chosen against viewed content — refuse if it shifted.
-	crate::mcp::request_ctx::ensure_not_stale(&from_path_obj)?;
+	crate::mcp::request_ctx::ensure_not_stale(&from_source).await?;
 
-	let source_content = match tokio_fs::read_to_string(&from_path_obj).await {
+	let source_content = match io_read_to_string(&from_source).await {
 		Ok(content) => content,
 		Err(e) => {
 			bail!("Failed to read source file '{from_path}': {e}");
@@ -514,22 +513,22 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		};
 
 	// Handle target file - create parent directories if needed
-	let append_path_obj = resolve_path(&append_path, &call.workdir);
-	if let Some(parent) = append_path_obj.parent() {
-		if let Err(e) = tokio_fs::create_dir_all(parent).await {
+	let append_source = resolve_path_source(&append_path, &call.workdir);
+	if let Some(parent_source) = append_source.parent() {
+		if let Err(e) = io_create_dir_all(&parent_source).await {
 			bail!("Failed to create parent directories for '{append_path}': {e}");
 		}
 	}
 
 	// extract_lines modifies the target just like text_editor/batch_edit do — take the
 	// same per-file lock so concurrent writers serialize instead of clobbering each other.
-	let file_lock = text_editing::acquire_file_lock(&append_path_obj).await?;
+	let file_lock = text_editing::acquire_file_lock(&append_source).await?;
 	let _lock_guard = file_lock.lock().await;
-	crate::mcp::request_ctx::ensure_not_stale(&append_path_obj)?;
+	crate::mcp::request_ctx::ensure_not_stale(&append_source).await?;
 
 	// Read existing target file content or create empty if doesn't exist
-	let target_content = if append_path_obj.exists() {
-		match tokio_fs::read_to_string(&append_path_obj).await {
+	let target_content = if io_exists(&append_source).await? {
+		match io_read_to_string(&append_source).await {
 			Ok(content) => content,
 			Err(e) => {
 				bail!("Failed to read target file '{append_path}': {e}");
@@ -618,11 +617,11 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 
 	// Snapshot the target for undo_edit, then write atomically — same guarantees as
 	// every other edit path (no partial file on interruption, permissions preserved).
-	save_file_history(&append_path_obj).await?;
-	if let Err(e) = text_editing::atomic_write(&append_path_obj, &final_content).await {
+	save_file_history(&append_source).await?;
+	if let Err(e) = text_editing::atomic_write(&append_source, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}
-	crate::mcp::request_ctx::record_stamp(&append_path_obj);
+	crate::mcp::request_ctx::record_stamp(&append_source).await;
 
 	// Return success result with useful information
 	let lines_extracted = from_range.1 - from_range.0 + 1;

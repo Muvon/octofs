@@ -16,6 +16,7 @@
 mod tests {
 	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view};
 
+	use crate::mcp::fs::remote::PathSource;
 	use crate::mcp::McpToolCall;
 	use serde_json::json;
 	use tempfile::NamedTempFile;
@@ -56,10 +57,13 @@ mod tests {
 
 		// The edit must fail fast instead of applying against unseen content.
 		request_ctx::with_request_context(stamps.clone(), async {
-			let err =
-				crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "beta", "BETA")
-					.await
-					.unwrap_err();
+			let err = crate::mcp::fs::text_editing::str_replace_spec(
+				&PathSource::from(temp_file.path()),
+				"beta",
+				"BETA",
+			)
+			.await
+			.unwrap_err();
 			assert!(err.to_string().contains("changed on disk"), "got: {err}");
 		})
 		.await;
@@ -67,9 +71,13 @@ mod tests {
 		// Re-viewing refreshes the stamp; the same edit then succeeds.
 		request_ctx::with_request_context(stamps.clone(), async {
 			execute_view(&view_call).await.unwrap();
-			crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "beta", "BETA")
-				.await
-				.unwrap();
+			crate::mcp::fs::text_editing::str_replace_spec(
+				&PathSource::from(temp_file.path()),
+				"beta",
+				"BETA",
+			)
+			.await
+			.unwrap();
 		})
 		.await;
 
@@ -85,7 +93,9 @@ mod tests {
 		// dead entries must be evicted instead of accumulating forever.
 		for i in 0..1200 {
 			let p = std::env::temp_dir().join(format!("octofs_lock_bound_test_{i}"));
-			let lock = text_editing::acquire_file_lock(&p).await.unwrap();
+			let lock = text_editing::acquire_file_lock(&PathSource::from(&p))
+				.await
+				.unwrap();
 			drop(lock);
 		}
 		let len = text_editing::file_lock_map_len();
@@ -621,9 +631,13 @@ mod tests {
 	async fn test_str_replace(content: &str, old_str: &str, new_str: &str, expected: &str) {
 		let temp_file = create_test_file(content).await;
 
-		crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), old_str, new_str)
-			.await
-			.unwrap();
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			old_str,
+			new_str,
+		)
+		.await
+		.unwrap();
 
 		// Check file content
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -766,7 +780,7 @@ mod tests {
 		let temp_file = create_test_file("Hello world").await;
 
 		let err = crate::mcp::fs::text_editing::str_replace_spec(
-			temp_file.path(),
+			&PathSource::from(temp_file.path()),
 			"not_found",
 			"replacement",
 		)
@@ -785,10 +799,13 @@ mod tests {
 	async fn test_str_replace_error_multiple_matches() {
 		let temp_file = create_test_file("test test test").await;
 
-		let err =
-			crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "test", "replacement")
-				.await
-				.unwrap_err();
+		let err = crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"test",
+			"replacement",
+		)
+		.await
+		.unwrap_err();
 
 		// Should return error for multiple matches
 		assert!(
@@ -802,9 +819,13 @@ mod tests {
 		let temp_file = create_test_file("hello\nworld\ntest").await;
 
 		// Replace with content containing actual newlines
-		crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), "world", "new\nline")
-			.await
-			.unwrap();
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"world",
+			"new\nline",
+		)
+		.await
+		.unwrap();
 
 		// Read and verify byte content
 		let actual_bytes = fs::read(temp_file.path()).await.unwrap();
@@ -1718,7 +1739,7 @@ mod tests {
 		);
 
 		// Now test undo functionality
-		let undo_text = crate::mcp::fs::core::undo_edit(temp_file.path())
+		let undo_text = crate::mcp::fs::core::undo_edit(&PathSource::from(temp_file.path()))
 			.await
 			.unwrap();
 
@@ -4242,7 +4263,7 @@ mod tests {
 
 		// Use old_text with different whitespace (tabs instead of spaces)
 		crate::mcp::fs::text_editing::str_replace_spec(
-			temp_file.path(),
+			&PathSource::from(temp_file.path()),
 			"fn hello() {\n\tlet x = 1;\n}",
 			"fn hello() {\n    let x = 2;\n}",
 		)
@@ -4260,7 +4281,7 @@ mod tests {
 
 		// Match with no indentation - fuzzy should find it and adjust new_text indentation
 		crate::mcp::fs::text_editing::str_replace_spec(
-			temp_file.path(),
+			&PathSource::from(temp_file.path()),
 			"def bar():\n    pass",
 			"def baz():\n    return 42",
 		)
@@ -4277,7 +4298,7 @@ mod tests {
 			create_test_file("fn hello_world() {}\nfn hello_earth() {}\nfn goodbye() {}").await;
 
 		let err = crate::mcp::fs::text_editing::str_replace_spec(
-			temp_file.path(),
+			&PathSource::from(temp_file.path()),
 			"fn hello_word() {}",
 			"fn replaced() {}",
 		)
@@ -4303,9 +4324,13 @@ mod tests {
 			("version 2", "version 3"),
 			("version 3", "version 4"),
 		] {
-			crate::mcp::fs::text_editing::str_replace_spec(temp_file.path(), old, new)
-				.await
-				.unwrap();
+			crate::mcp::fs::text_editing::str_replace_spec(
+				&PathSource::from(temp_file.path()),
+				old,
+				new,
+			)
+			.await
+			.unwrap();
 		}
 
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -4313,7 +4338,7 @@ mod tests {
 
 		// Undo 3 times - should go back to version 1
 		for expected in ["version 3", "version 2", "version 1"] {
-			crate::mcp::fs::core::undo_edit(temp_file.path())
+			crate::mcp::fs::core::undo_edit(&PathSource::from(temp_file.path()))
 				.await
 				.unwrap();
 			let actual = fs::read_to_string(temp_file.path()).await.unwrap();
@@ -4321,7 +4346,7 @@ mod tests {
 		}
 
 		// 4th undo should fail - no more history
-		crate::mcp::fs::core::undo_edit(temp_file.path())
+		crate::mcp::fs::core::undo_edit(&PathSource::from(temp_file.path()))
 			.await
 			.unwrap_err();
 	}
@@ -4883,7 +4908,7 @@ mod tests {
 			.await
 			.unwrap();
 
-		atomic_write(&file_path, "#!/bin/sh\necho new\n")
+		atomic_write(&PathSource::from(&file_path), "#!/bin/sh\necho new\n")
 			.await
 			.unwrap();
 
@@ -5450,5 +5475,360 @@ mod tests {
 			!diff.contains("+3: Z"),
 			"stale pre-shift position in diff: {diff}"
 		);
+	}
+
+	// ── Remote filesystem integration tests ─────────────────────────────
+	//
+	// These tests exercise the full remote I/O path (SFTP over SSH) against a
+	// real host. They are gated behind the `OCTOFS_TEST_SSH_HOST` environment
+	// variable so CI without an SSH target skips them automatically.
+	//
+	// To run locally:
+	//   OCTOFS_TEST_SSH_HOST=host \
+	//   OCTOFS_TEST_SSH_USER=user \
+	//   OCTOFS_TEST_SSH_PORT=2222 \
+	//   OCTOFS_TEST_SSH_KEY=/path/to/key \
+	//   cargo test --features remote -- --ignored remote_
+
+	#[cfg(feature = "remote")]
+	fn remote_test_prefix() -> Option<String> {
+		let host = std::env::var("OCTOFS_TEST_SSH_HOST").ok()?;
+		let user = std::env::var("OCTOFS_TEST_SSH_USER")
+			.unwrap_or_else(|_| std::env::var("USER").unwrap_or_else(|_| "root".to_string()));
+		let port = std::env::var("OCTOFS_TEST_SSH_PORT").unwrap_or_else(|_| "22".to_string());
+		// Unique per-test temp dir under /tmp to avoid collisions.
+		let pid = std::process::id();
+		Some(format!("ssh://{user}@{host}:{port}/tmp/octofs_test_{pid}"))
+	}
+
+	/// Initialize the SFTP pool once for all remote tests.
+	#[cfg(feature = "remote")]
+	fn ensure_sftp_pool() {
+		use std::sync::Once;
+		static INIT: Once = Once::new();
+		INIT.call_once(|| {
+			let key_path = std::env::var("OCTOFS_TEST_SSH_KEY").ok();
+			let config = crate::mcp::fs::remote::SshConfig {
+				key_path,
+				password: None,
+				timeout: std::time::Duration::from_secs(30),
+			};
+			crate::mcp::fs::remote::init_sftp_pool(config);
+		});
+	}
+
+	/// Create a fresh remote test directory and return its ssh:// prefix.
+	#[cfg(feature = "remote")]
+	async fn setup_remote_dir() -> String {
+		ensure_sftp_pool();
+		let prefix = remote_test_prefix().expect("OCTOFS_TEST_SSH_HOST not set");
+		let source = crate::mcp::fs::remote::parse_path_source(&prefix);
+		crate::mcp::fs::remote::io_create_dir_all(&source)
+			.await
+			.expect("Failed to create remote test dir");
+		prefix
+	}
+
+	/// Clean up the remote test directory.
+	#[cfg(feature = "remote")]
+	async fn cleanup_remote_dir(prefix: &str) {
+		// Best-effort: remove files we created. SFTP rmdir is not exposed,
+		// so we rely on /tmp being cleaned by the host OS.
+		let _ = prefix;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_view_create_and_read() {
+		let Some(prefix) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+		let file_path = format!("{dir}/hello.txt");
+
+		// Create a file via text_editor
+		let call = McpToolCall::test_call(
+			"text_editor",
+			json!({
+				"command": "create",
+				"path": file_path,
+				"content": "line one\nline two\nline three\n"
+			}),
+		);
+		let result = crate::mcp::fs::core::execute_text_editor(&call).await;
+		assert!(result.is_ok(), "create failed: {:?}", result.err());
+
+		// View it back
+		let view_call = McpToolCall::test_call(
+			"view",
+			json!({
+				"path": file_path
+			}),
+		);
+		let content = execute_view(&view_call).await.expect("view failed");
+		assert!(content.contains("line one"), "content: {content}");
+		assert!(content.contains("line three"), "content: {content}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_str_replace() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+		let file_path = format!("{dir}/replace.txt");
+
+		// Create initial content
+		let call = McpToolCall::test_call(
+			"text_editor",
+			json!({
+				"command": "create",
+				"path": file_path,
+				"content": "alpha\nbeta\ngamma\n"
+			}),
+		);
+		crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap();
+
+		// View to establish stamp
+		let view_call = McpToolCall::test_call(
+			"view",
+			json!({
+			"path": file_path }),
+		);
+
+		// Replace beta -> BETA
+		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+		let diff = crate::mcp::fs::text_editing::str_replace_spec(&source, "beta", "BETA")
+			.await
+			.expect("str_replace failed");
+		assert!(diff.contains("BETA"), "diff: {diff}");
+
+		// Verify on disk
+		let content = crate::mcp::fs::remote::io_read_to_string(&source)
+			.await
+			.unwrap();
+		assert!(content.contains("BETA"), "content: {content}");
+		assert!(!content.contains("beta"), "content: {content}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_batch_edit() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+		let file_path = format!("{dir}/batch.txt");
+
+		// Create initial content
+		let call = McpToolCall::test_call(
+			"text_editor",
+			json!({
+				"command": "create",
+				"path": file_path,
+				"content": "one\ntwo\nthree\nfour\nfive\n"
+			}),
+		);
+		crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap();
+
+		// View to establish stamp
+		let view_call = McpToolCall::test_call(
+			"view",
+			json!({
+			"path": file_path }),
+		);
+
+		// Replace lines 2-3 (two -> THREE, three -> replaced)
+		let batch_call = McpToolCall::test_call(
+			"batch_edit",
+			json!({
+				"path": file_path,
+				"operations": [
+					{
+						"operation": "replace",
+						"start": 2,
+						"end": 3,
+						"content": "TWO\nREPLACED"
+					}
+				]
+			}),
+		);
+		let result = execute_batch_edit(&batch_call).await;
+		assert!(result.is_ok(), "batch_edit failed: {:?}", result.err());
+
+		// Verify
+		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+		let content = crate::mcp::fs::remote::io_read_to_string(&source)
+			.await
+			.unwrap();
+		assert!(content.contains("TWO"), "content: {content}");
+		assert!(content.contains("REPLACED"), "content: {content}");
+		assert!(!content.contains("two"), "content: {content}");
+		assert!(!content.contains("three"), "content: {content}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_directory_listing() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+
+		// Create a couple files
+		for name in ["a.txt", "b.txt"] {
+			let path = format!("{dir}/{name}");
+			let call = McpToolCall::test_call(
+				"text_editor",
+				json!({
+					"command": "create",
+					"path": path,
+					"content": "test\n"
+				}),
+			);
+			crate::mcp::fs::core::execute_text_editor(&call)
+				.await
+				.unwrap();
+		}
+
+		// List the directory
+		let list_call = McpToolCall::test_call(
+			"view",
+			json!({
+			"path": dir }),
+		);
+		assert!(listing.contains("a.txt"), "listing: {listing}");
+		assert!(listing.contains("b.txt"), "listing: {listing}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_extract_lines() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+		let src_path = format!("{dir}/extract_src.txt");
+		let dst_path = format!("{dir}/extract_dst.txt");
+
+		// Create source file
+		let call = McpToolCall::test_call(
+			"text_editor",
+			json!({
+				"command": "create",
+				"path": src_path,
+				"content": "L1\nL2\nL3\nL4\nL5\n"
+			}),
+		);
+		crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap();
+
+		// View to establish stamp
+		let view_call = McpToolCall::test_call(
+			"view",
+			json!({
+			"path": src_path }),
+		);
+
+		// Extract lines 2-3 into dst
+		let extract_call = McpToolCall::test_call(
+			"extract_lines",
+			json!({
+				"from_path": src_path,
+				"from_start": 2,
+				"from_end": 3,
+				"append_path": dst_path,
+				"append_line": -1
+			}),
+		);
+		let result = execute_extract_lines(&extract_call).await;
+		assert!(result.is_ok(), "extract_lines failed: {:?}", result.err());
+
+		// Verify destination
+		let dst_source = crate::mcp::fs::remote::parse_path_source(&dst_path);
+		let content = crate::mcp::fs::remote::io_read_to_string(&dst_source)
+			.await
+			.unwrap();
+		assert!(content.contains("L2"), "content: {content}");
+		assert!(content.contains("L3"), "content: {content}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[cfg(feature = "remote")]
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_undo_edit() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+		let file_path = format!("{dir}/undo.txt");
+
+		// Create initial content
+		let call = McpToolCall::test_call(
+			"text_editor",
+			json!({
+				"command": "create",
+				"path": file_path,
+				"content": "original\n"
+			}),
+		);
+		crate::mcp::fs::core::execute_text_editor(&call)
+			.await
+			.unwrap();
+
+		// View to establish stamp
+		let view_call = McpToolCall::test_call(
+			"view",
+			json!({
+			"path": file_path }),
+		);
+
+		// Replace original -> modified
+		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+		crate::mcp::fs::text_editing::str_replace_spec(&source, "original", "modified")
+			.await
+			.unwrap();
+
+		// Verify modification
+		let content = crate::mcp::fs::remote::io_read_to_string(&source)
+			.await
+			.unwrap();
+		assert!(content.contains("modified"), "content: {content}");
+
+		// Undo
+		let undone = crate::mcp::fs::core::undo_edit(&source)
+			.await
+			.expect("undo failed");
+		assert!(undone.contains("original"), "undone: {undone}");
+
+		// Verify on disk
+		let content = crate::mcp::fs::remote::io_read_to_string(&source)
+			.await
+			.unwrap();
+		assert!(content.contains("original"), "content: {content}");
+		assert!(!content.contains("modified"), "content: {content}");
+
+		cleanup_remote_dir(&dir).await;
 	}
 }

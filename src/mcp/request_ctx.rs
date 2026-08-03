@@ -29,10 +29,10 @@
 // Outside a scope (unit tests calling executors directly) every accessor degrades to
 // a no-op: hints are dropped, staleness is not enforced.
 
+use crate::mcp::fs::remote::{io_fingerprint, PathSource};
 use anyhow::{bail, Result};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -80,18 +80,16 @@ pub fn drain_hints() -> Vec<String> {
 
 /// (mtime, len) is what editors use for external-change detection: cheap (one stat)
 /// and reliable — a content hash would need a full read on every check.
-fn fingerprint(path: &Path) -> Option<(SystemTime, u64)> {
-	let meta = std::fs::metadata(path).ok()?;
-	Some((meta.modified().ok()?, meta.len()))
-}
-
-/// Record `path`'s current fingerprint as "the model has seen this content".
+/// Now delegates to `io_fingerprint` which handles both local and remote paths.
+///
+/// Record `source`'s current fingerprint as "the model has seen this content".
 /// Called after a successful file view and after every successful write.
-pub fn record_stamp(path: &Path) {
-	let key = crate::mcp::fs::text_editing::lock_key_for(path);
+pub async fn record_stamp(source: &PathSource) {
+	let key = crate::mcp::fs::text_editing::lock_key_for_source(source);
+	let fp = io_fingerprint(source).await;
 	let _ = CTX.try_with(|ctx| {
 		let mut stamps = ctx.stamps.lock().expect("stamps poisoned");
-		match fingerprint(path) {
+		match fp {
 			Some(fp) => {
 				stamps.insert(key, fp);
 			}
@@ -102,16 +100,16 @@ pub fn record_stamp(path: &Path) {
 	});
 }
 
-/// Forget `path`'s fingerprint (file deleted).
-pub fn forget_stamp(path: &Path) {
-	let key = crate::mcp::fs::text_editing::lock_key_for(path);
+/// Forget `source`'s fingerprint (file deleted).
+pub fn forget_stamp(source: &PathSource) {
+	let key = crate::mcp::fs::text_editing::lock_key_for_source(source);
 	let _ = CTX.try_with(|ctx| ctx.stamps.lock().expect("stamps poisoned").remove(&key));
 }
 
-/// Fail if `path` changed on disk since the model last saw it.
+/// Fail if `source` changed on disk since the model last saw it.
 /// Paths with no recorded stamp pass — editing without a prior view stays legal.
-pub fn ensure_not_stale(path: &Path) -> Result<()> {
-	let key = crate::mcp::fs::text_editing::lock_key_for(path);
+pub async fn ensure_not_stale(source: &PathSource) -> Result<()> {
+	let key = crate::mcp::fs::text_editing::lock_key_for_source(source);
 	let recorded = CTX
 		.try_with(|ctx| {
 			ctx.stamps
@@ -125,10 +123,10 @@ pub fn ensure_not_stale(path: &Path) -> Result<()> {
 	let Some(recorded) = recorded else {
 		return Ok(());
 	};
-	if fingerprint(path) != Some(recorded) {
+	if io_fingerprint(source).await != Some(recorded) {
 		bail!(
 			"File changed on disk since it was last viewed (external edit — another program or a shell command). Run `view` on '{}' again, then retry.",
-			path.display()
+			source.display()
 		);
 	}
 	Ok(())

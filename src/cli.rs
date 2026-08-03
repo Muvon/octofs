@@ -28,7 +28,9 @@ pub struct Cli {
 pub enum Commands {
 	/// Start MCP server exposing filesystem tools (view, text_editor, batch_edit, shell, workdir, extract_lines)
 	Mcp {
-		/// Working directory for filesystem operations (default: current directory)
+		/// Working directory for filesystem operations (default: current directory).
+		/// Supports ssh:// or sftp:// paths for remote filesystem access
+		/// (requires --features remote).
 		#[arg(long, value_name = "PATH")]
 		path: Option<PathBuf>,
 
@@ -43,5 +45,13 @@ pub enum Commands {
 		/// Hint enforcement mode: "hard" (default) rejects tool misuse with an error, "soft" appends guidance to the response and runs the command anyway
 		#[arg(long, value_name = "MODE", default_value = "hard")]
 		hint_mode: String,
+
+		/// Path to SSH private key for remote filesystem access (requires --features remote)
+		#[arg(long, value_name = "FILE")]
+		ssh_key: Option<String>,
+
+		/// SSH connection timeout in seconds for remote filesystem access (requires --features remote)
+		#[arg(long, value_name = "SECS")]
+		ssh_timeout: Option<u64>,
 	},
 }
