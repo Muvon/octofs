@@ -216,19 +216,44 @@ mod sftp {
 	use russh_sftp::client::SftpSession;
 	use tokio::sync::Mutex;
 
-	/// SSH handler that accepts all server keys.
+	/// SSH handler that verifies the server's host key against `~/.ssh/known_hosts`.
 	///
-	/// TODO: known_hosts verification (planned for CLI flags task).
-	struct SshHandler;
+	/// Policy matches OpenSSH `StrictHostKeyChecking=accept-new` — the only sane
+	/// non-interactive default for an MCP server (no way to prompt the user):
+	/// known+matching → accept; unknown → record and accept (trust on first use);
+	/// mismatch or any check error → fail closed.
+	struct SshHandler {
+		host: String,
+		port: u16,
+	}
 
 	impl client::Handler for SshHandler {
 		type Error = anyhow::Error;
 
 		async fn check_server_key(
 			&mut self,
-			_server_public_key: &ssh_key::PublicKey,
+			server_public_key: &ssh_key::PublicKey,
 		) -> Result<bool, Self::Error> {
-			Ok(true)
+			match russh::keys::check_known_hosts(&self.host, self.port, server_public_key) {
+				Ok(true) => Ok(true),
+				Ok(false) => {
+					russh::keys::learn_known_hosts(&self.host, self.port, server_public_key)
+						.map_err(|e| {
+							anyhow!(
+								"Failed to record host key for {}:{} in known_hosts: {e}",
+								self.host,
+								self.port
+							)
+						})?;
+					Ok(true)
+				}
+				Err(e) => Err(anyhow!(
+					"Host key verification failed for {}:{}: {e}. The presented key does not match ~/.ssh/known_hosts — possible man-in-the-middle attack. If the host key legitimately changed, remove the old entry (`ssh-keygen -R '{}'`) and reconnect.",
+					self.host,
+					self.port,
+					self.host
+				)),
+			}
 		}
 	}
 
@@ -298,7 +323,14 @@ mod sftp {
 
 			let mut handle = tokio::time::timeout(
 				self.config.timeout,
-				client::connect(Arc::new(config), (host, port), SshHandler),
+				client::connect(
+					Arc::new(config),
+					(host, port),
+					SshHandler {
+						host: host.to_string(),
+						port,
+					},
+				),
 			)
 			.await
 			.map_err(|_| anyhow!("SSH connect to {host}:{port} timed out"))?
