@@ -53,8 +53,11 @@ rmcp = { version = "3.0.0", features = ["server", "macros", "transport-io", "tra
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
-# Remote filesystem support (SSH/SFTP)
-russh = { version = "0.62", optional = true }
+# Remote filesystem support (SSH/SFTP).
+# default-features = false drops russh's `rsa` feature: the `rsa` crate has no
+# release with the RUSTSEC-2023-0071 (Marvin) fix, so RSA keys are unsupported —
+# use ed25519/ecdsa keys and host keys instead.
+russh = { version = "0.62", optional = true, default-features = false, features = ["flate2", "aws-lc-rs"] }
 russh-sftp = { version = "2.3", optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
