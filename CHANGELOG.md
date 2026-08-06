@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.1] - 2026-08-06
+
+### 📋 Release Summary
+
+This release updates the CLI to use soft hint mode by default for an improved user experience (7fc289d9). Additionally, the documentation has been expanded to provide clearer guidance on installation, available features, and system architecture (8819bc26).
+
+
+### ✨ New Features & Enhancements
+
+- **cli**: set soft hint mode as default `7fc289d9`
+
+### 📚 Documentation & Examples
+
+- **readme**: expand installation, features, and architecture `8819bc26`
+
 ## [0.8.0] - 2026-08-03
 
 ### 📋 Release Summary
