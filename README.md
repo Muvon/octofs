@@ -4,16 +4,17 @@
 
 **Give your AI assistant filesystem superpowers**
 
+[![CI](https://github.com/muvon/octofs/actions/workflows/ci.yml/badge.svg)](https://github.com/muvon/octofs/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-2025--03--26-green.svg)](https://modelcontextprotocol.io)
+[![MCP](https://img.shields.io/badge/MCP-2026--07--28-green.svg)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/crates/v/octofs.svg)](https://crates.io/crates/octofs)
 
-*The fastest, most capable filesystem MCP server. Built in Rust for AI agents that actually ship.*
+*Standalone Rust binary that exposes filesystem tools over the Model Context Protocol. Built on `rmcp` 3.0, `tokio`, and `axum`.*
 
-[Installation](#installation) • [Quick Start](#quick-start) • [Features](#features) • [Tools Reference](#mcp-tools-reference)
+[Installation](#installation) · [Quick Start](#quick-start) · [Features](#features) · [Tools Reference](#mcp-tools-reference) · [Architecture](#architecture)
 
-MCP Registry name: `mcp-name: io.github.Muvon/octofs`
+MCP Registry: [`io.github.Muvon/octofs`](https://github.com/muvon/octofs)
 
 </div>
 
@@ -21,11 +22,12 @@ MCP Registry name: `mcp-name: io.github.Muvon/octofs`
 
 ## Why Octofs?
 
-Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart—but it's **blind to your filesystem**. Octofs bridges that gap, giving your AI:
+Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart — but it's **blind to your filesystem**. Octofs bridges that gap, giving your AI:
 
 - **Eyes** — Read files, search content, explore directories
 - **Hands** — Create, edit, batch-modify files atomically
 - **Context** — Execute commands, manage working directories
+- **Reach** — Transparent SSH/SFTP: every file tool accepts `ssh://` URLs
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -37,8 +39,8 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart—but it's **
 │  • *Wastes 10 minutes on back-and-forth*                    │
 ├─────────────────────────────────────────────────────────────┤
 │  AI with Octofs:                                            │
-│  • Scans entire codebase in milliseconds                    │
-│  • Finds all 47 error handling patterns                     │
+│  • Reads your codebase directly                             │
+│  • Finds all error handling patterns                         │
 │  • Suggests atomic batch edits                              │
 │  • Applies changes with your approval                       │
 └─────────────────────────────────────────────────────────────┘
@@ -46,38 +48,60 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart—but it's **
 
 ## What Makes It Different
 
-| Feature | Octofs | Others |
-|---------|--------|--------|
-| **Speed** | Rust-powered, sub-millisecond responses | Python/Node-based, slower |
+| Feature | Octofs | Typical Alternatives |
+|---------|--------|---------------------|
+| **Implementation** | Compiled Rust binary, no runtime | Python/Node script |
 | **Content Search** | Built-in search with context lines | String matching only |
 | **Batch Operations** | Atomic multi-edit on single file | One-at-a-time |
 | **Line Modes** | Hash-based (stable across edits) or number-based | Number-only |
-| **Transport** | STDIO + HTTP (Streamable HTTP) | STDIO only |
-| **Shell Integration** | Background process support | Limited or none |
-| **Safety** | Gitignore-aware, path validation | Full filesystem access |
+| **Transport** | STDIO + Streamable HTTP | STDIO only |
+| **Shell Integration** | Foreground + background process support | Limited or none |
+| **Remote Files** | Transparent SSH/SFTP on every file tool | None |
+| **Safety** | Gitignore-aware, stale-write detection, path validation | Full filesystem access |
 
 ---
 
 ## Installation
+
+### Cargo (crates.io)
+
+```bash
+cargo install octofs
+```
+
+### Homebrew
+
+```bash
+brew install muvon/tap/octofs
+```
+
+### Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for your platform:
+
+| Platform | Target |
+|----------|--------|
+| Linux (x86_64) | `x86_64-unknown-linux-musl` |
+| Linux (ARM64) | `aarch64-unknown-linux-musl` |
+| Windows (x86_64) | `x86_64-pc-windows-msvc` |
+| Windows (ARM64) | `aarch64-pc-windows-msvc` |
+| macOS (Intel) | `x86_64-apple-darwin` |
+| macOS (Apple Silicon) | `aarch64-apple-darwin` |
+
+### MCP Registry
+
+One-click install via the [MCP Registry](https://github.com/muvon/octofs) entry `io.github.Muvon/octofs`.
 
 ### From Source
 
 Requires Rust 1.95+.
 
 ```bash
-# Clone and build
 git clone https://github.com/muvon/octofs
 cd octofs
 cargo build --release
-
-# Binary will be at ./target/release/octofs
-# Optionally install globally
-cargo install --path .
+# Binary at ./target/release/octofs
 ```
-
-### Pre-built Binaries
-
-Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for your platform.
 
 ---
 
@@ -85,12 +109,15 @@ Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for yo
 
 ### 1. Configure Your AI Assistant
 
+The CLI uses a `mcp` subcommand — your config must pass `["mcp"]` as args.
+
 **Cursor** (`~/.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
     "octofs": {
-      "command": "/path/to/octofs"
+      "command": "octofs",
+      "args": ["mcp"]
     }
   }
 }
@@ -101,7 +128,8 @@ Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for yo
 {
   "mcpServers": {
     "octofs": {
-      "command": "/path/to/octofs"
+      "command": "octofs",
+      "args": ["mcp"]
     }
   }
 }
@@ -112,15 +140,18 @@ Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for yo
 {
   "mcpServers": {
     "octofs": {
-      "command": "/path/to/octofs"
+      "command": "octofs",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
+> If Octofs isn't on your `PATH`, use the full path to the binary (e.g. `/usr/local/bin/octofs` or `./target/release/octofs`).
+
 ### 2. Restart Your AI Assistant
 
-The MCP server will start automatically when your AI assistant connects.
+The MCP server starts automatically when your AI assistant connects.
 
 ### 3. Try It
 
@@ -137,9 +168,9 @@ Ask your AI assistant to:
 ### 📁 Filesystem Operations
 
 - **View Files & Directories** — Read a single file (call `view` in parallel for several), list directories with glob patterns, search content
-- **Smart Truncation** — Large files are truncated intelligently to avoid overwhelming context
+- **Smart Truncation** — Large files are truncated intelligently to avoid overwhelming context windows
 - **Gitignore-Aware** — Respects `.gitignore` patterns during directory traversal
-- **Line Ranges** — Read specific line ranges with negative indexing support (`-1` = last line)
+- **Line Ranges** — Read specific line ranges with negative indexing (`-1` = last line)
 - **Remote Files (SSH/SFTP)** — Every file tool accepts `ssh://user@host:port/path` URLs (see [Remote Filesystem](#remote-filesystem-sshsftp))
 
 ### ✏️ Text Editing
@@ -147,7 +178,7 @@ Ask your AI assistant to:
 - **Create Files** — Create new files with automatic parent directory creation
 - **String Replace** — Replace exact string matches with fuzzy fallback for whitespace
 - **Delete** — Remove a file (recoverable via undo)
-- **Undo** — Revert last edit (up to 10 undo levels per file)
+- **Undo** — Revert last edit (up to 10 undo levels per file, in-memory)
 - **Batch Edit** — Perform multiple insert/replace operations atomically on a single file
 - **Stale-Write Protection** — Edits fail fast if the file changed on disk since it was last viewed (external-edit detection, like an IDE's "file changed on disk" guard)
 
@@ -168,7 +199,7 @@ Ask your AI assistant to:
 
 ### Line Identifier Modes
 
-Octofs supports two modes for identifying lines in files:
+Octofs supports two modes for identifying lines in files, set once at startup:
 
 #### Number Mode (default)
 
@@ -183,7 +214,7 @@ Use for: Simple operations, one-off edits.
 
 #### Hash Mode
 
-Lines are identified by 4-character hex hashes derived from content:
+Lines are identified by 4-character hex hashes (FNV-1a, position-dependent — same content at different lines produces different hashes):
 ```
 a3bd: fn main() {
 c7f2:     println!("Hello");
@@ -197,8 +228,8 @@ Use for: Complex multi-step edits where line numbers would shift. Hashes stay st
 {
   "mcpServers": {
     "octofs": {
-      "command": "/path/to/octofs",
-      "args": ["--line-mode", "hash"]
+      "command": "octofs",
+      "args": ["mcp", "--line-mode", "hash"]
     }
   }
 }
@@ -206,7 +237,7 @@ Use for: Complex multi-step edits where line numbers would shift. Hashes stay st
 
 ### Hint Modes
 
-Octofs detects shell misuse — commands like `cat`, `grep`, `find`, or `sed` that should use the dedicated MCP tools instead — and can enforce it in two modes:
+Octofs detects shell misuse — commands like `cat`, `grep`, `find`, or `sed` that should use the dedicated MCP tools instead — and enforces it in two modes:
 
 #### Hard Mode (default)
 
@@ -221,8 +252,8 @@ The command runs anyway, and the guidance is appended to the tool response as a 
 {
   "mcpServers": {
     "octofs": {
-      "command": "/path/to/octofs",
-      "args": ["--hint-mode", "soft"]
+      "command": "octofs",
+      "args": ["mcp", "--hint-mode", "soft"]
     }
   }
 }
@@ -235,7 +266,7 @@ The command runs anyway, and the guidance is appended to the tool response as a 
 Standard input/output transport. Works with all MCP clients.
 
 ```bash
-octofs  # defaults to STDIO
+octofs mcp
 ```
 
 #### HTTP
@@ -243,7 +274,7 @@ octofs  # defaults to STDIO
 Streamable HTTP transport for remote access or multi-client scenarios.
 
 ```bash
-octofs --bind 0.0.0.0:12345
+octofs mcp --bind 0.0.0.0:12345
 ```
 
 Connect clients to `http://localhost:12345/mcp`.
@@ -256,8 +287,8 @@ By default, Octofs operates in the current directory. Specify a different root:
 {
   "mcpServers": {
     "octofs": {
-      "command": "/path/to/octofs",
-      "args": ["--path", "/path/to/your/project"]
+      "command": "octofs",
+      "args": ["mcp", "--path", "/path/to/your/project"]
     }
   }
 }
@@ -269,7 +300,7 @@ All path parameters — and `--path` itself — accept `ssh://` or `sftp://` URL
 
 ```bash
 # Remote session root: relative paths resolve on the remote host
-octofs --path ssh://deploy@example.com/var/www/app --ssh-key ~/.ssh/id_ed25519
+octofs mcp --path ssh://deploy@example.com/var/www/app --ssh-key ~/.ssh/id_ed25519
 ```
 
 ```
@@ -450,31 +481,37 @@ copy in the target: `0` = beginning, `-1` = end, `N` = after line N.
 ```
 octofs/
 ├── src/
-│   ├── main.rs              # Entry point, STDIO/HTTP server setup
-│   ├── cli.rs               # CLI argument parsing (clap)
-│   └── mcp/
-│       ├── server.rs        # MCP protocol handler (rmcp SDK)
-│       ├── request_ctx.rs   # Per-request hints + stale-file stamps
-│       └── fs/              # Filesystem tools
-│           ├── core.rs          # view, batch_edit, extract_lines, text_editor
-│           ├── text_editing.rs  # str_replace, undo, batch operations
-│           ├── directory.rs     # Directory traversal
-│           ├── file_ops.rs       # File operations
-│           ├── search.rs          # Content search
-│           ├── shell.rs           # Command execution
-│           ├── workdir.rs         # Working directory management
-│           └── fs_tests.rs        # Unit tests
-└── src/utils/
-    ├── line_hash.rs         # Content-based line hashing
-    └── truncation.rs        # Smart content truncation
+│   ├── main.rs                  # Entry point, STDIO/HTTP server setup, signal handling
+│   ├── cli.rs                   # CLI argument parsing (clap): octofs mcp [OPTIONS]
+│   ├── mcp/
+│   │   ├── mod.rs               # McpToolCall, SessionRoot, HintMode
+│   │   ├── server.rs            # OctofsServer (rmcp tool impl), Params structs, SessionWorkdir
+│   │   ├── request_ctx.rs       # Per-request hint queue + stale-file stamps
+│   │   └── fs/                  # Filesystem tool implementations
+│   │       ├── mod.rs           # Re-exports
+│   │       ├── core.rs          # view, text_editor, batch_edit, extract_lines
+│   │       ├── file_ops.rs      # view_file_spec, create_file_spec
+│   │       ├── text_editing.rs  # str_replace, batch_edit, undo, per-file locking
+│   │       ├── directory.rs     # Directory listing + content search
+│   │       ├── search.rs        # search_content
+│   │       ├── shell.rs         # Command execution, background, process cleanup
+│   │       ├── workdir.rs       # Working directory management
+│   │       ├── remote.rs        # SSH/SFTP path abstraction, SshHandler, SFTP pool
+│   │       └── fs_tests.rs      # Integration tests (cfg(test))
+│   └── utils/
+│       ├── mod.rs               # Module re-exports
+│       ├── line_hash.rs         # LineMode, FNV-1a hashes, endpoint parsing
+│       └── truncation.rs        # Token estimation, smart truncation
 ```
 
-**Key components:**
+**Key design decisions:**
 
-- **rmcp SDK** — Official Rust MCP SDK for protocol handling
-- **Tokio** — Async runtime for concurrent operations
-- **File locking** — Per-file async locks prevent concurrent write conflicts
-- **Undo history** — Up to 10 undo levels per file, thread-safe storage
+- **rmcp SDK** — Official Rust MCP SDK (`rmcp` 3.0) for protocol handling
+- **Tokio** — Async runtime; all file I/O uses `tokio::fs`, never blocking `std::fs`
+- **File locking** — Per-file `tokio::sync::Mutex` prevents concurrent write conflicts
+- **Undo history** — Up to 10 snapshots per file, in-memory (lost on restart)
+- **Path resolution** — Relative paths resolve against the session workdir; no canonicalization (files may not exist yet)
+- **Stale-write detection** — `io_fingerprint` comparison fails edits if the file changed on disk since last view
 
 ---
 
@@ -494,7 +531,7 @@ cargo clippy
 cargo fmt
 
 # Run locally
-cargo run
+cargo run -- mcp
 ```
 
 ### Running Tests
@@ -538,7 +575,7 @@ Apache-2.0 — See [LICENSE](LICENSE)
 
 ## Acknowledgments
 
-- [rmcp](https://github.com/anthropics/rust-sdk) — Official Rust MCP SDK
+- [rmcp](https://crates.io/crates/rmcp) — Official Rust MCP SDK
 - [Model Context Protocol](https://modelcontextprotocol.io) — The protocol specification
 
 ---
