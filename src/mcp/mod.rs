@@ -56,9 +56,9 @@ pub fn set_hint_mode(mode: HintMode) {
 	HINT_MODE.set(mode).ok();
 }
 
-/// Get the current hint mode (defaults to Hard).
+/// Get the current hint mode (defaults to Soft).
 pub fn get_hint_mode() -> HintMode {
-	HINT_MODE.get().copied().unwrap_or(HintMode::Hard)
+	HINT_MODE.get().copied().unwrap_or(HintMode::Soft)
 }
 
 /// Returns true if misuse should surface as a soft hint instead of an error.

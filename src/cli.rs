@@ -41,8 +41,8 @@ pub enum Commands {
 		#[arg(long, value_name = "MODE", default_value = "number")]
 		line_mode: String,
 
-		/// Hint enforcement mode: "hard" (default) rejects tool misuse with an error, "soft" appends guidance to the response and runs the command anyway
-		#[arg(long, value_name = "MODE", default_value = "hard")]
+		/// Hint enforcement mode: "soft" (default) appends guidance to the response and runs the command anyway, "hard" rejects tool misuse with an error
+		#[arg(long, value_name = "MODE", default_value = "soft")]
 		hint_mode: String,
 
 		/// Path to SSH private key for remote filesystem access

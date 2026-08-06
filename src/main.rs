@@ -54,8 +54,8 @@ async fn main() -> Result<()> {
 
 			// Set hint enforcement mode
 			let hmode = match hint_mode.as_str() {
-				"soft" => mcp::HintMode::Soft,
-				_ => mcp::HintMode::Hard,
+				"hard" => mcp::HintMode::Hard,
+				_ => mcp::HintMode::Soft,
 			};
 			mcp::set_hint_mode(hmode);
 
