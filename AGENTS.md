@@ -7,7 +7,7 @@ Standalone Rust binary that exposes filesystem tools (view, text_editor, batch_e
 ```
 src/
   main.rs                    — Entry point: CLI dispatch, stdio/HTTP server startup, signal handling
-  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--hint-mode]`
+  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--ssh-key] [--ssh-timeout]`
   mcp/
     mod.rs                   — McpToolCall struct, session root directory (OnceLock)
     server.rs                — OctofsServer (rmcp tool impl), SessionWorkdir, all Params structs
@@ -44,7 +44,7 @@ src/
 | Line ids / endpoint parsing | `utils/line_hash.rs` — composite `N:hh` ids, verification, stale errors |
 | Content truncation logic | `utils/truncation.rs` — token estimation and smart truncation |
 | Glob expansion | `utils/glob.rs` — gitignore-aware, dotfile-filtered |
-| Hint messages to LLM | `mcp/request_ctx.rs` — push_hint(), drained after every tool call; hard/soft enforcement set via `--hint-mode` |
+| Hint messages to LLM | `mcp/request_ctx.rs` — push_hint(), drained after every tool call; shell misuse always rejects (`fs/shell.rs`) |
 | Session workdir state | `server.rs` `SessionWorkdir` — per-instance RwLock<PathBuf> |
 | Process cleanup on exit | `main.rs` signal handler + `fs/shell.rs` `kill_all_shell_children` |
 
@@ -93,13 +93,9 @@ Multi-file view was removed — the caller makes parallel `view` calls instead.
 
 Any `execute_*` function can call `request_ctx::push_hint("...")` to queue guidance text. After the tool returns, `server.rs::append_hints()` drains the queue and appends hints to the response. Used to surface misuse warnings to the LLM without failing the call.
 
-### Hint Mode
+### Shell Misuse Enforcement
 
-Two modes set once at startup via `--hint-mode` (`mcp::HintMode`, default `hard`):
-- `hard` — shell misuse (cat/grep/find/sed/awk instead of dedicated tools) is rejected with an error; the call fails.
-- `soft` — the misuse guidance is appended to the response as a ⚠️ hint and the command runs anyway.
-
-Enforced in `fs/shell.rs::execute_shell_command` via `mcp::is_soft_hint_mode()`.
+Shell misuse (cat/grep/find/ls/sed/awk instead of dedicated tools) is ALWAYS rejected with an error — no mode switch; this deliberately blocks shell in favour of the dedicated tools. Pipelines are not split (`... | grep` stays allowed); quoted separators (SSH remote commands) don't false-positive. Enforced in `fs/shell.rs::execute_shell_command` via `detect_shell_misuse`.
 
 ### Transport Modes
 

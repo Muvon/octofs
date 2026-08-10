@@ -5526,10 +5526,11 @@ mod tests {
 	#[tokio::test]
 	async fn test_view_with_id_endpoints() {
 		// view start/end accept line ids; the position part selects the span.
+		// Long file so out-of-range lines are elided (small margins render as context).
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file = temp_dir.path().join("v.txt");
-		let body = "v1\nv2\nv3\nv4\nv5\n";
-		fs::write(&file, body).await.unwrap();
+		let body: String = (1..=20).map(|i| format!("v{i}\n")).collect();
+		fs::write(&file, &body).await.unwrap();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
@@ -5537,13 +5538,23 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({
 				"path": file.to_string_lossy(),
-				"start": lid(body, 3),
-				"end": lid(body, 3)
+				"start": lid(&body, 10),
+				"end": lid(&body, 10)
 			}),
 		};
 		let out = execute_view(&call).await.unwrap();
-		assert!(out.contains(&idl(3, "v3")), "should render line 3: {out}");
-		assert!(!out.contains("v2\n"), "should not render line 2: {out}");
+		assert!(
+			out.contains(&idl(10, "v10")),
+			"should render line 10: {out}"
+		);
+		assert!(
+			!out.contains(&idl(5, "v5")),
+			"elided line 5 must not render: {out}"
+		);
+		assert!(
+			out.contains("lines more]"),
+			"elision markers present: {out}"
+		);
 	}
 
 	#[tokio::test]

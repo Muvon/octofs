@@ -69,8 +69,9 @@ pub fn kill_all_shell_children() {
 }
 
 // Each entry: (triggering programs, error message with usage example).
-// Checked before execution — hard error in --hint-mode=hard (default),
-// soft hint appended to the response in --hint-mode=soft.
+// Checked before execution — misuse is always a hard error: the dedicated tools
+// are strictly better for the model (line ids, gitignore-awareness, remote hosts),
+// so shell access to these programs is intentionally blocked.
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
@@ -182,8 +183,7 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 }
 
 // Detect shell commands that should use a dedicated MCP tool instead.
-// Returns the misuse guidance message — the caller either bails (hard mode)
-// or pushes it as a hint and proceeds (soft mode).
+// Returns the misuse guidance message the caller rejects the command with.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	// Split into individual commands on shell separators, respecting
 	// quoting so that `&&`/`||`/`;` inside quoted strings (e.g. SSH remote
@@ -292,14 +292,9 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Reject or warn on commands that can be done with dedicated MCP tools,
-	// depending on the configured hint mode (--hint-mode).
+	// Reject commands that can be done with dedicated MCP tools.
 	if let Some(msg) = detect_shell_misuse(&command) {
-		if crate::mcp::is_soft_hint_mode() {
-			crate::mcp::request_ctx::push_hint(msg);
-		} else {
-			bail!("{msg}");
-		}
+		bail!("{msg}");
 	}
 
 	// Extract background parameter
@@ -445,6 +440,19 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[tokio::test]
+	async fn test_shell_misuse_always_rejected() {
+		// No modes: misuse is a hard error, nothing executes.
+		let call = crate::mcp::McpToolCall::test_call(
+			"shell",
+			serde_json::json!({ "command": "cat src/main.rs" }),
+		);
+		let err = execute_shell_command(&call)
+			.await
+			.expect_err("misuse must be rejected");
+		assert!(err.to_string().contains("view"), "err: {err}");
+	}
 
 	#[tokio::test]
 	async fn test_rejects_remote_workdir() {

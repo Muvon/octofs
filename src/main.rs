@@ -30,7 +30,6 @@ async fn main() -> Result<()> {
 		Commands::Mcp {
 			path,
 			bind,
-			hint_mode,
 			ssh_key,
 			ssh_timeout,
 		} => {
@@ -43,13 +42,6 @@ async fn main() -> Result<()> {
 
 			// Stderr-only logging — no stdout (would corrupt stdio MCP protocol)
 			init_mcp_logging();
-
-			// Set hint enforcement mode
-			let hmode = match hint_mode.as_str() {
-				"hard" => mcp::HintMode::Hard,
-				_ => mcp::HintMode::Soft,
-			};
-			mcp::set_hint_mode(hmode);
 
 			// Initialize SFTP pool for remote filesystem support.
 			let config = mcp::fs::remote::SshConfig {

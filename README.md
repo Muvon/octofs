@@ -218,29 +218,18 @@ This is the single line-id format — there is no mode switch. Plain line number
 are still accepted where a position alone is safe: `view` ranges (negative counts
 from the end) and the insert anchors `0` (file start) / `-1` (append).
 
-### Hint Modes
+### Shell Misuse Enforcement
 
-Octofs detects shell misuse — commands like `cat`, `grep`, `find`, or `sed` that should use the dedicated MCP tools instead — and enforces it in two modes:
+Octofs detects shell misuse — commands like `cat`, `grep`, `find`, or `sed` that
+should use the dedicated MCP tools instead — and rejects them with an error
+explaining which tool to use. The call fails; nothing executes. This is
+intentional and not configurable: the dedicated tools give the model line ids,
+gitignore-awareness, and remote-host support that raw shell output cannot.
+Pipelines (`cargo build 2>&1 | grep error`) remain allowed — only standalone
+invocations of those programs are blocked.
 
-#### Hard Mode (default)
-
-The command is rejected with an error explaining which tool to use instead. The call fails; nothing executes.
-
-#### Soft Mode
-
-The command runs anyway, and the guidance is appended to the tool response as a ⚠️ hint.
-
-**Enable soft mode:**
-```json
-{
-  "mcpServers": {
-    "octofs": {
-      "command": "octofs",
-      "args": ["mcp", "--hint-mode", "soft"]
-    }
-  }
-}
-```
+Other guidance (out-of-bounds ranges, fuzzy-match notices) is appended to
+successful responses as ⚠️ hints without failing the call.
 
 ### Transport Modes
 
@@ -464,7 +453,7 @@ octofs/
 │   ├── main.rs                  # Entry point, STDIO/HTTP server setup, signal handling
 │   ├── cli.rs                   # CLI argument parsing (clap): octofs mcp [OPTIONS]
 │   ├── mcp/
-│   │   ├── mod.rs               # McpToolCall, SessionRoot, HintMode
+│   │   ├── mod.rs               # McpToolCall, SessionRoot
 │   │   ├── server.rs            # OctofsServer (rmcp tool impl), Params structs, SessionWorkdir
 │   │   ├── request_ctx.rs       # Per-request hint queue + stale-file stamps
 │   │   └── fs/                  # Filesystem tool implementations
