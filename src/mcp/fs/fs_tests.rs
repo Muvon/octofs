@@ -83,6 +83,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"CHANGED",
 			"BETA",
+			false,
 		)
 		.await
 		.unwrap();
@@ -256,13 +257,13 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_replace_crlf_line_endings() {
-		// CRLF files: batch_edit normalises to LF on write
+		// CRLF files keep their line endings after a batch_edit
 		test_batch_replace(
 			"line 1\r\nline 2\r\nline 3\r\n",
 			2,
 			2,
 			"REPLACED",
-			"line 1\nREPLACED\nline 3\n",
+			"line 1\r\nREPLACED\r\nline 3\r\n",
 		)
 		.await;
 	}
@@ -691,6 +692,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			old_str,
 			new_str,
+			false,
 		)
 		.await
 		.unwrap();
@@ -807,6 +809,116 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_str_replace_crlf_multiline_old_text() {
+		// Regression: a multi-line old_text with \n endings on a CRLF file used to
+		// fuzzy-"match", write the file back unchanged, and report success.
+		test_str_replace(
+			"line 1\r\nline 2\r\nline 3\r\nline 4\r\n",
+			"line 2\nline 3",
+			"REPLACED",
+			"line 1\r\nREPLACED\r\nline 4\r\n",
+		)
+		.await;
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_crlf_fuzzy_preserves_endings() {
+		// Fuzzy (whitespace-normalized) path on a CRLF file must apply for real
+		// and keep the endings.
+		let temp_file = create_test_file("fn hello() {\r\n    let x = 1;\r\n}\r\n").await;
+
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"fn hello() {\n\tlet x = 1;\n}",
+			"fn hello() {\n    let x = 2;\n}",
+			false,
+		)
+		.await
+		.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "fn hello() {\r\n    let x = 2;\r\n}\r\n");
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_replace_all() {
+		let temp_file = create_test_file("foo(a)\nbar()\nfoo(b)\nbaz()\nfoo(c)\n").await;
+
+		let result = crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"foo(",
+			"qux(",
+			true,
+		)
+		.await
+		.unwrap();
+
+		assert!(result.contains("Replaced 3 occurrences"), "got: {result}");
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "qux(a)\nbar()\nqux(b)\nbaz()\nqux(c)\n");
+		// Landing sites carry fresh line ids
+		let after = "qux(a)\nbar()\nqux(b)\nbaz()\nqux(c)\n";
+		assert!(result.contains(&lid(after, 1)), "site ids: {result}");
+		assert!(result.contains(&lid(after, 3)), "site ids: {result}");
+		assert!(result.contains(&lid(after, 5)), "site ids: {result}");
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_multiple_matches_suggests_replace_all() {
+		let temp_file = create_test_file("x foo x foo x\n").await;
+
+		let err = crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"foo",
+			"bar",
+			false,
+		)
+		.await
+		.unwrap_err();
+
+		assert!(
+			err.to_string().contains("replace_all"),
+			"error should suggest replace_all: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_escaped_literal_recovery() {
+		// old_text arrives double-escaped (literal backslash-n); the unescaped form
+		// matches uniquely and is applied instead of erroring.
+		let temp_file = create_test_file("alpha\nbeta\ngamma\n").await;
+
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"alpha\\nbeta",
+			"ALPHA\\nBETA",
+			false,
+		)
+		.await
+		.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "ALPHA\nBETA\ngamma\n");
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_escaped_tab_recovery() {
+		let temp_file = create_test_file("key:\tvalue\nother\n").await;
+
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"key:\\tvalue",
+			"key:\\tNEW",
+			false,
+		)
+		.await
+		.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "key:\tNEW\nother\n");
+	}
+
+	#[tokio::test]
 	async fn test_str_replace_complex_code() {
 		let old_code = "fn old_function() {\n    println!(\"old\");\n}";
 		let new_code = "fn new_function() {\n    println!(\"new\");\n    return 42;\n}";
@@ -839,6 +951,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"not_found",
 			"replacement",
+			false,
 		)
 		.await
 		.unwrap_err();
@@ -859,6 +972,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"test",
 			"replacement",
+			false,
 		)
 		.await
 		.unwrap_err();
@@ -879,6 +993,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"world",
 			"new\nline",
+			false,
 		)
 		.await
 		.unwrap();
@@ -4479,6 +4594,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"fn hello() {\n\tlet x = 1;\n}",
 			"fn hello() {\n    let x = 2;\n}",
+			false,
 		)
 		.await
 		.unwrap();
@@ -4497,6 +4613,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"def bar():\n    pass",
 			"def baz():\n    return 42",
+			false,
 		)
 		.await
 		.unwrap();
@@ -4514,6 +4631,7 @@ mod tests {
 			&PathSource::from(temp_file.path()),
 			"fn hello_word() {}",
 			"fn replaced() {}",
+			false,
 		)
 		.await
 		.unwrap_err();
@@ -4541,7 +4659,8 @@ mod tests {
 				&PathSource::from(temp_file.path()),
 				old,
 				new,
-			)
+			false,
+		)
 			.await
 			.unwrap();
 		}
@@ -5450,6 +5569,31 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_extract_lines_crlf_target_preserves_endings() {
+		// Splicing LF-extracted lines into a CRLF target must not mix endings.
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "new line\n").await.unwrap();
+		fs::write(&target, "a\r\nb\r\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"append_path": target.to_string_lossy(),
+				"append_line": -1
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, "a\r\nb\r\nnew line\r\n");
+	}
+
+	#[tokio::test]
 	async fn test_extract_lines_append_line_id_empty_target_errors() {
 		// An id append_line against an empty/new target has nothing to verify → clear error.
 		let temp_dir = tempfile::TempDir::new().unwrap();
@@ -5764,7 +5908,7 @@ mod tests {
 
 		// Replace beta -> BETA
 		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
-		let diff = crate::mcp::fs::text_editing::str_replace_spec(&source, "beta", "BETA")
+		let diff = crate::mcp::fs::text_editing::str_replace_spec(&source, "beta", "BETA", false)
 			.await
 			.expect("str_replace failed");
 		assert!(diff.contains("BETA"), "diff: {diff}");
@@ -5942,7 +6086,7 @@ mod tests {
 
 		// Replace original -> modified
 		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
-		crate::mcp::fs::text_editing::str_replace_spec(&source, "original", "modified")
+		crate::mcp::fs::text_editing::str_replace_spec(&source, "original", "modified", false)
 			.await
 			.unwrap();
 

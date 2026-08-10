@@ -333,7 +333,7 @@ Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + est
 {"command": "create", "path": "src/new.rs", "content": "pub fn new() {}"}
 ```
 
-**Replace string:**
+**Replace string:** (`old_text` must match exactly once)
 ```json
 {
   "command": "str_replace",
@@ -342,6 +342,22 @@ Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + est
   "new_text": "fn new()"
 }
 ```
+
+**Replace ALL occurrences** (rename-style edits):
+```json
+{
+  "command": "str_replace",
+  "path": "src/main.rs",
+  "old_text": "old_name",
+  "new_text": "new_name",
+  "replace_all": true
+}
+```
+
+Matching is progressive: exact → escaped-literal recovery (double-escaped `\n`/`\t`
+interpreted when the result matches uniquely) → whitespace-normalized fuzzy with
+indentation adjustment → rich diagnostics with the closest candidates and their
+line ids. CRLF files are matched in LF space and keep their line endings on write.
 
 **Delete file:** (recoverable with `undo_edit`)
 ```json

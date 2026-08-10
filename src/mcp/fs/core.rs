@@ -201,8 +201,13 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 					bail!("Missing or invalid 'new_text' parameter");
 				}
 			};
+			let replace_all = call
+				.parameters
+				.get("replace_all")
+				.and_then(|v| v.as_bool())
+				.unwrap_or(false);
 			let source = resolve_path_source(&path, &call.workdir);
-			text_editing::str_replace_spec(&source, &old_text, &new_text).await
+			text_editing::str_replace_spec(&source, &old_text, &new_text, replace_all).await
 		}
 		"undo_edit" => {
 			let path = match call.parameters.get("path") {
@@ -515,6 +520,16 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		String::new()
 	};
 
+	// Extracted lines are LF by construction (`lines()` strips `\r`), so a CRLF
+	// target is spliced in LF space and its endings restored on write — otherwise
+	// the concatenation branches would produce mixed-ending files.
+	let target_uses_crlf = target_content.contains("\r\n");
+	let target_content = if target_uses_crlf {
+		target_content.replace("\r\n", "\n")
+	} else {
+		target_content
+	};
+
 	// Resolve append_line: line id → verified line number, or keep integer as-is (0/-1/N).
 	let append_line: i64 =
 		match append_line_ep {
@@ -596,6 +611,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// Snapshot the target for undo_edit, then write atomically — same guarantees as
 	// every other edit path (no partial file on interruption, permissions preserved).
 	save_file_history(&append_source).await?;
+	let final_content = text_editing::restore_endings(target_uses_crlf, final_content);
 	if let Err(e) = text_editing::atomic_write(&append_source, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}

@@ -499,14 +499,114 @@ pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
 		}
 	}
 }
+/// Restore CRLF line endings on the outgoing content when the original file used
+/// them. All matching/replacement happens in LF space; without this, edited CRLF
+/// files would be silently rewritten to LF.
+pub(crate) fn restore_endings(uses_crlf: bool, s: String) -> String {
+	if uses_crlf {
+		s.replace('\n', "\r\n")
+	} else {
+		s
+	}
+}
+
+/// Interpret double-escaped whitespace sequences (`\n`, `\t`, `\r` arriving as
+/// backslash + letter) as the real characters. Recovery heuristic only — applied
+/// when the raw form found no match and this form matches uniquely.
+fn unescape_literals(s: &str) -> String {
+	s.replace("\\n", "\n")
+		.replace("\\t", "\t")
+		.replace("\\r", "\r")
+}
+
+/// Apply a unique exact replacement and return the annotated diff.
+/// Shared by stage 1 (exact match) and stage 1.5 (escaped-literal recovery).
+async fn apply_unique_replacement(
+	source: &PathSource,
+	content: &str,
+	old_text: &str,
+	new_text: &str,
+	uses_crlf: bool,
+) -> Result<String> {
+	let orig_lines: Vec<&str> = content.lines().collect();
+	let old_line_count = old_text.lines().count();
+	// Find the 0-indexed start line of the match
+	let match_offset = content.find(old_text).unwrap_or(0);
+	let match_start = byte_offset_to_line(content, match_offset) - 1;
+
+	save_file_history(source).await?;
+	let new_content = content.replace(old_text, new_text);
+	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+
+	if old_line_count > 1 {
+		crate::mcp::request_ctx::push_hint(&format!(
+			"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line ids — it's faster and avoids content-search ambiguity.",
+			old_line_count
+		));
+	}
+
+	let new_lines: Vec<&str> = new_content.lines().collect();
+	let new_text_lines: Vec<&str> = new_text.lines().collect();
+	Ok(build_str_replace_diff(
+		&orig_lines,
+		&new_lines,
+		match_start,
+		old_line_count,
+		&new_text_lines,
+	))
+}
+
+/// Replace every occurrence of `old_text` and report where the replacements
+/// landed (fresh line ids in the final file).
+async fn apply_replace_all(
+	source: &PathSource,
+	content: &str,
+	old_text: &str,
+	new_text: &str,
+	uses_crlf: bool,
+) -> Result<String> {
+	let positions = find_all_positions(content, old_text);
+	save_file_history(source).await?;
+	let new_content = content.replace(old_text, new_text);
+	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+
+	let new_lines: Vec<&str> = new_content.lines().collect();
+	// Each occurrence shifts later ones by the length delta; map original offsets
+	// to final-file offsets to name the landing line of every replacement.
+	let delta = new_text.len() as i64 - old_text.len() as i64;
+	let sites: Vec<String> = positions
+		.iter()
+		.enumerate()
+		.map(|(i, &pos)| {
+			let new_pos = (pos as i64 + delta * i as i64).max(0) as usize;
+			let line = byte_offset_to_line(&new_content, new_pos.min(new_content.len()))
+				.min(new_lines.len().max(1));
+			if new_lines.is_empty() {
+				format!("line {line}")
+			} else {
+				line_id_at(&new_lines, line)
+			}
+		})
+		.collect();
+
+	Ok(format!(
+		"Replaced {} occurrences. Replacements start at: {}",
+		positions.len(),
+		sites.join(", ")
+	))
+}
+
 // Replace a string in a file with progressive matching strategy:
-// 1. Exact match (original behavior)
+// 1. Exact match (unique, or all occurrences with `replace_all`)
+// 1.5. Escaped-literal recovery (double-escaped \n/\t interpreted, unique match)
 // 2. Whitespace-normalized fuzzy match with indentation adjustment
 // 3. Rich diagnostics with closest candidates on failure
+// CRLF files are matched and edited in LF space; original endings are restored on write.
 pub async fn str_replace_spec(
 	source: &PathSource,
 	old_text: &str,
 	new_text: &str,
+	replace_all: bool,
 ) -> Result<String> {
 	if !io_exists(source).await? {
 		bail!("File not found");
@@ -518,42 +618,32 @@ pub async fn str_replace_spec(
 
 	// Read the file content. Content-addressed matching is its own staleness check:
 	// old_text either still matches uniquely or the error below explains why not.
-	let content = io_read_to_string(source)
+	let raw = io_read_to_string(source)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+
+	// Normalize CRLF for matching (and in the inputs, in case the model echoed
+	// CRLF back); `restore_endings` puts the file's endings back on write.
+	let uses_crlf = raw.contains("\r\n");
+	let content = if uses_crlf {
+		raw.replace("\r\n", "\n")
+	} else {
+		raw
+	};
+	let old_text = old_text.replace("\r\n", "\n");
+	let new_text = new_text.replace("\r\n", "\n");
+	let old_text = old_text.as_str();
+	let new_text = new_text.as_str();
 
 	// === Stage 1: Exact match ===
 	let occurrences = content.matches(old_text).count();
 
+	if replace_all && occurrences >= 1 {
+		return apply_replace_all(source, &content, old_text, new_text, uses_crlf).await;
+	}
+
 	if occurrences == 1 {
-		// Perfect exact match — replace directly
-		let orig_lines: Vec<&str> = content.lines().collect();
-		let old_line_count = old_text.lines().count();
-		// Find the 0-indexed start line of the match
-		let match_offset = content.find(old_text).unwrap_or(0);
-		let match_start = byte_offset_to_line(&content, match_offset) - 1;
-
-		save_file_history(source).await?;
-		let new_content = content.replace(old_text, new_text);
-		atomic_write(source, &new_content).await?;
-
-		if old_line_count > 1 {
-			crate::mcp::request_ctx::push_hint(&format!(
-				"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line ids — it's faster and avoids content-search ambiguity.",
-				old_line_count
-			));
-		}
-
-		let new_lines: Vec<&str> = new_content.lines().collect();
-		let new_text_lines: Vec<&str> = new_text.lines().collect();
-		let diff = build_str_replace_diff(
-			&orig_lines,
-			&new_lines,
-			match_start,
-			old_line_count,
-			&new_text_lines,
-		);
-		return Ok(diff);
+		return apply_unique_replacement(source, &content, old_text, new_text, uses_crlf).await;
 	}
 
 	if occurrences > 1 {
@@ -571,10 +661,36 @@ pub async fn str_replace_spec(
 			.collect();
 
 		bail!(
-			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific line ids.",
+			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, pass `replace_all: true` to replace all {} occurrences, or use `batch_edit` with the specific line ids.",
 			occurrences,
-			locations.join("\n")
+			locations.join("\n"),
+			occurrences
 		);
+	}
+
+	// === Stage 1.5: Escaped-literal recovery ===
+	// A double-escaped old_text (JSON "\\n" arriving as backslash-n) never matches.
+	// If interpreting the escapes yields a match, use it instead of bouncing an
+	// error back — new_text gets the same interpretation for consistency.
+	if old_text.contains("\\n") || old_text.contains("\\t") || old_text.contains("\\r") {
+		let un_old = unescape_literals(old_text);
+		if un_old != old_text {
+			let un_occurrences = content.matches(&un_old).count();
+			let un_new = unescape_literals(new_text);
+			if replace_all && un_occurrences >= 1 {
+				crate::mcp::request_ctx::push_hint(
+					"old_text contained literal \\n/\\t escapes; they were interpreted as real newlines/tabs.",
+				);
+				return apply_replace_all(source, &content, &un_old, &un_new, uses_crlf).await;
+			}
+			if un_occurrences == 1 {
+				crate::mcp::request_ctx::push_hint(
+					"old_text contained literal \\n/\\t escapes; they were interpreted as real newlines/tabs (unique match).",
+				);
+				return apply_unique_replacement(source, &content, &un_old, &un_new, uses_crlf)
+					.await;
+			}
+		}
 	}
 
 	// === Stage 2: Whitespace-normalized fuzzy match ===
@@ -612,7 +728,7 @@ pub async fn str_replace_spec(
 
 			save_file_history(source).await?;
 			let new_content = content.replace(&actual_old, &adjusted_new);
-			atomic_write(source, &new_content).await?;
+			atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
 
 			crate::mcp::request_ctx::push_hint(
 				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
@@ -1075,10 +1191,12 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let file_lock = acquire_file_lock(&source).await?;
 	let _lock_guard = file_lock.lock().await;
 
-	// Read original file content
+	// Read original file content. Line splitting/hashing strips `\r` everywhere, so
+	// ids and diffs are ending-agnostic; `uses_crlf` restores the endings on write.
 	let original_content = io_read_to_string(&source)
 		.await
 		.map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
+	let uses_crlf = original_content.contains("\r\n");
 
 	// Parse and validate all operations (with unresolved line ranges)
 	let mut unresolved_operations = Vec::new();
@@ -1265,7 +1383,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}
 	}
 
-	// Apply all operations to the original content
+	// Apply all operations to the original content (LF-joined by construction)
 	let final_content = apply_batch_operations(&original_content, &batch_operations)
 		.await
 		.map_err(|e| anyhow!("Failed to apply operations: {}", e))?;
@@ -1273,7 +1391,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Save file history for undo functionality
 	save_file_history(&source).await?;
 
-	atomic_write(&source, &final_content)
+	atomic_write(&source, &restore_endings(uses_crlf, final_content.clone()))
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
 

@@ -156,9 +156,10 @@ impl OctofsServer {
 		description = "Perform text editing operations on files: create, str_replace, delete, undo_edit. \
 			For str_replace pass raw file text in old_text/new_text — real newlines and tabs, no \\n \
 			escaping, and no `N:hh|` line-id prefixes. old_text must match the file exactly and \
-			uniquely; on multiple matches or no match, the error lists candidate locations with line \
-			ids you can use with batch_edit instead. When you already know the target line ids, \
-			prefer batch_edit — it verifies ids against the file and avoids content-match ambiguity."
+			uniquely, or pass replace_all: true to replace every occurrence (rename-style edits); \
+			on multiple matches or no match, the error lists candidate locations with line ids you \
+			can use with batch_edit instead. When you already know the target line ids, prefer \
+			batch_edit — it verifies ids against the file and avoids content-match ambiguity."
 	)]
 	async fn text_editor(
 		&self,
@@ -431,6 +432,10 @@ pub struct TextEditorParams {
 	/// Replacement text. REQUIRED for str_replace.
 	#[serde(default)]
 	pub new_text: Option<String>,
+	/// str_replace only: replace ALL occurrences of old_text (rename-style edits).
+	/// Default false — old_text must then match exactly once.
+	#[serde(default)]
+	pub replace_all: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]

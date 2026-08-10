@@ -89,6 +89,10 @@ One format, no mode switch: every line is addressed as `N:hh` — 1-indexed posi
 
 Multi-file view was removed — the caller makes parallel `view` calls instead.
 
+### str_replace Matching
+
+Progressive stages in `text_editing::str_replace_spec`: exact (unique, or every occurrence with `replace_all: true`) → escaped-literal recovery (double-escaped `\n`/`\t` interpreted when the unescaped form matches) → whitespace-normalized fuzzy with indentation adjustment → closest-match diagnostics with line ids. CRLF files: all matching happens in LF space, `restore_endings` puts `\r\n` back on write (batch_edit does the same) — without this, CRLF files silently no-oped on the fuzzy path.
+
 ### Hint Accumulator
 
 Any `execute_*` function can call `request_ctx::push_hint("...")` to queue guidance text. After the tool returns, `server.rs::append_hints()` drains the queue and appends hints to the response. Used to surface misuse warnings to the LLM without failing the call.
