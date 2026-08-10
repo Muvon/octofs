@@ -15,48 +15,37 @@
 // Per-request task-local context.
 //
 // Every fs tool call runs inside `with_request_context` (see server.rs), which scopes
-// a RequestContext to that call's task via tokio::task_local. Two things live here:
+// a RequestContext to that call's task via tokio::task_local. It carries the call's
+// hints — tool-misuse guidance collected during THIS call and appended to its result.
+// Request-scoped by construction: a hint can never leak into a concurrent HTTP
+// session's response, and hints from a failed call die with its scope instead of
+// surfacing on the next call.
 //
-//   hints  — tool-misuse guidance collected during THIS call and appended to its
-//            result. Request-scoped by construction: a hint can never leak into a
-//            concurrent HTTP session's response, and hints from a failed call die
-//            with its scope instead of surfacing on the next call.
-//   stamps — a handle to the SESSION's file fingerprints: (mtime, len) recorded when
-//            the model last saw a file's content. Edit tools call ensure_not_stale to
-//            fail fast when a file changed on disk since it was viewed — the same
-//            timestamp check vim's `checktime` and VSCode's dirty-file tracking use.
+// Staleness is NOT tracked here: edit targets are composite line ids ("N:hh") whose
+// content hash is verified against the file at apply time, so an external change is
+// caught per-target with a self-healing error instead of a whole-file fingerprint gate.
 //
 // Outside a scope (unit tests calling executors directly) every accessor degrades to
-// a no-op: hints are dropped, staleness is not enforced.
+// a no-op: hints are dropped.
 
-use crate::mcp::fs::remote::{io_fingerprint, PathSource};
-use anyhow::{bail, Result};
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
-
-/// Session-wide file fingerprints keyed by canonical path (see `lock_key_for`).
-pub type FileStamps = Arc<Mutex<HashMap<String, (SystemTime, u64)>>>;
 
 struct RequestContext {
 	hints: RefCell<Vec<String>>,
-	stamps: FileStamps,
 }
 
 tokio::task_local! {
 	static CTX: RequestContext;
 }
 
-/// Run `fut` with a fresh request context bound to the given session stamps.
-pub async fn with_request_context<F>(stamps: FileStamps, fut: F) -> F::Output
+/// Run `fut` with a fresh request context.
+pub async fn with_request_context<F>(fut: F) -> F::Output
 where
 	F: std::future::Future,
 {
 	CTX.scope(
 		RequestContext {
 			hints: RefCell::new(Vec::new()),
-			stamps,
 		},
 		fut,
 	)
@@ -76,58 +65,4 @@ pub fn drain_hints() -> Vec<String> {
 		hints.drain(..).filter(|h| seen.insert(h.clone())).collect()
 	})
 	.unwrap_or_default()
-}
-
-/// (mtime, len) is what editors use for external-change detection: cheap (one stat)
-/// and reliable — a content hash would need a full read on every check.
-/// Now delegates to `io_fingerprint` which handles both local and remote paths.
-///
-/// Record `source`'s current fingerprint as "the model has seen this content".
-/// Called after a successful file view and after every successful write.
-pub async fn record_stamp(source: &PathSource) {
-	let key = crate::mcp::fs::text_editing::lock_key_for_source(source);
-	let fp = io_fingerprint(source).await;
-	let _ = CTX.try_with(|ctx| {
-		let mut stamps = ctx.stamps.lock().expect("stamps poisoned");
-		match fp {
-			Some(fp) => {
-				stamps.insert(key, fp);
-			}
-			None => {
-				stamps.remove(&key);
-			}
-		}
-	});
-}
-
-/// Forget `source`'s fingerprint (file deleted).
-pub fn forget_stamp(source: &PathSource) {
-	let key = crate::mcp::fs::text_editing::lock_key_for_source(source);
-	let _ = CTX.try_with(|ctx| ctx.stamps.lock().expect("stamps poisoned").remove(&key));
-}
-
-/// Fail if `source` changed on disk since the model last saw it.
-/// Paths with no recorded stamp pass — editing without a prior view stays legal.
-pub async fn ensure_not_stale(source: &PathSource) -> Result<()> {
-	let key = crate::mcp::fs::text_editing::lock_key_for_source(source);
-	let recorded = CTX
-		.try_with(|ctx| {
-			ctx.stamps
-				.lock()
-				.expect("stamps poisoned")
-				.get(&key)
-				.copied()
-		})
-		.ok()
-		.flatten();
-	let Some(recorded) = recorded else {
-		return Ok(());
-	};
-	if io_fingerprint(source).await != Some(recorded) {
-		bail!(
-			"File changed on disk since it was last viewed (external edit — another program or a shell command). Run `view` on '{}' again, then retry.",
-			source.display()
-		);
-	}
-	Ok(())
 }

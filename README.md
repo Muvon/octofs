@@ -197,43 +197,26 @@ Ask your AI assistant to:
 
 ## Configuration
 
-### Line Identifier Modes
+### Line Identifiers
 
-Octofs supports two modes for identifying lines in files, set once at startup:
+Every line is addressed by a composite id `N:hh` — its 1-indexed position plus a
+2-character hex hash (FNV-1a) of its content. `view` renders lines as `N:hh|content`:
 
-#### Number Mode (default)
-
-Lines are identified by 1-indexed line numbers:
 ```
-1: fn main() {
-2:     println!("Hello");
-3: }
+1:a3|fn main() {
+2:f1|    println!("Hello");
+3:0e|}
 ```
 
-Use for: Simple operations, one-off edits.
+Edit tools take these ids back as targets and verify the hash against the file
+before applying anything. A stale id (the file changed since it was viewed) fails
+with the current content around the target and where the expected content moved —
+so the model retargets from the error instead of re-reading the file. Edit results
+are diffs with fresh ids, so edits chain without re-viewing.
 
-#### Hash Mode
-
-Lines are identified by 4-character hex hashes (FNV-1a, position-dependent — same content at different lines produces different hashes):
-```
-a3bd: fn main() {
-c7f2:     println!("Hello");
-e9f1: }
-```
-
-Use for: Complex multi-step edits where line numbers would shift. Hashes stay stable across edits.
-
-**Enable hash mode:**
-```json
-{
-  "mcpServers": {
-    "octofs": {
-      "command": "octofs",
-      "args": ["mcp", "--line-mode", "hash"]
-    }
-  }
-}
-```
+This is the single line-id format — there is no mode switch. Plain line numbers
+are still accepted where a position alone is safe: `view` ranges (negative counts
+from the end) and the insert anchors `0` (file start) / `-1` (append).
 
 ### Hint Modes
 
@@ -319,14 +302,18 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 
 ### `view` — Read files, list directories, search content
 
-**File reading:** (`path` is a single path; `start`/`end` are line numbers or hashes)
+**File reading:** (`path` is a single path; `start`/`end` are line numbers or line ids)
 ```json
 {"path": "src/main.rs"}                          // whole file
 {"path": "src/main.rs", "start": 10, "end": 20}  // lines 10–20
 {"path": "src/main.rs", "start": 42, "end": 42}  // single line
 {"path": "src/main.rs", "start": 80}             // line 80 → end of file
-{"path": "src/main.rs", "start": "a3bd", "end": "c7f2"}  // hash mode
+{"path": "src/main.rs", "start": -20}            // last 20 lines
+{"path": "src/main.rs", "start": "12:a3", "end": "20:f1"}  // line ids from prior output
 ```
+
+Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
+that `batch_edit` and `extract_lines` take as targets.
 
 To read several files, make multiple `view` calls — they run in parallel.
 
@@ -383,10 +370,12 @@ Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + est
 
 Perform multiple insert/replace operations on a single file atomically.
 
-Each operation has a `start` (line number or hash). For `insert` it's the anchor
-(`0` = file start, `-1` = after last line, `N` = after line N). For `replace` add `end`
-for a range (omit `end` for a single line). `start` and `end` must be the same kind —
-both line numbers or both hashes (no mixing).
+Each operation has a `start`. For `replace` it's the first line of the range as a
+line id copied from `view` output (add `end` for a range; omit it for a single
+line). For `insert` it's the anchor to insert after — a line id, or the integers
+`0` (file start) / `-1` (after last line). Every id is verified against the file
+before anything applies; a stale id fails with the current content so the model
+can retarget without a re-view. The result is a diff with fresh ids.
 
 **Insert at beginning:**
 ```json
@@ -403,17 +392,7 @@ both line numbers or both hashes (no mixing).
 {
   "path": "src/main.rs",
   "operations": [
-    {"operation": "replace", "start": 10, "end": 15, "content": "new code here"}
-  ]
-}
-```
-
-**Hash mode (stable across edits):**
-```json
-{
-  "path": "src/main.rs",
-  "operations": [
-    {"operation": "replace", "start": "a3bd", "end": "c7f2", "content": "new code"}
+    {"operation": "replace", "start": "10:4b", "end": "15:c2", "content": "new code here"}
   ]
 }
 ```
@@ -433,8 +412,9 @@ both line numbers or both hashes (no mixing).
 ```
 
 `from_end` is optional (omit to copy a single line). `from_start`, `from_end`, and
-`append_line` each accept a line number or a content hash. `append_line` positions the
-copy in the target: `0` = beginning, `-1` = end, `N` = after line N.
+`append_line` each accept a line number or a line id (`"12:a3"`, verified against
+the file). `append_line` positions the copy in the target: `0` = beginning,
+`-1` = end, `N` = after line N.
 
 ---
 
@@ -500,7 +480,7 @@ octofs/
 │   │       └── fs_tests.rs      # Integration tests (cfg(test))
 │   └── utils/
 │       ├── mod.rs               # Module re-exports
-│       ├── line_hash.rs         # LineMode, FNV-1a hashes, endpoint parsing
+│       ├── line_hash.rs         # Composite line ids (N:hh), FNV-1a hashes, endpoint parsing
 │       └── truncation.rs        # Token estimation, smart truncation
 ```
 
@@ -511,7 +491,7 @@ octofs/
 - **File locking** — Per-file `tokio::sync::Mutex` prevents concurrent write conflicts
 - **Undo history** — Up to 10 snapshots per file, in-memory (lost on restart)
 - **Path resolution** — Relative paths resolve against the session workdir; no canonicalization (files may not exist yet)
-- **Stale-write detection** — `io_fingerprint` comparison fails edits if the file changed on disk since last view
+- **Stale-write detection** — every edit target's `N:hh` id is verified against the file at apply time; a stale id fails with the current content instead of editing the wrong line
 
 ---
 

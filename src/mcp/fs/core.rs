@@ -131,10 +131,6 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 	let file_lock = text_editing::acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
 
-	// An undo would clobber an external edit just like any other write.
-	// Check BEFORE popping so a stale error doesn't consume an undo level.
-	crate::mcp::request_ctx::ensure_not_stale(source).await?;
-
 	let path_str = text_editing::lock_key_for_source(source);
 	let previous_content = file_history()
 		.lock()
@@ -143,7 +139,6 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 
 	if let Some(prev_content) = previous_content {
 		text_editing::atomic_write(source, &prev_content).await?;
-		crate::mcp::request_ctx::record_stamp(source).await;
 
 		Ok(format!(
 			"Successfully undid the last edit to {}",
@@ -185,10 +180,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 				}
 			};
 			let source = resolve_path_source(&path, &call.workdir);
-			let result = file_ops::create_file_spec(&source, &content).await?;
-			// The model wrote this content — stamp it so it can edit without re-viewing.
-			crate::mcp::request_ctx::record_stamp(&source).await;
-			Ok(result)
+			file_ops::create_file_spec(&source, &content).await
 		}
 		"str_replace" => {
 			let path = match call.parameters.get("path") {
@@ -246,25 +238,22 @@ fn parse_optional_endpoint(value: Option<&Value>, name: &str) -> Result<Option<E
 	}
 }
 
-/// Resolve one endpoint to a 1-indexed line. Numbers clamp to file bounds (setting
-/// `clamped`); hashes must resolve exactly.
+/// Resolve one endpoint to a 1-indexed line for viewing. Both numbers and line ids
+/// clamp to file bounds (setting `clamped`) — a view is self-correcting because it
+/// returns fresh ids, so a stale id's position part is still the best answer.
 fn resolve_endpoint_to_line(
 	ep: &Endpoint,
 	total_lines: usize,
-	file_lines: &[&str],
 	clamped: &mut bool,
 ) -> Result<usize> {
-	match ep {
-		Endpoint::Number(n) => {
-			let (line, was) = resolve_line_index_clamped(*n, total_lines)
-				.map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
-			*clamped |= was;
-			Ok(line)
-		}
-		Endpoint::Hash(h) => {
-			line_hash::resolve_hash_to_line(h, file_lines).map_err(|e| anyhow!("Invalid hash: {e}"))
-		}
-	}
+	let n = match ep {
+		Endpoint::Number(n) => *n,
+		Endpoint::Id { line, .. } => *line as i64,
+	};
+	let (line, was) = resolve_line_index_clamped(n, total_lines)
+		.map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
+	*clamped |= was;
+	Ok(line)
 }
 
 /// Resolve a `view` line range from optional start/end endpoints into a clamped
@@ -287,12 +276,10 @@ async fn resolve_view_range(
 		}
 	}
 
-	let content = io_read_to_string(source).await.ok();
-	let file_lines: Vec<&str> = content
-		.as_deref()
-		.map(|c| c.lines().collect())
-		.unwrap_or_default();
-	let total_lines = file_lines.len();
+	let total_lines = io_read_to_string(source)
+		.await
+		.map(|c| c.lines().count())
+		.unwrap_or(0);
 
 	if total_lines == 0 {
 		// Empty/unreadable file: there is nothing to clamp a range against, so render the
@@ -304,8 +291,8 @@ async fn resolve_view_range(
 	let end_ep = end_ep.unwrap_or(Endpoint::Number(-1));
 
 	let mut clamped = false;
-	let start = resolve_endpoint_to_line(&start_ep, total_lines, &file_lines, &mut clamped)?;
-	let end = resolve_endpoint_to_line(&end_ep, total_lines, &file_lines, &mut clamped)?;
+	let start = resolve_endpoint_to_line(&start_ep, total_lines, &mut clamped)?;
+	let end = resolve_endpoint_to_line(&end_ep, total_lines, &mut clamped)?;
 	if start > end {
 		bail!("Invalid lines parameter: start line {start} is after end line {end}");
 	}
@@ -375,11 +362,7 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
 	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
 	let range = resolve_view_range(start_ep, end_ep, &source).await?;
-	let result = file_ops::view_file_spec(&source, range).await?;
-	// The model has now seen this file's content — stamp it so a later edit can
-	// detect an external change in between.
-	crate::mcp::request_ctx::record_stamp(&source).await;
-	Ok(result)
+	file_ops::view_file_spec(&source, range).await
 }
 
 // Execute extract_lines command - MCP compliant implementation
@@ -400,14 +383,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Validate and extract from_start / from_end endpoints (line number or hash).
+	// Validate and extract from_start / from_end endpoints (line number or line id).
 	// from_end omitted → single line (defaults to from_start). Resolution is deferred
 	// until after the source file is read.
 	let from_start_ep = match call.parameters.get("from_start") {
 		Some(v) if !v.is_null() => {
 			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'from_start': {e}"))?
 		}
-		_ => bail!("Missing required parameter 'from_start' (line number or hash)"),
+		_ => bail!("Missing required parameter 'from_start' (line number or line id)"),
 	};
 	let from_end_ep = parse_optional_endpoint(call.parameters.get("from_end"), "from_end")?
 		.unwrap_or_else(|| from_start_ep.clone());
@@ -429,12 +412,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	// Validate and extract append_line parameter: 0 (start), -1 (end), N (after line N),
-	// or a hash. Hash resolution is deferred until after the target file is read.
+	// or a line id. Id verification is deferred until after the target file is read.
 	let append_line_ep = match call.parameters.get("append_line") {
 		Some(v) if !v.is_null() => {
 			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?
 		}
-		_ => bail!("Missing required parameter 'append_line' (0 = start, -1 = end, N, or a hash)"),
+		_ => {
+			bail!("Missing required parameter 'append_line' (0 = start, -1 = end, N, or a line id)")
+		}
 	};
 
 	// Read source file
@@ -442,8 +427,6 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	if !io_exists(&from_source).await? {
 		bail!("Source file does not exist: {from_path}");
 	}
-	// Line numbers/hashes were chosen against viewed content — refuse if it shifted.
-	crate::mcp::request_ctx::ensure_not_stale(&from_source).await?;
 
 	let source_content = match io_read_to_string(&from_source).await {
 		Ok(content) => content,
@@ -456,12 +439,14 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let source_lines: Vec<&str> = source_content.lines().collect();
 	let total_lines = source_lines.len();
 
-	// Resolve from_start / from_end endpoints to 1-indexed line numbers (strict — no clamping).
+	// Resolve from_start / from_end endpoints to 1-indexed line numbers (strict — no
+	// clamping). Line ids are verified against the source content; a stale id fails
+	// with the current content instead of silently copying the wrong lines.
 	let resolve_extract_endpoint = |ep: &Endpoint, which: &str| -> Result<usize> {
 		match ep {
 			Endpoint::Number(n) => resolve_line_index(*n, total_lines)
 				.map_err(|e| anyhow!("Invalid from_{which}: {e}")),
-			Endpoint::Hash(h) => line_hash::resolve_hash_to_line(h, &source_lines)
+			Endpoint::Id { line, hash } => line_hash::verify_line_id(*line, hash, &source_lines)
 				.map_err(|e| anyhow!("Invalid from_{which}: {e}")),
 		}
 	};
@@ -477,14 +462,8 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// Extract the specified lines (convert to 0-indexed)
 	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1].to_vec();
 
-	// Create smart formatted content with proper line identifiers for display
-	// In hash mode, compute hashes from the full source file and slice the relevant range
-	let extracted_hashes: Option<Vec<String>> = if crate::utils::line_hash::is_hash_mode() {
-		let all_hashes = crate::utils::line_hash::compute_line_hashes(&source_lines);
-		Some(all_hashes[(from_range.0 - 1)..from_range.1].to_vec())
-	} else {
-		None
-	};
+	// Confirmation echo with SOURCE-position line ids (content hashes stay valid
+	// wherever the lines land in the target).
 	let extracted_content_display = format_extracted_content_smart(
 		&extracted_lines,
 		from_range.0, // Start line number (1-indexed)
@@ -492,7 +471,6 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		// the model chose this exact content, the marker preserves the hidden count,
 		// and the full result is on disk behind `view`.
 		Some(30),
-		extracted_hashes.as_deref(),
 	);
 
 	// Preserve original newline structure by checking if source content ends with newline
@@ -524,7 +502,6 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// same per-file lock so concurrent writers serialize instead of clobbering each other.
 	let file_lock = text_editing::acquire_file_lock(&append_source).await?;
 	let _lock_guard = file_lock.lock().await;
-	crate::mcp::request_ctx::ensure_not_stale(&append_source).await?;
 
 	// Read existing target file content or create empty if doesn't exist
 	let target_content = if io_exists(&append_source).await? {
@@ -538,26 +515,27 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		String::new()
 	};
 
-	// Resolve append_line: hash → line number, or keep integer as-is (0/-1/N).
-	let append_line: i64 = match append_line_ep {
-		Endpoint::Number(n) => {
-			if n < -1 {
-				bail!(
-					"Invalid append_line {n}: use 0 (beginning), -1 (end), N (after line N), or a hash"
+	// Resolve append_line: line id → verified line number, or keep integer as-is (0/-1/N).
+	let append_line: i64 =
+		match append_line_ep {
+			Endpoint::Number(n) => {
+				if n < -1 {
+					bail!(
+					"Invalid append_line {n}: use 0 (beginning), -1 (end), N (after line N), or a line id"
 				);
+				}
+				n
 			}
-			n
-		}
-		Endpoint::Hash(hash) => {
-			if target_content.is_empty() {
-				bail!("Cannot use a hash for append_line on an empty or non-existent target file");
+			Endpoint::Id { line, hash } => {
+				if target_content.is_empty() {
+					bail!("Cannot use a line id for append_line on an empty or non-existent target file");
+				}
+				let target_lines: Vec<&str> = target_content.lines().collect();
+				let line = line_hash::verify_line_id(line, &hash, &target_lines)
+					.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
+				line as i64
 			}
-			let target_lines: Vec<&str> = target_content.lines().collect();
-			let line = line_hash::resolve_hash_to_line(&hash, &target_lines)
-				.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
-			line as i64
-		}
-	};
+		};
 
 	// Determine insertion logic based on append_line
 	let final_content = if append_line == 0 {
@@ -621,7 +599,6 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	if let Err(e) = text_editing::atomic_write(&append_source, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}
-	crate::mcp::request_ctx::record_stamp(&append_source).await;
 
 	// Return success result with useful information
 	let lines_extracted = from_range.1 - from_range.0 + 1;

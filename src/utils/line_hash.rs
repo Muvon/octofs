@@ -12,41 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Position-aware line hashing for stable line identifiers.
-// Each line gets a 4-char hex hash derived from its 1-indexed position AND content.
-// Including position keeps duplicate content at different positions on distinct keys,
-// but the 16-bit fold can still collide between different keys — resolve_hash_to_line
-// detects that and errors instead of silently picking a line.
+// Composite line identifiers: every line is addressed as "N:hh" — its 1-indexed
+// position plus a 2-char hex hash of its content. View output renders lines as
+// "N:hh|content"; edit tools take the same ids back and verify the hash against
+// the file before touching anything, so a stale id fails loudly (with the fresh
+// content in the error) instead of silently editing the wrong line. This is the
+// single line-id format — there is no mode switch.
 
-use std::sync::OnceLock;
-
-/// Line identifier mode: sequential numbers or content-based hashes.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LineMode {
-	Number,
-	Hash,
-}
-
-static LINE_MODE: OnceLock<LineMode> = OnceLock::new();
-
-/// Set the global line mode. Call once at startup.
-pub fn set_line_mode(mode: LineMode) {
-	LINE_MODE.set(mode).ok();
-}
-
-/// Get the current line mode (defaults to Number).
-pub fn get_line_mode() -> LineMode {
-	LINE_MODE.get().copied().unwrap_or(LineMode::Number)
-}
-
-/// Returns true if hash-based line identifiers are active.
-pub fn is_hash_mode() -> bool {
-	get_line_mode() == LineMode::Hash
-}
-
-/// FNV-1a hash folded to 16 bits.
-/// Produces a deterministic hash from arbitrary bytes.
-fn fnv1a_16(content: &str) -> u16 {
+/// FNV-1a hash of line content folded to 8 bits (2 hex chars).
+/// Content-only — position lives in the id's number part, so a line keeps its
+/// hash when it moves and a stale-id error can report where the content went.
+/// 8 bits means a changed line keeps its hash with probability 1/256 — accepted
+/// trade-off for id brevity (the position check catches gross drift anyway).
+fn fnv1a_8(content: &str) -> u8 {
 	const FNV_OFFSET: u32 = 2166136261;
 	const FNV_PRIME: u32 = 16777619;
 
@@ -56,44 +34,83 @@ fn fnv1a_16(content: &str) -> u16 {
 		hash = hash.wrapping_mul(FNV_PRIME);
 	}
 
-	// Fold 32-bit to 16-bit via XOR
-	((hash >> 16) ^ (hash & 0xFFFF)) as u16
+	// Fold 32 -> 16 -> 8 via XOR
+	let h16 = ((hash >> 16) ^ (hash & 0xFFFF)) as u16;
+	((h16 >> 8) ^ (h16 & 0xFF)) as u8
 }
 
-/// Compute 4-char hex hashes for all lines.
-/// Each hash is derived from `"<1-indexed-position>:<content>"`, so duplicate content
-/// at different positions gets distinct keys. The 16-bit output can still collide;
-/// [`resolve_hash_to_line`] treats an ambiguous hash as a hard error.
-pub fn compute_line_hashes(lines: &[&str]) -> Vec<String> {
-	lines
+/// 2-char hex content hash of a single line.
+pub fn line_hash(content: &str) -> String {
+	format!("{:02x}", fnv1a_8(content))
+}
+
+/// Composite id "N:hh" for a 1-indexed line with the given content.
+pub fn line_id(line_1idx: usize, content: &str) -> String {
+	format!("{}:{}", line_1idx, line_hash(content))
+}
+
+/// Composite id for a 1-indexed line looked up in `lines`.
+pub fn line_id_at(lines: &[&str], line_1idx: usize) -> String {
+	line_id(line_1idx, lines[line_1idx - 1])
+}
+
+/// Verify a composite id against the current file lines. Returns the 1-indexed
+/// line on success. On mismatch the error is self-contained: it shows the
+/// current content around the target with fresh ids, where the expected content
+/// moved to (matching hashes), and suggests a ranged `view` — so the model can
+/// retarget from the error alone instead of re-reading the whole file.
+pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Result<usize, String> {
+	let total = lines.len();
+	if line == 0 || line > total {
+		let mut msg =
+			format!("Stale line id \"{line}:{expected_hash}\": the file has {total} lines now.");
+		push_relocation(&mut msg, expected_hash, line, lines);
+		msg.push_str("\nRun `view` on this file to get fresh ids, then retry.");
+		return Err(msg);
+	}
+
+	if line_hash(lines[line - 1]) == expected_hash {
+		return Ok(line);
+	}
+
+	const CONTEXT: usize = 2;
+	let win_start = line.saturating_sub(CONTEXT).max(1);
+	let win_end = (line + CONTEXT).min(total);
+	let mut msg = format!(
+		"Stale line id \"{line}:{expected_hash}\" — the file changed since you viewed it. Current content around line {line}:\n"
+	);
+	for i in win_start..=win_end {
+		msg.push_str(&format!("{}|{}\n", line_id_at(lines, i), lines[i - 1]));
+	}
+	push_relocation(&mut msg, expected_hash, line, lines);
+	msg.push_str(&format!(
+		"\nRetry with the fresh ids above, or run `view` with start: {win_start}, end: {win_end} (or a wider range) to confirm before editing."
+	));
+	Err(msg)
+}
+
+/// Append "content with this hash is now at ..." candidates (nearest to
+/// `expected_line` first, up to 3) so a moved-but-unchanged line is a one-step fix.
+fn push_relocation(msg: &mut String, expected_hash: &str, expected_line: usize, lines: &[&str]) {
+	let mut candidates: Vec<usize> = lines
 		.iter()
 		.enumerate()
-		.map(|(i, line)| {
-			let key = format!("{}:{}", i + 1, line);
-			format!("{:04x}", fnv1a_16(&key))
-		})
-		.collect()
-}
-
-/// Resolve a single hash string to a 1-indexed line number.
-/// 16-bit hashes can collide in larger files; an ambiguous hash is a hard error —
-/// silently picking one of the colliding lines would edit the wrong line.
-pub fn resolve_hash_to_line(hash: &str, lines: &[&str]) -> Result<usize, String> {
-	let mut found: Option<usize> = None;
-	for (i, h) in compute_line_hashes(lines).iter().enumerate() {
-		if h == hash {
-			if let Some(first) = found {
-				return Err(format!(
-					"Hash '{}' is ambiguous: lines {} and {} share it. Use line numbers for this edit instead.",
-					hash,
-					first,
-					i + 1
-				));
-			}
-			found = Some(i + 1);
-		}
+		.filter(|(_, l)| line_hash(l) == expected_hash)
+		.map(|(i, _)| i + 1)
+		.collect();
+	if candidates.is_empty() {
+		return;
 	}
-	found.ok_or_else(|| format!("Hash '{}' not found in file content", hash))
+	candidates.sort_by_key(|&n| n.abs_diff(expected_line));
+	let shown: Vec<String> = candidates
+		.iter()
+		.take(3)
+		.map(|&n| line_id_at(lines, n))
+		.collect();
+	msg.push_str(&format!(
+		"Content matching hash {expected_hash} is now at: {} (your target may have moved).",
+		shown.join(", ")
+	));
 }
 
 // ── Line number resolution ─────────────────────────────────────────────────────────
@@ -162,36 +179,27 @@ pub(crate) fn resolve_line_index_clamped(
 
 // ── Line endpoint parsing ────────────────────────────────────────────────────────
 //
-// Tools take line targets as scalar params (`start`/`end`, `append_line`, …). Each
-// endpoint is either a line NUMBER (JSON integer) or a content HASH (JSON string), so
-// the JSON type itself disambiguates — no range-string parsing, and no ambiguity for
-// all-digit hashes. LineMode affects how lines are RENDERED, and (in number mode only)
-// whether a numeric STRING is tolerated as a line number — see parse_endpoint.
+// Tools take line targets as scalar params (`start`/`end`, `append_line`, op
+// endpoints). An endpoint is either a composite id string "N:hh" (verified against
+// the file before edits) or a plain integer line number where positions are allowed
+// (view ranges, insert anchors 0/-1). Numeric strings are tolerated as integers for
+// clients that stringify numbers.
 
-/// A single line endpoint parsed from a JSON value: a line number or a content hash.
+/// A single line endpoint parsed from a JSON value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
-	/// Line number (1-indexed; 0 and negatives carry position-specific meaning per tool).
+	/// Plain line number (1-indexed; 0 and negatives carry position-specific meaning per tool).
 	Number(i64),
-	/// Content hash identifying a line.
-	Hash(String),
+	/// Composite id: 1-indexed line plus its expected 2-char content hash.
+	Id { line: usize, hash: String },
 }
 
-/// Parse a JSON value into a line [`Endpoint`] using the active [`LineMode`].
+/// Parse a JSON value into a line [`Endpoint`].
 ///
-/// - JSON integer → [`Endpoint::Number`] (a line number).
-/// - JSON string → [`Endpoint::Hash`], EXCEPT in number mode a purely-numeric string
-///   is accepted as a line number (tolerates clients that stringify integers).
+/// - JSON integer → [`Endpoint::Number`].
+/// - String "N:hh" (line + 2 hex chars, as rendered in view output) → [`Endpoint::Id`].
+/// - Numeric string → [`Endpoint::Number`] (tolerates clients that stringify integers).
 pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
-	parse_endpoint_with_mode(value, is_hash_mode())
-}
-
-/// Mode-explicit core of [`parse_endpoint`], split out so the hash-mode branch is
-/// unit-testable without mutating the process-global [`LineMode`] (a write-once `OnceLock`).
-fn parse_endpoint_with_mode(
-	value: &serde_json::Value,
-	hash_mode: bool,
-) -> Result<Endpoint, String> {
 	match value {
 		serde_json::Value::Number(n) => n
 			.as_i64()
@@ -202,14 +210,32 @@ fn parse_endpoint_with_mode(
 			if s.is_empty() {
 				return Err("line value is empty".to_string());
 			}
-			if !hash_mode {
-				if let Ok(n) = s.parse::<i64>() {
-					return Ok(Endpoint::Number(n));
-				}
+			if let Ok(n) = s.parse::<i64>() {
+				return Ok(Endpoint::Number(n));
 			}
-			Ok(Endpoint::Hash(s.to_string()))
+			if let Some((num, hash)) = s.split_once(':') {
+				let line: usize = num.parse().map_err(|_| {
+					format!("invalid line id '{s}': expected \"N:hh\" as shown in view output (e.g. \"12:a3\")")
+				})?;
+				if line == 0 {
+					return Err(format!("invalid line id '{s}': lines are 1-indexed"));
+				}
+				let hash = hash.to_ascii_lowercase();
+				if hash.len() != 2 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+					return Err(format!(
+						"invalid line id '{s}': the hash part must be 2 hex chars (e.g. \"12:a3\")"
+					));
+				}
+				return Ok(Endpoint::Id { line, hash });
+			}
+			Err(format!(
+				"invalid line value '{s}': pass a line id like \"12:a3\" (from view output) or an integer line number"
+			))
 		}
-		_ => Err("line value must be an integer (line number) or a string (hash)".to_string()),
+		_ => Err(
+			"line value must be a line id string like \"12:a3\" or an integer line number"
+				.to_string(),
+		),
 	}
 }
 
@@ -218,168 +244,113 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn test_basic_hash_deterministic() {
-		// Same position + content always produces the same hash
-		let h1 = fnv1a_16("1:hello world");
-		let h2 = fnv1a_16("1:hello world");
-		assert_eq!(h1, h2);
-	}
-
-	#[test]
-	fn test_different_content_different_hash() {
-		let h1 = fnv1a_16("1:line one");
-		let h2 = fnv1a_16("1:line two");
-		assert_ne!(h1, h2);
-	}
-
-	#[test]
-	fn test_compute_unique_lines() {
-		let lines = vec!["fn main() {", "    println!(\"hello\");", "}"];
-		let hashes = compute_line_hashes(&lines);
-		assert_eq!(hashes.len(), 3);
-		// All unique content → all unique hashes
-		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
-		assert_eq!(unique.len(), 3);
-		// Each hash is 4 hex chars
-		for h in &hashes {
-			assert_eq!(h.len(), 4);
-			assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
-		}
-	}
-
-	#[test]
-	fn test_duplicate_content_unique_hashes() {
-		// Duplicate content at different positions must produce different hashes
-		// because position is included in the hash key.
-		let lines = vec!["same", "same", "same"];
-		let hashes = compute_line_hashes(&lines);
-		assert_eq!(hashes.len(), 3);
-		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
+	fn test_line_hash_deterministic_and_content_only() {
+		assert_eq!(line_hash("hello world"), line_hash("hello world"));
+		assert_ne!(line_hash("line one"), line_hash("line two"));
+		// Content-only: same content always hashes the same regardless of position.
 		assert_eq!(
-			unique.len(),
-			3,
-			"duplicate lines must get unique hashes via position"
+			line_id(1, "same").split(':').nth(1),
+			line_id(9, "same").split(':').nth(1)
 		);
-		// Verify each hash matches its position-keyed input
-		assert_eq!(hashes[0], format!("{:04x}", fnv1a_16("1:same")));
-		assert_eq!(hashes[1], format!("{:04x}", fnv1a_16("2:same")));
-		assert_eq!(hashes[2], format!("{:04x}", fnv1a_16("3:same")));
 	}
 
 	#[test]
-	fn test_same_content_different_position_different_hash() {
-		// Identical content at different positions must differ
-		let h1 = fnv1a_16("1:closing brace");
-		let h2 = fnv1a_16("5:closing brace");
-		assert_ne!(h1, h2);
-	}
-
-	#[test]
-	fn test_ambiguous_hash_is_an_error() {
-		// Brute-force a real 16-bit collision: content at line 2 whose hash equals line 1's.
-		let base = "line-0";
-		let target = fnv1a_16("1:line-0");
-		let collider = (0..1_000_000)
-			.map(|k| format!("line-{k}"))
-			.find(|cand| fnv1a_16(&format!("2:{cand}")) == target)
-			.expect("collision must exist in 16-bit space");
-
-		let lines = vec![base, collider.as_str()];
-		let hashes = compute_line_hashes(&lines);
-		assert_eq!(hashes[0], hashes[1]);
-
-		let err = resolve_hash_to_line(&hashes[0], &lines).unwrap_err();
-		assert!(err.contains("ambiguous"), "got: {err}");
-	}
-
-	#[test]
-	fn test_resolve_hash() {
-		let lines = vec!["first", "second", "third"];
-		let hashes = compute_line_hashes(&lines);
-
-		assert_eq!(resolve_hash_to_line(&hashes[0], &lines).unwrap(), 1);
-		assert_eq!(resolve_hash_to_line(&hashes[1], &lines).unwrap(), 2);
-		assert_eq!(resolve_hash_to_line(&hashes[2], &lines).unwrap(), 3);
-		assert!(resolve_hash_to_line("zzzz", &lines).is_err());
-	}
-
-	#[test]
-	fn test_empty_lines() {
-		// Empty lines at different positions get unique hashes
-		let lines = vec!["", "", "content"];
-		let hashes = compute_line_hashes(&lines);
-		assert_eq!(hashes.len(), 3);
-		let unique: std::collections::HashSet<&String> = hashes.iter().collect();
-		assert_eq!(unique.len(), 3);
-	}
-
-	#[test]
-	fn test_hash_format_lowercase_hex() {
-		let lines = vec!["test"];
-		let hashes = compute_line_hashes(&lines);
-		assert!(hashes[0]
+	fn test_line_hash_format() {
+		let h = line_hash("test");
+		assert_eq!(h.len(), 2);
+		assert!(h
 			.chars()
 			.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
 	}
 
 	#[test]
-	fn test_unique_content_hash_stable_at_same_position() {
-		// A line with unique content at the same position always gets the same hash
-		let lines_a = vec!["alpha", "beta", "gamma"];
-		let lines_b = vec!["alpha", "beta", "gamma"];
-		let hashes_a = compute_line_hashes(&lines_a);
-		let hashes_b = compute_line_hashes(&lines_b);
-		assert_eq!(hashes_a, hashes_b);
+	fn test_line_id_shape() {
+		let lines = vec!["fn main() {", "    println!(\"hello\");", "}"];
+		assert_eq!(line_id_at(&lines, 1), format!("1:{}", line_hash(lines[0])));
+		assert_eq!(line_id_at(&lines, 3), format!("3:{}", line_hash(lines[2])));
 	}
 
 	#[test]
-	fn test_parse_endpoint_number_mode() {
+	fn test_verify_line_id_ok() {
+		let lines = vec!["first", "second", "third"];
+		let hash = line_hash("second");
+		assert_eq!(verify_line_id(2, &hash, &lines).unwrap(), 2);
+	}
+
+	#[test]
+	fn test_verify_line_id_stale_shows_fresh_context() {
+		let lines = vec!["first", "CHANGED", "third"];
+		let old_hash = line_hash("second");
+		let err = verify_line_id(2, &old_hash, &lines).unwrap_err();
+		assert!(err.contains("Stale line id"), "got: {err}");
+		assert!(err.contains("CHANGED"), "fresh content shown: {err}");
+		assert!(
+			err.contains(&line_id_at(&lines, 2)),
+			"fresh id shown: {err}"
+		);
+		assert!(err.contains("view"), "suggests ranged view: {err}");
+	}
+
+	#[test]
+	fn test_verify_line_id_reports_moved_content() {
+		// "target" moved from line 2 to line 4.
+		let lines = vec!["first", "inserted", "also inserted", "target"];
+		let hash = line_hash("target");
+		let err = verify_line_id(2, &hash, &lines).unwrap_err();
+		assert!(
+			err.contains(&format!("4:{hash}")),
+			"relocation candidate shown: {err}"
+		);
+	}
+
+	#[test]
+	fn test_verify_line_id_beyond_eof() {
+		let lines = vec!["only line"];
+		let err = verify_line_id(9, "ab", &lines).unwrap_err();
+		assert!(err.contains("1 lines"), "got: {err}");
+	}
+
+	#[test]
+	fn test_parse_endpoint_numbers() {
 		use serde_json::json;
-		// JSON integers are line numbers (incl. 0 and negatives).
 		assert_eq!(parse_endpoint(&json!(42)).unwrap(), Endpoint::Number(42));
 		assert_eq!(parse_endpoint(&json!(0)).unwrap(), Endpoint::Number(0));
 		assert_eq!(parse_endpoint(&json!(-1)).unwrap(), Endpoint::Number(-1));
-		// In number mode, a numeric string is tolerated as a line number.
+		// Numeric strings are tolerated as line numbers.
 		assert_eq!(parse_endpoint(&json!("10")).unwrap(), Endpoint::Number(10));
 		assert_eq!(parse_endpoint(&json!("-3")).unwrap(), Endpoint::Number(-3));
-		// A string with hex letters is a hash.
-		assert_eq!(
-			parse_endpoint(&json!("a3bd")).unwrap(),
-			Endpoint::Hash("a3bd".to_string())
-		);
-		// Wrong types / empties are errors.
-		assert!(parse_endpoint(&json!("")).is_err());
-		assert!(parse_endpoint(&json!([1, 2])).is_err());
-		assert!(parse_endpoint(&json!(null)).is_err());
 	}
 
 	#[test]
-	fn test_parse_endpoint_hash_mode() {
+	fn test_parse_endpoint_ids() {
 		use serde_json::json;
-		// In hash mode an all-digit string is a HASH, not a line number — this is the whole
-		// point of JSON-type disambiguation (a hex hash like "1024" must not become line 1024).
 		assert_eq!(
-			parse_endpoint_with_mode(&json!("1024"), true).unwrap(),
-			Endpoint::Hash("1024".to_string())
+			parse_endpoint(&json!("12:a3")).unwrap(),
+			Endpoint::Id {
+				line: 12,
+				hash: "a3".to_string()
+			}
 		);
+		// Uppercase hex is normalized.
 		assert_eq!(
-			parse_endpoint_with_mode(&json!("a3bd"), true).unwrap(),
-			Endpoint::Hash("a3bd".to_string())
+			parse_endpoint(&json!("7:FF")).unwrap(),
+			Endpoint::Id {
+				line: 7,
+				hash: "ff".to_string()
+			}
 		);
-		// Integers are always line numbers, even in hash mode (anchors 0/-1/N).
-		assert_eq!(
-			parse_endpoint_with_mode(&json!(0), true).unwrap(),
-			Endpoint::Number(0)
-		);
-		assert_eq!(
-			parse_endpoint_with_mode(&json!(-1), true).unwrap(),
-			Endpoint::Number(-1)
-		);
-		// Number mode keeps the stringified-integer tolerance.
-		assert_eq!(
-			parse_endpoint_with_mode(&json!("10"), false).unwrap(),
-			Endpoint::Number(10)
-		);
+	}
+
+	#[test]
+	fn test_parse_endpoint_rejects_garbage() {
+		use serde_json::json;
+		assert!(parse_endpoint(&json!("")).is_err());
+		assert!(parse_endpoint(&json!("abc")).is_err());
+		assert!(parse_endpoint(&json!("0:a3")).is_err());
+		assert!(parse_endpoint(&json!("12:xyz")).is_err());
+		assert!(parse_endpoint(&json!("12:a")).is_err());
+		assert!(parse_endpoint(&json!([1, 2])).is_err());
+		assert!(parse_endpoint(&json!(null)).is_err());
 	}
 
 	#[test]
@@ -412,14 +383,7 @@ mod tests {
 
 	#[test]
 	fn test_modified_line_changes_hash() {
-		let lines_before = vec!["alpha", "beta", "gamma"];
-		let hashes_before = compute_line_hashes(&lines_before);
-
-		let lines_after = vec!["alpha", "BETA_MODIFIED", "gamma"];
-		let hashes_after = compute_line_hashes(&lines_after);
-
-		assert_eq!(hashes_before[0], hashes_after[0]); // alpha at pos 1 unchanged
-		assert_ne!(hashes_before[1], hashes_after[1]); // content changed
-		assert_eq!(hashes_before[2], hashes_after[2]); // gamma at pos 3 unchanged
+		assert_ne!(line_hash("beta"), line_hash("BETA_MODIFIED"));
+		assert_eq!(line_hash("alpha"), line_hash("alpha"));
 	}
 }

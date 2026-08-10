@@ -61,8 +61,6 @@ impl SessionWorkdir {
 pub struct OctofsServer {
 	/// Per-session working directory state.
 	workdir: Arc<SessionWorkdir>,
-	/// Per-session file fingerprints for stale-write detection (see request_ctx).
-	stamps: request_ctx::FileStamps,
 	/// Whether the session context (workdir) has been applied from client
 	/// capabilities. Applied once on the first tool call so a later `workdir`
 	/// tool change is not overwritten by subsequent requests.
@@ -75,7 +73,6 @@ impl OctofsServer {
 		let root = super::get_session_root_directory();
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
-			stamps: request_ctx::FileStamps::default(),
 			session_applied: Arc::new(std::sync::atomic::AtomicBool::new(false)),
 		}
 	}
@@ -128,7 +125,12 @@ use std::path::PathBuf;
 #[tool_router]
 impl OctofsServer {
 	#[tool(
-		description = "Read files, view directories, and search file content. Unified read-only tool. Listing a directory returns each file with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope unfamiliar trees and budget reads before opening files."
+		description = "Read files, view directories, and search file content. Unified read-only tool. \
+			File lines are rendered as `N:hh|content` — N is the line number, hh a 2-char content \
+			hash. Together `N:hh` is the line id that edit tools (batch_edit, extract_lines) take \
+			as targets; copy ids verbatim from this output. Listing a directory returns each file \
+			with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope \
+			unfamiliar trees and budget reads before opening files."
 	)]
 	async fn view(
 		&self,
@@ -143,7 +145,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.stamps.clone(), async move {
+		request_ctx::with_request_context(async move {
 			let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
 		})
@@ -151,7 +153,12 @@ impl OctofsServer {
 	}
 
 	#[tool(
-		description = "Perform text editing operations on files: create, str_replace, delete, undo_edit."
+		description = "Perform text editing operations on files: create, str_replace, delete, undo_edit. \
+			For str_replace pass raw file text in old_text/new_text — real newlines and tabs, no \\n \
+			escaping, and no `N:hh|` line-id prefixes. old_text must match the file exactly and \
+			uniquely; on multiple matches or no match, the error lists candidate locations with line \
+			ids you can use with batch_edit instead. When you already know the target line ids, \
+			prefer batch_edit — it verifies ids against the file and avoids content-match ambiguity."
 	)]
 	async fn text_editor(
 		&self,
@@ -166,7 +173,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.stamps.clone(), async move {
+		request_ctx::with_request_context(async move {
 			let result = fs::execute_text_editor(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -175,7 +182,15 @@ impl OctofsServer {
 		.await
 	}
 
-	#[tool(description = "Perform multiple insert/replace operations on a SINGLE file atomically.")]
+	#[tool(
+		description = "Perform multiple insert/replace operations on a SINGLE file atomically. \
+			Targets are line ids (e.g. \"12:a3\") copied from view or previous edit output; each id \
+			is verified against the file before anything is applied, so a stale id fails with the \
+			current content instead of editing the wrong line. The result is a diff of every \
+			operation with FRESH line ids — use those ids directly for follow-up edits; no need to \
+			re-view the file. Insert anchors 0 (file start) and -1 (append after last line) are \
+			plain integers. Content is raw text without line-id prefixes."
+	)]
 	async fn batch_edit(
 		&self,
 		context: RequestContext<RoleServer>,
@@ -189,7 +204,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.stamps.clone(), async move {
+		request_ctx::with_request_context(async move {
 			let result = fs::execute_batch_edit(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -212,7 +227,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.stamps.clone(), async move {
+		request_ctx::with_request_context(async move {
 			let result = fs::execute_extract_lines(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -241,7 +256,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.stamps.clone(), async move {
+		request_ctx::with_request_context(async move {
 			let result = fs::execute_shell_command(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -300,7 +315,9 @@ impl ServerHandler for OctofsServer {
 				"This server provides filesystem tools: view (read files/dirs), \
 				 text_editor (create/str_replace/delete/undo), batch_edit (multi-op line edits), \
 				 extract_lines (copy lines between files), shell (execute commands), \
-				 workdir (get/set working directory)."
+				 workdir (get/set working directory). File lines are rendered as `N:hh|content`; \
+				 the `N:hh` prefix is the line id edit tools take as targets. Edit results are \
+				 diffs with fresh ids, so edits can be chained without re-viewing files."
 					.to_string(),
 			)
 	}
@@ -335,12 +352,12 @@ pub struct ViewParams {
 	/// filesystem access.
 	pub path: String,
 	/// First line to show (inclusive). Integer line number (negative counts from the
-	/// end: -1 = last line) or a string hash in hash mode. Omit to start at line 1.
+	/// end: -1 = last line) or a line id like "12:a3". Omit to start at line 1.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub start: Option<serde_json::Value>,
 	/// Last line to show (inclusive). Integer line number (negative counts from the end)
-	/// or a string hash in hash mode. Omit to read to the end of the file.
+	/// or a line id like "20:f1". Omit to read to the end of the file.
 	/// Omit BOTH `start` and `end` to view the whole file.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
@@ -373,30 +390,19 @@ pub struct ViewParams {
 
 /// JSON schema for a single line endpoint (`start`/`end`/`append_line`/op `start`/`end`).
 ///
-/// The shape is mode-aware (line mode is fixed at startup before schema generation):
-/// - number mode (default): a plain `integer`. No union — maximally portable across every
-///   tool-calling stack (OpenAI strict structured outputs and Gemini both reject unions).
-/// - hash mode: `anyOf:[integer, string]` — integers are line numbers / anchors, strings are
-///   content hashes; the JSON type disambiguates (no ambiguity for all-digit hashes).
-///   `anyOf` (not `oneOf`) is used because it has strictly wider cross-stack support.
+/// One shape everywhere: a line id string "N:hh" copied from view output (verified
+/// against the file before edits), or a plain integer line number where positions are
+/// allowed (view ranges, insert anchors 0/-1). `anyOf` (not `oneOf`) is used because
+/// it has strictly wider cross-stack support.
 fn line_endpoint_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-	let schema = if crate::utils::line_hash::is_hash_mode() {
-		serde_json::json!({
-			"description": "A line endpoint: an integer line number (negative counts from the end, -1 = last line) or a string content hash from previous output (e.g. \"a3bd\").",
-			"anyOf": [
-				{ "type": "integer", "format": "int64" },
-				{ "type": "string" }
-			],
-			"examples": ["a3bd", -1]
-		})
-	} else {
-		serde_json::json!({
-			"description": "A line number (1-indexed; negative counts from the end, -1 = last line).",
-			"type": "integer",
-			"format": "int64",
-			"examples": [10, 42, -1]
-		})
-	};
+	let schema = serde_json::json!({
+		"description": "A line endpoint: a line id \"N:hh\" copied from view/edit output (e.g. \"12:a3\") or an integer line number (negative counts from the end, -1 = last line). Edit targets require ids; view ranges accept plain numbers.",
+		"anyOf": [
+			{ "type": "string" },
+			{ "type": "integer", "format": "int64" }
+		],
+		"examples": ["12:a3", -1]
+	});
 	serde_json::from_value(schema).expect("static schema is valid JSON")
 }
 
@@ -438,18 +444,19 @@ pub enum BatchEditOperationType {
 pub struct BatchEditOperation {
 	/// Type of operation: 'insert' (after a line) or 'replace' (a line range)
 	pub operation: BatchEditOperationType,
-	/// Start line in the ORIGINAL file. Integer line number or a string hash.
-	/// For `insert` this is the anchor: 0 = file start, -1 = after last line, N = after line N.
+	/// Target in the ORIGINAL file, as a line id from view output (e.g. "12:a3").
 	/// For `replace` this is the first line of the range to replace.
+	/// For `insert` this is the anchor to insert after — a line id, or the integers
+	/// 0 (file start) / -1 (after last line).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub start: serde_json::Value,
-	/// Last line of the range to replace (inclusive), for `replace` only.
-	/// Omit for a single-line replace (defaults to `start`). Ignored for `insert`.
-	/// Must be the same kind as `start` — both line numbers or both hashes (no mixing).
+	/// Last line of the range to replace (inclusive), as a line id (e.g. "20:f1"),
+	/// for `replace` only. Omit for a single-line replace (defaults to `start`).
+	/// Ignored for `insert`.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Raw content to insert or replace with.
+	/// Raw content to insert or replace with (no line-id prefixes).
 	pub content: String,
 }
 
@@ -467,10 +474,11 @@ pub struct ExtractLinesParams {
 	/// Path to the source file to extract lines from.
 	/// Supports ssh://user@host:port/path for remote filesystem access.
 	pub from_path: String,
-	/// First line to copy (inclusive). Integer line number or a string hash.
+	/// First line to copy (inclusive). Integer line number or a line id like "12:a3"
+	/// (ids are verified against the source file).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub from_start: serde_json::Value,
-	/// Last line to copy (inclusive). Integer line number or a string hash.
+	/// Last line to copy (inclusive). Integer line number or a line id.
 	/// Omit to copy a single line (defaults to `from_start`).
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
@@ -479,7 +487,7 @@ pub struct ExtractLinesParams {
 	/// Supports ssh://user@host:port/path for remote filesystem access.
 	pub append_path: String,
 	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N
-	/// (integer), or a string hash in hash mode.
+	/// (integer), or a line id like "12:a3" (verified against the target file).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub append_line: serde_json::Value,
 }

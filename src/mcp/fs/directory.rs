@@ -19,7 +19,7 @@ use super::remote::{
 	io_list_dir, io_read, io_read_to_string, resolve_path_source, IoMetadata, PathSource,
 };
 use super::search::{self, Matcher};
-use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
+use crate::utils::line_hash::line_id_at;
 use crate::utils::truncation::estimate_tokens;
 use anyhow::{bail, Result};
 use ignore::WalkBuilder;
@@ -332,7 +332,6 @@ async fn list_directory_remote(
 	if has_content {
 		let content_pattern = content.unwrap();
 		let matcher = Matcher::new(&content_pattern, regex_flag)?;
-		let hash_mode = is_hash_mode();
 
 		let mut results: Vec<String> = Vec::new();
 		for (rel_path, meta) in &files {
@@ -359,19 +358,17 @@ async fn list_directory_remote(
 			}
 
 			let file_lines: Vec<&str> = file_content.lines().collect();
-			let prefixes: Vec<String> = if hash_mode {
-				compute_line_hashes(&file_lines)
-			} else {
-				(1..=file_lines.len()).map(|n| n.to_string()).collect()
-			};
 
 			let mut rendered_blocks: Vec<String> = Vec::new();
 			for block in &blocks {
 				let mut rendered = Vec::new();
 				for &n in &block.line_numbers {
-					let idx = n - 1;
-					if idx < file_lines.len() {
-						rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
+					if n <= file_lines.len() {
+						rendered.push(format!(
+							"{}|{}",
+							line_id_at(&file_lines, n),
+							file_lines[n - 1]
+						));
 					}
 				}
 				rendered_blocks.push(rendered.join("\n"));
@@ -474,8 +471,6 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 				}
 			}
 
-			let hash_mode = is_hash_mode();
-
 			// Parallel per-file scan. Each thread reads + searches independently;
 			// results carry the original index so the final output preserves
 			// the deterministic alphabetic order of `files`.
@@ -513,19 +508,17 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 					}
 
 					let file_lines: Vec<&str> = file_content.lines().collect();
-					let prefixes: Vec<String> = if hash_mode {
-						compute_line_hashes(&file_lines)
-					} else {
-						(1..=file_lines.len()).map(|n| n.to_string()).collect()
-					};
 
 					let mut rendered_blocks: Vec<String> = Vec::new();
 					for block in &blocks {
 						let mut rendered = Vec::new();
 						for &n in &block.line_numbers {
-							let idx = n - 1;
-							if idx < file_lines.len() {
-								rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
+							if n <= file_lines.len() {
+								rendered.push(format!(
+									"{}|{}",
+									line_id_at(&file_lines, n),
+									file_lines[n - 1]
+								));
 							}
 						}
 						rendered_blocks.push(rendered.join("\n"));

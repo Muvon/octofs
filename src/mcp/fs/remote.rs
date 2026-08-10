@@ -715,16 +715,6 @@ mod sftp {
 			.get()
 			.expect("SFTP pool not initialized — call init_sftp_pool at startup")
 	}
-	/// Get a fingerprint (mtime, size) for staleness detection.
-	pub async fn remote_fingerprint(
-		source: &super::PathSource,
-	) -> Option<(std::time::SystemTime, u64)> {
-		match remote_metadata(source).await {
-			Ok(meta) => meta.modified.map(|m| (m, meta.size)),
-			Err(_) => None,
-		}
-	}
-
 	/// Extract (host, port, user, path) from a remote PathSource.
 	fn remote_parts(source: &super::PathSource) -> (&str, u16, &str, &str) {
 		match source {
@@ -888,9 +878,9 @@ mod sftp {
 }
 
 pub use sftp::{
-	init_sftp_pool, remote_canonicalize, remote_create_dir_all, remote_exists, remote_fingerprint,
-	remote_list_dir, remote_metadata, remote_read, remote_read_to_string, remote_remove_file,
-	remote_write, sftp_pool, RemoteMetadata, SftpPool, SshConfig,
+	init_sftp_pool, remote_canonicalize, remote_create_dir_all, remote_exists, remote_list_dir,
+	remote_metadata, remote_read, remote_read_to_string, remote_remove_file, remote_write,
+	sftp_pool, RemoteMetadata, SftpPool, SshConfig,
 };
 
 // ── Unified I/O dispatch layer ─────────────────────────────────────────
@@ -1003,17 +993,6 @@ pub async fn io_remove_file(source: &PathSource) -> Result<()> {
 			.await
 			.map_err(|e| anyhow!("Failed to remove '{}': {}", source.display(), e)),
 		PathSource::Remote { .. } => sftp::remote_remove_file(source).await,
-	}
-}
-
-/// Get a fingerprint (mtime, size) for staleness detection.
-pub async fn io_fingerprint(source: &PathSource) -> Option<(SystemTime, u64)> {
-	match source {
-		PathSource::Local(p) => {
-			let meta = std::fs::metadata(p).ok()?;
-			Some((meta.modified().ok()?, meta.len()))
-		}
-		PathSource::Remote { .. } => sftp::remote_fingerprint(source).await,
 	}
 }
 

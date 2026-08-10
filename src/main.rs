@@ -30,7 +30,6 @@ async fn main() -> Result<()> {
 		Commands::Mcp {
 			path,
 			bind,
-			line_mode,
 			hint_mode,
 			ssh_key,
 			ssh_timeout,
@@ -44,13 +43,6 @@ async fn main() -> Result<()> {
 
 			// Stderr-only logging — no stdout (would corrupt stdio MCP protocol)
 			init_mcp_logging();
-
-			// Set line identifier mode
-			let mode = match line_mode.as_str() {
-				"hash" => utils::line_hash::LineMode::Hash,
-				_ => utils::line_hash::LineMode::Number,
-			};
-			utils::line_hash::set_line_mode(mode);
 
 			// Set hint enforcement mode
 			let hmode = match hint_mode.as_str() {

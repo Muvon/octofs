@@ -37,10 +37,6 @@ pub enum Commands {
 		#[arg(long, value_name = "HOST:PORT")]
 		bind: Option<String>,
 
-		/// Line identifier mode: "number" (default) for sequential line numbers, "hash" for content-based 4-char hex hashes
-		#[arg(long, value_name = "MODE", default_value = "number")]
-		line_mode: String,
-
 		/// Hint enforcement mode: "soft" (default) appends guidance to the response and runs the command anyway, "hard" rejects tool misuse with an error
 		#[arg(long, value_name = "MODE", default_value = "soft")]
 		hint_mode: String,

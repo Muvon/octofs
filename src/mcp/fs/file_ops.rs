@@ -19,7 +19,7 @@ use super::remote::{
 	PathSource,
 };
 use super::search;
-use crate::utils::line_hash::{compute_line_hashes, is_hash_mode};
+use crate::utils::line_hash::line_id_at;
 use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, bail, Result};
 
@@ -113,20 +113,16 @@ pub async fn view_file_with_content_search(
 		return Ok(String::new());
 	}
 
-	// Compute prefixes once for the whole file (same as view_file_spec does)
-	let prefixes: Vec<String> = if is_hash_mode() {
-		compute_line_hashes(&file_lines)
-	} else {
-		(1..=total).map(|n| n.to_string()).collect()
-	};
-
 	// Render each block; separate blocks with "--"
 	let mut parts: Vec<String> = Vec::new();
 	for block in &blocks {
 		let mut rendered = Vec::new();
 		for &n in &block.line_numbers {
-			let idx = n - 1;
-			rendered.push(format!("{}:{}", prefixes[idx], file_lines[idx]));
+			rendered.push(format!(
+				"{}|{}",
+				line_id_at(&file_lines, n),
+				file_lines[n - 1]
+			));
 		}
 		parts.push(rendered.join("\n"));
 	}

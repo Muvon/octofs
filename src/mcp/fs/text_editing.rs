@@ -111,7 +111,6 @@ pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
 
 	let file_lock = acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
-	crate::mcp::request_ctx::ensure_not_stale(source).await?;
 
 	// Snapshot for undo before unlinking.
 	save_file_history(source).await?;
@@ -119,32 +118,12 @@ pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
 	io_remove_file(source)
 		.await
 		.map_err(|e| anyhow!("Failed to delete '{}': {}", source.display(), e))?;
-	crate::mcp::request_ctx::forget_stamp(source);
 
 	Ok(format!("Successfully deleted {}", source.display()))
 }
 
-// Line-index resolution (negative indexing) is shared from utils::line_hash.
-use crate::utils::line_hash::resolve_line_index;
-
-// Helper function to resolve line range with negative indexing support
-fn resolve_line_range_batch(
-	start: i64,
-	end: i64,
-	total_lines: usize,
-) -> Result<(usize, usize), String> {
-	let resolved_start = resolve_line_index(start, total_lines)?;
-	let resolved_end = resolve_line_index(end, total_lines)?;
-
-	if resolved_start > resolved_end {
-		return Err(format!(
-			"Start line ({}) cannot be greater than end line ({})",
-			start, end
-		));
-	}
-
-	Ok((resolved_start, resolved_end))
-}
+// Line-id helpers are shared from utils::line_hash.
+use crate::utils::line_hash::{line_id_at, verify_line_id};
 
 // Batch operation structures for the new single-file, multi-operation approach
 #[derive(Debug, Clone)]
@@ -155,7 +134,7 @@ struct BatchOperation {
 	operation_index: usize,
 }
 
-// Unresolved batch operation with raw line indices (may be negative)
+// Unresolved batch operation with endpoints not yet verified against the file
 #[derive(Debug, Clone)]
 struct UnresolvedBatchOperation {
 	operation_type: OperationType,
@@ -178,49 +157,45 @@ enum LineRange {
 
 #[derive(Debug, Clone)]
 enum UnresolvedLineRange {
-	Single(i64),               // Insert after this line (may be negative)
-	Range(i64, i64),           // Replace this range (may be negative)
-	Hash(String),              // Insert after line identified by hash
-	HashRange(String, String), // Replace range identified by hashes
+	/// Insert anchor without content to verify: 0 = file start, -1 = after last line.
+	Anchor(i64),
+	/// Insert after this line id ("N:hh", verified against the file).
+	IdAnchor { line: usize, hash: String },
+	/// Replace this id range (inclusive; both endpoints verified).
+	IdRange {
+		start: (usize, String),
+		end: (usize, String),
+	},
 }
 
-// Resolve unresolved line range to actual line range using file length.
-// `lines` is needed for hash resolution (the full file's lines).
+// Resolve an unresolved range to concrete line positions, verifying every line id
+// against the current file content. A stale id fails with a self-healing error
+// (fresh context + relocation candidates) built by `verify_line_id`.
 fn resolve_unresolved_line_range(
 	unresolved: &UnresolvedLineRange,
 	total_lines: usize,
 	lines: &[&str],
 ) -> Result<LineRange, String> {
 	match unresolved {
-		UnresolvedLineRange::Single(line) => {
-			// Insert anchor 0 = beginning of file. On an empty file, -1 ("after last line")
-			// also means the beginning — there is no last line to anchor to.
-			if *line == 0 || (*line < 0 && total_lines == 0) {
-				return Ok(LineRange::Single(0));
-			}
-			let resolved = resolve_line_index(*line, total_lines)?;
+		UnresolvedLineRange::Anchor(0) => Ok(LineRange::Single(0)),
+		UnresolvedLineRange::Anchor(-1) => Ok(LineRange::Single(total_lines)),
+		UnresolvedLineRange::Anchor(n) => Err(format!(
+			"Invalid insert anchor {n}: use 0 (file start), -1 (after last line), or a line id like \"12:a3\" from view output"
+		)),
+		UnresolvedLineRange::IdAnchor { line, hash } => {
+			let resolved = verify_line_id(*line, hash, lines)?;
 			Ok(LineRange::Single(resolved))
 		}
-		UnresolvedLineRange::Range(start, end) => {
-			let (resolved_start, resolved_end) =
-				resolve_line_range_batch(*start, *end, total_lines)?;
-			Ok(LineRange::Range(resolved_start, resolved_end))
-		}
-		UnresolvedLineRange::Hash(hash) => {
-			let line = crate::utils::line_hash::resolve_hash_to_line(hash, lines)?;
-			Ok(LineRange::Single(line))
-		}
-		UnresolvedLineRange::HashRange(start_hash, end_hash) => {
-			let start = crate::utils::line_hash::resolve_hash_to_line(start_hash, lines)?;
-			let end = crate::utils::line_hash::resolve_hash_to_line(end_hash, lines)?;
-			if start > end {
+		UnresolvedLineRange::IdRange { start, end } => {
+			let s = verify_line_id(start.0, &start.1, lines)?;
+			let e = verify_line_id(end.0, &end.1, lines)?;
+			if s > e {
 				return Err(format!(
-					"Hash range is reversed: '{}' is line {} but '{}' is line {} (which comes before it). \
-					Did you mean start: \"{}\", end: \"{}\"?",
-					start_hash, start, end_hash, end, end_hash, start_hash
+					"Range is reversed: start \"{}:{}\" is after end \"{}:{}\". Did you mean start: \"{}:{}\", end: \"{}:{}\"?",
+					start.0, start.1, end.0, end.1, end.0, end.1, start.0, start.1
 				));
 			}
-			Ok(LineRange::Range(start, end))
+			Ok(LineRange::Range(s, e))
 		}
 	}
 }
@@ -406,6 +381,8 @@ fn adjust_indentation(new_text: &str, provided_old: &str, actual_old: &str) -> S
 }
 
 /// Build a unified-style diff for a str_replace operation showing CONTEXT lines before/after.
+/// Context and added lines carry FRESH line ids from the final file, so the model can
+/// chain follow-up edits without re-viewing; removed lines carry their old ids.
 // `start` is 0-indexed position of the first replaced line in `orig_lines`.
 fn build_str_replace_diff(
 	orig_lines: &[&str],
@@ -417,47 +394,40 @@ fn build_str_replace_diff(
 	const CONTEXT: usize = 2;
 	let mut diff: Vec<String> = Vec::new();
 
-	// Context before
+	// Context before (identical in both files — render with final-file ids)
 	let ctx_before_start = start.saturating_sub(CONTEXT);
 	if ctx_before_start > 0 {
 		diff.push("...".to_string());
 	}
-	for (i, line) in orig_lines
-		.iter()
-		.enumerate()
-		.take(start)
-		.skip(ctx_before_start)
-	{
-		diff.push(format!("{}: {}", i + 1, line));
+	for i in ctx_before_start..start {
+		diff.push(format!("{}|{}", line_id_at(new_lines, i + 1), new_lines[i]));
 	}
 
-	// Removed lines
+	// Removed lines (old ids)
 	for (i, line) in orig_lines
 		.iter()
 		.enumerate()
 		.skip(start)
 		.take(old_line_count)
 	{
-		diff.push(format!("-{}: {}", i + 1, line));
+		diff.push(format!("-{}|{}", line_id_at(orig_lines, i + 1), line));
 	}
 
-	// Added lines
+	// Added lines — at their final positions with fresh ids.
 	// In the new file the inserted block starts at `start + 1` (1-indexed)
-	let new_block_start = start + 1;
 	for (i, line) in new_text_lines.iter().enumerate() {
-		diff.push(format!("+{}: {}", new_block_start + i, line));
+		diff.push(format!(
+			"+{}|{}",
+			line_id_at(new_lines, start + 1 + i),
+			line
+		));
 	}
 
 	// Context after: read from new_lines (already has the replacement applied)
 	let new_after_start = start + new_text_lines.len(); // 0-indexed in new_lines
 	let ctx_after_end = (new_after_start + CONTEXT).min(new_lines.len());
-	for (i, line) in new_lines
-		.iter()
-		.enumerate()
-		.take(ctx_after_end)
-		.skip(new_after_start)
-	{
-		diff.push(format!("{}: {}", i + 1, line));
+	for i in new_after_start..ctx_after_end {
+		diff.push(format!("{}|{}", line_id_at(new_lines, i + 1), new_lines[i]));
 	}
 	if ctx_after_end < new_lines.len() {
 		diff.push("...".to_string());
@@ -545,9 +515,9 @@ pub async fn str_replace_spec(
 	// Acquire file lock to prevent concurrent writes
 	let file_lock = acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
-	crate::mcp::request_ctx::ensure_not_stale(source).await?;
 
-	// Read the file content
+	// Read the file content. Content-addressed matching is its own staleness check:
+	// old_text either still matches uniquely or the error below explains why not.
 	let content = io_read_to_string(source)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
@@ -566,11 +536,10 @@ pub async fn str_replace_spec(
 		save_file_history(source).await?;
 		let new_content = content.replace(old_text, new_text);
 		atomic_write(source, &new_content).await?;
-		crate::mcp::request_ctx::record_stamp(source).await;
 
 		if old_line_count > 1 {
 			crate::mcp::request_ctx::push_hint(&format!(
-				"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line range — it's faster and avoids content-search ambiguity.",
+				"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line ids — it's faster and avoids content-search ambiguity.",
 				old_line_count
 			));
 		}
@@ -588,33 +557,23 @@ pub async fn str_replace_spec(
 	}
 
 	if occurrences > 1 {
-		// Multiple exact matches — show locations to help disambiguate
+		// Multiple exact matches — show locations with line ids so the model can
+		// switch to `batch_edit` without another view.
 		let positions = find_all_positions(&content, old_text);
-		let use_hashes = crate::utils::line_hash::is_hash_mode();
 		let file_lines: Vec<&str> = content.lines().collect();
-		let hashes: Vec<String> = if use_hashes {
-			crate::utils::line_hash::compute_line_hashes(&file_lines)
-		} else {
-			Vec::new()
-		};
 		let locations: Vec<String> = positions
 			.iter()
 			.enumerate()
 			.map(|(i, &offset)| {
 				let line = byte_offset_to_line(&content, offset);
-				if use_hashes {
-					format!("  {}. hash {} (line {})", i + 1, hashes[line - 1], line)
-				} else {
-					format!("  {}. line {}", i + 1, line)
-				}
+				format!("  {}. {}", i + 1, line_id_at(&file_lines, line))
 			})
 			.collect();
 
 		bail!(
-			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific {}.",
+			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, or use `batch_edit` with the specific line ids.",
 			occurrences,
-			locations.join("\n"),
-			if use_hashes { "hash range" } else { "line range" }
+			locations.join("\n")
 		);
 	}
 
@@ -654,7 +613,6 @@ pub async fn str_replace_spec(
 			save_file_history(source).await?;
 			let new_content = content.replace(&actual_old, &adjusted_new);
 			atomic_write(source, &new_content).await?;
-			crate::mcp::request_ctx::record_stamp(source).await;
 
 			crate::mcp::request_ctx::push_hint(
 				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
@@ -683,61 +641,36 @@ pub async fn str_replace_spec(
 	if candidates.is_empty() {
 		msg.push_str("No similar text found in the file. Verify the content exists.");
 	} else {
-		let use_hashes = crate::utils::line_hash::is_hash_mode();
 		let diag_lines: Vec<&str> = content.lines().collect();
-		let diag_hashes: Vec<String> = if use_hashes {
-			crate::utils::line_hash::compute_line_hashes(&diag_lines)
-		} else {
-			Vec::new()
-		};
 
 		msg.push_str("Closest matches:\n");
 		let old_line_count = old_text.lines().count();
 		for (i, (line_num, window, sim)) in candidates.iter().enumerate() {
 			let diagnosis = diagnose_mismatch(old_text, window);
 			let end_line = line_num + old_line_count - 1;
-			if use_hashes {
-				let start_hash = &diag_hashes[line_num - 1];
-				let end_hash = &diag_hashes[end_line - 1];
-				msg.push_str(&format!(
-					"\n  {}. Hashes {}-{} ({:.0}% similar, {})\n",
-					i + 1,
-					start_hash,
-					end_hash,
-					sim * 100.0,
-					diagnosis
-				));
-			} else {
-				msg.push_str(&format!(
-					"\n  {}. Lines {}-{} ({:.0}% similar, {})\n",
-					i + 1,
-					line_num,
-					end_line,
-					sim * 100.0,
-					diagnosis
-				));
-			}
+			msg.push_str(&format!(
+				"\n  {}. {} .. {} ({:.0}% similar, {})\n",
+				i + 1,
+				line_id_at(&diag_lines, *line_num),
+				line_id_at(&diag_lines, end_line),
+				sim * 100.0,
+				diagnosis
+			));
 			// Show first 3 lines of the candidate as preview
 			for (j, line) in window.lines().take(3).enumerate() {
-				let pfx = if use_hashes {
-					diag_hashes[line_num - 1 + j].clone()
-				} else {
-					format!("{}", line_num + j)
-				};
-				msg.push_str(&format!("     {}: {}\n", pfx, line));
+				msg.push_str(&format!(
+					"     {}|{}\n",
+					line_id_at(&diag_lines, line_num + j),
+					line
+				));
 			}
 			if old_line_count > 3 {
 				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
 			}
 		}
-		msg.push_str(&format!(
-			"\nTip: use `batch_edit` with the {} shown above, or fix the `old_text` content.",
-			if use_hashes {
-				"hash range"
-			} else {
-				"line range"
-			}
-		));
+		msg.push_str(
+			"\nTip: use `batch_edit` with the line ids shown above, or fix the `old_text` content.",
+		);
 	}
 
 	bail!("{}", msg);
@@ -773,28 +706,13 @@ fn check_replace_duplicates(
 	start_line: usize,
 	end_line: usize,
 	operation_index: usize,
-	hashes: &[String],
-	use_hashes: bool,
 ) -> Result<(), String> {
 	if content_lines.is_empty() {
 		return Ok(());
 	}
 
-	// Format a line reference as hash or number
-	let line_id = |line_1idx: usize| -> String {
-		if use_hashes {
-			hashes[line_1idx - 1].clone()
-		} else {
-			format!("line {}", line_1idx)
-		}
-	};
-	let range_id = |s: usize, e: usize| -> String {
-		if use_hashes {
-			format!("\"{}-{}\"", hashes[s - 1], hashes[e - 1])
-		} else {
-			format!("\"{}-{}\"", s, e)
-		}
-	};
+	let id = |line_1idx: usize| -> String { line_id_at(file_lines, line_1idx) };
+	let range_id = |s: usize, e: usize| -> String { format!("\"{}\"-\"{}\"", id(s), id(e)) };
 
 	// First content line matches the line immediately before the range
 	if start_line > 1 {
@@ -806,9 +724,9 @@ fn check_replace_duplicates(
 				{}: {:?}. Do NOT include surrounding unchanged lines — \
 				only provide the lines that replace {}.",
 				operation_index,
-				line_id(start_line - 1),
+				id(start_line - 1),
 				range_id(start_line, end_line),
-				line_id(start_line - 1),
+				id(start_line - 1),
 				line_before,
 				range_id(start_line, end_line)
 			));
@@ -825,9 +743,9 @@ fn check_replace_duplicates(
 				{}: {:?}. Do NOT include surrounding unchanged lines — \
 				only provide the lines that replace {}.",
 				operation_index,
-				line_id(end_line + 1),
+				id(end_line + 1),
 				range_id(start_line, end_line),
-				line_id(end_line + 1),
+				id(end_line + 1),
 				line_after,
 				range_id(start_line, end_line)
 			));
@@ -843,22 +761,14 @@ fn check_replace_duplicates(
 //   Insert  vs Insert  — same anchor line → conflict (ambiguous ordering)
 //   Insert  vs Replace — NEVER conflict. Insert operates in the *gap* after a line,
 //                        Replace operates on the line's *content*. They are independent.
-fn detect_conflicts(
-	operations: &[BatchOperation],
-	hashes: &[String],
-	use_hashes: bool,
-) -> Result<(), String> {
+fn detect_conflicts(operations: &[BatchOperation], file_lines: &[&str]) -> Result<(), String> {
 	let id = |line_1idx: usize| -> String {
-		if use_hashes {
-			// Anchor 0 means "file start" — there is no line to hash, and `0 - 1`
-			// would underflow the usize index.
-			if line_1idx == 0 {
-				"the start of the file".to_string()
-			} else {
-				hashes[line_1idx - 1].clone()
-			}
+		// Anchor 0 means "file start" — there is no line to identify, and `0 - 1`
+		// would underflow the usize index.
+		if line_1idx == 0 {
+			"the start of the file".to_string()
 		} else {
-			format!("{}", line_1idx)
+			line_id_at(file_lines, line_1idx)
 		}
 	};
 
@@ -1088,9 +998,11 @@ async fn apply_batch_operations(
 }
 
 // Parse an operation's `start` (+ optional `end`) into an unresolved line range.
-// Each endpoint is a JSON integer (line number) or string (hash) — JSON type disambiguates.
-//   insert:  start is the anchor (0 = file start, -1 = after last line, N = after line N, or hash).
-//   replace: start..end (end omitted → single line). Both endpoints must be the same kind.
+//   insert:  start is the anchor — a line id "N:hh", or the integers 0 (file start) /
+//            -1 (after last line). Other plain numbers are rejected: they carry no
+//            content hash, so a stale position could not be detected.
+//   replace: start..end line ids (end omitted → single line). Ids are mandatory —
+//            every replaced boundary is verified against the file before applying.
 fn parse_line_range(
 	start_val: &Value,
 	end_val: Option<&Value>,
@@ -1102,9 +1014,11 @@ fn parse_line_range(
 
 	match operation_type {
 		OperationType::Insert => match start {
-			// Number covers the 0 (file start) / -1 (after last) / N anchors.
-			Endpoint::Number(n) => Ok(UnresolvedLineRange::Single(n)),
-			Endpoint::Hash(h) => Ok(UnresolvedLineRange::Hash(h)),
+			Endpoint::Number(n @ (0 | -1)) => Ok(UnresolvedLineRange::Anchor(n)),
+			Endpoint::Number(n) => Err(format!(
+				"insert anchor {n} is not verifiable: use a line id like \"12:a3\" from view output, or 0 (file start) / -1 (after last line)"
+			)),
+			Endpoint::Id { line, hash } => Ok(UnresolvedLineRange::IdAnchor { line, hash }),
 		},
 		OperationType::Replace => {
 			let end = match end_val {
@@ -1112,17 +1026,14 @@ fn parse_line_range(
 				None => start.clone(), // single-line replace
 			};
 			match (start, end) {
-				(Endpoint::Number(a), Endpoint::Number(b)) => {
-					if a == 0 || b == 0 {
-						return Err(
-							"Replace line numbers are 1-indexed, use 1 for first line".to_string()
-						);
-					}
-					Ok(UnresolvedLineRange::Range(a, b))
+				(Endpoint::Id { line: sl, hash: sh }, Endpoint::Id { line: el, hash: eh }) => {
+					Ok(UnresolvedLineRange::IdRange {
+						start: (sl, sh),
+						end: (el, eh),
+					})
 				}
-				(Endpoint::Hash(a), Endpoint::Hash(b)) => Ok(UnresolvedLineRange::HashRange(a, b)),
 				_ => Err(
-					"`start` and `end` must both be line numbers or both be hashes (no mixing)."
+					"replace targets must be line ids like \"12:a3\" copied from view output — plain line numbers are not verified against the file"
 						.to_string(),
 				),
 			}
@@ -1163,9 +1074,6 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Acquire file lock to prevent concurrent writes
 	let file_lock = acquire_file_lock(&source).await?;
 	let _lock_guard = file_lock.lock().await;
-	// batch_edit targets lines by number/hash chosen against VIEWED content — an
-	// external change shifts lines and would make this silently edit the wrong ones.
-	crate::mcp::request_ctx::ensure_not_stale(&source).await?;
 
 	// Read original file content
 	let original_content = io_read_to_string(&source)
@@ -1251,17 +1159,17 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		);
 	}
 
-	// Resolve negative line indices (and hash identifiers) now that we have the file content
+	// Resolve anchors and verify every line id against the current file content.
+	// Atomic contract mirrors parsing: if ANY id is stale, apply nothing and report
+	// all failures at once — each failure carries the fresh context to retarget from.
 	let total_lines = original_content.lines().count();
-	let original_lines_for_resolve: Vec<&str> = original_content.lines().collect();
+	let original_lines: Vec<&str> = original_content.lines().collect();
 	let mut batch_operations = Vec::new();
+	let mut resolve_failures: Vec<String> = Vec::new();
 
 	for unresolved_op in unresolved_operations {
-		match resolve_unresolved_line_range(
-			&unresolved_op.line_range,
-			total_lines,
-			&original_lines_for_resolve,
-		) {
+		match resolve_unresolved_line_range(&unresolved_op.line_range, total_lines, &original_lines)
+		{
 			Ok(resolved_range) => {
 				batch_operations.push(BatchOperation {
 					operation_type: unresolved_op.operation_type,
@@ -1271,42 +1179,33 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				});
 			}
 			Err(err) => {
-				bail!(
-					"Invalid line range in operation {}: {}",
-					unresolved_op.operation_index,
-					err
-				);
+				resolve_failures.push(format!("op {}: {}", unresolved_op.operation_index, err));
 			}
 		}
 	}
 
-	// Compute hashes once for all validation and output (used in hash mode)
-	let original_lines: Vec<&str> = original_content.lines().collect();
-	let use_hashes = crate::utils::line_hash::is_hash_mode();
-	let orig_hashes: Vec<String> = if use_hashes {
-		crate::utils::line_hash::compute_line_hashes(&original_lines)
-	} else {
-		Vec::new()
-	};
+	if !resolve_failures.is_empty() {
+		bail!(
+			"No operations were applied — {} of {} operations have invalid or stale targets:\n{}",
+			resolve_failures.len(),
+			operations.len(),
+			resolve_failures.join("\n---\n")
+		);
+	}
 
 	// Check for conflicts between operations
-	if let Err(conflict_error) = detect_conflicts(&batch_operations, &orig_hashes, use_hashes) {
+	if let Err(conflict_error) = detect_conflicts(&batch_operations, &original_lines) {
 		bail!("{}", conflict_error);
 	}
 
 	// Duplicate-line detection: validate operations against original content before applying.
 	// Catches the #1 AI mistake of including surrounding/already-existing lines.
-	// Helper: format a line reference as hash or number for error messages
 	let orig_line_id = |line_1idx: usize| -> String {
-		if use_hashes {
-			// Anchor 0 means "file start" — no line to hash, and `0 - 1` underflows.
-			if line_1idx == 0 {
-				"the start of the file".to_string()
-			} else {
-				orig_hashes[line_1idx - 1].clone()
-			}
+		// Anchor 0 means "file start" — no line to identify, and `0 - 1` underflows.
+		if line_1idx == 0 {
+			"the start of the file".to_string()
 		} else {
-			format!("line {}", line_1idx)
+			line_id_at(&original_lines, line_1idx)
 		}
 	};
 	for op in &batch_operations {
@@ -1326,8 +1225,6 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					start,
 					end,
 					op.operation_index,
-					&orig_hashes,
-					use_hashes,
 				) {
 					bail!("{}", e);
 				}
@@ -1379,34 +1276,15 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	atomic_write(&source, &final_content)
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
-	crate::mcp::request_ctx::record_stamp(&source).await;
 
 	// Build annotated diff for each operation so the AI can verify edits landed correctly.
-	// In hash mode: uses content-based hashes as line prefixes.
-	// In number mode: uses sequential line numbers as before.
+	// Context and added lines carry FRESH ids from the final file — usable directly as
+	// targets for follow-up edits, no re-view needed. Removed lines carry their old ids.
 	const CONTEXT: usize = 2;
 	let new_lines: Vec<&str> = final_content.lines().collect();
-	let new_hashes: Vec<String> = if use_hashes {
-		crate::utils::line_hash::compute_line_hashes(&new_lines)
-	} else {
-		Vec::new()
-	};
 
-	// Helper closures: produce a line prefix from index (0-based for hashes, 1-based number for display)
-	let orig_prefix = |line_1idx: usize| -> String {
-		if use_hashes {
-			orig_hashes[line_1idx - 1].clone()
-		} else {
-			format!("{}", line_1idx)
-		}
-	};
-	let new_prefix = |line_1idx: usize| -> String {
-		if use_hashes {
-			new_hashes[line_1idx - 1].clone()
-		} else {
-			format!("{}", line_1idx)
-		}
-	};
+	let orig_prefix = |line_1idx: usize| -> String { line_id_at(&original_lines, line_1idx) };
+	let new_prefix = |line_1idx: usize| -> String { line_id_at(&new_lines, line_1idx) };
 
 	let mut diffs: Vec<String> = Vec::new();
 
@@ -1433,7 +1311,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// Render context line `new_i` from the final file, if in range.
 	let ctx_line = |new_i: usize| -> Option<String> {
 		(new_i >= 1 && new_i <= new_lines.len())
-			.then(|| format!("{}: {}", new_prefix(new_i), new_lines[new_i - 1]))
+			.then(|| format!("{}|{}", new_prefix(new_i), new_lines[new_i - 1]))
 	};
 
 	for op in &display_ops {
@@ -1459,17 +1337,17 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				}
 				// Removed lines — original content at ORIGINAL coordinates.
 				for (i, old_line) in original_lines[start - 1..end].iter().enumerate() {
-					diff.push(format!("-{}: {}", orig_prefix(start + i), old_line));
+					diff.push(format!("-{}|{}", orig_prefix(start + i), old_line));
 				}
-				// Added lines — at their FINAL positions.
+				// Added lines — at their FINAL positions, ids computed from the
+				// added content itself (always correct, no bounds concern).
 				for (i, new_line) in content_lines.iter().enumerate() {
 					let idx = new_start + i;
-					let pfx = if idx <= new_lines.len() {
-						new_prefix(idx)
-					} else {
-						format!("{}", idx)
-					};
-					diff.push(format!("+{}: {}", pfx, new_line));
+					diff.push(format!(
+						"+{}|{}",
+						crate::utils::line_hash::line_id(idx, new_line),
+						new_line
+					));
 				}
 				// Context after — from the final file.
 				let new_after_start = new_start + new_count;
@@ -1504,12 +1382,11 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 				for (i, new_line) in content_lines.iter().enumerate() {
 					let idx = insert_at + i;
-					let pfx = if idx <= new_lines.len() {
-						new_prefix(idx)
-					} else {
-						format!("{}", idx)
-					};
-					diff.push(format!("+{}: {}", pfx, new_line));
+					diff.push(format!(
+						"+{}|{}",
+						crate::utils::line_hash::line_id(idx, new_line),
+						new_line
+					));
 				}
 
 				let after_end = insert_at + content_lines.len();

@@ -7,11 +7,11 @@ Standalone Rust binary that exposes filesystem tools (view, text_editor, batch_e
 ```
 src/
   main.rs                    — Entry point: CLI dispatch, stdio/HTTP server startup, signal handling
-  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--line-mode] [--hint-mode]`
+  cli.rs                     — Clap CLI: `octofs mcp [--path] [--bind] [--hint-mode]`
   mcp/
     mod.rs                   — McpToolCall struct, session root directory (OnceLock)
     server.rs                — OctofsServer (rmcp tool impl), SessionWorkdir, all Params structs
-    request_ctx.rs           — Per-request hint queue (appended to every tool response) + stale-file stamps
+    request_ctx.rs           — Per-request hint queue (appended to every tool response)
     shared_utils.rs          — apply_head_truncation helper
     fs/
       mod.rs                 — Re-exports: execute_view, execute_text_editor, execute_batch_edit,
@@ -29,7 +29,7 @@ src/
     glob.rs                  — expand_glob_patterns_filtered (gitignore-aware, max 1000 files)
     truncation.rs            — estimate_tokens, truncate_to_tokens, format_content_with_line_numbers,
                                truncate_mcp_response_global
-    line_hash.rs             — LineMode (Number|Hash), FNV1a-16 per-line hashes, resolve_hash_to_line
+    line_hash.rs             — Composite line ids (N:hh), FNV1a-8 content hashes, verify_line_id
 ```
 
 ## Where to Look
@@ -41,7 +41,7 @@ src/
 | Change tool parameter schema | `server.rs` — Params structs with `#[schemars]` / `#[serde]` annotations |
 | File reading / formatting | `fs/file_ops.rs` — all view_file_* functions |
 | Directory listing / search | `fs/directory.rs` + `fs/search.rs` |
-| Line number vs hash mode | `utils/line_hash.rs` — set at startup via `--line-mode` CLI flag |
+| Line ids / endpoint parsing | `utils/line_hash.rs` — composite `N:hh` ids, verification, stale errors |
 | Content truncation logic | `utils/truncation.rs` — token estimation and smart truncation |
 | Glob expansion | `utils/glob.rs` — gitignore-aware, dotfile-filtered |
 | Hint messages to LLM | `mcp/request_ctx.rs` — push_hint(), drained after every tool call; hard/soft enforcement set via `--hint-mode` |
@@ -80,14 +80,12 @@ Concurrent writes to the same file are serialized via per-file `tokio::sync::Mut
 
 ### Line Identifiers
 
-Two modes set once at startup via `--line-mode`:
-- `number` (default) — sequential 1-indexed integers
-- `hash` — 4-char lowercase hex FNV1a-16 hashes, position-dependent (same content at different lines → different hash)
+One format, no mode switch: every line is addressed as `N:hh` — 1-indexed position plus a 2-char lowercase hex FNV1a-8 hash of the line's CONTENT (content-only, so a moved line keeps its hash and stale errors can report where content went). View output renders `N:hh|content`.
 
-`utils/line_hash::is_hash_mode()` gates output rendering and the emitted endpoint schema (plain `integer` in number mode; `anyOf:[integer,string]` in hash mode). Line targets are scalar params, each parsed by `utils/line_hash::parse_endpoint` into an `Endpoint` (line number or hash) — the **JSON type disambiguates**: integer → line number, string → hash (so all-digit hashes are unambiguous). Mode affects input parsing only in one narrow way: in number mode a numeric *string* like `"10"` is also accepted as a line number (client convenience); in hash mode it is treated as a hash.
-- `view`: `path` (single string), optional `start`/`end` (omit both → whole file; `start` only → to EOF). Numbers clamp to bounds; negatives count from EOF.
-- `batch_edit` op: `start` (+ optional `end`). insert anchor: `0` = file start, `-1` = after last line, `N`; replace: `start..end` (end omitted → single line).
-- `extract_lines`: `from_start`/`from_end` and `append_line` (`0`/`-1`/`N`/hash).
+`utils/line_hash::parse_endpoint` parses each scalar line target into an `Endpoint`: JSON integer (or numeric string) → `Number`, `"N:hh"` string → `Id`. Edit targets require `Id` and are verified against the file via `verify_line_id` — a stale id fails with the current content around the target, relocation candidates (same hash elsewhere), and a ranged-`view` suggestion. There is no whole-file staleness gate; verification is per-target. Edit results are diffs with FRESH ids so edits chain without re-viewing.
+- `view`: `path` (single string), optional `start`/`end` (omit both → whole file; `start` only → to EOF). Numbers clamp to bounds; negatives count from EOF; ids resolve by their position part.
+- `batch_edit` op: `start` (+ optional `end`), both ids for replace (end omitted → single line). Insert anchor: an id, or `0` = file start / `-1` = after last line (plain integers; other integers rejected — unverifiable).
+- `extract_lines`: `from_start`/`from_end` and `append_line` accept numbers or ids (ids verified).
 
 Multi-file view was removed — the caller makes parallel `view` calls instead.
 
