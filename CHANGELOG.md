@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.0] - 2026-08-11
+
+### 📋 Release Summary
+
+This release enhances file manipulation capabilities with improved text replacement and more precise line identification (d735bdbb, 9e36f8d1). System reliability is increased through stricter shell execution safeguards and updated core dependencies (bf236fc4, 05968198).
+
+
+### ✨ New Features & Enhancements
+
+- **fs**: add replace_all and CRLF support to str_replace `d735bdbb`
+- **core**: implement composite line identifiers `9e36f8d1`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: fix indentation in fs_tests.rs `e6be5d65`
+- **release**: add npm publishing step `73227982`
+- **mcp**: enforce hard rejection of shell misuse `bf236fc4`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.8.1] - 2026-08-06
 
 ### 📋 Release Summary
