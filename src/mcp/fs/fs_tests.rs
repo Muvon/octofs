@@ -4659,8 +4659,8 @@ mod tests {
 				&PathSource::from(temp_file.path()),
 				old,
 				new,
-			false,
-		)
+				false,
+			)
 			.await
 			.unwrap();
 		}
