@@ -132,7 +132,7 @@ impl OctofsServer {
 			with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope \
 			unfamiliar trees and budget reads before opening files. For rg-style content search \
 			across several roots, separate literal files/directories in `path` with `|`. The \
-			`pattern` filter uses ripgrep -g glob semantics, including `**` and leading `!`."
+			`pattern` filter accepts ripgrep -g glob grammar, including `**` and leading `!`."
 	)]
 	async fn view(
 		&self,
@@ -367,11 +367,15 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Ripgrep-style `-g/--glob` filter for directory listing and content search. A glob
-	/// without `/` matches filenames at any depth; a glob with `/` matches the returned
-	/// relative path. Supports `*`, `**`, `?`, character classes (`[abc]`), brace
-	/// alternatives (`*.{rs,toml}`), and leading `!` exclusions. Use `|` to supply
+	/// Ripgrep `-g/--glob` compatible filter for directory listing and content search.
+	/// A glob without `/` matches filenames at any depth; a glob with `/` matches the
+	/// returned relative path. Supports `*`, `**`, `?`, character classes (`[abc]`),
+	/// brace alternatives (`*.{rs,toml}`), and leading `!` exclusions. Use `|` to supply
 	/// ordered globs in one string, e.g. `**/*.rs|!target/**` (later globs take precedence).
+	/// Filtering is applied after gitignore/hidden traversal; use `include_hidden: true`
+	/// for hidden paths, while gitignored paths remain excluded. Maximum 4096 UTF-8 bytes
+	/// and 64 `|`-separated globs. Must be a single line. Escape a literal leading `#`
+	/// or `!` as `\#` or `\!`; malformed patterns fail before directory traversal.
 	#[serde(default)]
 	pub pattern: Option<String>,
 	/// Content search string. By default treated as a literal substring.

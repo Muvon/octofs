@@ -80,7 +80,23 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 // `|` predates the rg-compatible matcher and remains a convenient way to pass
 // several ordered -g-style globs through one MCP string. Do not split escaped
 // pipes or pipes inside character classes, where `|` names a literal character.
+const MAX_PATTERN_BYTES: usize = 4096;
+const MAX_PATTERN_ALTERNATIVES: usize = 64;
+
 fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
+	if pattern.len() > MAX_PATTERN_BYTES {
+		return Err(format!(
+			"Invalid `pattern`: {} bytes exceeds the {MAX_PATTERN_BYTES}-byte limit. Narrow the glob or split the search into separate `view` calls.",
+			pattern.len()
+		));
+	}
+	if pattern.chars().any(char::is_control) {
+		return Err(
+			"Invalid `pattern`: control characters are not allowed. Pass one single-line glob string."
+				.to_string(),
+		);
+	}
+
 	let mut alternatives = Vec::new();
 	let mut start = 0;
 	let mut escaped = false;
@@ -99,7 +115,12 @@ fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
 				let alternative = pattern[start..index].trim();
 				if alternative.is_empty() {
 					return Err(format!(
-						"Invalid `pattern` glob `{pattern}`: every `|`-separated glob must be non-empty"
+						"Invalid `pattern` glob {pattern:?}: every `|`-separated glob must be non-empty"
+					));
+				}
+				if alternatives.len() >= MAX_PATTERN_ALTERNATIVES {
+					return Err(format!(
+						"Invalid `pattern`: more than {MAX_PATTERN_ALTERNATIVES} `|`-separated globs. Split the search into separate `view` calls."
 					));
 				}
 				alternatives.push(alternative);
@@ -112,32 +133,55 @@ fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
 	let alternative = pattern[start..].trim();
 	if alternative.is_empty() {
 		return Err(format!(
-			"Invalid `pattern` glob `{pattern}`: every `|`-separated glob must be non-empty"
+			"Invalid `pattern` glob {pattern:?}: every `|`-separated glob must be non-empty"
+		));
+	}
+	if alternatives.len() >= MAX_PATTERN_ALTERNATIVES {
+		return Err(format!(
+			"Invalid `pattern`: more than {MAX_PATTERN_ALTERNATIVES} `|`-separated globs. Split the search into separate `view` calls."
 		));
 	}
 	alternatives.push(alternative);
+
+	for glob in &alternatives {
+		if glob.starts_with('#') {
+			return Err(format!(
+				"Invalid `pattern` glob {glob:?}: a leading `#` is parsed as a comment. Use `\\#` to match a literal leading `#`."
+			));
+		}
+		if *glob == "!" {
+			return Err(
+				"Invalid `pattern` glob \"!\": an exclusion must include a glob after `!`."
+					.to_string(),
+			);
+		}
+	}
 	Ok(alternatives)
 }
 
-// Build with the same gitignore-style override engine used for ripgrep's -g/--glob.
+// Compile before traversal so malformed or adversarial patterns fail without walking a tree.
 // Positive globs include, leading-! globs exclude, and later alternatives take precedence.
-fn build_pattern_matcher(pattern: &str, root: &Path) -> Result<Override, String> {
+fn build_pattern_matcher(pattern: &str) -> Result<Override, String> {
 	let alternatives = split_pattern_alternatives(pattern)?;
-	let mut builder = OverrideBuilder::new(root);
+	let mut builder = OverrideBuilder::new("");
 	for glob in alternatives {
 		builder
 			.add(glob)
-			.map_err(|e| format!("Invalid `pattern` glob `{glob}`: {e}"))?;
+			.map_err(|e| format!("Invalid `pattern` glob {glob:?}: {e}"))?;
 	}
 	builder
 		.build()
-		.map_err(|e| format!("Invalid `pattern` glob `{pattern}`: {e}"))
+		.map_err(|e| format!("Invalid `pattern` glob {pattern:?}: {e}"))
+}
+
+fn apply_pattern(files: &mut Vec<String>, matcher: &Override) {
+	files.retain(|file| !matcher.matched(file, false).is_ignore());
 }
 
 #[cfg(test)]
 fn filter_by_pattern(files: &mut Vec<String>, pattern: &str) -> Result<(), String> {
-	let matcher = build_pattern_matcher(pattern, Path::new(""))?;
-	files.retain(|file| !matcher.matched(file, false).is_ignore());
+	let matcher = build_pattern_matcher(pattern)?;
+	apply_pattern(files, &matcher);
 	Ok(())
 }
 
@@ -221,38 +265,28 @@ async fn collect_remote_files(
 	max_depth: Option<usize>,
 	include_hidden: bool,
 	gitignore: Option<&ignore::gitignore::Gitignore>,
-	overrides: Option<&Override>,
 	current_depth: usize,
 ) -> Result<Vec<(String, IoMetadata)>> {
 	let mut files = Vec::new();
 	let entries = io_list_dir(source).await?;
 
 	for (name, meta) in entries {
+		if !include_hidden && name.starts_with('.') {
+			continue;
+		}
+
 		let rel_path = if base_rel.is_empty() {
 			name.clone()
 		} else {
 			format!("{base_rel}/{name}")
 		};
 
-		// rg-style -g overrides have higher precedence than hidden and ignore rules.
-		let override_match = overrides.map(|matcher| matcher.matched(&rel_path, meta.is_dir));
-		if override_match.as_ref().is_some_and(|m| m.is_ignore()) {
-			continue;
-		}
-		let explicitly_included = override_match.as_ref().is_some_and(|m| m.is_whitelist());
-
-		if !explicitly_included && !include_hidden && name.starts_with('.') {
-			continue;
-		}
-
-		if !explicitly_included {
-			if let Some(gi) = gitignore {
-				if gi
-					.matched_path_or_any_parents(&rel_path, meta.is_dir)
-					.is_ignore()
-				{
-					continue;
-				}
+		if let Some(gi) = gitignore {
+			if gi
+				.matched_path_or_any_parents(&rel_path, meta.is_dir)
+				.is_ignore()
+			{
+				continue;
 			}
 		}
 
@@ -269,7 +303,6 @@ async fn collect_remote_files(
 				max_depth,
 				include_hidden,
 				gitignore,
-				overrides,
 				current_depth + 1,
 			))
 			.await?;
@@ -308,6 +341,11 @@ async fn list_directory_remote(
 	regex_flag: bool,
 ) -> Result<String> {
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
+	let pattern_matcher = pattern
+		.as_deref()
+		.map(build_pattern_matcher)
+		.transpose()
+		.map_err(|e| anyhow::anyhow!(e))?;
 
 	// Root .gitignore (repo checkouts always have one) — parsed with the same
 	// `ignore` crate the local walker uses. ponytail: root file only; nested
@@ -322,27 +360,18 @@ async fn list_directory_remote(
 		}
 		Err(_) => None,
 	};
-	let pattern_matcher = pattern
-		.as_deref()
-		.map(|glob| build_pattern_matcher(glob, Path::new("")))
-		.transpose()
-		.map_err(|e| anyhow::anyhow!(e))?;
+	let mut files =
+		collect_remote_files(source, "", max_depth, include_hidden, gitignore.as_ref(), 0).await?;
 
-	let files = collect_remote_files(
-		source,
-		"",
-		max_depth,
-		include_hidden,
-		gitignore.as_ref(),
-		pattern_matcher.as_ref(),
-		0,
-	)
-	.await?;
-
-	if files.is_empty() {
-		if let Some(ref name_pattern) = pattern {
+	if let Some(ref matcher) = pattern_matcher {
+		let mut names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
+		apply_pattern(&mut names, matcher);
+		if names.is_empty() {
+			let name_pattern = pattern.as_deref().unwrap_or_default();
 			return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 		}
+		let keep: std::collections::HashSet<String> = names.into_iter().collect();
+		files.retain(|(n, _)| keep.contains(n));
 	}
 
 	if has_content {
@@ -475,15 +504,16 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		let matcher = Matcher::new(&content_pattern, regex_flag)?;
 
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
+			let pattern_matcher = pattern.as_deref().map(build_pattern_matcher).transpose()?;
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
-			// Install the matcher on the walker so -g-style rules override .gitignore and
-			// hidden-file filtering with the same precedence as ripgrep.
-			if let Some(ref name_pattern) = pattern {
-				builder.overrides(build_pattern_matcher(name_pattern, &working_dir)?);
-			}
-			let files = collect_file_paths(&mut builder, &working_dir);
-			if files.is_empty() {
-				if let Some(ref name_pattern) = pattern {
+			let mut files = collect_file_paths(&mut builder, &working_dir);
+
+			// The `pattern` glob narrows content search the same way it narrows listing —
+			// silently ignoring it here would search files the caller explicitly excluded.
+			if let Some(ref matcher) = pattern_matcher {
+				apply_pattern(&mut files, matcher);
+				if files.is_empty() {
+					let name_pattern = pattern.as_deref().unwrap_or_default();
 					return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 				}
 			}
@@ -562,13 +592,16 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 	} else {
 		// File listing mode — annotate each file with line count + estimated tokens.
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
+			let pattern_matcher = pattern.as_deref().map(build_pattern_matcher).transpose()?;
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
-			if let Some(ref name_pattern) = pattern {
-				builder.overrides(build_pattern_matcher(name_pattern, &working_dir)?);
-			}
-			let files = collect_file_paths(&mut builder, &working_dir);
-			if files.is_empty() {
-				if let Some(ref name_pattern) = pattern {
+			let mut files = collect_file_paths(&mut builder, &working_dir);
+
+			// Apply glob pattern filter if provided — an unparseable pattern is a caller
+			// error, not a reason to silently return the unfiltered listing.
+			if let Some(ref matcher) = pattern_matcher {
+				apply_pattern(&mut files, matcher);
+				if files.is_empty() {
+					let name_pattern = pattern.as_deref().unwrap_or_default();
 					return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 				}
 			}
@@ -659,20 +692,90 @@ mod tests {
 		)
 		.unwrap();
 		assert_eq!(later_include_wins, vec!["src/generated/keep.rs"]);
+
+		let mut exclusion_only = vec!["keep.rs".to_string(), "drop.log".to_string()];
+		filter_by_pattern(&mut exclusion_only, "!*.log").unwrap();
+		assert_eq!(exclusion_only, vec!["keep.rs"]);
 	}
 
 	#[test]
-	fn test_pattern_pipe_escaping_and_validation() {
+	fn test_pattern_literal_escaping_and_shell_characters_are_data() {
+		let mut files = vec!["report|final.md".to_string(), "report.md".to_string()];
+		filter_by_pattern(&mut files, r"report\|final.md").unwrap();
+		assert_eq!(files, vec!["report|final.md"]);
+
 		let mut files = vec!["report|final.md".to_string(), "report.md".to_string()];
 		filter_by_pattern(&mut files, r"report[|]final.md").unwrap();
 		assert_eq!(files, vec!["report|final.md"]);
 
-		let mut files = vec!["a.rs".to_string()];
-		let err = filter_by_pattern(&mut files, "*.rs|").unwrap_err();
-		assert!(err.contains("non-empty"), "got: {err}");
+		let mut files = vec!["#notes".to_string(), "notes".to_string()];
+		filter_by_pattern(&mut files, r"\#notes").unwrap();
+		assert_eq!(files, vec!["#notes"]);
 
-		let err = filter_by_pattern(&mut files, "[unclosed").unwrap_err();
-		assert!(err.contains("Invalid `pattern` glob"), "got: {err}");
+		let mut files = vec!["!important".to_string(), "important".to_string()];
+		filter_by_pattern(&mut files, r"\!important").unwrap();
+		assert_eq!(files, vec!["!important"]);
+
+		let mut files = vec!["$(touch pwned)".to_string(), "safe".to_string()];
+		filter_by_pattern(&mut files, "$(touch pwned)").unwrap();
+		assert_eq!(files, vec!["$(touch pwned)"]);
+	}
+
+	#[test]
+	fn test_pattern_rejects_malformed_or_ambiguous_input_without_mutation() {
+		for pattern in [
+			"",
+			"   ",
+			"|*.rs",
+			"*.rs||*.toml",
+			"*.rs|",
+			"[unclosed",
+			"{unclosed",
+			r"dangling\",
+			"!",
+			"#silent-comment",
+			"*.rs\n!**",
+			"*.rs\0",
+		] {
+			let original = vec!["keep.rs".to_string(), "keep.toml".to_string()];
+			let mut files = original.clone();
+			let err = filter_by_pattern(&mut files, pattern).unwrap_err();
+			assert!(err.contains("Invalid `pattern`"), "{pattern:?}: {err}");
+			assert_eq!(
+				files, original,
+				"invalid pattern mutated files: {pattern:?}"
+			);
+		}
+
+		let mut files = vec!["#silent-comment".to_string()];
+		let err = filter_by_pattern(&mut files, "#silent-comment").unwrap_err();
+		assert!(err.contains(r"Use `\#`"), "got: {err}");
+	}
+
+	#[test]
+	fn test_pattern_resource_limits() {
+		let mut files = vec!["keep.rs".to_string()];
+		let oversized = "a".repeat(MAX_PATTERN_BYTES + 1);
+		let err = filter_by_pattern(&mut files, &oversized).unwrap_err();
+		assert!(err.contains("byte limit"), "got: {err}");
+		assert!(
+			err.len() < 300,
+			"error echoed oversized input: {} bytes",
+			err.len()
+		);
+
+		let allowed: String = (0..MAX_PATTERN_ALTERNATIVES)
+			.map(|i| format!("file{i}"))
+			.collect::<Vec<_>>()
+			.join("|");
+		filter_by_pattern(&mut files, &allowed).unwrap();
+
+		let too_many: String = (0..=MAX_PATTERN_ALTERNATIVES)
+			.map(|i| format!("file{i}"))
+			.collect::<Vec<_>>()
+			.join("|");
+		let err = filter_by_pattern(&mut files, &too_many).unwrap_err();
+		assert!(err.contains("more than 64"), "got: {err}");
 	}
 
 	#[test]
@@ -879,10 +982,6 @@ mod tests {
 		fs::write(temp_path.join("src/nested/lib.rs"), "needle\n").unwrap();
 		fs::write(temp_path.join("src/generated/code.rs"), "needle\n").unwrap();
 		fs::write(temp_path.join("src/nested/readme.md"), "needle\n").unwrap();
-		let matcher = build_pattern_matcher("src/**/*.rs|!src/generated/**", temp_path).unwrap();
-		assert!(matcher
-			.matched(temp_path.join("src/main.rs"), false)
-			.is_whitelist());
 
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
@@ -903,28 +1002,34 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_pattern_override_reincludes_gitignored_path() {
+	async fn test_view_pattern_rejects_silent_comment_in_listing_and_search() {
 		use std::fs;
 		use tempfile::TempDir;
 
 		let temp_dir = TempDir::new().unwrap();
 		let temp_path = temp_dir.path();
-		fs::write(temp_path.join(".gitignore"), "keep.rs\n").unwrap();
-		fs::write(temp_path.join("keep.rs"), "needle\n").unwrap();
+		fs::write(temp_path.join("visible.rs"), "needle\n").unwrap();
 
-		let call = McpToolCall {
-			tool_name: "view".to_string(),
-			parameters: json!({
+		for parameters in [
+			json!({ "path": ".", "pattern": "#silently-ignored" }),
+			json!({
 				"path": ".",
-				"content": "needle",
-				"pattern": "keep.rs"
+				"pattern": "#silently-ignored",
+				"content": "needle"
 			}),
-			tool_id: "test-call-id".to_string(),
-			workdir: temp_path.to_path_buf(),
-		};
+		] {
+			let call = McpToolCall {
+				tool_name: "view".to_string(),
+				parameters,
+				tool_id: "test-call-id".to_string(),
+				workdir: temp_path.to_path_buf(),
+			};
 
-		let result = list_directory(&call, ".").await.unwrap();
-		assert!(result.contains("keep.rs"), "got: {result}");
+			let err = list_directory(&call, ".").await.unwrap_err().to_string();
+			assert!(err.contains("leading `#`"), "got: {err}");
+			assert!(err.contains(r"Use `\#`"), "got: {err}");
+			assert!(!err.contains("visible.rs"), "must not leak listing: {err}");
+		}
 	}
 
 	#[tokio::test]

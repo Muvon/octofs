@@ -313,7 +313,7 @@ To read several files, make multiple `view` calls — they run in parallel.
 {"path": "src/", "max_depth": 2, "include_hidden": true}
 ```
 
-`pattern` uses the same gitignore-style glob semantics as ripgrep's `-g/--glob`:
+`pattern` uses the same gitignore-style glob grammar as ripgrep's `-g/--glob`:
 without `/` it matches filenames at any depth, while a pattern containing `/`
 matches the returned relative path. It supports `*` within one path component,
 `**` across directories, `?`, character classes such as `[abc]`, brace alternatives
@@ -324,6 +324,13 @@ one MCP string; later globs take precedence:
 {"path": ".", "pattern": "**/*.{rs,toml}|!target/**"}
 {"path": ".", "content": "unsafe", "pattern": "src/**/*.rs|!src/generated/**"}
 ```
+
+The glob filters files discovered by Octofs' gitignore-aware traversal. Use
+`include_hidden: true` to include hidden paths; gitignored paths remain excluded.
+Patterns are limited to 4096 UTF-8 bytes and 64 `|`-separated rules, must be a
+single line, and are validated before traversal. Escape a literal leading `#`
+or `!` as `\#` or `\!`; otherwise `#` is rejected instead of silently acting as
+a gitignore comment.
 
 **Content search:** (literal by default; set `regex: true` for a Rust regex, `(?i)` = case-insensitive)
 ```json
