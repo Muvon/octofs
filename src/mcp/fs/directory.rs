@@ -22,7 +22,7 @@ use super::search::{self, Matcher};
 use crate::utils::line_hash::line_id_at;
 use crate::utils::truncation::estimate_tokens;
 use anyhow::{bail, Result};
-use ignore::WalkBuilder;
+use ignore::{overrides::Override, overrides::OverrideBuilder, WalkBuilder};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -77,71 +77,67 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 	}
 	Some(suffix)
 }
-// Convert glob pattern to regex pattern for filename filtering
-fn convert_glob_to_regex(glob_pattern: &str) -> String {
-	let patterns: Vec<&str> = glob_pattern.split('|').collect();
+// `|` predates the rg-compatible matcher and remains a convenient way to pass
+// several ordered -g-style globs through one MCP string. Do not split escaped
+// pipes or pipes inside character classes, where `|` names a literal character.
+fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
+	let mut alternatives = Vec::new();
+	let mut start = 0;
+	let mut escaped = false;
+	let mut in_class = false;
 
-	let body = if patterns.len() > 1 {
-		let regex_patterns: Vec<String> = patterns
-			.iter()
-			.map(|p| convert_single_glob_to_regex(p.trim()))
-			.collect();
-		format!("({})", regex_patterns.join("|"))
-	} else {
-		convert_single_glob_to_regex(glob_pattern)
-	};
-	// Anchored: the glob must match the whole relative path, not a substring —
-	// unanchored, `*.rs` also matched `main.rsx`.
-	format!("^(?:{body})$")
-}
-
-fn convert_single_glob_to_regex(pattern: &str) -> String {
-	let mut regex = String::new();
-	let chars: Vec<char> = pattern.chars().collect();
-	let mut i = 0;
-
-	while i < chars.len() {
-		match chars[i] {
-			'*' => regex.push_str(".*?"),
-			'?' => regex.push('.'),
-			'[' => {
-				regex.push('[');
-				i += 1;
-				while i < chars.len() && chars[i] != ']' {
-					regex.push(chars[i]);
-					i += 1;
-				}
-				if i < chars.len() {
-					regex.push(']');
-				}
-			}
-			c if "(){}^$+|\\.".contains(c) => {
-				regex.push('\\');
-				regex.push(c);
-			}
-			c => regex.push(c),
+	for (index, ch) in pattern.char_indices() {
+		if escaped {
+			escaped = false;
+			continue;
 		}
-		i += 1;
+		match ch {
+			'\\' => escaped = true,
+			'[' if !in_class => in_class = true,
+			']' if in_class => in_class = false,
+			'|' if !in_class => {
+				let alternative = pattern[start..index].trim();
+				if alternative.is_empty() {
+					return Err(format!(
+						"Invalid `pattern` glob `{pattern}`: every `|`-separated glob must be non-empty"
+					));
+				}
+				alternatives.push(alternative);
+				start = index + ch.len_utf8();
+			}
+			_ => {}
+		}
 	}
 
-	regex
+	let alternative = pattern[start..].trim();
+	if alternative.is_empty() {
+		return Err(format!(
+			"Invalid `pattern` glob `{pattern}`: every `|`-separated glob must be non-empty"
+		));
+	}
+	alternatives.push(alternative);
+	Ok(alternatives)
 }
 
-// A glob with no '/' matches the file name at any depth (gitignore semantics) —
-// `Model.php` finds `app/src/Plugin/Foo/Model.php`. A glob containing '/' matches
-// the workdir-relative path.
-fn filter_by_pattern(files: &mut Vec<String>, glob: &str) -> Result<(), String> {
-	let regex = regex::Regex::new(&convert_glob_to_regex(glob))
-		.map_err(|e| format!("Invalid `pattern` glob '{}': {}", glob, e))?;
-	if glob.contains('/') {
-		files.retain(|file| regex.is_match(file));
-	} else {
-		files.retain(|file| {
-			Path::new(file)
-				.file_name()
-				.is_some_and(|n| regex.is_match(&n.to_string_lossy()))
-		});
+// Build with the same gitignore-style override engine used for ripgrep's -g/--glob.
+// Positive globs include, leading-! globs exclude, and later alternatives take precedence.
+fn build_pattern_matcher(pattern: &str, root: &Path) -> Result<Override, String> {
+	let alternatives = split_pattern_alternatives(pattern)?;
+	let mut builder = OverrideBuilder::new(root);
+	for glob in alternatives {
+		builder
+			.add(glob)
+			.map_err(|e| format!("Invalid `pattern` glob `{glob}`: {e}"))?;
 	}
+	builder
+		.build()
+		.map_err(|e| format!("Invalid `pattern` glob `{pattern}`: {e}"))
+}
+
+#[cfg(test)]
+fn filter_by_pattern(files: &mut Vec<String>, pattern: &str) -> Result<(), String> {
+	let matcher = build_pattern_matcher(pattern, Path::new(""))?;
+	files.retain(|file| !matcher.matched(file, false).is_ignore());
 	Ok(())
 }
 
@@ -225,28 +221,38 @@ async fn collect_remote_files(
 	max_depth: Option<usize>,
 	include_hidden: bool,
 	gitignore: Option<&ignore::gitignore::Gitignore>,
+	overrides: Option<&Override>,
 	current_depth: usize,
 ) -> Result<Vec<(String, IoMetadata)>> {
 	let mut files = Vec::new();
 	let entries = io_list_dir(source).await?;
 
 	for (name, meta) in entries {
-		if !include_hidden && name.starts_with('.') {
-			continue;
-		}
-
 		let rel_path = if base_rel.is_empty() {
 			name.clone()
 		} else {
 			format!("{base_rel}/{name}")
 		};
 
-		if let Some(gi) = gitignore {
-			if gi
-				.matched_path_or_any_parents(&rel_path, meta.is_dir)
-				.is_ignore()
-			{
-				continue;
+		// rg-style -g overrides have higher precedence than hidden and ignore rules.
+		let override_match = overrides.map(|matcher| matcher.matched(&rel_path, meta.is_dir));
+		if override_match.as_ref().is_some_and(|m| m.is_ignore()) {
+			continue;
+		}
+		let explicitly_included = override_match.as_ref().is_some_and(|m| m.is_whitelist());
+
+		if !explicitly_included && !include_hidden && name.starts_with('.') {
+			continue;
+		}
+
+		if !explicitly_included {
+			if let Some(gi) = gitignore {
+				if gi
+					.matched_path_or_any_parents(&rel_path, meta.is_dir)
+					.is_ignore()
+				{
+					continue;
+				}
 			}
 		}
 
@@ -263,6 +269,7 @@ async fn collect_remote_files(
 				max_depth,
 				include_hidden,
 				gitignore,
+				overrides,
 				current_depth + 1,
 			))
 			.await?;
@@ -315,18 +322,27 @@ async fn list_directory_remote(
 		}
 		Err(_) => None,
 	};
+	let pattern_matcher = pattern
+		.as_deref()
+		.map(|glob| build_pattern_matcher(glob, Path::new("")))
+		.transpose()
+		.map_err(|e| anyhow::anyhow!(e))?;
 
-	let mut files =
-		collect_remote_files(source, "", max_depth, include_hidden, gitignore.as_ref(), 0).await?;
+	let files = collect_remote_files(
+		source,
+		"",
+		max_depth,
+		include_hidden,
+		gitignore.as_ref(),
+		pattern_matcher.as_ref(),
+		0,
+	)
+	.await?;
 
-	if let Some(ref name_pattern) = pattern {
-		let mut names: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
-		filter_by_pattern(&mut names, name_pattern).map_err(|e| anyhow::anyhow!("{e}"))?;
-		if names.is_empty() {
+	if files.is_empty() {
+		if let Some(ref name_pattern) = pattern {
 			return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 		}
-		let keep: std::collections::HashSet<String> = names.into_iter().collect();
-		files.retain(|(n, _)| keep.contains(n));
 	}
 
 	if has_content {
@@ -460,13 +476,14 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
-			let mut files = collect_file_paths(&mut builder, &working_dir);
-
-			// The `pattern` glob narrows content search the same way it narrows listing —
-			// silently ignoring it here would search files the caller explicitly excluded.
+			// Install the matcher on the walker so -g-style rules override .gitignore and
+			// hidden-file filtering with the same precedence as ripgrep.
 			if let Some(ref name_pattern) = pattern {
-				filter_by_pattern(&mut files, name_pattern)?;
-				if files.is_empty() {
+				builder.overrides(build_pattern_matcher(name_pattern, &working_dir)?);
+			}
+			let files = collect_file_paths(&mut builder, &working_dir);
+			if files.is_empty() {
+				if let Some(ref name_pattern) = pattern {
 					return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 				}
 			}
@@ -546,13 +563,12 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		// File listing mode — annotate each file with line count + estimated tokens.
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
-			let mut files = collect_file_paths(&mut builder, &working_dir);
-
-			// Apply glob pattern filter if provided — an unparseable pattern is a caller
-			// error, not a reason to silently return the unfiltered listing.
 			if let Some(ref name_pattern) = pattern {
-				filter_by_pattern(&mut files, name_pattern)?;
-				if files.is_empty() {
+				builder.overrides(build_pattern_matcher(name_pattern, &working_dir)?);
+			}
+			let files = collect_file_paths(&mut builder, &working_dir);
+			if files.is_empty() {
+				if let Some(ref name_pattern) = pattern {
 					return Ok(format!("No files matched pattern \"{name_pattern}\"."));
 				}
 			}
@@ -602,16 +618,61 @@ mod tests {
 	use serde_json::json;
 
 	#[test]
-	fn test_glob_regex_is_anchored_and_escapes_dot() {
-		let re = regex::Regex::new(&convert_glob_to_regex("*.rs")).unwrap();
-		assert!(re.is_match("main.rs"));
-		assert!(re.is_match("src/main.rs"));
-		assert!(!re.is_match("main.rsx"), "unanchored regex matched suffix");
-		assert!(!re.is_match("mainxrs"), "unescaped '.' matched any char");
+	fn test_pattern_uses_ripgrep_glob_semantics() {
+		let all = vec![
+			"Cargo.toml".to_string(),
+			"src/main.rs".to_string(),
+			"src/nested/lib.rs".to_string(),
+			"src/generated/code.rs".to_string(),
+			"src/main.rsx".to_string(),
+			"notes.txt".to_string(),
+		];
 
-		let multi = regex::Regex::new(&convert_glob_to_regex("*.rs|*.toml")).unwrap();
-		assert!(multi.is_match("Cargo.toml"));
-		assert!(!multi.is_match("Cargo.toml.bak"));
+		let mut brace_alternation = all.clone();
+		filter_by_pattern(&mut brace_alternation, "*.{rs,toml}").unwrap();
+		assert!(brace_alternation.contains(&"Cargo.toml".to_string()));
+		assert!(brace_alternation.contains(&"src/nested/lib.rs".to_string()));
+		assert!(!brace_alternation.contains(&"src/main.rsx".to_string()));
+
+		let mut single_star = all.clone();
+		filter_by_pattern(&mut single_star, "src/*.rs").unwrap();
+		assert_eq!(single_star, vec!["src/main.rs"]);
+
+		let mut double_star_with_exclusion = all;
+		filter_by_pattern(
+			&mut double_star_with_exclusion,
+			"src/**/*.rs|!src/generated/**",
+		)
+		.unwrap();
+		assert_eq!(
+			double_star_with_exclusion,
+			vec!["src/main.rs", "src/nested/lib.rs"]
+		);
+
+		let mut later_include_wins = vec![
+			"src/generated/drop.rs".to_string(),
+			"src/generated/keep.rs".to_string(),
+		];
+		filter_by_pattern(
+			&mut later_include_wins,
+			"src/**/*.rs|!src/generated/**|src/generated/keep.rs",
+		)
+		.unwrap();
+		assert_eq!(later_include_wins, vec!["src/generated/keep.rs"]);
+	}
+
+	#[test]
+	fn test_pattern_pipe_escaping_and_validation() {
+		let mut files = vec!["report|final.md".to_string(), "report.md".to_string()];
+		filter_by_pattern(&mut files, r"report[|]final.md").unwrap();
+		assert_eq!(files, vec!["report|final.md"]);
+
+		let mut files = vec!["a.rs".to_string()];
+		let err = filter_by_pattern(&mut files, "*.rs|").unwrap_err();
+		assert!(err.contains("non-empty"), "got: {err}");
+
+		let err = filter_by_pattern(&mut files, "[unclosed").unwrap_err();
+		assert!(err.contains("Invalid `pattern` glob"), "got: {err}");
 	}
 
 	#[test]
@@ -803,6 +864,67 @@ mod tests {
 			!result.contains("notes.txt"),
 			"pattern must filter content search too: {result}"
 		);
+	}
+
+	#[tokio::test]
+	async fn test_content_search_supports_recursive_glob_and_exclusion() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		fs::create_dir_all(temp_path.join("src/nested")).unwrap();
+		fs::create_dir_all(temp_path.join("src/generated")).unwrap();
+		fs::write(temp_path.join("src/main.rs"), "needle\n").unwrap();
+		fs::write(temp_path.join("src/nested/lib.rs"), "needle\n").unwrap();
+		fs::write(temp_path.join("src/generated/code.rs"), "needle\n").unwrap();
+		fs::write(temp_path.join("src/nested/readme.md"), "needle\n").unwrap();
+		let matcher = build_pattern_matcher("src/**/*.rs|!src/generated/**", temp_path).unwrap();
+		assert!(matcher
+			.matched(temp_path.join("src/main.rs"), false)
+			.is_whitelist());
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": ".",
+				"content": "needle",
+				"pattern": "src/**/*.rs|!src/generated/**"
+			}),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let result = list_directory(&call, ".").await.unwrap();
+		assert!(result.contains("src/main.rs"), "got: {result}");
+		assert!(result.contains("src/nested/lib.rs"), "got: {result}");
+		assert!(!result.contains("src/generated/code.rs"), "got: {result}");
+		assert!(!result.contains("src/nested/readme.md"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn test_pattern_override_reincludes_gitignored_path() {
+		use std::fs;
+		use tempfile::TempDir;
+
+		let temp_dir = TempDir::new().unwrap();
+		let temp_path = temp_dir.path();
+		fs::write(temp_path.join(".gitignore"), "keep.rs\n").unwrap();
+		fs::write(temp_path.join("keep.rs"), "needle\n").unwrap();
+
+		let call = McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": ".",
+				"content": "needle",
+				"pattern": "keep.rs"
+			}),
+			tool_id: "test-call-id".to_string(),
+			workdir: temp_path.to_path_buf(),
+		};
+
+		let result = list_directory(&call, ".").await.unwrap();
+		assert!(result.contains("keep.rs"), "got: {result}");
 	}
 
 	#[tokio::test]

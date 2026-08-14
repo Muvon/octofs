@@ -313,7 +313,17 @@ To read several files, make multiple `view` calls — they run in parallel.
 {"path": "src/", "max_depth": 2, "include_hidden": true}
 ```
 
-`pattern` is a glob, not a content search: without `/` it matches the whole filename at any depth; with `/` it matches the workdir-relative path. It supports `*`, `?`, character classes such as `[abc]`, and `|` alternatives such as `*.rs|*.toml`.
+`pattern` uses the same gitignore-style glob semantics as ripgrep's `-g/--glob`:
+without `/` it matches filenames at any depth, while a pattern containing `/`
+matches the returned relative path. It supports `*` within one path component,
+`**` across directories, `?`, character classes such as `[abc]`, brace alternatives
+such as `*.{rs,toml}`, and leading `!` exclusions. Use `|` to pass ordered globs in
+one MCP string; later globs take precedence:
+
+```json
+{"path": ".", "pattern": "**/*.{rs,toml}|!target/**"}
+{"path": ".", "content": "unsafe", "pattern": "src/**/*.rs|!src/generated/**"}
+```
 
 **Content search:** (literal by default; set `regex: true` for a Rust regex, `(?i)` = case-insensitive)
 ```json

@@ -131,7 +131,8 @@ impl OctofsServer {
 			as targets; copy ids verbatim from this output. Listing a directory returns each file \
 			with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope \
 			unfamiliar trees and budget reads before opening files. For rg-style content search \
-			across several roots, separate literal files/directories in `path` with `|`."
+			across several roots, separate literal files/directories in `path` with `|`. The \
+			`pattern` filter uses ripgrep -g glob semantics, including `**` and leading `!`."
 	)]
 	async fn view(
 		&self,
@@ -366,10 +367,11 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Filename glob filter for directory listing and directory content search. Patterns
-	/// without `/` match the whole filename at any depth; patterns containing `/` match
-	/// the workdir-relative path. Supports `*`, `?`, character classes (`[abc]`), and
-	/// `|` alternatives (for example, `*.rs|*.toml`).
+	/// Ripgrep-style `-g/--glob` filter for directory listing and content search. A glob
+	/// without `/` matches filenames at any depth; a glob with `/` matches the returned
+	/// relative path. Supports `*`, `**`, `?`, character classes (`[abc]`), brace
+	/// alternatives (`*.{rs,toml}`), and leading `!` exclusions. Use `|` to supply
+	/// ordered globs in one string, e.g. `**/*.rs|!target/**` (later globs take precedence).
 	#[serde(default)]
 	pub pattern: Option<String>,
 	/// Content search string. By default treated as a literal substring.

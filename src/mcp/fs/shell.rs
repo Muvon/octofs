@@ -83,7 +83,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["find", "ls"],
-		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering, works on remote hosts).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # glob-filter by filename (`*`, `?`, `[abc]`, `|`)\n    view path=\"ssh://user@host/dir\"  # remote listing — no `ssh ls` needed\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the workdir-relative path.\n  Shell is allowed only for system paths outside the project.",
+		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering, works on remote hosts).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # ripgrep-style glob filter (`*`, `**`, `?`, `[abc]`, `{a,b}`, leading `!`)\n    view path=\"ssh://user@host/dir\"  # remote listing — no `ssh ls` needed\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the returned relative path. Use `|` for ordered globs.\n  Shell is allowed only for system paths outside the project.",
 	),
 	(
 		&["sed", "awk"],
