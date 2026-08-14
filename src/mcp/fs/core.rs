@@ -309,35 +309,10 @@ async fn resolve_view_range(
 	Ok(Some((start, end as i64)))
 }
 
-// Execute view command - unified read-only tool for a single file, directory, or content search.
-// To view multiple files, the caller makes multiple `view` calls (they run in parallel).
-pub async fn execute_view(call: &McpToolCall) -> Result<String> {
-	// Single path (the common case). An array is rejected with a pointer to parallel calls.
-	let path = match call.parameters.get("path") {
-		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
-		Some(Value::Array(_)) => bail!(
-			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
-		),
-		_ => bail!(
-			"Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."
-		),
-	};
-
-	let source = resolve_path_source(&path, &call.workdir);
-
-	// Name the path and where it resolved to — a bare "File not found" hides
-	// workdir mismatches (relative path resolved against an unexpected root).
-	if !io_exists(&source).await? {
-		bail!(
-			"Path not found: {} (resolved to {})",
-			path,
-			source.display()
-		);
-	}
-
+async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource) -> Result<String> {
 	// Directory: dispatch directly with the path string
-	if io_is_dir(&source).await? {
-		return directory::list_directory(call, &path).await;
+	if io_is_dir(source).await? {
+		return directory::list_directory(call, path).await;
 	}
 
 	// File + content: search the file for a literal/regex pattern and render with the same hash/number format
@@ -354,7 +329,7 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 				.and_then(|v| v.as_bool())
 				.unwrap_or(false);
 			return file_ops::view_file_with_content_search(
-				&source,
+				source,
 				content_pattern,
 				context_lines,
 				regex_flag,
@@ -366,8 +341,80 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// File: optional start/end line range (both omitted → whole file).
 	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
 	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
-	let range = resolve_view_range(start_ep, end_ep, &source).await?;
-	file_ops::view_file_spec(&source, range).await
+	let range = resolve_view_range(start_ep, end_ep, source).await?;
+	file_ops::view_file_spec(source, range).await
+}
+
+async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
+	let roots: Vec<&str> = path.split('|').map(str::trim).collect();
+	if roots.iter().any(|root| root.is_empty()) {
+		bail!(
+			"Invalid content-search path alternatives: {path}. Every `|`-separated root must be non-empty."
+		);
+	}
+
+	let mut results = Vec::new();
+	for root in roots {
+		let source = resolve_path_source(root, &call.workdir);
+		if !io_exists(&source).await? {
+			bail!(
+				"Search root not found: {} (from path alternatives `{}`, resolved to {})",
+				root,
+				path,
+				source.display()
+			);
+		}
+
+		let is_directory = io_is_dir(&source).await?;
+		let result = view_existing_path(call, root, &source).await?;
+		if result.is_empty() {
+			continue;
+		}
+		if is_directory {
+			results.push(result);
+		} else {
+			results.push(format!("{root}:\n{result}"));
+		}
+	}
+
+	Ok(results.join("\n\n"))
+}
+
+// Execute view command - unified read-only tool for a single file, directory, or content search.
+// To view multiple files, the caller makes multiple `view` calls (they run in parallel).
+pub async fn execute_view(call: &McpToolCall) -> Result<String> {
+	// Single path (the common case). An array is rejected with a pointer to parallel calls.
+	let path = match call.parameters.get("path") {
+		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
+		Some(Value::Array(_)) => bail!(
+			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
+		),
+		_ => bail!(
+			"Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."
+		),
+	};
+
+	let source = resolve_path_source(&path, &call.workdir);
+	if io_exists(&source).await? {
+		return view_existing_path(call, &path, &source).await;
+	}
+
+	let has_content = call
+		.parameters
+		.get("content")
+		.and_then(|value| value.as_str())
+		.is_some_and(|content| !content.trim().is_empty());
+	if has_content && path.contains('|') {
+		return search_path_alternatives(call, &path).await;
+	}
+
+	// Name the path and where it resolved to — a bare "File not found" hides
+	// workdir mismatches (relative path resolved against an unexpected root).
+	bail!(
+		"Path not found: {} (resolved to {})",
+		path,
+		source.display()
+	)
 }
 
 // Execute extract_lines command - MCP compliant implementation

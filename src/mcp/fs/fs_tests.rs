@@ -5454,6 +5454,84 @@ mod tests {
 		assert_eq!(out.matches("HIT line").count(), 40);
 	}
 
+	#[tokio::test]
+	async fn test_view_content_search_accepts_pipe_separated_literal_roots() {
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		stdfs::create_dir(dir.path().join("docs")).unwrap();
+		stdfs::create_dir(dir.path().join("scripts")).unwrap();
+		stdfs::write(
+			dir.path().join("docs/guide.md"),
+			"before\nupdate_benchmark.py\nafter\n",
+		)
+		.unwrap();
+		stdfs::write(dir.path().join("scripts/run.py"), "# update_benchmark.py\n").unwrap();
+		stdfs::write(
+			dir.path().join("BENCHMARK.md"),
+			"Use update_benchmark.py here.\n",
+		)
+		.unwrap();
+		stdfs::write(dir.path().join("outside.txt"), "update_benchmark.py\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": "docs|scripts|BENCHMARK.md",
+				"content": "update_benchmark.py",
+				"context": 1,
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("docs/guide.md"), "got: {out}");
+		assert!(out.contains("scripts/run.py"), "got: {out}");
+		assert!(out.contains("BENCHMARK.md:"), "got: {out}");
+		assert!(
+			out.contains("before") && out.contains("after"),
+			"got: {out}"
+		);
+		assert!(!out.contains("outside.txt"), "got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_existing_pipe_path_takes_precedence_over_search_roots() {
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		stdfs::write(dir.path().join("left|right"), "unique needle\n").unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": "left|right",
+				"content": "needle",
+			}),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("unique needle"), "got: {out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_pipe_path_without_content_remains_a_literal_path() {
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": "docs|scripts" }),
+		};
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.contains("Path not found"), "got: {err}");
+	}
+
 	// ===== SIMPLIFIED LINE-TARGETING COVERAGE =====
 
 	#[tokio::test]

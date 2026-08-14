@@ -320,7 +320,13 @@ To read several files, make multiple `view` calls — they run in parallel.
 {"path": "src", "content": "fn main"}
 {"path": "src", "content": "unwrap()", "context": 3}
 {"path": "src", "content": "(?i)error", "regex": true}
+{"path": "docs|scripts|BENCHMARK.md", "content": "update_benchmark.py", "context": 4}
 ```
+
+For an rg-style search across several roots, `path` accepts `|`-separated literal
+files and directories when `content` is set. The roots are not regexes: as with
+rg's positional path arguments, each one must exist. A real path containing `|`
+takes precedence over this shorthand.
 
 Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + estimated tokens) so you can budget reads before opening files; binary files show `path<TAB>(binary)`.
 

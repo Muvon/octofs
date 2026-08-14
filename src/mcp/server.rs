@@ -130,7 +130,8 @@ impl OctofsServer {
 			hash. Together `N:hh` is the line id that edit tools (batch_edit, extract_lines) take \
 			as targets; copy ids verbatim from this output. Listing a directory returns each file \
 			with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope \
-			unfamiliar trees and budget reads before opening files."
+			unfamiliar trees and budget reads before opening files. For rg-style content search \
+			across several roots, separate literal files/directories in `path` with `|`."
 	)]
 	async fn view(
 		&self,
@@ -347,7 +348,9 @@ fn append_hints(mut result: String) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// A single file or directory path (e.g. "src/main.rs"). To view several files,
+	/// A single file or directory path (e.g. "src/main.rs"). During content search,
+	/// `|` may separate literal search roots (e.g. "docs|scripts|README.md"). An existing
+	/// path containing `|` takes precedence. To read several files without content search,
 	/// make multiple `view` calls — they run in parallel.
 	/// Supports ssh://user@host:port/path or sftp://user@host:port/path for remote
 	/// filesystem access.
