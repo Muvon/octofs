@@ -24,7 +24,7 @@ use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -345,27 +345,70 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	file_ops::view_file_spec(source, range).await
 }
 
+const MAX_SEARCH_PATH_BYTES: usize = 8192;
+const MAX_SEARCH_ROOTS: usize = 32;
+const MAX_ERROR_PATH_PREVIEW_CHARS: usize = 160;
+
+fn path_error_preview(path: &str) -> String {
+	let mut chars = path.chars();
+	let preview: String = chars.by_ref().take(MAX_ERROR_PATH_PREVIEW_CHARS).collect();
+	if chars.next().is_some() {
+		format!("{preview:?}...")
+	} else {
+		format!("{path:?}")
+	}
+}
+
 async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
-	let roots: Vec<&str> = path.split('|').map(str::trim).collect();
-	if roots.iter().any(|root| root.is_empty()) {
+	if path.len() > MAX_SEARCH_PATH_BYTES {
 		bail!(
-			"Invalid content-search path alternatives: {path}. Every `|`-separated root must be non-empty."
+			"Invalid content-search path alternatives: {} bytes exceeds the {MAX_SEARCH_PATH_BYTES}-byte limit. Split the search into separate `view` calls.",
+			path.len()
+		);
+	}
+	if path.chars().any(char::is_control) {
+		bail!(
+			"Invalid content-search path alternatives: control characters are not allowed. Pass one single-line `|`-separated root list."
 		);
 	}
 
-	let mut results = Vec::new();
+	let roots: Vec<&str> = path.split('|').map(str::trim).collect();
+	if roots.iter().any(|root| root.is_empty()) {
+		bail!(
+			"Invalid content-search path alternatives {path:?}: every `|`-separated root must be non-empty."
+		);
+	}
+	if roots.len() > MAX_SEARCH_ROOTS {
+		bail!(
+			"Invalid content-search path alternatives: {} roots exceeds the {MAX_SEARCH_ROOTS}-root limit. Split the search into separate `view` calls.",
+			roots.len()
+		);
+	}
+	let mut seen = HashSet::with_capacity(roots.len());
+	for root in &roots {
+		if !seen.insert(*root) {
+			bail!(
+				"Invalid content-search path alternatives: duplicate root {root:?}. Remove duplicates before retrying."
+			);
+		}
+	}
+
+	// Resolve and validate every root before searching any of them. Otherwise a typo in a
+	// later root could be reported only after an expensive traversal of an earlier tree.
+	let mut sources = Vec::with_capacity(roots.len());
 	for root in roots {
 		let source = resolve_path_source(root, &call.workdir);
 		if !io_exists(&source).await? {
-			bail!(
-				"Search root not found: {} (from path alternatives `{}`, resolved to {})",
-				root,
-				path,
-				source.display()
-			);
+			let root_preview = path_error_preview(root);
+			let resolved_preview = path_error_preview(&source.display());
+			bail!("Search root not found: {root_preview} (resolved to {resolved_preview})");
 		}
-
 		let is_directory = io_is_dir(&source).await?;
+		sources.push((root, source, is_directory));
+	}
+
+	let mut results = Vec::new();
+	for (root, source, is_directory) in sources {
 		let result = view_existing_path(call, root, &source).await?;
 		if result.is_empty() {
 			continue;

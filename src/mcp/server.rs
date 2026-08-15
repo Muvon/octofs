@@ -351,8 +351,9 @@ fn append_hints(mut result: String) -> String {
 pub struct ViewParams {
 	/// A single file or directory path (e.g. "src/main.rs"). During content search,
 	/// `|` may separate literal search roots (e.g. "docs|scripts|README.md"). An existing
-	/// path containing `|` takes precedence. To read several files without content search,
-	/// make multiple `view` calls — they run in parallel.
+	/// path containing `|` takes precedence. Multi-root search is limited to 32 unique,
+	/// single-line roots and 8192 UTF-8 bytes. To read several files without content
+	/// search, make multiple `view` calls — they run in parallel.
 	/// Supports ssh://user@host:port/path or sftp://user@host:port/path for remote
 	/// filesystem access.
 	pub path: String,
@@ -373,9 +374,10 @@ pub struct ViewParams {
 	/// brace alternatives (`*.{rs,toml}`), and leading `!` exclusions. Use `|` to supply
 	/// ordered globs in one string, e.g. `**/*.rs|!target/**` (later globs take precedence).
 	/// Filtering is applied after gitignore/hidden traversal; use `include_hidden: true`
-	/// for hidden paths, while gitignored paths remain excluded. Maximum 4096 UTF-8 bytes
-	/// and 64 `|`-separated globs. Must be a single line. Escape a literal leading `#`
-	/// or `!` as `\#` or `\!`; malformed patterns fail before directory traversal.
+	/// for hidden paths, while gitignored paths remain excluded. Maximum 4096 UTF-8 bytes,
+	/// 64 `|`-separated globs, and 16 nested brace levels. Must be a single line. Escape
+	/// a literal leading `#` or `!` as `\#` or `\!`; malformed patterns fail before
+	/// directory traversal.
 	#[serde(default)]
 	pub pattern: Option<String>,
 	/// Content search string. By default treated as a literal substring.

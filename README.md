@@ -327,10 +327,11 @@ one MCP string; later globs take precedence:
 
 The glob filters files discovered by Octofs' gitignore-aware traversal. Use
 `include_hidden: true` to include hidden paths; gitignored paths remain excluded.
-Patterns are limited to 4096 UTF-8 bytes and 64 `|`-separated rules, must be a
-single line, and are validated before traversal. Escape a literal leading `#`
-or `!` as `\#` or `\!`; otherwise `#` is rejected instead of silently acting as
-a gitignore comment.
+Patterns are limited to 4096 UTF-8 bytes, 64 `|`-separated rules, and 16 nested
+brace levels. They must be a single line and are validated before traversal.
+Escape a literal leading `#` or `!` as `\#` or `\!`; otherwise `#` is rejected
+instead of silently acting as a gitignore comment. Empty brace alternatives such
+as `{,rs}` are rejected because ripgrep does not support them.
 
 **Content search:** (literal by default; set `regex: true` for a Rust regex, `(?i)` = case-insensitive)
 ```json
@@ -343,7 +344,8 @@ a gitignore comment.
 For an rg-style search across several roots, `path` accepts `|`-separated literal
 files and directories when `content` is set. The roots are not regexes: as with
 rg's positional path arguments, each one must exist. A real path containing `|`
-takes precedence over this shorthand.
+takes precedence over this shorthand. Root lists must be single-line, contain no
+duplicates, and are limited to 32 roots and 8192 UTF-8 bytes.
 
 Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + estimated tokens) so you can budget reads before opening files; binary files show `path<TAB>(binary)`.
 

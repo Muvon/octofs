@@ -5532,6 +5532,60 @@ mod tests {
 		assert!(err.contains("Path not found"), "got: {err}");
 	}
 
+	#[tokio::test]
+	async fn test_view_pipe_search_rejects_unsafe_or_wasteful_root_lists() {
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		let too_many = (0..33)
+			.map(|i| format!("root{i}"))
+			.collect::<Vec<_>>()
+			.join("|");
+		let oversized = format!("{}|other", "a".repeat(8192));
+		let long_missing = format!("{}|other", "a".repeat(8000));
+		for (path, expected) in [
+			("docs||scripts".to_string(), "non-empty"),
+			("docs|docs".to_string(), "duplicate root"),
+			("docs|\nsecret".to_string(), "control characters"),
+			(too_many, "32-root limit"),
+			(oversized, "8192-byte limit"),
+			(long_missing, "Search root not found"),
+		] {
+			let call = McpToolCall {
+				tool_id: "test".to_string(),
+				workdir: dir.path().to_path_buf(),
+				tool_name: "view".to_string(),
+				parameters: json!({ "path": path, "content": "needle" }),
+			};
+			let err = execute_view(&call).await.unwrap_err().to_string();
+			assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+			assert!(
+				err.len() < 500,
+				"error echoed oversized input: {} bytes",
+				err.len()
+			);
+		}
+
+		let first_root = dir.path().join("first");
+		tokio::fs::create_dir(&first_root).await.unwrap();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({
+				"path": "first|missing",
+				"content": "[",
+				"regex": true
+			}),
+		};
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.contains("Search root not found"), "got: {err}");
+		assert!(
+			!err.contains("Invalid regex"),
+			"searched before preflight: {err}"
+		);
+	}
+
 	// ===== SIMPLIFIED LINE-TARGETING COVERAGE =====
 
 	#[tokio::test]

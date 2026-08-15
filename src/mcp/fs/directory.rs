@@ -82,6 +82,7 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 // pipes or pipes inside character classes, where `|` names a literal character.
 const MAX_PATTERN_BYTES: usize = 4096;
 const MAX_PATTERN_ALTERNATIVES: usize = 64;
+const MAX_BRACE_NESTING: usize = 16;
 
 fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
 	if pattern.len() > MAX_PATTERN_BYTES {
@@ -159,12 +160,82 @@ fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
 	Ok(alternatives)
 }
 
+fn validate_glob_structure(glob: &str) -> Result<(), String> {
+	let mut branches_have_content: Vec<bool> = Vec::new();
+	let mut escaped = false;
+	let mut in_class = false;
+
+	for ch in glob.chars() {
+		if escaped {
+			if let Some(has_content) = branches_have_content.last_mut() {
+				*has_content = true;
+			}
+			escaped = false;
+			continue;
+		}
+		if in_class {
+			if ch == ']' {
+				in_class = false;
+			}
+			continue;
+		}
+
+		match ch {
+			'\\' => escaped = true,
+			'[' => {
+				in_class = true;
+				if let Some(has_content) = branches_have_content.last_mut() {
+					*has_content = true;
+				}
+			}
+			'{' => {
+				if branches_have_content.len() >= MAX_BRACE_NESTING {
+					return Err(format!(
+						"Invalid `pattern` glob {glob:?}: brace nesting exceeds the {MAX_BRACE_NESTING}-level limit"
+					));
+				}
+				branches_have_content.push(false);
+			}
+			',' if !branches_have_content.is_empty() => {
+				if let Some(has_content) = branches_have_content.last_mut() {
+					if !*has_content {
+						return Err(format!(
+							"Invalid `pattern` glob {glob:?}: empty brace alternatives are not supported"
+						));
+					}
+					*has_content = false;
+				}
+			}
+			'}' if !branches_have_content.is_empty() => {
+				if let Some(has_content) = branches_have_content.pop() {
+					if !has_content {
+						return Err(format!(
+							"Invalid `pattern` glob {glob:?}: empty brace alternatives are not supported"
+						));
+					}
+					if let Some(parent_has_content) = branches_have_content.last_mut() {
+						*parent_has_content = true;
+					}
+				}
+			}
+			_ => {
+				if let Some(has_content) = branches_have_content.last_mut() {
+					*has_content = true;
+				}
+			}
+		}
+	}
+
+	Ok(())
+}
+
 // Compile before traversal so malformed or adversarial patterns fail without walking a tree.
 // Positive globs include, leading-! globs exclude, and later alternatives take precedence.
 fn build_pattern_matcher(pattern: &str) -> Result<Override, String> {
 	let alternatives = split_pattern_alternatives(pattern)?;
 	let mut builder = OverrideBuilder::new("");
 	for glob in alternatives {
+		validate_glob_structure(glob)?;
 		builder
 			.add(glob)
 			.map_err(|e| format!("Invalid `pattern` glob {glob:?}: {e}"))?;
@@ -666,6 +737,13 @@ mod tests {
 		assert!(brace_alternation.contains(&"Cargo.toml".to_string()));
 		assert!(brace_alternation.contains(&"src/nested/lib.rs".to_string()));
 		assert!(!brace_alternation.contains(&"src/main.rsx".to_string()));
+		let mut nested_braces = vec![
+			"file.rs".to_string(),
+			"file.toml".to_string(),
+			"file.md".to_string(),
+		];
+		filter_by_pattern(&mut nested_braces, "*.{rs,{toml,md}}").unwrap();
+		assert_eq!(nested_braces.len(), 3);
 
 		let mut single_star = all.clone();
 		filter_by_pattern(&mut single_star, "src/*.rs").unwrap();
@@ -731,6 +809,10 @@ mod tests {
 			"*.rs|",
 			"[unclosed",
 			"{unclosed",
+			"empty{,branch}",
+			"empty{branch,}",
+			"empty{branch,,other}",
+			"empty{}",
 			r"dangling\",
 			"!",
 			"#silent-comment",
@@ -776,6 +858,14 @@ mod tests {
 			.join("|");
 		let err = filter_by_pattern(&mut files, &too_many).unwrap_err();
 		assert!(err.contains("more than 64"), "got: {err}");
+
+		let deeply_nested = format!(
+			"{}x{}",
+			"{".repeat(MAX_BRACE_NESTING + 1),
+			"}".repeat(MAX_BRACE_NESTING + 1)
+		);
+		let err = filter_by_pattern(&mut files, &deeply_nested).unwrap_err();
+		assert!(err.contains("nesting exceeds"), "got: {err}");
 	}
 
 	#[test]
