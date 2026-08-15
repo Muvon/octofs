@@ -1232,10 +1232,16 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			}
 		};
 
-		// Extract start (required) and optional end endpoints.
-		let line_range = match operation_obj.get("start") {
+		// Extract start (required) and optional end endpoints. JSON null counts as
+		// omitted: the server round-trips ops through the typed struct, which
+		// re-serializes an absent `end` as null (and clients send explicit nulls too).
+		let line_range = match operation_obj.get("start").filter(|v| !v.is_null()) {
 			Some(start_value) => {
-				match parse_line_range(start_value, operation_obj.get("end"), &operation_type) {
+				match parse_line_range(
+					start_value,
+					operation_obj.get("end").filter(|v| !v.is_null()),
+					&operation_type,
+				) {
 					Ok(range) => range,
 					Err(e) => {
 						parse_failures.push(format!("  op {index}: Invalid line target: {e}"));

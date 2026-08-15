@@ -2217,6 +2217,84 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_batch_edit_replace_end_null_is_single_line() {
+		// JSON null `end` means "omitted" → single-line replace. The server
+		// round-trips params through the typed struct, which re-serializes an
+		// omitted `end` as null — both forms must behave identically.
+		let content = "line 1\nline 2\nline 3\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		// Exact server path: BatchEditParams → serde_json::to_value → execute.
+		let params: crate::mcp::server::BatchEditParams =
+			serde_json::from_value(json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"start": lid(content, 2),
+					"content": "REPLACED"
+				}]
+			}))
+			.unwrap();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: serde_json::to_value(&params).unwrap(),
+		};
+		crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nREPLACED\nline 3\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_replace_explicit_end_null_raw_params() {
+		// A raw `"end": null` (client-filled optional) is also a single-line replace.
+		let content = "line 1\nline 2\nline 3\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{
+				"operation": "replace",
+				"start": lid(content, 2),
+				"end": null,
+				"content": "REPLACED"
+			}]),
+		)
+		.await;
+		crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "line 1\nREPLACED\nline 3\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_start_null_reports_missing_start() {
+		// JSON null `start` is reported as missing, not as an unparseable line value.
+		let content = "line 1\nline 2\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			json!([{
+				"operation": "replace",
+				"start": null,
+				"content": "X"
+			}]),
+		)
+		.await;
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap_err()
+			.to_string();
+		assert!(err.contains("Missing 'start' field"), "got: {err}");
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_concurrent_writes_atomicity() {
 		// Concurrent batch_edits on the same file must not interleave or corrupt.
 		// The file lock ensures only one write happens at a time.

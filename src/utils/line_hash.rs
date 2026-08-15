@@ -232,10 +232,9 @@ pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 				"invalid line value '{s}': pass a line id like \"12:a3\" (from view output) or an integer line number"
 			))
 		}
-		_ => Err(
-			"line value must be a line id string like \"12:a3\" or an integer line number"
-				.to_string(),
-		),
+		_ => Err(format!(
+			"line value must be a line id like \"12:a3\" or an integer line number, got {value}",
+		)),
 	}
 }
 
@@ -349,8 +348,10 @@ mod tests {
 		assert!(parse_endpoint(&json!("0:a3")).is_err());
 		assert!(parse_endpoint(&json!("12:xyz")).is_err());
 		assert!(parse_endpoint(&json!("12:a")).is_err());
-		assert!(parse_endpoint(&json!([1, 2])).is_err());
-		assert!(parse_endpoint(&json!(null)).is_err());
+		let arr_err = parse_endpoint(&json!([1, 2])).unwrap_err();
+		assert!(arr_err.contains("got [1,2]"), "got: {arr_err}");
+		let null_err = parse_endpoint(&json!(null)).unwrap_err();
+		assert!(null_err.contains("got null"), "got: {null_err}");
 	}
 
 	#[test]
