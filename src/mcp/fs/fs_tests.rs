@@ -2226,16 +2226,15 @@ mod tests {
 		let path = temp_file.path().to_string_lossy().to_string();
 
 		// Exact server path: BatchEditParams → serde_json::to_value → execute.
-		let params: crate::mcp::server::BatchEditParams =
-			serde_json::from_value(json!({
-				"path": path,
-				"operations": [{
-					"operation": "replace",
-					"start": lid(content, 2),
-					"content": "REPLACED"
-				}]
-			}))
-			.unwrap();
+		let params: crate::mcp::server::BatchEditParams = serde_json::from_value(json!({
+			"path": path,
+			"operations": [{
+				"operation": "replace",
+				"start": lid(content, 2),
+				"content": "REPLACED"
+			}]
+		}))
+		.unwrap();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
@@ -5574,6 +5573,7 @@ mod tests {
 		assert!(!out.contains("outside.txt"), "got: {out}");
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn test_view_existing_pipe_path_takes_precedence_over_search_roots() {
 		use std::fs as stdfs;
