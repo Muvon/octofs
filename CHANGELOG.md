@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.0] - 2026-08-15
+
+### 📋 Release Summary
+
+This release introduces support for pipe-separated paths in content searches to enable more flexible file targeting (16377962). Search and glob pattern matching have been significantly hardened and refined for better reliability and accuracy (21420a9d, 919541ba, 9d63962e). Additionally, a fix ensures more consistent handling of line endpoints during MCP operations (3c849246).
+
+
+### ✨ New Features & Enhancements
+
+- **fs**: support pipe-separated paths for content search `16377962`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: implement ripgrep-style glob matching `9d63962e`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: treat null line endpoints as omitted `3c849246`
+- **fs**: harden content-search and glob validation `21420a9d`
+- **fs**: harden glob pattern validation and filtering `919541ba`
+
 ## [0.9.0] - 2026-08-11
 
 ### 📋 Release Summary
