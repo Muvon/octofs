@@ -20,7 +20,6 @@ use super::remote::{
 };
 use super::search::{self, Matcher};
 use crate::utils::line_hash::line_id_at;
-use crate::utils::truncation::estimate_tokens;
 use anyhow::{bail, Result};
 use ignore::{overrides::Override, overrides::OverrideBuilder, WalkBuilder};
 use rayon::prelude::*;
@@ -41,6 +40,11 @@ fn annotation_cache() -> &'static Mutex<AnnotationCache> {
 }
 
 // Annotation suffix for a listed file: "NL\t~Nt" or "(binary)". None = unreadable.
+// Newline count over raw bytes — the listing annotation needs only the count,
+// not decoded text.
+fn bytecount_newlines(bytes: &[u8]) -> usize {
+	bytes.iter().filter(|&&b| b == b'\n').count()
+}
 fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> Option<String> {
 	if let Some(mt) = mtime {
 		if let Some((c_mt, c_len, suffix)) = annotation_cache()
@@ -61,8 +65,17 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 	let suffix = if null_count > sample_size / 10 {
 		"(binary)".to_string()
 	} else {
-		let text = String::from_utf8_lossy(&bytes);
-		format!("{}L\t~{}t", text.lines().count(), estimate_tokens(&text))
+		// Count newlines on the raw bytes: identical to `lines().count()` for both
+		// LF and CRLF, without the lossy UTF-8 copy of the whole file.
+		let newlines = bytecount_newlines(&bytes);
+		let line_count = if bytes.is_empty() {
+			0
+		} else if bytes[bytes.len() - 1] == b'\n' {
+			newlines
+		} else {
+			newlines + 1
+		};
+		format!("{}L\t~{}t", line_count, bytes.len().div_ceil(4))
 	};
 
 	if let Some(mt) = mtime {
@@ -278,7 +291,8 @@ fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<Stri
 	let mut files: Vec<String> = Vec::new();
 	for entry in walker.flatten() {
 		let path = entry.path();
-		if !path.is_file() {
+		// The walker already knows the entry type — `path.is_file()` would stat again.
+		if !entry.file_type().is_some_and(|ft| ft.is_file()) {
 			continue;
 		}
 		let mut rel = path

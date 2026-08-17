@@ -51,6 +51,19 @@ impl Matcher {
 		}
 	}
 
+	/// Whole-buffer prefilter: if the pattern cannot match anywhere in the file,
+	/// no line can match either. Lets callers skip splitting non-matching files
+	/// into lines, which dominates a tree-wide search. Regex is exempt: `^`/`$`
+	/// anchor to the buffer, not to lines, so a whole-buffer test would reject
+	/// files whose individual lines do match.
+	#[inline]
+	fn matches_anywhere(&self, content: &str) -> bool {
+		match self {
+			Matcher::Literal(s) => content.contains(s.as_str()),
+			Matcher::Regex(_) => true,
+		}
+	}
+
 	pub fn is_empty_pattern(&self) -> bool {
 		match self {
 			Matcher::Literal(s) => s.is_empty(),
@@ -62,9 +75,13 @@ impl Matcher {
 /// Search `content` line-by-line using `matcher`, returning contiguous blocks of
 /// matching line numbers (expanded by `context_lines` before/after each match).
 pub fn search_lines(content: &str, matcher: &Matcher, context_lines: usize) -> Vec<MatchBlock> {
+	if matcher.is_empty_pattern() || !matcher.matches_anywhere(content) {
+		return Vec::new();
+	}
+
 	let lines: Vec<&str> = content.lines().collect();
 	let total = lines.len();
-	if total == 0 || matcher.is_empty_pattern() {
+	if total == 0 {
 		return Vec::new();
 	}
 
