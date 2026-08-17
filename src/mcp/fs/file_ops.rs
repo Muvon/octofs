@@ -104,13 +104,17 @@ pub async fn view_file_with_content_search(
 	let total = file_lines.len();
 
 	if total == 0 {
-		return Ok(String::new());
+		return Ok(format!(
+			"File is empty — no content to match pattern \"{pattern}\"."
+		));
 	}
 
 	let matcher = search::Matcher::new(pattern, regex)?;
 	let blocks = search::search_lines(&content, &matcher, context_lines);
 	if blocks.is_empty() {
-		return Ok(String::new());
+		return Ok(format!(
+			"No matches for pattern \"{pattern}\" in this file."
+		));
 	}
 
 	// Render each block; separate blocks with "--"

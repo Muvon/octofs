@@ -240,11 +240,13 @@ impl OctofsServer {
 	}
 
 	#[tool(
-		description = "Execute a command in the shell. Output is what a real terminal would \
-			display: ANSI escapes and progress-bar redraw frames are removed, and runs of \
-			identical consecutive lines collapse to the line plus a repeat count. For \
-			byte-exact inspection (line endings, control bytes) pipe through `od -c`, `xxd`, \
-			or `cat -v` — their printable output passes through untouched."
+		description = "Execute a command in the shell — builds, tests, git, the project's own \
+			CLIs. Not a file reader: `view` reads files, lists directories, and does rg-style \
+			content search, so prefer it over cat/grep/ls/sed for inspection. Output is what a \
+			real terminal would display: ANSI escapes and progress-bar redraw frames are \
+			removed, and runs of identical consecutive lines collapse to the line plus a \
+			repeat count. For byte-exact inspection (line endings, control bytes) pipe through \
+			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched."
 	)]
 	async fn shell(
 		&self,
