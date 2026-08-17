@@ -4983,7 +4983,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_view_file_content_search_no_match_returns_empty() {
+	async fn test_view_file_content_search_no_match_reports_no_matches() {
 		let temp_file = create_test_file("alpha\nbeta\ngamma\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
@@ -4995,8 +4995,12 @@ mod tests {
 		};
 		let output = execute_view(&call).await.unwrap();
 		assert!(
-			output.is_empty(),
-			"no match should return empty, got: {output}"
+			output.contains("No matches for pattern \"zzznomatch\""),
+			"no match should say so explicitly, got: {output}"
+		);
+		assert!(
+			!output.contains("alpha"),
+			"no-match output must not leak file content: {output}"
 		);
 	}
 
