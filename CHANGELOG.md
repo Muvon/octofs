@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.1] - 2026-08-17
+
+### 📋 Release Summary
+
+This release enhances the MCP tool experience with improved descriptions and more intuitive search feedback (6f5cf53a). Additionally, file listing and search operations have been optimized for better performance (9562211d).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: improve tool descriptions and search feedback `6f5cf53a`
+
+### 🔧 Improvements & Optimizations
+
+- **fs**: optimize file listing and search `9562211d`
+- **fs**: restrict pipe path test to unix platforms `40129a79`
+
 ## [0.10.0] - 2026-08-15
 
 ### 📋 Release Summary
