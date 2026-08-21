@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.2] - 2026-08-21
+
+### 📋 Release Summary
+
+This release introduces liveness heartbeats for shell commands to improve execution monitoring (89d08667). Additionally, search functionality has been refined to provide more explicit reporting when no matches are found (31502fe5).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: add liveness heartbeats for shell commands `89d08667`
+
+### 🔧 Improvements & Optimizations
+
+- **fs**: verify no-match search reports explicitly `31502fe5`
+
 ## [0.10.1] - 2026-08-17
 
 ### 📋 Release Summary
