@@ -56,6 +56,10 @@ impl SessionWorkdir {
 	}
 }
 
+/// How often a running foreground `shell` command reports liveness. Well below
+/// any sane client idle timeout so a single missed beat cannot cancel the call.
+const SHELL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// MCP server with per-session working directory isolation.
 #[derive(Debug, Clone)]
 pub struct OctofsServer {
@@ -261,13 +265,40 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(async move {
+		// Heartbeat while the command runs. The MCP idle timeout cancels a call
+		// that reports nothing, and a build or test suite is silent by nature —
+		// more so once the model redirects its output to a log to keep the reply
+		// small. Without a liveness signal the only way to run anything slow is
+		// to detach it and poll, which costs a model round-trip per check and
+		// re-sends the whole conversation each time. A progress notification
+		// resets the client's idle timer (it still enforces an absolute cap), so
+		// a slow foreground command simply works and there is nothing to poll.
+		let progress_token = context.meta.get_progress_token();
+		let peer = context.peer.clone();
+		let exec = request_ctx::with_request_context(async move {
 			let result = fs::execute_shell_command(&call)
 				.await
 				.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
-		})
-		.await
+		});
+		tokio::pin!(exec);
+		let mut beats = 0.0_f64;
+		loop {
+			tokio::select! {
+				biased;
+				done = &mut exec => return done,
+				_ = tokio::time::sleep(SHELL_HEARTBEAT_INTERVAL) => {
+					let Some(token) = progress_token.clone() else { continue };
+					beats += 1.0;
+					let _ = peer
+						.notify_progress(
+							rmcp::model::ProgressNotificationParam::new(token, beats)
+								.with_message("command still running"),
+						)
+						.await;
+				}
+			}
+		}
 	}
 
 	#[tool(
@@ -514,7 +545,14 @@ pub struct ExtractLinesParams {
 pub struct ShellParams {
 	/// The shell command to execute
 	pub command: String,
-	/// Run command in background and return PID
+	/// Detach the command and return only its PID. Its output is discarded and
+	/// there is no completion signal, so the only way to find out what happened
+	/// is to make the command redirect to a file and then read that file — each
+	/// check costing a full round-trip. Do NOT use this for work whose result
+	/// you need: builds, test suites and installs run fine in the foreground
+	/// however long they are silent, because the call reports liveness while it
+	/// waits. Reserve `background` for processes you deliberately want to
+	/// outlive the call, such as a server you are about to make requests to.
 	#[serde(default)]
 	pub background: Option<bool>,
 }
