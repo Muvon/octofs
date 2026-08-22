@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.3] - 2026-08-22
+
+### 📋 Release Summary
+
+This release includes a bug fix to improve the accuracy of tool schemas (962afcb0).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: remove null variants from tool schemas `962afcb0`
+
 ## [0.10.2] - 2026-08-21
 
 ### 📋 Release Summary
