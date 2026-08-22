@@ -2,10 +2,13 @@ use std::sync::{Arc, RwLock};
 
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
-	model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+	model::{
+		Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+		ServerCapabilities, ServerInfo,
+	},
 	schemars,
 	service::RequestContext,
-	tool, tool_handler, tool_router, RoleServer,
+	tool, tool_handler, tool_router, ErrorData, RoleServer,
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -341,6 +344,64 @@ impl OctofsServer {
 	}
 }
 
+/// Collapse `"type": [T, "null"]` to `T` and `anyOf: [X, {"type": "null"}]` to
+/// `X` throughout a tool schema, merging the surviving branch into the parent
+/// so field-level keys (description) win.
+///
+/// schemars emits those nullable forms for every `Option<T>` parameter. Serving
+/// stacks build their tool-call grammar from `"type"` and some read it as a
+/// plain string: given the array form they fall through to the string branch and
+/// constrain the model to emit the argument as text — `"3"` instead of `3` —
+/// which rmcp then rejects while deserializing parameters. Measured on Alibaba
+/// Model Studio's Qwen path and on CoreWeave; the same weights on Parasail,
+/// Chutes and DeepInfra are unaffected.
+///
+/// Lossless: optionality is carried by `required`. Genuine multi-branch unions
+/// (the `string | integer` line endpoints) have nothing to collapse to and are
+/// left alone — `parse_endpoint` accepts either form anyway.
+fn strip_null_variants(value: &mut serde_json::Value) {
+	match value {
+		serde_json::Value::Object(obj) => {
+			for nested in obj.values_mut() {
+				strip_null_variants(nested);
+			}
+
+			let collapsed_type =
+				obj.get_mut("type")
+					.and_then(|t| t.as_array_mut())
+					.and_then(|types| {
+						types.retain(|t| t.as_str() != Some("null"));
+						(types.len() == 1).then(|| types[0].clone())
+					});
+			if let Some(single) = collapsed_type {
+				obj.insert("type".to_string(), single);
+			}
+
+			for key in ["anyOf", "oneOf"] {
+				let only = obj
+					.get_mut(key)
+					.and_then(|v| v.as_array_mut())
+					.and_then(|variants| {
+						variants.retain(|v| v.get("type").and_then(|t| t.as_str()) != Some("null"));
+						(variants.len() == 1).then(|| variants[0].clone())
+					});
+				if let Some(serde_json::Value::Object(only)) = only {
+					obj.remove(key);
+					for (k, v) in only {
+						obj.entry(k).or_insert(v);
+					}
+				}
+			}
+		}
+		serde_json::Value::Array(items) => {
+			for item in items.iter_mut() {
+				strip_null_variants(item);
+			}
+		}
+		_ => {}
+	}
+}
+
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
@@ -356,6 +417,26 @@ impl ServerHandler for OctofsServer {
 				 diffs with fresh ids, so edits can be chained without re-viewing files."
 					.to_string(),
 			)
+	}
+
+	async fn list_tools(
+		&self,
+		_request: Option<PaginatedRequestParams>,
+		_context: RequestContext<RoleServer>,
+	) -> Result<ListToolsResult, ErrorData> {
+		let tools = Self::tool_router()
+			.list_all()
+			.into_iter()
+			.map(|mut tool| {
+				let mut schema = tool.input_schema.as_ref().clone();
+				for value in schema.values_mut() {
+					strip_null_variants(value);
+				}
+				tool.input_schema = Arc::new(schema);
+				tool
+			})
+			.collect();
+		Ok(ListToolsResult::with_all_items(tools))
 	}
 
 	// The default `initialize` (legacy clients) and `discover` (2026-07-28
