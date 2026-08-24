@@ -19,6 +19,12 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+// Backstop for foreground commands the misuse hints don't catch (dev servers,
+// accidental infinite loops): the liveness heartbeats would otherwise keep a
+// never-returning call alive indefinitely.
+const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(600);
 // Track PIDs of in-flight foreground shell children.
 // Each child is spawned with process_group(0) so PGID == child PID.
 // On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
@@ -93,7 +99,16 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 		&["sleep"],
 		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it in the foreground, or use background=true and check on it later.\n\n  Do not chain shorter sleeps to work around this block.",
 	),
+	(
+		&["watch", "top", "htop"],
+		"This program never exits, so the call would never return. Run the underlying command once instead; to observe a long-running process, start it with background=true and check on it later.",
+	),
 ];
+
+// Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
+// breaks on quoting/escaping and bypasses tracked edits. Redirecting other
+// programs' OUTPUT to a file stays allowed — only content-authoring is blocked.
+static REDIRECT_WRITE_HINT: &str = "Writing files with echo/printf/cat/tee redirects is forbidden — shell quoting silently corrupts content and the write is untracked. Use `text_editor` instead (atomic, tracked, works on remote hosts).\n\n  Example:\n    text_editor command=\"create\" path=\"notes.txt\" content=\"line 1\\nline 2\"\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Redirecting other programs' output (e.g. `cargo test > out.log`) stays allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + process_group(0) already makes input physically impossible;
@@ -225,6 +240,15 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 			_ => {}
 		}
 
+		// Content-authoring programs writing a file via redirect, or standalone
+		// tee (writes stdin to a file). Checked before the hint table so
+		// `cat > file` gets the write guidance, not the read guidance.
+		if prog == "tee"
+			|| (matches!(prog, "echo" | "printf" | "cat") && has_file_redirect(segment))
+		{
+			return Some(REDIRECT_WRITE_HINT);
+		}
+
 		for (progs, hint) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
 				return Some(hint);
@@ -233,6 +257,39 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	}
 
 	None
+}
+
+/// True if the segment contains an unquoted `>` or `>>` file redirect.
+/// Fd duplications (`>&2`, `2>&1`) are not file writes and don't count.
+fn has_file_redirect(segment: &str) -> bool {
+	let bytes = segment.as_bytes();
+	let mut in_single = false;
+	let mut in_double = false;
+	let mut i = 0;
+	while i < bytes.len() {
+		match bytes[i] {
+			b'\'' if !in_double => in_single = !in_single,
+			b'"' if !in_single => in_double = !in_double,
+			b'\\' if !in_single => i += 1, // skip escaped char
+			b'>' if !in_single && !in_double => {
+				let mut j = i + 1;
+				if j < bytes.len() && bytes[j] == b'>' {
+					j += 1;
+				}
+				while j < bytes.len() && bytes[j] == b' ' {
+					j += 1;
+				}
+				if j < bytes.len() && bytes[j] != b'&' {
+					return true;
+				}
+				i = j;
+				continue;
+			}
+			_ => {}
+		}
+		i += 1;
+	}
+	false
 }
 
 /// Split a shell command string into segments on `;`, `&&`, `||`, `\n`,
@@ -299,6 +356,10 @@ fn split_shell_segments(command: &str) -> Vec<&str> {
 
 // Execute a shell command
 pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
+	execute_with_timeout(call, FOREGROUND_TIMEOUT).await
+}
+
+async fn execute_with_timeout(call: &McpToolCall, timeout: Duration) -> Result<String> {
 	use tokio::process::Command as TokioCommand;
 
 	// Extract command parameter
@@ -423,8 +484,30 @@ pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
 		register_child(pid);
 	}
 
-	// Foreground execution: wait for completion and return output
-	let result = child.wait_with_output().await;
+	// Foreground execution: wait for completion and return output.
+	// On timeout the dropped future's kill_on_drop kills the direct child;
+	// nuke the whole process group so grandchildren die too.
+	// ponytail: partial output is discarded on timeout; stream-capture if it ever matters
+	let result = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+		Ok(result) => result,
+		Err(_) => {
+			#[cfg(unix)]
+			if let Some(pid) = child_pid {
+				// SAFETY: kill is always safe with valid arguments.
+				// Negative pgid targets the entire process group.
+				unsafe {
+					libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+				}
+			}
+			if let Some(pid) = child_pid {
+				unregister_child(pid);
+			}
+			bail!(
+				"Command timed out after {}s and was killed. Commands that run this long (servers, watchers) must use background=true; check on them later.",
+				timeout.as_secs()
+			);
+		}
+	};
 
 	// Child finished — remove from tracker before processing result.
 	if let Some(pid) = child_pid {
@@ -477,6 +560,18 @@ mod tests {
 			.await
 			.expect_err("misuse must be rejected");
 		assert!(err.to_string().contains("view"), "err: {err}");
+	}
+
+	#[tokio::test]
+	async fn test_foreground_timeout_kills_command() {
+		let call = crate::mcp::McpToolCall::test_call(
+			"shell",
+			serde_json::json!({ "command": "while true; do sleep 1; done" }),
+		);
+		let err = execute_with_timeout(&call, Duration::from_millis(200))
+			.await
+			.expect_err("must time out");
+		assert!(err.to_string().contains("timed out"), "err: {err}");
 	}
 
 	#[tokio::test]
@@ -588,5 +683,24 @@ mod tests {
 		// Subshell/group openers no longer hide a forbidden program
 		assert!(detect_shell_misuse("(cat file)").is_some());
 		assert!(detect_shell_misuse("{ grep foo bar; }").is_some());
+
+		// Writing file content via shell redirects is blocked
+		assert!(detect_shell_misuse("echo 'fn main() {}' > src/main.rs").is_some());
+		assert!(detect_shell_misuse("printf '%s\\n' hi >> notes.txt").is_some());
+		assert!(detect_shell_misuse("tee out.txt").is_some());
+		assert!(detect_shell_misuse("cd /x && echo data > f").is_some());
+		// cat with a redirect gets the write guidance, not the read guidance
+		let msg = detect_shell_misuse("cat > f.txt").unwrap();
+		assert!(msg.contains("text_editor"), "msg: {msg}");
+		// Redirecting other programs' output stays allowed
+		assert!(detect_shell_misuse("cargo test > out.log 2>&1").is_none());
+		assert!(detect_shell_misuse("make 2>&1 | tee build.log").is_none());
+		// Fd duplication and quoted `>` are not file writes
+		assert!(detect_shell_misuse("echo error >&2").is_none());
+		assert!(detect_shell_misuse("echo \"a > b\"").is_none());
+
+		// Never-terminating programs are blocked
+		assert!(detect_shell_misuse("watch -n1 date").is_some());
+		assert!(detect_shell_misuse("top").is_some());
 	}
 }
