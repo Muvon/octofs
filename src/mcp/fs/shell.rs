@@ -89,6 +89,10 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 		&["sed", "awk"],
 		"Editing files with this command is forbidden — use `text_editor` str_replace or `batch_edit` instead (atomic, tracked, works on remote hosts via ssh:// paths).\n\n  Example:\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Shell is allowed only for stream transforms in pipelines.",
 	),
+	(
+		&["sleep"],
+		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it in the foreground, or use background=true and check on it later.\n\n  Do not chain shorter sleeps to work around this block.",
+	),
 ];
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
@@ -185,6 +189,9 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 // Detect shell commands that should use a dedicated MCP tool instead.
 // Returns the misuse guidance message the caller rejects the command with.
 fn detect_shell_misuse(command: &str) -> Option<&'static str> {
+	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
+	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
+	let mut loop_depth = 0usize;
 	// Split into individual commands on shell separators, respecting
 	// quoting so that `&&`/`||`/`;` inside quoted strings (e.g. SSH remote
 	// commands: `ssh host 'cd /path && ls'`) are not treated as local
@@ -192,13 +199,31 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
 	for segment in split_shell_segments(command) {
 		let segment = segment.trim();
-		// Skip leading env assignments (FOO=bar cmd ...) to reach the program.
+		// Skip leading env assignments (FOO=bar cmd ...) and group openers
+		// (`{`) to reach the program; strip subshell parens glued to tokens
+		// (`(cat file)`) so they can't hide a forbidden program.
 		let prog = segment
 			.split_whitespace()
-			.find(|tok| !tok.contains('='))
+			.map(|tok| tok.trim_start_matches('(').trim_end_matches(')'))
+			.find(|tok| !tok.is_empty() && !tok.contains('=') && *tok != "{")
 			.unwrap_or("");
 		// Strip any path prefix: /bin/grep -> grep
 		let prog = prog.rsplit('/').next().unwrap_or(prog);
+
+		match prog {
+			// The command after `do` shares its segment, so `do sleep 2`
+			// already passes today — keep that leniency unchanged.
+			"do" => {
+				loop_depth += 1;
+				continue;
+			}
+			"done" => {
+				loop_depth = loop_depth.saturating_sub(1);
+				continue;
+			}
+			"sleep" if loop_depth > 0 => continue,
+			_ => {}
+		}
 
 		for (progs, hint) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
@@ -544,5 +569,24 @@ mod tests {
 		);
 		// Unquoted separators after a quoted block are still caught
 		assert!(detect_shell_misuse("ssh host 'ls' && cat file").is_some());
+
+		// Bare / chained sleep is blocked in every common shape
+		assert!(detect_shell_misuse("sleep 40").is_some());
+		assert!(detect_shell_misuse("sleep 40; echo done").is_some());
+		assert!(detect_shell_misuse("sleep 5 && cargo test").is_some());
+		assert!(detect_shell_misuse("cargo build && sleep 5").is_some());
+		assert!(detect_shell_misuse("sleep 30 || true").is_some());
+		assert!(detect_shell_misuse("sleep $((5*60))").is_some());
+		assert!(detect_shell_misuse("(sleep 5 && echo hi) &").is_some());
+		// Sleep inside a do...done loop body is legitimate polling
+		assert!(detect_shell_misuse("until test -f /tmp/x; do sleep 2; done").is_none());
+		assert!(detect_shell_misuse("while ! nc -z localhost 8080; do sleep 1; done").is_none());
+		assert!(detect_shell_misuse("while true; do echo waiting; sleep 5; done").is_none());
+		// Loop depth resets after `done` — a trailing sleep is still caught
+		assert!(detect_shell_misuse("until ok; do sleep 1; done; sleep 40").is_some());
+
+		// Subshell/group openers no longer hide a forbidden program
+		assert!(detect_shell_misuse("(cat file)").is_some());
+		assert!(detect_shell_misuse("{ grep foo bar; }").is_some());
 	}
 }
