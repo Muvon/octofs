@@ -56,14 +56,17 @@ pub fn line_id_at(lines: &[&str], line_1idx: usize) -> String {
 
 /// Verify a composite id against the current file lines. Returns the 1-indexed
 /// line on success. On mismatch the error is self-contained: it shows the
-/// current content around the target with fresh ids, where the expected content
-/// moved to (matching hashes), and suggests a ranged `view` — so the model can
-/// retarget from the error alone instead of re-reading the whole file.
+/// current content around the target with fresh ids, where the expected hash
+/// actually is, and suggests a ranged `view` — so the model can retarget from
+/// the error alone instead of re-reading the whole file. It does not claim WHY
+/// the id is off: a neighbour's hash pasted next to the wrong line number looks
+/// exactly like a one-line shift, and the fix is the same either way.
 pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Result<usize, String> {
 	let total = lines.len();
 	if line == 0 || line > total {
-		let mut msg =
-			format!("Stale line id \"{line}:{expected_hash}\": the file has {total} lines now.");
+		let mut msg = format!(
+			"Line id \"{line}:{expected_hash}\" is out of range: the file has {total} lines now."
+		);
 		push_relocation(&mut msg, expected_hash, line, lines);
 		msg.push_str("\nRun `view` on this file to get fresh ids, then retry.");
 		return Err(msg);
@@ -77,7 +80,8 @@ pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Resul
 	let win_start = line.saturating_sub(CONTEXT).max(1);
 	let win_end = (line + CONTEXT).min(total);
 	let mut msg = format!(
-		"Stale line id \"{line}:{expected_hash}\" — the file changed since you viewed it. Current content around line {line}:\n"
+		"Line id \"{line}:{expected_hash}\" does not match: line {line} is currently \"{}\". Content around it:\n",
+		line_id_at(lines, line)
 	);
 	for i in win_start..=win_end {
 		msg.push_str(&format!("{}|{}\n", line_id_at(lines, i), lines[i - 1]));
@@ -89,8 +93,8 @@ pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Resul
 	Err(msg)
 }
 
-/// Append "content with this hash is now at ..." candidates (nearest to
-/// `expected_line` first, up to 3) so a moved-but-unchanged line is a one-step fix.
+/// Append where content with this hash actually is (nearest to `expected_line`
+/// first, up to 3) so a moved line or a mis-paired hash is a one-step fix.
 fn push_relocation(msg: &mut String, expected_hash: &str, expected_line: usize, lines: &[&str]) {
 	let mut candidates: Vec<usize> = lines
 		.iter()
@@ -108,7 +112,7 @@ fn push_relocation(msg: &mut String, expected_hash: &str, expected_line: usize, 
 		.map(|&n| line_id_at(lines, n))
 		.collect();
 	msg.push_str(&format!(
-		"Content matching hash {expected_hash} is now at: {} (your target may have moved).",
+		"Hash {expected_hash} currently matches: {} — you may have paired line {expected_line} with a neighbour's hash, or the content moved.",
 		shown.join(", ")
 	));
 }
@@ -281,7 +285,7 @@ mod tests {
 		let lines = vec!["first", "CHANGED", "third"];
 		let old_hash = line_hash("second");
 		let err = verify_line_id(2, &old_hash, &lines).unwrap_err();
-		assert!(err.contains("Stale line id"), "got: {err}");
+		assert!(err.contains("does not match"), "got: {err}");
 		assert!(err.contains("CHANGED"), "fresh content shown: {err}");
 		assert!(
 			err.contains(&line_id_at(&lines, 2)),

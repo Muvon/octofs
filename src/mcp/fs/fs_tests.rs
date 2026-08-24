@@ -67,7 +67,7 @@ mod tests {
 			}),
 		};
 		let err = execute_batch_edit(&call).await.unwrap_err().to_string();
-		assert!(err.contains("Stale line id"), "got: {err}");
+		assert!(err.contains("does not match"), "got: {err}");
 		// The error carries the fresh content and its current id — retargetable
 		// without a re-view.
 		assert!(err.contains("CHANGED"), "fresh content shown: {err}");
@@ -117,11 +117,49 @@ mod tests {
 			}),
 		};
 		let err = execute_batch_edit(&call).await.unwrap_err().to_string();
-		assert!(err.contains("Stale line id"), "got: {err}");
+		assert!(err.contains("does not match"), "got: {err}");
 		assert!(
 			err.contains(&lid(shifted, 3)),
 			"moved location shown: {err}"
 		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_reports_both_stale_endpoints_at_once() {
+		// A replace whose start AND end ids are both wrong must report both in one
+		// error; reporting only the first costs the caller a second failed round.
+		let content = "alpha\nbeta\ngamma\ndelta\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		// Line numbers paired with a neighbour's hash — the slip seen in the wild.
+		let wrong_start = format!("2:{}", crate::utils::line_hash::line_hash("alpha"));
+		let wrong_end = format!("3:{}", crate::utils::line_hash::line_hash("delta"));
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path.clone(),
+				"operations": [{
+					"operation": "replace",
+					"start": wrong_start.as_str(),
+					"end": wrong_end.as_str(),
+					"content": "REPLACED"
+				}]
+			}),
+		};
+		let err = execute_batch_edit(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains(&format!("\"{wrong_start}\"")),
+			"start reported: {err}"
+		);
+		assert!(
+			err.contains(&format!("\"{wrong_end}\"")),
+			"end reported: {err}"
+		);
+		assert!(err.contains(&path), "file named: {err}");
+		assert_eq!(fs::read_to_string(temp_file.path()).await.unwrap(), content);
 	}
 
 	#[tokio::test]
@@ -5748,7 +5786,7 @@ mod tests {
 			}),
 		};
 		let err = execute_extract_lines(&call).await.unwrap_err().to_string();
-		assert!(err.contains("Stale line id"), "got: {err}");
+		assert!(err.contains("does not match"), "got: {err}");
 		assert!(
 			!target.exists(),
 			"target must not be created on stale source id"

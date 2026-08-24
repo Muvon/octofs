@@ -187,8 +187,19 @@ fn resolve_unresolved_line_range(
 			Ok(LineRange::Single(resolved))
 		}
 		UnresolvedLineRange::IdRange { start, end } => {
-			let s = verify_line_id(start.0, &start.1, lines)?;
-			let e = verify_line_id(end.0, &end.1, lines)?;
+			// Verify both endpoints before failing: a range with two bad ids must
+			// surface both, or the caller fixes one, retries, and only then sees
+			// the other.
+			let (s, e) = match (
+				verify_line_id(start.0, &start.1, lines),
+				verify_line_id(end.0, &end.1, lines),
+			) {
+				(Ok(s), Ok(e)) => (s, e),
+				(s, e) => {
+					let errs: Vec<String> = [s.err(), e.err()].into_iter().flatten().collect();
+					return Err(errs.join("\n"));
+				}
+			};
 			if s > e {
 				return Err(format!(
 					"Range is reversed: start \"{}:{}\" is after end \"{}:{}\". Did you mean start: \"{}:{}\", end: \"{}:{}\"?",
@@ -1310,7 +1321,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 	if !resolve_failures.is_empty() {
 		bail!(
-			"No operations were applied — {} of {} operations have invalid or stale targets:\n{}",
+			"No operations were applied to {path_str} — {} of {} operations have invalid or stale targets:\n{}",
 			resolve_failures.len(),
 			operations.len(),
 			resolve_failures.join("\n---\n")
