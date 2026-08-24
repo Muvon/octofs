@@ -564,10 +564,15 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_foreground_timeout_kills_command() {
-		let call = crate::mcp::McpToolCall::test_call(
-			"shell",
-			serde_json::json!({ "command": "while true; do sleep 1; done" }),
-		);
+		// cmd.exe can't run a POSIX loop — it errors instantly and the test
+		// never reaches the timeout; `ping -n` is the batch idiom for hanging.
+		let command = if cfg!(target_os = "windows") {
+			"ping -n 60 127.0.0.1"
+		} else {
+			"while true; do sleep 1; done"
+		};
+		let call =
+			crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 		let err = execute_with_timeout(&call, Duration::from_millis(200))
 			.await
 			.expect_err("must time out");
