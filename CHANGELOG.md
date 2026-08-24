@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.4] - 2026-08-24
+
+### 📋 Release Summary
+
+This release improves the safety and validation of shell command execution (d5f003d9, 7e42b5df). These updates enhance the detection and prevention of shell misuse.
+
+
+### 🔧 Improvements & Optimizations
+
+- **mcp/fs**: improve shell command safety and validation `d5f003d9`
+- **mcp**: improve shell misuse detection `7e42b5df`
+
 ## [0.10.3] - 2026-08-22
 
 ### 📋 Release Summary
