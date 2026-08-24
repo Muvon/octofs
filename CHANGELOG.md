@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.5] - 2026-08-24
+
+### 📋 Release Summary
+
+This release improves file system reliability through better line identification and error reporting (042f0f22). Additionally, compatibility for shell timeout testing on Windows has been resolved (44992867) and dependencies were updated (d2363edb).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: improve line id verification and error reporting `042f0f22`
+- **mcp**: ensure shell timeout test runs on windows `44992867`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.10.4] - 2026-08-24
 
 ### 📋 Release Summary

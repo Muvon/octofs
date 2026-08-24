@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "octofs"
-version = "0.10.3"
+version = "0.10.5"
 dependencies = [
  "anyhow",
  "axum",
