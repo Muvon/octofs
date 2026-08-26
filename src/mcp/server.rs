@@ -277,14 +277,12 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		// Heartbeat while the command runs. The MCP idle timeout cancels a call
-		// that reports nothing, and a build or test suite is silent by nature —
-		// more so once the model redirects its output to a log to keep the reply
-		// small. Without a liveness signal the only way to run anything slow is
-		// to detach it and poll, which costs a model round-trip per check and
-		// re-sends the whole conversation each time. A progress notification
-		// resets the client's idle timer (it still enforces an absolute cap), so
-		// a slow foreground command simply works and there is nothing to poll.
+		// Heartbeat while a foreground command runs, so the MCP idle timeout does
+		// not cancel a call that is silent by nature (even a quick build/test can
+		// stay quiet for a few seconds). This only has to cover the foreground
+		// window: anything past the 30s cap is stopped and told to re-run in the
+		// background, where completion is delivered by a resource notification
+		// rather than a held-open call — so there is nothing to poll either way.
 		let progress_token = context.meta.get_progress_token();
 		let peer = context.peer.clone();
 		// A background job outlives this call; when it exits, emit
@@ -439,10 +437,15 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
 		ServerInfo::new(
+			// Resources (read/list) are advertised for the background-job handles.
+			// We deliberately do NOT advertise `subscribe`: this server delivers
+			// job completion by pushing an unsolicited `resources/updated` to the
+			// client that started the job, so there is no subscribe handshake to
+			// implement — advertising one we don't answer would be a lie the SDK
+			// would then reject with method-not-found.
 			ServerCapabilities::builder()
 				.enable_tools()
 				.enable_resources()
-				.enable_resources_subscribe()
 				.build(),
 		)
 		.with_server_info(Implementation::from_build_env())

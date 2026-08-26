@@ -34,7 +34,7 @@ const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(30);
 // including any grandchildren the command may have spawned.
 static SHELL_CHILDREN: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
 
-fn register_child(pid: u32) {
+pub(super) fn register_child(pid: u32) {
 	SHELL_CHILDREN
 		.lock()
 		.unwrap()
@@ -42,7 +42,7 @@ fn register_child(pid: u32) {
 		.insert(pid);
 }
 
-fn unregister_child(pid: u32) {
+pub(super) fn unregister_child(pid: u32) {
 	if let Some(set) = SHELL_CHILDREN.lock().unwrap().as_mut() {
 		set.remove(&pid);
 	}

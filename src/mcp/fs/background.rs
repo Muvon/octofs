@@ -159,6 +159,14 @@ where
 		.expect("jobs registry mutex poisoned")
 		.insert(id.clone(), job.clone());
 
+	// A detached job must not outlive the server: register its process group so
+	// shutdown cleanup (`kill_all_shell_children`) tears it down like any other
+	// shell child, rather than orphaning a running build with nobody to read
+	// its log. It survives its own tool call (`kill_on_drop` is not set on the
+	// spawned child) but dies with the process; unregistered once it exits on
+	// its own.
+	super::shell::register_child(pid);
+
 	let uri = resource_uri(&id);
 	tokio::spawn(async move {
 		let code = match child.wait().await {
@@ -168,6 +176,7 @@ where
 		if let Ok(mut guard) = status.lock() {
 			*guard = JobStatus::Exited(code);
 		}
+		super::shell::unregister_child(pid);
 		on_complete(uri);
 	});
 
@@ -189,17 +198,27 @@ pub fn read(id: &str) -> Option<JobView> {
 		.expect("jobs registry mutex poisoned")
 		.get(id)
 		.cloned()?;
-	let raw = std::fs::read(&job.log_path).unwrap_or_default();
-	let truncated = raw.len() > MAX_TAIL_BYTES;
-	let tail = if truncated {
-		&raw[raw.len() - MAX_TAIL_BYTES..]
-	} else {
-		&raw[..]
+	// Read only the tail, not the whole file: a build/test log can be hundreds
+	// of MB, and pulling it all into memory just to keep the last 30 KB would
+	// stall the request. Seek to the tail and read from there.
+	use std::io::{Read, Seek, SeekFrom};
+	let (tail, truncated) = match std::fs::File::open(&job.log_path) {
+		Ok(mut file) => {
+			let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+			let truncated = len > MAX_TAIL_BYTES as u64;
+			if truncated {
+				let _ = file.seek(SeekFrom::End(-(MAX_TAIL_BYTES as i64)));
+			}
+			let mut buf = Vec::with_capacity(MAX_TAIL_BYTES.min(len as usize));
+			let _ = file.read_to_end(&mut buf);
+			(buf, truncated)
+		}
+		Err(_) => (Vec::new(), false),
 	};
 	Some(JobView {
 		command: job.command.clone(),
 		status: job.status(),
-		output: String::from_utf8_lossy(tail).into_owned(),
+		output: String::from_utf8_lossy(&tail).into_owned(),
 		truncated,
 	})
 }
