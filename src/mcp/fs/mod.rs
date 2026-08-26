@@ -14,6 +14,7 @@
 
 // File System MCP provider - modular structure
 
+pub mod background;
 pub mod core;
 pub mod directory;
 pub mod file_ops;

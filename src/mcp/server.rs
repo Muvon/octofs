@@ -3,8 +3,9 @@ use std::sync::{Arc, RwLock};
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
 	model::{
-		Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-		ServerCapabilities, ServerInfo,
+		CallToolResult, ContentBlock, Implementation, ListResourcesResult, ListToolsResult,
+		PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+		ReadResourceResult, Resource, ResourceContents, ServerCapabilities, ServerInfo,
 	},
 	schemars,
 	service::RequestContext,
@@ -253,13 +254,21 @@ impl OctofsServer {
 			real terminal would display: ANSI escapes and progress-bar redraw frames are \
 			removed, and runs of identical consecutive lines collapse to the line plus a \
 			repeat count. For byte-exact inspection (line endings, control bytes) pipe through \
-			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched."
+			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched. \
+			Foreground is for quick commands only (~30s cap). Anything longer — a build, a full \
+			test suite, a server — MUST set background=true: it returns immediately with a linked \
+			job resource and keeps running detached. CRITICAL: after launching in the background, \
+			do NOT poll or babysit it — no `ps`, no `kill -0`, no `sleep`, and do not re-run the \
+			command. Its FULL output is delivered to you automatically as a new message the moment \
+			it exits (with the exit code and output tail). Simply move on: start the next \
+			independent step, or if nothing else can be done until it finishes, end your turn — \
+			you will be woken with the result. Polling wastes turns and is never necessary."
 	)]
 	async fn shell(
 		&self,
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ShellParams>,
-	) -> Result<String, String> {
+	) -> Result<CallToolResult, String> {
 		self.ensure_session_workdir(&context);
 		let workdir = self.workdir.get_current();
 		let call = McpToolCall {
@@ -278,11 +287,35 @@ impl OctofsServer {
 		// a slow foreground command simply works and there is nothing to poll.
 		let progress_token = context.meta.get_progress_token();
 		let peer = context.peer.clone();
+		// A background job outlives this call; when it exits, emit
+		// `resources/updated` for its resource URI so the client can read the
+		// output. The peer is the only client-facing handle — captured here and
+		// hidden behind an opaque callback so the fs layer stays protocol-free.
+		let notify_peer = context.peer.clone();
+		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
+			tokio::spawn(async move {
+				let _ = notify_peer
+					.notify_resource_updated(rmcp::model::ResourceUpdatedNotificationParam::new(
+						uri,
+					))
+					.await;
+			});
+		});
 		let exec = request_ctx::with_request_context(async move {
-			let result = fs::execute_shell_command(&call)
+			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
 				.map_err(|e| e.to_string())?;
-			Ok(append_hints(result))
+			let mut content = vec![ContentBlock::text(append_hints(outcome.text))];
+			if let Some(uri) = outcome.resource_uri {
+				// A ResourceLink is the protocol-native "watch this" signal: the
+				// client follows it generically, with no octofs-specific
+				// knowledge, so shell can be served by any MCP server.
+				content.push(ContentBlock::resource_link(Resource::new(
+					uri,
+					"background shell job",
+				)));
+			}
+			Ok::<_, String>(CallToolResult::success(content))
 		});
 		tokio::pin!(exec);
 		let mut beats = 0.0_f64;
@@ -405,18 +438,24 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
-		ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-			.with_server_info(Implementation::from_build_env())
-			.with_protocol_version(ProtocolVersion::V_2026_07_28)
-			.with_instructions(
-				"This server provides filesystem tools: view (read files/dirs), \
+		ServerInfo::new(
+			ServerCapabilities::builder()
+				.enable_tools()
+				.enable_resources()
+				.enable_resources_subscribe()
+				.build(),
+		)
+		.with_server_info(Implementation::from_build_env())
+		.with_protocol_version(ProtocolVersion::V_2026_07_28)
+		.with_instructions(
+			"This server provides filesystem tools: view (read files/dirs), \
 				 text_editor (create/str_replace/delete/undo), batch_edit (multi-op line edits), \
 				 extract_lines (copy lines between files), shell (execute commands), \
 				 workdir (get/set working directory). File lines are rendered as `N:hh|content`; \
 				 the `N:hh` prefix is the line id edit tools take as targets. Edit results are \
 				 diffs with fresh ids, so edits can be chained without re-viewing files."
-					.to_string(),
-			)
+				.to_string(),
+		)
 	}
 
 	async fn list_tools(
@@ -437,6 +476,58 @@ impl ServerHandler for OctofsServer {
 			})
 			.collect();
 		Ok(ListToolsResult::with_all_items(tools))
+	}
+
+	// Background shell jobs are surfaced as resources: each detached command is
+	// `octofs://jobs/<id>`, readable for its status and output tail. On exit the
+	// job's spawn task emits `resources/updated` for that URI (see the `shell`
+	// handler's notifier), so a client learns a build finished without polling.
+	async fn list_resources(
+		&self,
+		_request: Option<PaginatedRequestParams>,
+		_context: RequestContext<RoleServer>,
+	) -> Result<ListResourcesResult, ErrorData> {
+		let resources = fs::background::list()
+			.into_iter()
+			.map(|job| {
+				let state = match job.status() {
+					fs::background::JobStatus::Running => "running",
+					fs::background::JobStatus::Exited(_) => "finished",
+				};
+				Resource::new(
+					fs::background::resource_uri(&job.id),
+					format!("background shell job ({state}): {}", job.command),
+				)
+			})
+			.collect();
+		Ok(ListResourcesResult::with_all_items(resources))
+	}
+
+	async fn read_resource(
+		&self,
+		request: ReadResourceRequestParams,
+		_context: RequestContext<RoleServer>,
+	) -> Result<ReadResourceResponse, ErrorData> {
+		let uri = request.uri;
+		let id = fs::background::job_id_from_uri(&uri)
+			.ok_or_else(|| ErrorData::resource_not_found(format!("Not a job URI: {uri}"), None))?;
+		let view = fs::background::read(id).ok_or_else(|| {
+			ErrorData::resource_not_found(format!("No such background job: {uri}"), None)
+		})?;
+		let status = match view.status {
+			fs::background::JobStatus::Running => "running".to_string(),
+			fs::background::JobStatus::Exited(code) => format!("exited with code {code}"),
+		};
+		let truncated = if view.truncated {
+			"\n[earlier output dropped — showing the last 30000 bytes]"
+		} else {
+			""
+		};
+		let body = format!(
+			"job {id}\ncommand: {}\nstatus: {status}{truncated}\n\n{}",
+			view.command, view.output
+		);
+		Ok(ReadResourceResult::new(vec![ResourceContents::text(body, uri)]).into())
 	}
 
 	// The default `initialize` (legacy clients) and `discover` (2026-07-28

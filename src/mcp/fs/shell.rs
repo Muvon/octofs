@@ -21,10 +21,13 @@ use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-// Backstop for foreground commands the misuse hints don't catch (dev servers,
-// accidental infinite loops): the liveness heartbeats would otherwise keep a
-// never-returning call alive indefinitely.
-const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(600);
+// Foreground commands are for quick, interactive-latency work — inspection,
+// git, a fast unit test. Anything slower belongs in the background: it returns
+// immediately with a job resource and the client is notified with the output
+// when it finishes, so the model can do other work or simply wait without
+// holding a tool call open. A foreground command that crosses this cap is
+// stopped with an error that points at `background=true`.
+const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(30);
 // Track PIDs of in-flight foreground shell children.
 // Each child is spawned with process_group(0) so PGID == child PID.
 // On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
@@ -115,7 +118,7 @@ static REDIRECT_WRITE_HINT: &str = "Writing files with echo/printf/cat/tee redir
 // these env vars make cooperative tools surface a clean error instead of
 // printing a prompt and hitting EOF mid-read (or invoking a pager that
 // misbehaves without a TTY).
-static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
+pub(super) static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
 	("GIT_TERMINAL_PROMPT", "0"), // git: fail instead of prompting for credentials
 	("DEBIAN_FRONTEND", "noninteractive"), // apt/dpkg: never prompt
 	("PAGER", "cat"),             // don't invoke less (hangs / garbled without TTY)
@@ -354,12 +357,43 @@ fn split_shell_segments(command: &str) -> Vec<&str> {
 	segments
 }
 
-// Execute a shell command
-pub async fn execute_shell_command(call: &McpToolCall) -> Result<String> {
-	execute_with_timeout(call, FOREGROUND_TIMEOUT).await
+/// Delivers a finished background job's resource URI so the server layer can
+/// emit `resources/updated`. Boxed so `shell.rs` stays free of MCP/peer types —
+/// the server constructs one that captures the rmcp peer.
+pub type BackgroundNotify = Box<dyn FnOnce(String) + Send>;
+
+/// The outcome of a shell call. `resource_uri` is set only when the command was
+/// launched in the background: the server advertises it as an MCP resource link
+/// so the client can follow it, generically, with no knowledge that it came
+/// from octofs. Foreground commands carry their output inline and no resource.
+#[derive(Debug)]
+pub struct ShellOutcome {
+	pub text: String,
+	pub resource_uri: Option<String>,
 }
 
-async fn execute_with_timeout(call: &McpToolCall, timeout: Duration) -> Result<String> {
+impl ShellOutcome {
+	fn text(text: String) -> Self {
+		Self {
+			text,
+			resource_uri: None,
+		}
+	}
+}
+
+// Execute a shell command
+pub async fn execute_shell_command(
+	call: &McpToolCall,
+	on_background: Option<BackgroundNotify>,
+) -> Result<ShellOutcome> {
+	execute_with_timeout(call, FOREGROUND_TIMEOUT, on_background).await
+}
+
+async fn execute_with_timeout(
+	call: &McpToolCall,
+	timeout: Duration,
+	on_background: Option<BackgroundNotify>,
+) -> Result<ShellOutcome> {
 	use tokio::process::Command as TokioCommand;
 
 	// Extract command parameter
@@ -403,6 +437,28 @@ async fn execute_with_timeout(call: &McpToolCall, timeout: Duration) -> Result<S
 		);
 	}
 
+	// Long-running work runs detached: spawn it as a background job that streams
+	// its output to a resource and hand back the job id. The client is notified
+	// (resources/updated) when it exits — no blocked call, no polling. The
+	// command-misuse and remote-workdir guards above still apply.
+	if background {
+		let Some(notify) = on_background else {
+			bail!("background execution is only available when running under the MCP server");
+		};
+		let job = super::background::spawn(&command, &working_dir, notify)?;
+		let uri = super::background::resource_uri(&job.id);
+		return Ok(ShellOutcome {
+			text: format!(
+				"Started background job `{}` (PID {}). It runs detached; its stdout+stderr stream \
+				 to the linked resource. You will be notified when it finishes and can read the \
+				 resource for the exit code and output tail — you are not holding this call open, \
+				 so do other work or just wait. Stop it early with: kill -- -{} (whole group).",
+				job.id, job.pid, job.pid
+			),
+			resource_uri: Some(uri),
+		});
+	}
+
 	// Use tokio::process::Command for better cancellation support
 	let mut cmd = if cfg!(target_os = "windows") {
 		let mut cmd = TokioCommand::new("cmd");
@@ -435,47 +491,16 @@ async fn execute_with_timeout(call: &McpToolCall, timeout: Duration) -> Result<S
 		cmd.env(key, value);
 	}
 
-	// Configure the command based on execution mode
-	if background {
-		// Background execution: detach process and return PID immediately
-		cmd.stdout(std::process::Stdio::null())
-			.stderr(std::process::Stdio::null())
-			.stdin(std::process::Stdio::null())
-			.kill_on_drop(false); // Don't kill when dropped - let it run independently
-	} else {
-		// Foreground execution: capture output and wait for completion
-		cmd.stdout(std::process::Stdio::piped())
-			.stderr(std::process::Stdio::piped())
-			.stdin(std::process::Stdio::null())
-			.kill_on_drop(true); // CRITICAL: Kill process when dropped
-	}
+	// Foreground execution: capture output and wait for completion.
+	cmd.stdout(std::process::Stdio::piped())
+		.stderr(std::process::Stdio::piped())
+		.stdin(std::process::Stdio::null())
+		.kill_on_drop(true); // CRITICAL: Kill process when dropped
 
 	// Spawn the process
 	let child = cmd
 		.spawn()
 		.map_err(|e| anyhow!("Failed to spawn command: {}", e))?;
-
-	// Handle background vs foreground execution
-	if background {
-		// Background execution: return PID immediately
-		let pid = child
-			.id()
-			.ok_or_else(|| anyhow!("Failed to get process ID"))?;
-
-		// Drop (don't forget) the handle: kill_on_drop is false so the child keeps
-		// running, and tokio's background reaper collects its exit status — forgetting
-		// the handle would leave a zombie behind once the child exits.
-		drop(child);
-
-		#[cfg(unix)]
-		let kill_hint = format!("kill -- -{pid} (negative PID kills its whole process group)");
-		#[cfg(not(unix))]
-		let kill_hint = format!("taskkill /PID {pid} /T /F (/T kills the whole process tree)");
-
-		return Ok(format!(
-			"Command started in background with PID {pid}\nTo terminate it later run: {kill_hint}"
-		));
-	}
 
 	// Track the child's PID so kill_all_shell_children() can nuke its
 	// entire process group (including grandchildren) on shutdown.
@@ -503,7 +528,7 @@ async fn execute_with_timeout(call: &McpToolCall, timeout: Duration) -> Result<S
 				unregister_child(pid);
 			}
 			bail!(
-				"Command timed out after {}s and was killed. Commands that run this long (servers, watchers) must use background=true; check on them later.",
+				"Command ran longer than {}s in the foreground and was stopped. Long-running work — builds, test suites, servers — must use background=true: it returns immediately with a job resource, keeps running detached, and notifies you with its output when it finishes. Re-run this command with background=true.",
 				timeout.as_secs()
 			);
 		}
@@ -534,7 +559,7 @@ async fn execute_with_timeout(call: &McpToolCall, timeout: Duration) -> Result<S
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
 			if success {
-				Ok(final_output)
+				Ok(ShellOutcome::text(final_output))
 			} else {
 				// No command echo: the model just wrote the command and results are
 				// matched by tool id — repeating it back is pure token cost.
@@ -556,7 +581,7 @@ mod tests {
 			"shell",
 			serde_json::json!({ "command": "cat src/main.rs" }),
 		);
-		let err = execute_shell_command(&call)
+		let err = execute_shell_command(&call, None)
 			.await
 			.expect_err("misuse must be rejected");
 		assert!(err.to_string().contains("view"), "err: {err}");
@@ -573,10 +598,16 @@ mod tests {
 		};
 		let call =
 			crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
-		let err = execute_with_timeout(&call, Duration::from_millis(200))
+		let err = execute_with_timeout(&call, Duration::from_millis(200), None)
 			.await
-			.expect_err("must time out");
-		assert!(err.to_string().contains("timed out"), "err: {err}");
+			.expect_err("must stop a command that overruns the foreground cap");
+		// A foreground overrun now points the model at background execution
+		// instead of just reporting a timeout.
+		let msg = err.to_string();
+		assert!(
+			msg.contains("background=true") && msg.contains("ran longer"),
+			"err: {msg}"
+		);
 	}
 
 	#[tokio::test]
@@ -586,7 +617,7 @@ mod tests {
 			serde_json::json!({ "command": "echo hi" }),
 		);
 		call.workdir = std::path::PathBuf::from("ssh://user@host:22/tmp");
-		let err = execute_shell_command(&call)
+		let err = execute_shell_command(&call, None)
 			.await
 			.expect_err("remote workdir must be rejected");
 		assert!(err.to_string().contains("local machine"), "err: {err}");
