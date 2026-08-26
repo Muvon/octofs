@@ -75,3 +75,44 @@ async fn detached_job_captures_output_status_and_fires_completion() {
 fn reading_an_unknown_job_is_none() {
 	assert!(read("no-such-job").is_none());
 }
+
+#[tokio::test]
+async fn refuses_a_second_job_in_the_same_working_dir() {
+	// A dir unique to this test so it never collides with other tests' jobs.
+	let dir = std::env::temp_dir().join(format!("octofs-guard-{}", std::process::id()));
+	std::fs::create_dir_all(&dir).unwrap();
+
+	let first = spawn("sleep 2", &dir, |_: String| {}).expect("first job spawns");
+	let refused = spawn("echo second", &dir, |_: String| {});
+	assert!(
+		refused.is_err(),
+		"a second job in the same dir is refused while the first runs"
+	);
+	assert!(
+		refused
+			.unwrap_err()
+			.to_string()
+			.contains(&resource_uri(&first.id)),
+		"the rejection points at the running job's resource"
+	);
+
+	// A different directory is unaffected by the exclusion.
+	let other = dir.join("nested");
+	std::fs::create_dir_all(&other).unwrap();
+	assert!(
+		spawn("true", &other, |_: String| {}).is_ok(),
+		"a job in a different dir is allowed while the first runs"
+	);
+
+	// Once the first exits, its directory frees up again.
+	for _ in 0..250 {
+		if matches!(read(&first.id).unwrap().status, JobStatus::Exited(_)) {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	assert!(
+		spawn("true", &dir, |_: String| {}).is_ok(),
+		"the dir accepts a new job after the first finishes"
+	);
+}

@@ -49,6 +49,7 @@ pub struct Job {
 	pub id: String,
 	pub command: String,
 	pub log_path: PathBuf,
+	pub working_dir: PathBuf,
 	pub status: Arc<Mutex<JobStatus>>,
 	pub pid: u32,
 	pub started_unix: u64,
@@ -104,6 +105,31 @@ where
 {
 	use tokio::process::Command as TokioCommand;
 
+	// Serialize background jobs by working directory. Two builds writing the same
+	// tree corrupt each other's object archives, so identical commands come back
+	// with mixed pass/fail — the exact trap a freed-up loop invites when a model
+	// fires several builds at once. Reject the second here and point it at the
+	// running job's resource so it waits for that completion event instead of
+	// launching a competitor.
+	// ponytail: per-cwd exclusion; add a write-intent flag only if concurrent
+	// read-only background jobs in one dir ever become a real need.
+	if let Some(running) = jobs()
+		.lock()
+		.expect("jobs registry mutex poisoned")
+		.values()
+		.find(|j| j.working_dir.as_path() == working_dir && j.status() == JobStatus::Running)
+	{
+		return Err(anyhow!(
+			"A background job is already running in this directory: {} (`{}`). \
+			 Wait for its completion — you will get a resources/updated notification \
+			 with its output — before starting another job here. Do not launch \
+			 overlapping builds; concurrent writers to the same build tree corrupt \
+			 each other's artifacts.",
+			resource_uri(&running.id),
+			running.command
+		));
+	}
+
 	let dir = jobs_dir();
 	std::fs::create_dir_all(&dir)
 		.map_err(|e| anyhow!("Failed to create background job dir: {}", e))?;
@@ -150,6 +176,7 @@ where
 		id: id.clone(),
 		command: command.to_string(),
 		log_path: log_path.clone(),
+		working_dir: working_dir.to_path_buf(),
 		status: status.clone(),
 		pid,
 		started_unix: now_unix(),
