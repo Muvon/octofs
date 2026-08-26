@@ -299,6 +299,10 @@ impl OctofsServer {
 					.await;
 			});
 		});
+		// The resource link carries the command as its name, so a client can
+		// describe the job ("make reldebug … still running") without re-deriving
+		// it — e.g. when preserving pending jobs across a context compaction.
+		let job_label: String = params.command.trim().chars().take(80).collect();
 		let exec = request_ctx::with_request_context(async move {
 			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
@@ -308,10 +312,12 @@ impl OctofsServer {
 				// A ResourceLink is the protocol-native "watch this" signal: the
 				// client follows it generically, with no octofs-specific
 				// knowledge, so shell can be served by any MCP server.
-				content.push(ContentBlock::resource_link(Resource::new(
-					uri,
-					"background shell job",
-				)));
+				let name = if job_label.is_empty() {
+					"background shell job".to_string()
+				} else {
+					format!("shell: {job_label}")
+				};
+				content.push(ContentBlock::resource_link(Resource::new(uri, name)));
 			}
 			Ok::<_, String>(CallToolResult::success(content))
 		});
