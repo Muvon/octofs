@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.1] - 2026-08-26
+
+### 📋 Release Summary
+
+This release updates project dependencies and improves SSH key handling (dd4c3cd5).
+
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.11.0] - 2026-08-26
 
 ### 📋 Release Summary
