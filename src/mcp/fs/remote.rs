@@ -234,6 +234,7 @@ mod sftp {
 	use russh::keys::agent::client::AgentClient;
 	use russh::keys::ssh_key;
 	use russh::keys::PrivateKeyWithHashAlg;
+	use russh::keys::PublicKeyOrCertificate;
 	use russh_sftp::client::SftpSession;
 	use tokio::sync::Mutex;
 
@@ -253,15 +254,18 @@ mod sftp {
 
 		async fn check_server_key(
 			&mut self,
-			server_public_key: &ssh_key::PublicKey,
+			server_public_key: &PublicKeyOrCertificate,
 		) -> Result<bool, Self::Error> {
-			match russh::keys::check_known_hosts(&self.host, self.port, server_public_key) {
+			// A certificate is trusted via its certified key: russh verifies the
+			// certificate signature before this call, and known_hosts stores plain keys.
+			let server_key = server_public_key.public_key();
+			match russh::keys::check_known_hosts(&self.host, self.port, &server_key) {
 				Ok(true) => Ok(true),
 				Ok(false) => {
 					russh::keys::known_hosts::learn_known_hosts(
 						&self.host,
 						self.port,
-						server_public_key,
+					&server_key,
 					)
 					.map_err(|e| {
 						anyhow!(
