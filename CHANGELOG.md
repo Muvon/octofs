@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0] - 2026-08-26
+
+### 📋 Release Summary
+
+This release introduces background shell job execution and prevents concurrent jobs within the same directory (e4762484, 9eb1fd79). Performance and reliability were improved through optimized log reading, refined capabilities, and enhanced cross-platform compatibility for background tasks (407eca51, 94113244, 4e3178b4).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: prevent concurrent jobs in same directory `9eb1fd79`
+- **mcp**: implement background shell job execution `e4762484`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: update background tests for windows compatibility `94113244`
+- **mcp**: update background shell job labels `4e3178b4`
+- **mcp**: optimize job log reading and refine capabilities `407eca51`
+
 ## [0.10.5] - 2026-08-24
 
 ### 📋 Release Summary
