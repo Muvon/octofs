@@ -62,32 +62,47 @@ impl ClientHandler for RecordingClient {
 
 /// Connect a client (modern discover lifecycle, as octomind connects) to a
 /// fresh server instance over an in-memory duplex transport.
-async fn connect() -> (RunningService<RoleClient, RecordingClient>, Arc<Mutex<Vec<String>>>) {
+///
+/// The returned JoinHandle keeps the server task — and its RunningService —
+/// alive for the test's lifetime: dropping a RunningService cancels the
+/// connection, and `serve()` blocks until the handshake completes, so it must
+/// run concurrently with the client.
+async fn connect() -> (
+	RunningService<RoleClient, RecordingClient>,
+	tokio::task::JoinHandle<()>,
+	Arc<Mutex<Vec<String>>>,
+) {
 	let (client_io, server_io) = tokio::io::duplex(4096);
-	OctofsServer::new()
-		.serve(server_io)
-		.await
-		.expect("serve server");
+	let server_task = tokio::spawn(async move {
+		let server = OctofsServer::new()
+			.serve(server_io)
+			.await
+			.expect("serve server");
+		server.waiting().await.expect("server connection closed");
+	});
 	let unsolicited = Arc::new(Mutex::new(Vec::new()));
-	let client = RecordingClient {
-		unsolicited: unsolicited.clone(),
-	}
-	.serve_with_lifecycle(
-		client_io,
-		ClientLifecycleMode::Auto {
-			preferred_versions: vec![ProtocolVersion::V_2026_07_28],
-			legacy_version: None,
-		},
+	let client = tokio::time::timeout(
+		Duration::from_secs(5),
+		RecordingClient {
+			unsolicited: unsolicited.clone(),
+		}
+		.serve_with_lifecycle(
+			client_io,
+			ClientLifecycleMode::Auto {
+				preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+				legacy_version: None,
+			},
+		),
 	)
 	.await
+	.expect("client handshake within 5s")
 	.expect("serve client");
-	(client, unsolicited)
+	(client, server_task, unsolicited)
 }
 
 /// Start a detached `sleep` job and return the resource link it advertises.
 async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> String {
-	let serde_json::Value::Object(arguments) =
-		json!({"command": "sleep 2", "background": true})
+	let serde_json::Value::Object(arguments) = json!({"command": "sleep 2", "background": true})
 	else {
 		unreachable!("literal object argument")
 	};
@@ -105,7 +120,7 @@ async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> Stri
 
 #[tokio::test(flavor = "multi_thread")]
 async fn job_completion_is_delivered_on_the_listen_stream() {
-	let (client, unsolicited) = connect().await;
+	let (client, _server_task, unsolicited) = connect().await;
 	let uri = start_job(&client).await;
 
 	let mut filter = SubscriptionFilter::new();
@@ -144,7 +159,7 @@ async fn job_completion_is_delivered_on_the_listen_stream() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn job_completion_falls_back_to_unsolicited_push_without_a_stream() {
-	let (client, unsolicited) = connect().await;
+	let (client, _server_task, unsolicited) = connect().await;
 	let uri = start_job(&client).await;
 
 	// No listen stream — the server must fall back to the unsolicited push
