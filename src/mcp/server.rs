@@ -726,14 +726,13 @@ pub struct ExtractLinesParams {
 pub struct ShellParams {
 	/// The shell command to execute
 	pub command: String,
-	/// Detach the command and return only its PID. Its output is discarded and
-	/// there is no completion signal, so the only way to find out what happened
-	/// is to make the command redirect to a file and then read that file — each
-	/// check costing a full round-trip. Do NOT use this for work whose result
-	/// you need: builds, test suites and installs run fine in the foreground
-	/// however long they are silent, because the call reports liveness while it
-	/// waits. Reserve `background` for processes you deliberately want to
-	/// outlive the call, such as a server you are about to make requests to.
+	/// Run the command detached as a background job: the call returns immediately
+	/// with a job id and a linked resource its stdout+stderr stream to. You are
+	/// notified automatically the moment it exits, with the exit code and output
+	/// tail — no polling, `ps`, or `sleep` needed; move on to other work or end
+	/// your turn and you will be woken with the result. Use this for anything
+	/// that can outlast the ~30s foreground cap: builds, test suites, installs,
+	/// servers.
 	#[serde(default)]
 	pub background: Option<bool>,
 }

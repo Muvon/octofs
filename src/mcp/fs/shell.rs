@@ -100,11 +100,11 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["sleep"],
-		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it in the foreground, or use background=true and check on it later.\n\n  Do not chain shorter sleeps to work around this block.",
+		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it in the foreground, or use background=true and wait to be notified of its completion.\n\n  Do not chain shorter sleeps to work around this block.",
 	),
 	(
 		&["watch", "top", "htop"],
-		"This program never exits, so the call would never return. Run the underlying command once instead; to observe a long-running process, start it with background=true and check on it later.",
+		"This program never exits, so the call would never return. Run the underlying command once instead; to observe a long-running process, start it with background=true and read its linked resource when you need the output — its completion is notified, never polled.",
 	),
 ];
 
