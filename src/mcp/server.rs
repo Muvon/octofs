@@ -133,6 +133,13 @@ use std::path::PathBuf;
 #[tool_router]
 impl OctofsServer {
 	#[tool(
+		title = "View",
+		annotations(
+			read_only_hint = true,
+			destructive_hint = false,
+			idempotent_hint = true,
+			open_world_hint = false
+		),
 		description = "Read files, view directories, and search file content. Unified read-only tool. \
 			File lines are rendered as `N:hh|content` — N is the line number, hh a 2-char content \
 			hash. Together `N:hh` is the line id that edit tools (batch_edit, extract_lines) take \
@@ -163,6 +170,13 @@ impl OctofsServer {
 	}
 
 	#[tool(
+		title = "Text Editor",
+		annotations(
+			read_only_hint = false,
+			destructive_hint = true,
+			idempotent_hint = false,
+			open_world_hint = false
+		),
 		description = "Perform text editing operations on files: create, str_replace, delete, undo_edit. \
 			For str_replace pass raw file text in old_text/new_text — real newlines and tabs, no \\n \
 			escaping, and no `N:hh|` line-id prefixes. old_text must match the file exactly and \
@@ -194,6 +208,13 @@ impl OctofsServer {
 	}
 
 	#[tool(
+		title = "Batch Edit",
+		annotations(
+			read_only_hint = false,
+			destructive_hint = true,
+			idempotent_hint = false,
+			open_world_hint = false
+		),
 		description = "Perform multiple insert/replace operations on a SINGLE file atomically. \
 			Targets are line ids (e.g. \"12:a3\") copied from view or previous edit output; each id \
 			is verified against the file before anything is applied, so a stale id fails with the \
@@ -224,7 +245,16 @@ impl OctofsServer {
 		.await
 	}
 
-	#[tool(description = "Copy lines from a source file and append them into a target file.")]
+	#[tool(
+		title = "Extract Lines",
+		annotations(
+			read_only_hint = false,
+			destructive_hint = false,
+			idempotent_hint = false,
+			open_world_hint = false
+		),
+		description = "Copy lines from a source file and append them into a target file."
+	)]
 	async fn extract_lines(
 		&self,
 		context: RequestContext<RoleServer>,
@@ -248,6 +278,13 @@ impl OctofsServer {
 	}
 
 	#[tool(
+		title = "Shell",
+		annotations(
+			read_only_hint = false,
+			destructive_hint = true,
+			idempotent_hint = false,
+			open_world_hint = true
+		),
 		description = "Execute a command in the shell — builds, tests, git, the project's own \
 			CLIs. Not a file reader: `view` reads files, lists directories, and does rg-style \
 			content search, so prefer it over cat/grep/ls/sed for inspection. Output is what a \
@@ -342,6 +379,13 @@ impl OctofsServer {
 	}
 
 	#[tool(
+		title = "Working Directory",
+		annotations(
+			read_only_hint = false,
+			destructive_hint = false,
+			idempotent_hint = true,
+			open_world_hint = false
+		),
 		description = "Change the working directory used by subsequent tool calls. \
 			Do NOT call this just to check the current directory — all tools accept \
 			both relative and absolute paths and resolve relative paths against the \
