@@ -74,7 +74,12 @@ async fn connect() -> (
 ) {
 	let (client_io, server_io) = tokio::io::duplex(4096);
 	let server_task = tokio::spawn(async move {
-		let server = OctofsServer::new()
+		// A per-test temp root: background jobs are serialized per working
+		// directory, so sibling tests sharing the session root would reject
+		// each other's `sleep` jobs. The TempDir lives inside this task, so it
+		// is cleaned up only after the connection closes.
+		let root = tempfile::tempdir().expect("temp session root");
+		let server = OctofsServer::with_root(root.path().to_path_buf())
 			.serve(server_io)
 			.await
 			.expect("serve server");
@@ -100,9 +105,12 @@ async fn connect() -> (
 	(client, server_task, unsolicited)
 }
 
-/// Start a detached `sleep` job and return the resource link it advertises.
+/// Start a detached ~2s job and return the resource link it advertises.
+/// The loop form keeps `sleep` inside a loop body — the shell guard's
+/// documented leniency — so the job command itself isn't rejected.
 async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> String {
-	let serde_json::Value::Object(arguments) = json!({"command": "sleep 2", "background": true})
+	let serde_json::Value::Object(arguments) =
+		json!({"command": "for i in 1 2; do sleep 1; done", "background": true})
 	else {
 		unreachable!("literal object argument")
 	};
@@ -115,7 +123,12 @@ async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> Stri
 			ContentBlock::ResourceLink(link) => Some(link.uri.clone()),
 			_ => None,
 		})
-		.expect("background shell advertises a resource link")
+		.unwrap_or_else(|| {
+			panic!(
+				"background shell advertises a resource link; got is_error={:?} content={:?}",
+				result.is_error, result.content
+			)
+		})
 }
 
 #[tokio::test(flavor = "multi_thread")]

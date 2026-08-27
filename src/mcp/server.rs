@@ -129,7 +129,13 @@ pub struct OctofsServer {
 impl OctofsServer {
 	/// Create a new server instance with the given session root directory.
 	pub fn new() -> Self {
-		let root = super::get_session_root_directory();
+		Self::with_root(super::get_session_root_directory())
+	}
+
+	/// Create a server instance rooted at an explicit directory. HTTP sessions
+	/// each build their own instance this way; tests use it to isolate the
+	/// per-cwd background-job guard from sibling tests.
+	pub fn with_root(root: PathBuf) -> Self {
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
 			session_applied: Arc::new(std::sync::atomic::AtomicBool::new(false)),
