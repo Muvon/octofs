@@ -64,6 +64,9 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3.27.0"
 serial_test = "3.5.0"
+# Client feature for the in-process delivery tests in `server_tests.rs`;
+# feature unification applies it to test builds only, never the shipped bin.
+rmcp = { version = "3.1.4", features = ["client"] }
 
 [profile.dev]
 opt-level = 1

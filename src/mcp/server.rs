@@ -5,10 +5,11 @@ use rmcp::{
 	model::{
 		CallToolResult, ContentBlock, Implementation, ListResourcesResult, ListToolsResult,
 		PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-		ReadResourceResult, Resource, ResourceContents, ServerCapabilities, ServerInfo,
+		ReadResourceResult, RequestId, Resource, ResourceContents, ServerCapabilities, ServerInfo,
+		SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
 	},
 	schemars,
-	service::RequestContext,
+	service::{RequestContext, SubscriptionContext, SubscriptionSink},
 	tool, tool_handler, tool_router, ErrorData, RoleServer,
 };
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,53 @@ impl SessionWorkdir {
 	}
 }
 
+/// Active `subscriptions/listen` streams opened by this session's client.
+///
+/// Sinks are registered when a client listens and removed when the stream
+/// ends (client cancellation, transport close, or graceful teardown).
+/// Background-job completion is delivered through matching sinks — the
+/// 2026-07-28 contract path — and falls back to an unsolicited push for
+/// clients that never opened a stream (see the `shell` tool's notifier).
+#[derive(Debug, Default)]
+struct SubscriptionRegistry {
+	/// The guard is never held across an `.await`: sinks are cloned out first.
+	sinks: std::sync::Mutex<Vec<SubscriptionSink>>,
+}
+
+impl SubscriptionRegistry {
+	fn register(&self, sink: SubscriptionSink) {
+		if let Ok(mut sinks) = self.sinks.lock() {
+			sinks.push(sink);
+		}
+	}
+
+	fn unregister(&self, id: &RequestId) {
+		if let Ok(mut sinks) = self.sinks.lock() {
+			sinks.retain(|sink| sink.id() != id);
+		}
+	}
+
+	/// Sinks whose accepted filter covers `uri`, cloned out so no lock is held
+	/// while sending.
+	fn sinks_for(&self, uri: &str) -> Vec<SubscriptionSink> {
+		self.sinks
+			.lock()
+			.map(|sinks| {
+				sinks
+					.iter()
+					.filter(|sink| {
+						sink.accepted()
+							.resource_subscriptions
+							.as_ref()
+							.is_some_and(|uris| uris.iter().any(|u| u == uri))
+					})
+					.cloned()
+					.collect()
+			})
+			.unwrap_or_default()
+	}
+}
+
 /// How often a running foreground `shell` command reports liveness. Well below
 /// any sane client idle timeout so a single missed beat cannot cancel the call.
 const SHELL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
@@ -73,6 +121,9 @@ pub struct OctofsServer {
 	/// capabilities. Applied once on the first tool call so a later `workdir`
 	/// tool change is not overwritten by subsequent requests.
 	session_applied: Arc<std::sync::atomic::AtomicBool>,
+	/// Listen streams opened by this client, for contract-clean delivery of
+	/// background-job completion notifications.
+	subscriptions: Arc<SubscriptionRegistry>,
 }
 
 impl OctofsServer {
@@ -82,6 +133,7 @@ impl OctofsServer {
 		Self {
 			workdir: Arc::new(SessionWorkdir::new(root)),
 			session_applied: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+			subscriptions: Arc::new(SubscriptionRegistry::default()),
 		}
 	}
 
@@ -324,11 +376,25 @@ impl OctofsServer {
 		let peer = context.peer.clone();
 		// A background job outlives this call; when it exits, emit
 		// `resources/updated` for its resource URI so the client can read the
-		// output. The peer is the only client-facing handle — captured here and
-		// hidden behind an opaque callback so the fs layer stays protocol-free.
+		// output. Two delivery paths, by what the client set up: 2026-07-28
+		// clients that opened a `subscriptions/listen` stream get the
+		// notification on it (tagged with their subscription id by the sink);
+		// everyone else gets the unsolicited push the pre-2026-07-28 spec
+		// allowed. The peer and registry handles are captured here and hidden
+		// behind an opaque callback so the fs layer stays protocol-free.
 		let notify_peer = context.peer.clone();
+		let subscriptions = self.subscriptions.clone();
 		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
 			tokio::spawn(async move {
+				let sinks = subscriptions.sinks_for(&uri);
+				if !sinks.is_empty() {
+					for sink in sinks {
+						if let Err(error) = sink.notify_resource_updated(uri.clone()).await {
+							debug!("subscription delivery for {uri} failed: {error}");
+						}
+					}
+					return;
+				}
 				let _ = notify_peer
 					.notify_resource_updated(rmcp::model::ResourceUpdatedNotificationParam::new(
 						uri,
@@ -487,15 +553,16 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
 		ServerInfo::new(
-			// Resources (read/list) are advertised for the background-job handles.
-			// We deliberately do NOT advertise `subscribe`: this server delivers
-			// job completion by pushing an unsolicited `resources/updated` to the
-			// client that started the job, so there is no subscribe handshake to
-			// implement — advertising one we don't answer would be a lie the SDK
-			// would then reject with method-not-found.
+			// Resources (read/list) are advertised for the background-job
+			// handles. `subscribe` is advertised because resource updates are
+			// deliverable both ways: on a `subscriptions/listen` stream (the
+			// 2026-07-28 contract path, see `listen` below) and as the
+			// unsolicited push legacy clients expect (the `shell` notifier's
+			// fallback path).
 			ServerCapabilities::builder()
 				.enable_tools()
 				.enable_resources()
+				.enable_resources_subscribe()
 				.build(),
 		)
 		.with_server_info(Implementation::from_build_env())
@@ -583,11 +650,62 @@ impl ServerHandler for OctofsServer {
 		Ok(ReadResourceResult::new(vec![ResourceContents::text(body, uri)]).into())
 	}
 
+	// 2026-07-28 change notifications are opt-in: the client opens a
+	// `subscriptions/listen` stream filtered to what it wants, and the SDK
+	// acknowledges the accepted subset before `listen` runs. Accept whatever
+	// the client asked for — the SDK intersects it with the capabilities
+	// advertised in `get_info` (resources.subscribe gates URI subscriptions).
+	fn accepted_subscription_filter(
+		&self,
+		requested: &SubscriptionFilter,
+	) -> Option<SubscriptionFilter> {
+		Some(requested.clone())
+	}
+
+	// Keep the sink registered for the life of the stream so background-job
+	// completion can be delivered on it. `cancelled` resolves on client
+	// cancellation, transport close, or graceful teardown — however the
+	// stream ends, the sink is removed. A sink whose stream died between
+	// registration and delivery self-reports as closed on send.
+	async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+		let sink = context.sink().clone();
+		let id = sink.id().clone();
+		self.subscriptions.register(sink);
+		context.cancelled().await;
+		self.subscriptions.unregister(&id);
+		Ok(())
+	}
+
+	// Legacy (pre-2026-07-28) clients that see `subscribe` advertised may run
+	// the `resources/subscribe` handshake. Their delivery is the unsolicited
+	// push the server already sends on job exit (the notifier's fallback
+	// path), so the handshake itself is a no-op — refusing it would make the
+	// capability we advertise a lie.
+	async fn subscribe(
+		&self,
+		_request: SubscribeRequestParams,
+		_context: RequestContext<RoleServer>,
+	) -> Result<(), ErrorData> {
+		Ok(())
+	}
+
+	async fn unsubscribe(
+		&self,
+		_request: UnsubscribeRequestParams,
+		_context: RequestContext<RoleServer>,
+	) -> Result<(), ErrorData> {
+		Ok(())
+	}
+
 	// The default `initialize` (legacy clients) and `discover` (2026-07-28
 	// clients) implementations handle version negotiation; the session
 	// workdir from client capabilities is applied per-request in
 	// `ensure_session_workdir`, which covers both eras.
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod server_tests;
 
 /// Drain this request's hints and append them to the tool result.
 /// Called after tool execution (inside the request scope) to surface guidance to the LLM.
