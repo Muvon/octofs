@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.12.0] - 2026-08-28
+
+### 📋 Release Summary
+
+This release adds support for configuring a custom root directory and introduces resource subscription support (2b30b709, cad963cc). Tool metadata, annotations, and shell background-execution guidance were refined, alongside dependency and test updates (da176d6a, ea854bed, b138a077, fd119bbc).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: add custom root directory to server `2b30b709`
+- **mcp**: implement resource subscription support `cad963cc`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: rework server connection in tests `fd119bbc`
+- **mcp**: update tool metadata and annotations `da176d6a`
+- **mcp**: update shell background execution guidance `ea854bed`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.11.1] - 2026-08-26
 
 ### 📋 Release Summary
