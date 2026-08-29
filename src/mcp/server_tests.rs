@@ -40,6 +40,7 @@ use super::OctofsServer;
 #[derive(Clone, Debug)]
 struct RecordingClient {
 	unsolicited: Arc<Mutex<Vec<String>>>,
+	protocol_version: ProtocolVersion,
 }
 
 impl ClientHandler for RecordingClient {
@@ -48,7 +49,7 @@ impl ClientHandler for RecordingClient {
 			ClientCapabilities::default(),
 			Implementation::new("octofs-test-client", "0.0.0"),
 		)
-		.with_protocol_version(ProtocolVersion::V_2026_07_28)
+		.with_protocol_version(self.protocol_version.clone())
 	}
 
 	async fn on_resource_updated(
@@ -60,14 +61,17 @@ impl ClientHandler for RecordingClient {
 	}
 }
 
-/// Connect a client (modern discover lifecycle, as octomind connects) to a
-/// fresh server instance over an in-memory duplex transport.
+/// Connect a client with the requested protocol lifecycle to a fresh server
+/// instance over an in-memory duplex transport.
 ///
 /// The returned JoinHandle keeps the server task — and its RunningService —
 /// alive for the test's lifetime: dropping a RunningService cancels the
 /// connection, and `serve()` blocks until the handshake completes, so it must
 /// run concurrently with the client.
-async fn connect() -> (
+async fn connect_with_lifecycle(
+	protocol_version: ProtocolVersion,
+	lifecycle: ClientLifecycleMode,
+) -> (
 	RunningService<RoleClient, RecordingClient>,
 	tokio::task::JoinHandle<()>,
 	Arc<Mutex<Vec<String>>>,
@@ -90,19 +94,41 @@ async fn connect() -> (
 		Duration::from_secs(5),
 		RecordingClient {
 			unsolicited: unsolicited.clone(),
+			protocol_version,
 		}
-		.serve_with_lifecycle(
-			client_io,
-			ClientLifecycleMode::Auto {
-				preferred_versions: vec![ProtocolVersion::V_2026_07_28],
-				legacy_version: None,
-			},
-		),
+		.serve_with_lifecycle(client_io, lifecycle),
 	)
 	.await
 	.expect("client handshake within 5s")
 	.expect("serve client");
 	(client, server_task, unsolicited)
+}
+
+async fn connect() -> (
+	RunningService<RoleClient, RecordingClient>,
+	tokio::task::JoinHandle<()>,
+	Arc<Mutex<Vec<String>>>,
+) {
+	connect_with_lifecycle(
+		ProtocolVersion::V_2026_07_28,
+		ClientLifecycleMode::Auto {
+			preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+			legacy_version: None,
+		},
+	)
+	.await
+}
+
+async fn connect_legacy() -> (
+	RunningService<RoleClient, RecordingClient>,
+	tokio::task::JoinHandle<()>,
+	Arc<Mutex<Vec<String>>>,
+) {
+	connect_with_lifecycle(
+		ProtocolVersion::V_2025_11_25,
+		ClientLifecycleMode::Initialize,
+	)
+	.await
 }
 
 /// Start a ~2s job and return the resource link advertised when the test-only
@@ -251,7 +277,7 @@ async fn finished_job_is_replayed_to_a_late_listen_stream() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(deprecated)]
 async fn finished_job_is_replayed_to_a_late_legacy_subscription() {
-	let (client, _server_task, unsolicited) = connect().await;
+	let (client, _server_task, unsolicited) = connect_legacy().await;
 	let uri = start_job(&client).await;
 	wait_for_job_exit(&uri).await;
 	// Drain the original completion push first. Otherwise it could arrive after
