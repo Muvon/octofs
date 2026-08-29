@@ -451,7 +451,7 @@ the file). `append_line` positions the copy in the target: `0` = beginning,
 ### `shell` — Execute commands
 
 Commands start in the foreground and return their output normally when they
-finish within about 30 seconds:
+finish within about 10 seconds:
 
 ```json
 {"command": "cargo test"}

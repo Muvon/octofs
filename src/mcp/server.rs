@@ -350,7 +350,7 @@ impl OctofsServer {
 			removed, and runs of identical consecutive lines collapse to the line plus a \
 			repeat count. For byte-exact inspection (line endings, control bytes) pipe through \
 			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched. \
-			Every command starts in the foreground. If it is still running after ~30s, the same \
+			Every command starts in the foreground. If it is still running after ~10s, the same \
 			process automatically moves to the background and the call returns a linked job \
 			resource. CRITICAL: after a command moves to the background, \
 			do NOT poll or babysit it — no `ps`, no `kill -0`, no `sleep`, and do not re-run the \

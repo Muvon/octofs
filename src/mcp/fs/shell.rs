@@ -25,7 +25,7 @@ use std::time::Duration;
 // Anything still running at this deadline is automatically promoted to a
 // background job without killing or restarting it.
 #[cfg(not(test))]
-const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(30);
+const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const FOREGROUND_TIMEOUT: Duration = Duration::from_millis(200);
 // Track PIDs of in-flight foreground shell children.
