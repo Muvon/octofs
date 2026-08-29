@@ -99,6 +99,7 @@ fn now_unix() -> u64 {
 /// Files and metadata prepared before a shell child starts. Output is durable
 /// from byte one, so crossing the foreground deadline never loses output or
 /// requires restarting the command.
+#[derive(Debug)]
 pub(super) struct PreparedJob {
 	pub job: Job,
 	pub stdout_file: std::fs::File,
