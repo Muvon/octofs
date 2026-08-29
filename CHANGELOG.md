@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.13.0] - 2026-08-29
+
+### 📋 Release Summary
+
+This release adds automatic promotion for long-running shell commands, improving command handling for users (f7426986). Existing MCP job updates are now more reliably replayed, and foreground shell commands complete with a shorter timeout (6ea41375, 4d9bba2c). Documentation was updated for accuracy and now includes npm and `.mcpb` installation paths (cb957117).
+
+
+### ✨ New Features & Enhancements
+
+- **shell**: auto-promote long commands `f7426986`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: cover legacy subscription lifecycle `382dd051`
+- **mcp**: use platform-native bounded wait commands `7c5ddd86`
+- **shell**: use valid Windows promotion commands `c8993eb5`
+- **fs**: derive Debug for PreparedJob `48d07f4a`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: replay missed job updates `6ea41375`
+- **shell**: shorten foreground command timeout `4d9bba2c`
+
+### 📚 Documentation & Examples
+
+- **readme**: fix accuracy and add npm/.mcpb install paths `cb957117`
+
 ## [0.12.0] - 2026-08-28
 
 ### 📋 Release Summary
