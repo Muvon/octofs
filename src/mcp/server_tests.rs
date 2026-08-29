@@ -107,10 +107,15 @@ async fn connect() -> (
 
 /// Start a ~2s job and return the resource link advertised when the test-only
 /// foreground window automatically promotes it.
-/// The loop form keeps `sleep` inside a loop body — the shell guard's
-/// documented leniency — so the job command itself isn't rejected.
+/// Each platform uses its native bounded-wait command; the POSIX loop keeps
+/// `sleep` inside the shell guard's documented leniency.
 async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> String {
-	let serde_json::Value::Object(arguments) = json!({"command": "for i in 1 2; do sleep 1; done"})
+	let command = if cfg!(target_os = "windows") {
+		"ping -n 3 127.0.0.1"
+	} else {
+		"for i in 1 2; do sleep 1; done"
+	};
+	let serde_json::Value::Object(arguments) = json!({"command": command})
 	else {
 		unreachable!("literal object argument")
 	};
