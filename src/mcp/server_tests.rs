@@ -115,8 +115,7 @@ async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> Stri
 	} else {
 		"for i in 1 2; do sleep 1; done"
 	};
-	let serde_json::Value::Object(arguments) = json!({"command": command})
-	else {
+	let serde_json::Value::Object(arguments) = json!({"command": command}) else {
 		unreachable!("literal object argument")
 	};
 	let params = CallToolRequestParams::new("shell").with_arguments(arguments);
