@@ -10,11 +10,11 @@
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-green.svg)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/crates/v/octofs.svg)](https://crates.io/crates/octofs)
 
-*Standalone Rust binary that exposes filesystem tools over the Model Context Protocol. Built on `rmcp` 3.0, `tokio`, and `axum`.*
+*Standalone Rust binary that exposes filesystem tools over the Model Context Protocol. Built on `rmcp` 3.x, `tokio`, and `axum`.*
 
-[Installation](#installation) · [Quick Start](#quick-start) · [Features](#features) · [Tools Reference](#mcp-tools-reference) · [Architecture](#architecture)
+[Installation](#installation) · [Quick Start](#quick-start) · [Features](#features) · [Tools Reference](#mcp-tools-reference) · [Architecture](#architecture) · [Changelog](CHANGELOG.md)
 
-MCP Registry: [`io.github.Muvon/octofs`](https://github.com/muvon/octofs)
+MCP Registry: [`io.github.Muvon/octofs`](https://registry.modelcontextprotocol.io)
 
 </div>
 
@@ -53,7 +53,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart — but it's 
 | **Implementation** | Compiled Rust binary, no runtime | Python/Node script |
 | **Content Search** | Built-in search with context lines | String matching only |
 | **Batch Operations** | Atomic multi-edit on single file | One-at-a-time |
-| **Line Modes** | Hash-based (stable across edits) or number-based | Number-only |
+| **Line Addressing** | Composite `N:hh` ids — hash-verified at apply time; stale edits fail with relocation hints | Number-only |
 | **Transport** | STDIO + Streamable HTTP | STDIO only |
 | **Shell Integration** | Automatic foreground-to-background handoff | Limited or none |
 | **Remote Files** | Transparent SSH/SFTP on every file tool | None |
@@ -75,6 +75,25 @@ cargo install octofs
 brew install muvon/tap/octofs
 ```
 
+### npm (no Rust toolchain needed)
+
+```bash
+npx -y @muvon/octofs --version
+```
+
+The wrapper downloads the matching pre-built binary on first run. MCP config:
+
+```json
+{
+  "mcpServers": {
+    "octofs": {
+      "command": "npx",
+      "args": ["-y", "@muvon/octofs", "mcp"]
+    }
+  }
+}
+```
+
 ### Pre-built Binaries
 
 Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for your platform:
@@ -88,9 +107,11 @@ Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for yo
 | macOS (Intel) | `x86_64-apple-darwin` |
 | macOS (Apple Silicon) | `aarch64-apple-darwin` |
 
+Each release also ships `.mcpb` bundles for one-click install in clients that support MCP bundles (e.g. Claude Desktop).
+
 ### MCP Registry
 
-One-click install via the [MCP Registry](https://github.com/muvon/octofs) entry `io.github.Muvon/octofs`.
+Published to the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.Muvon/octofs`.
 
 ### From Source
 
@@ -180,7 +201,7 @@ Ask your AI assistant to:
 - **Delete** — Remove a file (recoverable via undo)
 - **Undo** — Revert last edit (up to 10 undo levels per file, in-memory)
 - **Batch Edit** — Perform multiple insert/replace operations atomically on a single file
-- **Stale-Write Protection** — Edits fail fast if the file changed on disk since it was last viewed (external-edit detection, like an IDE's "file changed on disk" guard)
+- **Stale-Write Protection** — Every edit target's `N:hh` id is verified against the file at apply time; a stale id fails with the current content and where it moved, instead of editing the wrong line
 
 ### 🔍 Code Intelligence
 
@@ -517,7 +538,7 @@ octofs/
 
 **Key design decisions:**
 
-- **rmcp SDK** — Official Rust MCP SDK (`rmcp` 3.0) for protocol handling
+- **rmcp SDK** — Official Rust MCP SDK (`rmcp` 3.x) for protocol handling
 - **Tokio** — Async runtime; all file I/O uses `tokio::fs`, never blocking `std::fs`
 - **File locking** — Per-file `tokio::sync::Mutex` prevents concurrent write conflicts
 - **Undo history** — Up to 10 snapshots per file, in-memory (lost on restart)
