@@ -350,12 +350,12 @@ impl OctofsServer {
 			removed, and runs of identical consecutive lines collapse to the line plus a \
 			repeat count. For byte-exact inspection (line endings, control bytes) pipe through \
 			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched. \
-			Foreground is for quick commands only (~30s cap). Anything longer — a build, a full \
-			test suite, a server — MUST set background=true: it returns immediately with a linked \
-			job resource and keeps running detached. CRITICAL: after launching in the background, \
+			Every command starts in the foreground. If it is still running after ~30s, the same \
+			process automatically moves to the background and the call returns a linked job \
+			resource. CRITICAL: after a command moves to the background, \
 			do NOT poll or babysit it — no `ps`, no `kill -0`, no `sleep`, and do not re-run the \
-			command. Its FULL output is delivered to you automatically as a new message the moment \
-			it exits (with the exit code and output tail). Simply move on: start the next \
+			command. Its completion is delivered to you automatically as a new message the moment \
+			it exits, with the exit code and output tail. Simply move on: start the next \
 			independent step, or if nothing else can be done until it finishes, end your turn — \
 			you will be woken with the result. Polling wastes turns and is never necessary."
 	)]
@@ -372,12 +372,10 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		// Heartbeat while a foreground command runs, so the MCP idle timeout does
-		// not cancel a call that is silent by nature (even a quick build/test can
-		// stay quiet for a few seconds). This only has to cover the foreground
-		// window: anything past the 30s cap is stopped and told to re-run in the
-		// background, where completion is delivered by a resource notification
-		// rather than a held-open call — so there is nothing to poll either way.
+		// Heartbeat while a command is inside the foreground window, so the MCP
+		// idle timeout does not cancel a call that is silent by nature. Anything
+		// still running at the boundary is returned as a background resource, so
+		// there is no held-open call or polling after promotion.
 		let progress_token = context.meta.get_progress_token();
 		let peer = context.peer.clone();
 		// A background job outlives this call; when it exits, emit
@@ -559,8 +557,8 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerInfo {
 		ServerInfo::new(
-			// Resources (read/list) are advertised for the background-job
-			// handles. `subscribe` is advertised because resource updates are
+			// Resources (read/list) advertise automatically promoted shell jobs
+			// as handles. `subscribe` is advertised because resource updates are
 			// deliverable both ways: on a `subscriptions/listen` stream (the
 			// 2026-07-28 contract path, see `listen` below) and as the
 			// unsolicited push legacy clients expect (the `shell` notifier's
@@ -604,9 +602,9 @@ impl ServerHandler for OctofsServer {
 		Ok(ListToolsResult::with_all_items(tools))
 	}
 
-	// Background shell jobs are surfaced as resources: each detached command is
+	// Background shell jobs are surfaced as resources: each promoted command is
 	// `octofs://jobs/<id>`, readable for its status and output tail. On exit the
-	// job's spawn task emits `resources/updated` for that URI (see the `shell`
+	// job's wait task emits `resources/updated` for that URI (see the `shell`
 	// handler's notifier), so a client learns a build finished without polling.
 	async fn list_resources(
 		&self,
@@ -894,15 +892,6 @@ pub struct ExtractLinesParams {
 pub struct ShellParams {
 	/// The shell command to execute
 	pub command: String,
-	/// Run the command detached as a background job: the call returns immediately
-	/// with a job id and a linked resource its stdout+stderr stream to. You are
-	/// notified automatically the moment it exits, with the exit code and output
-	/// tail — no polling, `ps`, or `sleep` needed; move on to other work or end
-	/// your turn and you will be woken with the result. Use this for anything
-	/// that can outlast the ~30s foreground cap: builds, test suites, installs,
-	/// servers.
-	#[serde(default)]
-	pub background: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]

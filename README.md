@@ -55,7 +55,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart — but it's 
 | **Batch Operations** | Atomic multi-edit on single file | One-at-a-time |
 | **Line Modes** | Hash-based (stable across edits) or number-based | Number-only |
 | **Transport** | STDIO + Streamable HTTP | STDIO only |
-| **Shell Integration** | Foreground + background process support | Limited or none |
+| **Shell Integration** | Automatic foreground-to-background handoff | Limited or none |
 | **Remote Files** | Transparent SSH/SFTP on every file tool | None |
 | **Safety** | Gitignore-aware, stale-write detection, path validation | Full filesystem access |
 
@@ -190,7 +190,7 @@ Ask your AI assistant to:
 ### 🖥️ Shell & System
 
 - **Command Execution** — Run shell commands with output capture
-- **Background Processes** — Run long commands in background, get PID for later management
+- **Background Processes** — Long commands automatically continue in background with completion notifications
 - **Working Directory** — Set/get/reset working directory context for operations
 
 ---
@@ -450,17 +450,18 @@ the file). `append_line` positions the copy in the target: `0` = beginning,
 
 ### `shell` — Execute commands
 
-**Foreground:**
+Commands start in the foreground and return their output normally when they
+finish within about 30 seconds:
+
 ```json
 {"command": "cargo test"}
 {"command": "cd foo && cargo build"}
 ```
 
-**Background:**
-```json
-{"command": "python -m http.server 8000", "background": true}
-// Returns PID; the response includes the platform-specific kill command
-```
+If a command is still running at that boundary, the same process continues in
+the background. The response returns its PID and linked output resource, and a
+completion notification arrives when it exits. There is no `background` flag
+and the command is never killed or restarted during the handoff.
 
 > On Windows, shutdown cleanup terminates only direct child processes (no Unix
 > process-group semantics); use `taskkill /PID <pid> /T` for process trees.

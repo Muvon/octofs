@@ -14,21 +14,20 @@
 
 //! Background shell jobs, surfaced as MCP resources.
 //!
-//! A long-running command (a build, a test suite) does not have to block its
-//! tool call. `background=true` detaches it, streams stdout+stderr to a per-job
-//! log file, and returns a job handle plus the resource URI `octofs://jobs/<id>`.
-//! The server exposes each job as a readable resource and, when the process
-//! exits, emits `notifications/resources/updated` for that URI. A subscribed
-//! client reads the resource to get the exit code and output tail — event-driven,
-//! no polling. This module owns the registry and the log files; it knows nothing
-//! about the MCP client. The completion signal is delivered through an opaque
-//! callback the server layer supplies (it captures the rmcp peer there), so this
-//! file stays free of any protocol/transport types.
+//! A command starts in the foreground. If it outlasts the foreground window,
+//! the same process is registered here as a background job and its tool call
+//! returns a resource URI `octofs://jobs/<id>`. The server exposes each job as a
+//! readable resource and, when the process exits, emits
+//! `notifications/resources/updated` for that URI. A subscribed client reads the
+//! resource to get the exit code and output tail — event-driven, no polling.
+//! This module owns the registry and the log files; it knows nothing about the
+//! MCP client. The completion signal is delivered through an opaque callback
+//! the server layer supplies (it captures the rmcp peer there), so this file
+//! stays free of any protocol/transport types.
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,7 +47,8 @@ pub enum JobStatus {
 pub struct Job {
 	pub id: String,
 	pub command: String,
-	pub log_path: PathBuf,
+	pub stdout_path: PathBuf,
+	pub stderr_path: PathBuf,
 	pub working_dir: PathBuf,
 	pub status: Arc<Mutex<JobStatus>>,
 	pub pid: u32,
@@ -96,23 +96,19 @@ fn now_unix() -> u64 {
 		.unwrap_or(0)
 }
 
-/// Spawn `command` detached, streaming combined output to a per-job log file.
-/// `on_complete` is invoked exactly once, with the job's resource URI, after the
-/// process exits — the server layer uses it to emit `resources/updated`.
-pub fn spawn<F>(command: &str, working_dir: &Path, on_complete: F) -> Result<Job>
-where
-	F: FnOnce(String) + Send + 'static,
-{
-	use tokio::process::Command as TokioCommand;
+/// Files and metadata prepared before a shell child starts. Output is durable
+/// from byte one, so crossing the foreground deadline never loses output or
+/// requires restarting the command.
+pub(super) struct PreparedJob {
+	pub job: Job,
+	pub stdout_file: std::fs::File,
+	pub stderr_file: std::fs::File,
+}
 
-	// Serialize background jobs by working directory. Two builds writing the same
-	// tree corrupt each other's object archives, so identical commands come back
-	// with mixed pass/fail — the exact trap a freed-up loop invites when a model
-	// fires several builds at once. Reject the second here and point it at the
-	// running job's resource so it waits for that completion event instead of
-	// launching a competitor.
-	// ponytail: per-cwd exclusion; add a write-intent flag only if concurrent
-	// read-only background jobs in one dir ever become a real need.
+/// Prepare durable output capture for a command that initially runs in the
+/// foreground. A known background job in the same directory still blocks a new
+/// shell command, preserving the build-tree corruption guard.
+pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<PreparedJob> {
 	if let Some(running) = jobs()
 		.lock()
 		.expect("jobs registry mutex poisoned")
@@ -122,7 +118,7 @@ where
 		return Err(anyhow!(
 			"A background job is already running in this directory: {} (`{}`). \
 			 Wait for its completion — you will get a resources/updated notification \
-			 with its output — before starting another job here. Do not launch \
+			 with its output — before starting another shell command here. Do not launch \
 			 overlapping builds; concurrent writers to the same build tree corrupt \
 			 each other's artifacts.",
 			resource_uri(&running.id),
@@ -131,68 +127,62 @@ where
 	}
 
 	let dir = jobs_dir();
-	std::fs::create_dir_all(&dir)
+	tokio::fs::create_dir_all(&dir)
+		.await
 		.map_err(|e| anyhow!("Failed to create background job dir: {}", e))?;
 	let id = next_id();
-	let log_path = dir.join(format!("{id}.log"));
-	let stdout_file = std::fs::File::create(&log_path)
-		.map_err(|e| anyhow!("Failed to create background job log: {}", e))?;
-	let stderr_file = stdout_file
-		.try_clone()
-		.map_err(|e| anyhow!("Failed to prepare background job log: {}", e))?;
-
-	let mut cmd = if cfg!(target_os = "windows") {
-		let mut c = TokioCommand::new("cmd");
-		c.args(["/C", command]);
-		c
-	} else {
-		let mut c = TokioCommand::new("sh");
-		c.args(["-c", command]);
-		c
+	let stdout_path = dir.join(format!("{id}.stdout.log"));
+	let stderr_path = dir.join(format!("{id}.stderr.log"));
+	let stdout_file = tokio::fs::File::create(&stdout_path)
+		.await
+		.map_err(|e| anyhow!("Failed to create shell stdout log: {}", e))?
+		.into_std()
+		.await;
+	let stderr_file = match tokio::fs::File::create(&stderr_path).await {
+		Ok(file) => file.into_std().await,
+		Err(error) => {
+			drop(stdout_file);
+			let _ = tokio::fs::remove_file(&stdout_path).await;
+			return Err(anyhow!("Failed to create shell stderr log: {}", error));
+		}
 	};
-	cmd.current_dir(working_dir)
-		.stdout(Stdio::from(stdout_file))
-		.stderr(Stdio::from(stderr_file))
-		.stdin(Stdio::null());
-	// Own process group so the whole tree is killable and isolated from the
-	// controlling terminal — same rationale as the foreground path.
-	#[cfg(unix)]
-	{
-		cmd.process_group(0);
-	}
-	for (key, value) in super::shell::NONINTERACTIVE_ENVS {
-		cmd.env(key, value);
-	}
 
-	let mut child = cmd
-		.spawn()
-		.map_err(|e| anyhow!("Failed to spawn background command: {}", e))?;
-	let pid = child
-		.id()
-		.ok_or_else(|| anyhow!("Failed to get background process ID"))?;
+	Ok(PreparedJob {
+		job: Job {
+			id,
+			command: command.to_string(),
+			stdout_path,
+			stderr_path,
+			working_dir: working_dir.to_path_buf(),
+			status: Arc::new(Mutex::new(JobStatus::Running)),
+			pid: 0,
+			started_unix: now_unix(),
+		},
+		stdout_file,
+		stderr_file,
+	})
+}
 
-	let status = Arc::new(Mutex::new(JobStatus::Running));
-	let job = Job {
-		id: id.clone(),
-		command: command.to_string(),
-		log_path: log_path.clone(),
-		working_dir: working_dir.to_path_buf(),
-		status: status.clone(),
-		pid,
-		started_unix: now_unix(),
-	};
+/// Remove capture files for a command that completed inside the foreground
+/// window or failed to spawn.
+pub(super) async fn discard(job: &Job) {
+	let _ = tokio::fs::remove_file(&job.stdout_path).await;
+	let _ = tokio::fs::remove_file(&job.stderr_path).await;
+}
+
+/// Register an already-running child as a background job and keep waiting for
+/// it. `on_complete` is invoked exactly once after exit, with the resource URI.
+pub(super) fn promote<F>(job: Job, mut child: tokio::process::Child, on_complete: F)
+where
+	F: FnOnce(String) + Send + 'static,
+{
+	let id = job.id.clone();
+	let status = job.status.clone();
+	let pid = job.pid;
 	jobs()
 		.lock()
 		.expect("jobs registry mutex poisoned")
-		.insert(id.clone(), job.clone());
-
-	// A detached job must not outlive the server: register its process group so
-	// shutdown cleanup (`kill_all_shell_children`) tears it down like any other
-	// shell child, rather than orphaning a running build with nobody to read
-	// its log. It survives its own tool call (`kill_on_drop` is not set on the
-	// spawned child) but dies with the process; unregistered once it exits on
-	// its own.
-	super::shell::register_child(pid);
+		.insert(id.clone(), job);
 
 	let uri = resource_uri(&id);
 	tokio::spawn(async move {
@@ -206,8 +196,6 @@ where
 		super::shell::unregister_child(pid);
 		on_complete(uri);
 	});
-
-	Ok(job)
 }
 
 /// A point-in-time read of a job: its status and the tail of its output.
@@ -218,18 +206,10 @@ pub struct JobView {
 	pub truncated: bool,
 }
 
-/// Read a job's current status and output tail. `None` if the id is unknown.
-pub fn read(id: &str) -> Option<JobView> {
-	let job = jobs()
-		.lock()
-		.expect("jobs registry mutex poisoned")
-		.get(id)
-		.cloned()?;
-	// Read only the tail, not the whole file: a build/test log can be hundreds
-	// of MB, and pulling it all into memory just to keep the last 30 KB would
-	// stall the request. Seek to the tail and read from there.
+fn read_tail(path: &Path) -> (Vec<u8>, bool) {
 	use std::io::{Read, Seek, SeekFrom};
-	let (tail, truncated) = match std::fs::File::open(&job.log_path) {
+
+	match std::fs::File::open(path) {
 		Ok(mut file) => {
 			let len = file.metadata().map(|m| m.len()).unwrap_or(0);
 			let truncated = len > MAX_TAIL_BYTES as u64;
@@ -241,12 +221,41 @@ pub fn read(id: &str) -> Option<JobView> {
 			(buf, truncated)
 		}
 		Err(_) => (Vec::new(), false),
+	}
+}
+
+/// Read a job's current status and output tail. `None` if the id is unknown.
+pub fn read(id: &str) -> Option<JobView> {
+	let job = jobs()
+		.lock()
+		.expect("jobs registry mutex poisoned")
+		.get(id)
+		.cloned()?;
+	// Read only the tails, not whole files: build/test logs can be hundreds of
+	// MB. Keeping stdout and stderr separate preserves the foreground response
+	// framing even after automatic promotion.
+	let (stdout, stdout_truncated) = read_tail(&job.stdout_path);
+	let (stderr, stderr_truncated) = read_tail(&job.stderr_path);
+	let stdout = String::from_utf8_lossy(&stdout);
+	let stderr = String::from_utf8_lossy(&stderr);
+	let output = if stderr.is_empty() {
+		stdout.into_owned()
+	} else if stdout.is_empty() {
+		stderr.into_owned()
+	} else {
+		format!("{stdout}\n\nError: {stderr}")
+	};
+	let output_truncated = output.len() > MAX_TAIL_BYTES;
+	let output = if output_truncated {
+		String::from_utf8_lossy(&output.as_bytes()[output.len() - MAX_TAIL_BYTES..]).into_owned()
+	} else {
+		output
 	};
 	Some(JobView {
 		command: job.command.clone(),
 		status: job.status(),
-		output: String::from_utf8_lossy(&tail).into_owned(),
-		truncated,
+		output,
+		truncated: stdout_truncated || stderr_truncated || output_truncated,
 	})
 }
 

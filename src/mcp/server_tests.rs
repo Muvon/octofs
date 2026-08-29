@@ -105,12 +105,12 @@ async fn connect() -> (
 	(client, server_task, unsolicited)
 }
 
-/// Start a detached ~2s job and return the resource link it advertises.
+/// Start a ~2s job and return the resource link advertised when the test-only
+/// foreground window automatically promotes it.
 /// The loop form keeps `sleep` inside a loop body — the shell guard's
 /// documented leniency — so the job command itself isn't rejected.
 async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> String {
-	let serde_json::Value::Object(arguments) =
-		json!({"command": "for i in 1 2; do sleep 1; done", "background": true})
+	let serde_json::Value::Object(arguments) = json!({"command": "for i in 1 2; do sleep 1; done"})
 	else {
 		unreachable!("literal object argument")
 	};
@@ -125,7 +125,7 @@ async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> Stri
 		})
 		.unwrap_or_else(|| {
 			panic!(
-				"background shell advertises a resource link; got is_error={:?} content={:?}",
+				"promoted shell advertises a resource link; got is_error={:?} content={:?}",
 				result.is_error, result.content
 			)
 		})

@@ -21,13 +21,13 @@ use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-// Foreground commands are for quick, interactive-latency work — inspection,
-// git, a fast unit test. Anything slower belongs in the background: it returns
-// immediately with a job resource and the client is notified with the output
-// when it finishes, so the model can do other work or simply wait without
-// holding a tool call open. A foreground command that crosses this cap is
-// stopped with an error that points at `background=true`.
+// Every command starts in the foreground for quick, interactive-latency work.
+// Anything still running at this deadline is automatically promoted to a
+// background job without killing or restarting it.
+#[cfg(not(test))]
 const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const FOREGROUND_TIMEOUT: Duration = Duration::from_millis(200);
 // Track PIDs of in-flight foreground shell children.
 // Each child is spawned with process_group(0) so PGID == child PID.
 // On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
@@ -100,11 +100,11 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["sleep"],
-		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it in the foreground, or use background=true and wait to be notified of its completion.\n\n  Do not chain shorter sleeps to work around this block.",
+		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it normally; long-running commands automatically move to the background and notify you when they finish.\n\n  Do not chain shorter sleeps to work around this block.",
 	),
 	(
 		&["watch", "top", "htop"],
-		"This program never exits, so the call would never return. Run the underlying command once instead; to observe a long-running process, start it with background=true and read its linked resource when you need the output — its completion is notified, never polled.",
+		"This program never exits. Run the underlying command once instead; long-running commands automatically move to the background and expose a linked resource, but a deliberately endless monitor would never deliver a completion notification.",
 	),
 ];
 
@@ -363,9 +363,9 @@ fn split_shell_segments(command: &str) -> Vec<&str> {
 pub type BackgroundNotify = Box<dyn FnOnce(String) + Send>;
 
 /// The outcome of a shell call. `resource_uri` is set only when the command was
-/// launched in the background: the server advertises it as an MCP resource link
-/// so the client can follow it, generically, with no knowledge that it came
-/// from octofs. Foreground commands carry their output inline and no resource.
+/// automatically promoted to the background: the server advertises it as an
+/// MCP resource link so the client can follow it generically. Commands that
+/// finish inside the foreground window carry their output inline.
 #[derive(Debug)]
 pub struct ShellOutcome {
 	pub text: String,
@@ -417,13 +417,6 @@ async fn execute_with_timeout(
 		bail!("{msg}");
 	}
 
-	// Extract background parameter
-	let background = call
-		.parameters
-		.get("background")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
-
 	// Get the working directory from the call context
 	let working_dir = call.workdir.clone();
 
@@ -435,28 +428,6 @@ async fn execute_with_timeout(
 			"The shell tool runs commands on the local machine only, but the working directory is remote ({}). Use view/text_editor/batch_edit/extract_lines for remote file access.",
 			working_dir.display()
 		);
-	}
-
-	// Long-running work runs detached: spawn it as a background job that streams
-	// its output to a resource and hand back the job id. The client is notified
-	// (resources/updated) when it exits — no blocked call, no polling. The
-	// command-misuse and remote-workdir guards above still apply.
-	if background {
-		let Some(notify) = on_background else {
-			bail!("background execution is only available when running under the MCP server");
-		};
-		let job = super::background::spawn(&command, &working_dir, notify)?;
-		let uri = super::background::resource_uri(&job.id);
-		return Ok(ShellOutcome {
-			text: format!(
-				"Started background job `{}` (PID {}). It runs detached; its stdout+stderr stream \
-				 to the linked resource. You will be notified when it finishes and can read the \
-				 resource for the exit code and output tail — you are not holding this call open, \
-				 so do other work or just wait. Stop it early with: kill -- -{} (whole group).",
-				job.id, job.pid, job.pid
-			),
-			resource_uri: Some(uri),
-		});
 	}
 
 	// Use tokio::process::Command for better cancellation support
@@ -491,58 +462,81 @@ async fn execute_with_timeout(
 		cmd.env(key, value);
 	}
 
-	// Foreground execution: capture output and wait for completion.
-	cmd.stdout(std::process::Stdio::piped())
-		.stderr(std::process::Stdio::piped())
+	// Capture output in durable files from byte one. A command that crosses the
+	// foreground deadline can then keep running as the exact same child while the
+	// background resource continues exposing all output produced so far.
+	let prepared = super::background::prepare(&command, &working_dir).await?;
+	let super::background::PreparedJob {
+		mut job,
+		stdout_file,
+		stderr_file,
+	} = prepared;
+	cmd.stdout(std::process::Stdio::from(stdout_file))
+		.stderr(std::process::Stdio::from(stderr_file))
 		.stdin(std::process::Stdio::null())
-		.kill_on_drop(true); // CRITICAL: Kill process when dropped
+		// Cancellation before promotion still cleans up the direct child. The
+		// timeout path moves `child`, so it does not trigger this guard.
+		.kill_on_drop(true);
 
 	// Spawn the process
-	let child = cmd
-		.spawn()
-		.map_err(|e| anyhow!("Failed to spawn command: {}", e))?;
+	let mut child = match cmd.spawn() {
+		Ok(child) => child,
+		Err(error) => {
+			drop(cmd);
+			super::background::discard(&job).await;
+			return Err(anyhow!("Failed to spawn command: {}", error));
+		}
+	};
 
 	// Track the child's PID so kill_all_shell_children() can nuke its
 	// entire process group (including grandchildren) on shutdown.
-	let child_pid = child.id();
-	if let Some(pid) = child_pid {
-		register_child(pid);
-	}
+	let Some(child_pid) = child.id() else {
+		drop(child);
+		super::background::discard(&job).await;
+		bail!("Failed to get shell process ID");
+	};
+	job.pid = child_pid;
+	register_child(child_pid);
 
-	// Foreground execution: wait for completion and return output.
-	// On timeout the dropped future's kill_on_drop kills the direct child;
-	// nuke the whole process group so grandchildren die too.
-	// ponytail: partial output is discarded on timeout; stream-capture if it ever matters
-	let result = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+	// Wait normally until the foreground deadline. If it expires, transfer the
+	// still-running child into the background registry; dropping the timed wait
+	// does not drop, kill, or restart the child.
+	let result = match tokio::time::timeout(timeout, child.wait()).await {
 		Ok(result) => result,
 		Err(_) => {
-			#[cfg(unix)]
-			if let Some(pid) = child_pid {
-				// SAFETY: kill is always safe with valid arguments.
-				// Negative pgid targets the entire process group.
-				unsafe {
-					libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
-				}
-			}
-			if let Some(pid) = child_pid {
-				unregister_child(pid);
-			}
-			bail!(
-				"Command ran longer than {}s in the foreground and was stopped. Long-running work — builds, test suites, servers — must use background=true: it returns immediately with a job resource, keeps running detached, and notifies you with its output when it finishes. Re-run this command with background=true.",
-				timeout.as_secs()
-			);
+			let job_id = job.id.clone();
+			let job_pid = job.pid;
+			let uri = super::background::resource_uri(&job_id);
+			let notify = on_background.unwrap_or_else(|| Box::new(|_: String| {}));
+			super::background::promote(job, child, notify);
+			return Ok(ShellOutcome {
+				text: format!(
+					"Command exceeded the foreground wait limit and was automatically moved to \
+					 background job `{}` (PID {}). The same process is still running; its \
+					 stdout+stderr continue streaming to the linked resource. You will be \
+					 notified when it finishes and can read the resource for the exit code and \
+					 output tail. Stop it early with: kill -- -{} (whole group).",
+					job_id, job_pid, job_pid
+				),
+				resource_uri: Some(uri),
+			});
 		}
 	};
 
 	// Child finished — remove from tracker before processing result.
-	if let Some(pid) = child_pid {
-		unregister_child(pid);
-	}
+	drop(child);
+	unregister_child(child_pid);
+
+	let stdout = tokio::fs::read(&job.stdout_path).await;
+	let stderr = tokio::fs::read(&job.stderr_path).await;
+	super::background::discard(&job).await;
 
 	match result.map_err(|e| anyhow!("Command execution failed: {}", e)) {
-		Ok(output) => {
-			let stdout = clean_terminal_noise(&String::from_utf8_lossy(&output.stdout));
-			let stderr = clean_terminal_noise(&String::from_utf8_lossy(&output.stderr));
+		Ok(status) => {
+			let stdout = stdout.map_err(|e| anyhow!("Failed to read command stdout: {}", e))?;
+			let stderr = stderr.map_err(|e| anyhow!("Failed to read command stderr: {}", e))?;
+			let stdout = clean_terminal_noise(&String::from_utf8_lossy(&stdout));
+			let stderr = clean_terminal_noise(&String::from_utf8_lossy(&stderr));
 
 			// Format the output more clearly with error handling
 			let final_output = if stderr.is_empty() {
@@ -554,8 +548,8 @@ async fn execute_with_timeout(
 			};
 
 			// Add detailed execution results including status code
-			let status_code = output.status.code().unwrap_or(-1);
-			let success = output.status.success();
+			let status_code = status.code().unwrap_or(-1);
+			let success = status.success();
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
 			if success {
@@ -588,25 +582,63 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_foreground_timeout_kills_command() {
-		// cmd.exe can't run a POSIX loop — it errors instantly and the test
-		// never reaches the timeout; `ping -n` is the batch idiom for hanging.
+	async fn test_quick_command_keeps_foreground_response() {
 		let command = if cfg!(target_os = "windows") {
-			"ping -n 60 127.0.0.1"
+			"echo stdout & echo stderr 1>&2"
 		} else {
-			"while true; do sleep 1; done"
+			"printf stdout; printf stderr 1>&2"
 		};
-		let call =
+		let temp = tempfile::tempdir().expect("temp workdir");
+		let mut call =
 			crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
-		let err = execute_with_timeout(&call, Duration::from_millis(200), None)
+		call.workdir = temp.path().to_path_buf();
+		let outcome = execute_with_timeout(&call, Duration::from_secs(5), None)
 			.await
-			.expect_err("must stop a command that overruns the foreground cap");
-		// A foreground overrun now points the model at background execution
-		// instead of just reporting a timeout.
-		let msg = err.to_string();
+			.expect("quick command succeeds");
+		assert!(outcome.resource_uri.is_none(), "quick command stays inline");
+		assert_eq!(outcome.text, "stdout\n\nError: stderr");
+	}
+
+	#[tokio::test]
+	async fn test_foreground_timeout_promotes_same_command() {
+		let command = if cfg!(target_os = "windows") {
+			"echo started & ping -n 2 127.0.0.1 >NUL & echo finished"
+		} else {
+			"for i in 1 2; do echo tick-$i; sleep 1; done"
+		};
+		let temp = tempfile::tempdir().expect("temp workdir");
+		let mut call =
+			crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+		call.workdir = temp.path().to_path_buf();
+		let outcome = execute_with_timeout(&call, Duration::from_millis(100), None)
+			.await
+			.expect("an overrun must be promoted, not killed");
 		assert!(
-			msg.contains("background=true") && msg.contains("ran longer"),
-			"err: {msg}"
+			outcome.text.contains("automatically moved") && outcome.text.contains("same process"),
+			"outcome: {}",
+			outcome.text
+		);
+		let uri = outcome.resource_uri.expect("promoted job resource");
+		let id = super::super::background::job_id_from_uri(&uri).expect("job id");
+		let mut finished = None;
+		for _ in 0..250 {
+			let view = super::super::background::read(id).expect("promoted job is registered");
+			if matches!(view.status, super::super::background::JobStatus::Exited(0)) {
+				finished = Some(view);
+				break;
+			}
+			tokio::time::sleep(Duration::from_millis(20)).await;
+		}
+		let finished = finished.expect("the original child must finish");
+		assert!(
+			finished.output.contains("started") || finished.output.contains("tick-1"),
+			"output from before promotion is preserved: {:?}",
+			finished.output
+		);
+		assert!(
+			finished.output.contains("finished") || finished.output.contains("tick-2"),
+			"output after promotion is preserved: {:?}",
+			finished.output
 		);
 	}
 
