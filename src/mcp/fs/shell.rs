@@ -602,7 +602,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_foreground_timeout_promotes_same_command() {
 		let command = if cfg!(target_os = "windows") {
-			"echo started & ping -n 2 127.0.0.1 >NUL & echo finished"
+			"echo started & ping -n 2 127.0.0.1 & echo finished"
 		} else {
 			"for i in 1 2; do echo tick-$i; sleep 1; done"
 		};
