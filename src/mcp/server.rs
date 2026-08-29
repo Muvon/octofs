@@ -1,3 +1,17 @@
+// Copyright 2026 Muvon Un Limited
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::sync::{Arc, RwLock};
 
 use rmcp::{
@@ -9,11 +23,11 @@ use rmcp::{
 		SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
 	},
 	schemars,
-	service::{RequestContext, SubscriptionContext, SubscriptionSink},
+	service::{Peer, RequestContext, SubscriptionContext, SubscriptionSink},
 	tool, tool_handler, tool_router, ErrorData, RoleServer,
 };
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::fs;
 use super::request_ctx;
@@ -105,6 +119,41 @@ impl SubscriptionRegistry {
 					.collect()
 			})
 			.unwrap_or_default()
+	}
+}
+
+fn background_job_finished(uri: &str) -> bool {
+	fs::background::job_id_from_uri(uri)
+		.and_then(fs::background::status)
+		.is_some_and(|status| matches!(status, fs::background::JobStatus::Exited(_)))
+}
+
+/// Deliver a completion to every matching live subscription. Failed sinks are
+/// removed immediately so they cannot suppress the legacy peer fallback.
+async fn notify_subscriptions(subscriptions: &SubscriptionRegistry, uri: &str) -> bool {
+	let mut delivered = false;
+	for sink in subscriptions.sinks_for(uri) {
+		let id = sink.id().clone();
+		match sink.notify_resource_updated(uri).await {
+			Ok(()) => delivered = true,
+			Err(error) => {
+				debug!("subscription delivery for {uri} failed: {error}");
+				subscriptions.unregister(&id);
+			}
+		}
+	}
+	delivered
+}
+
+async fn notify_peer_resource_updated(peer: &Peer<RoleServer>, uri: &str) {
+	if let Err(error) = peer
+		.notify_resource_updated(rmcp::model::ResourceUpdatedNotificationParam::new(uri))
+		.await
+	{
+		warn!(
+			"background job notification for {uri} could not be delivered: {error}; \
+			 completion remains available through the job resource"
+		);
 	}
 }
 
@@ -386,24 +435,13 @@ impl OctofsServer {
 		// everyone else gets the unsolicited push the pre-2026-07-28 spec
 		// allowed. The peer and registry handles are captured here and hidden
 		// behind an opaque callback so the fs layer stays protocol-free.
-		let notify_peer = context.peer.clone();
+		let completion_peer = context.peer.clone();
 		let subscriptions = self.subscriptions.clone();
 		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
 			tokio::spawn(async move {
-				let sinks = subscriptions.sinks_for(&uri);
-				if !sinks.is_empty() {
-					for sink in sinks {
-						if let Err(error) = sink.notify_resource_updated(uri.clone()).await {
-							debug!("subscription delivery for {uri} failed: {error}");
-						}
-					}
-					return;
+				if !notify_subscriptions(&subscriptions, &uri).await {
+					notify_peer_resource_updated(&completion_peer, &uri).await;
 				}
-				let _ = notify_peer
-					.notify_resource_updated(rmcp::model::ResourceUpdatedNotificationParam::new(
-						uri,
-					))
-					.await;
 			});
 		});
 		// The resource link carries the command as its name, so a client can
@@ -674,22 +712,40 @@ impl ServerHandler for OctofsServer {
 	async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
 		let sink = context.sink().clone();
 		let id = sink.id().clone();
-		self.subscriptions.register(sink);
+		let uris = sink
+			.accepted()
+			.resource_subscriptions
+			.clone()
+			.unwrap_or_default();
+		self.subscriptions.register(sink.clone());
+
+		// Registration happens before this check. If the job exits concurrently,
+		// either its completion path sees this sink or this replay sees the exited
+		// state (possibly both, which is safe for a change notification).
+		for uri in uris.into_iter().filter(|uri| background_job_finished(uri)) {
+			if let Err(error) = sink.notify_resource_updated(uri.clone()).await {
+				debug!("late subscription replay for {uri} failed: {error}");
+				self.subscriptions.unregister(&id);
+				notify_peer_resource_updated(&context.request_context().peer, &uri).await;
+			}
+		}
 		context.cancelled().await;
 		self.subscriptions.unregister(&id);
 		Ok(())
 	}
 
 	// Legacy (pre-2026-07-28) clients that see `subscribe` advertised may run
-	// the `resources/subscribe` handshake. Their delivery is the unsolicited
-	// push the server already sends on job exit (the notifier's fallback
-	// path), so the handshake itself is a no-op — refusing it would make the
-	// capability we advertise a lie.
+	// the `resources/subscribe` handshake. Normal delivery is the unsolicited
+	// push sent on job exit. If that happened before this subscription arrived,
+	// replay it now from the retained job state.
 	async fn subscribe(
 		&self,
-		_request: SubscribeRequestParams,
-		_context: RequestContext<RoleServer>,
+		request: SubscribeRequestParams,
+		context: RequestContext<RoleServer>,
 	) -> Result<(), ErrorData> {
+		if background_job_finished(&request.uri) {
+			notify_peer_resource_updated(&context.peer, &request.uri).await;
+		}
 		Ok(())
 	}
 

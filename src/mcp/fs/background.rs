@@ -199,6 +199,15 @@ where
 	});
 }
 
+/// Return the current status for a registered job without reading its logs.
+pub(crate) fn status(id: &str) -> Option<JobStatus> {
+	jobs()
+		.lock()
+		.expect("jobs registry mutex poisoned")
+		.get(id)
+		.map(Job::status)
+}
+
 /// A point-in-time read of a job: its status and the tail of its output.
 pub struct JobView {
 	pub command: String,

@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use rmcp::model::{
 	CallToolRequestParams, ClientCapabilities, ClientInfo, ContentBlock, Implementation,
-	ProtocolVersion, SubscriptionFilter,
+	ProtocolVersion, SubscribeRequestParams, SubscriptionFilter,
 };
 use rmcp::service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, RunningService};
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
@@ -135,6 +135,43 @@ async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> Stri
 		})
 }
 
+async fn wait_for_job_exit(uri: &str) {
+	let id = crate::mcp::fs::background::job_id_from_uri(uri).expect("job URI");
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+	loop {
+		if matches!(
+			crate::mcp::fs::background::status(id),
+			Some(crate::mcp::fs::background::JobStatus::Exited(_))
+		) {
+			return;
+		}
+		assert!(
+			tokio::time::Instant::now() < deadline,
+			"background job {uri} never finished"
+		);
+		tokio::time::sleep(Duration::from_millis(100)).await;
+	}
+}
+
+async fn wait_for_unsolicited(unsolicited: &Arc<Mutex<Vec<String>>>, uri: &str) {
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+	loop {
+		if unsolicited
+			.lock()
+			.await
+			.iter()
+			.any(|notified| notified == uri)
+		{
+			return;
+		}
+		assert!(
+			tokio::time::Instant::now() < deadline,
+			"unsolicited push for {uri} never arrived"
+		);
+		tokio::time::sleep(Duration::from_millis(100)).await;
+	}
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn job_completion_is_delivered_on_the_listen_stream() {
 	let (client, _server_task, unsolicited) = connect().await;
@@ -181,15 +218,50 @@ async fn job_completion_falls_back_to_unsolicited_push_without_a_stream() {
 
 	// No listen stream — the server must fall back to the unsolicited push
 	// that pre-2026-07-28 clients rely on.
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-	loop {
-		if unsolicited.lock().await.iter().any(|u| u == &uri) {
-			break;
+	wait_for_unsolicited(&unsolicited, &uri).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn finished_job_is_replayed_to_a_late_listen_stream() {
+	let (client, _server_task, _unsolicited) = connect().await;
+	let uri = start_job(&client).await;
+	wait_for_job_exit(&uri).await;
+
+	let mut filter = SubscriptionFilter::new();
+	filter.resource_subscriptions = Some(vec![uri.clone()]);
+	let mut subscription =
+		tokio::time::timeout(Duration::from_secs(5), client.peer().listen(filter))
+			.await
+			.expect("late listen establishes")
+			.expect("late listen succeeds");
+	let notification = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+		.await
+		.expect("finished job is replayed")
+		.expect("stream alive")
+		.expect("valid notification");
+	match notification {
+		rmcp::model::ServerNotification::ResourceUpdatedNotification(update) => {
+			assert_eq!(update.params.uri, uri);
 		}
-		assert!(
-			tokio::time::Instant::now() < deadline,
-			"unsolicited push for {uri} never arrived"
-		);
-		tokio::time::sleep(Duration::from_millis(100)).await;
+		other => panic!("expected a resource update, got {other:?}"),
 	}
+	subscription.cancel().await.expect("cancel subscription");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(deprecated)]
+async fn finished_job_is_replayed_to_a_late_legacy_subscription() {
+	let (client, _server_task, unsolicited) = connect().await;
+	let uri = start_job(&client).await;
+	wait_for_job_exit(&uri).await;
+	// Drain the original completion push first. Otherwise it could arrive after
+	// `clear` and make the replay assertion pass without the subscribe handler.
+	wait_for_unsolicited(&unsolicited, &uri).await;
+	unsolicited.lock().await.clear();
+
+	client
+		.subscribe(SubscribeRequestParams::new(uri.clone()))
+		.await
+		.expect("legacy subscription succeeds");
+	wait_for_unsolicited(&unsolicited, &uri).await;
 }
