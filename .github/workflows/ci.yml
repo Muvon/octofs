@@ -15,6 +15,14 @@ jobs:
       doc: false
       coverage: false
 
+
+  coverage:
+    name: Coverage Report
+    permissions:
+      contents: write # push the badge JSON to the `badges` branch
+    uses: muvon/ci-workflow/.github/workflows/rust-coverage.yml@master
+    with:
+      feature-flags: '--all-features'
   musl-build:
     name: Musl Build (x86_64 + aarch64)
     runs-on: ${{ matrix.os }}

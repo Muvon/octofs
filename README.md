@@ -5,6 +5,7 @@
 **Give your AI assistant filesystem superpowers**
 
 [![CI](https://github.com/muvon/octofs/actions/workflows/ci.yml/badge.svg)](https://github.com/muvon/octofs/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmuvon%2Foctofs%2Fbadges%2Fcoverage.json&style=flat-square)](https://github.com/muvon/octofs/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-green.svg)](https://modelcontextprotocol.io)
