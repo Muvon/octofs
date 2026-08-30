@@ -17,6 +17,7 @@ use super::*;
 
 #[test]
 fn parses_connection_and_authentication_options() {
+	let home = std::path::Path::new("/home/me");
 	let text = r#"
 Host *
   IdentityAgent ~/.ssh/agent.sock
@@ -28,7 +29,9 @@ Host dev
   ProxyJump jump
   IdentityFile ~/.ssh/dev_ed25519
 "#;
-	let config = parse_ssh_host_config(text, "dev", std::path::Path::new("/home/me"));
+	let config = parse_ssh_host_config(text, "dev", home);
+	let expected_agent = home.join(".ssh/agent.sock").to_string_lossy().into_owned();
+	let expected_identity = home.join(".ssh/dev_ed25519").to_string_lossy().into_owned();
 
 	assert_eq!(config.host_name.as_deref(), Some("192.0.2.10"));
 	assert_eq!(config.user.as_deref(), Some("box"));
@@ -37,9 +40,9 @@ Host dev
 	assert_eq!(config.proxy_jump.as_deref(), Some("jump"));
 	assert_eq!(
 		config.identity_agent.as_deref(),
-		Some("/home/me/.ssh/agent.sock")
+		Some(expected_agent.as_str())
 	);
-	assert_eq!(config.identity_files, vec!["/home/me/.ssh/dev_ed25519"]);
+	assert_eq!(config.identity_files, vec![expected_identity]);
 }
 
 #[test]
