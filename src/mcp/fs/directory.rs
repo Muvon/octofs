@@ -322,6 +322,8 @@ fn remote_child(source: &PathSource, name: &str) -> PathSource {
 			port,
 			user,
 			path,
+			user_explicit,
+			port_explicit,
 		} => {
 			let new_path = if path.ends_with('/') {
 				format!("{path}{name}")
@@ -333,6 +335,8 @@ fn remote_child(source: &PathSource, name: &str) -> PathSource {
 				port: *port,
 				user: user.clone(),
 				path: new_path,
+				user_explicit: *user_explicit,
+				port_explicit: *port_explicit,
 			}
 		}
 		_ => unreachable!("remote_child called on non-remote source"),

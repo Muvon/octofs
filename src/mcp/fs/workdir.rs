@@ -103,12 +103,19 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<WorkdirResult
 					};
 					let canonical_source = match &source {
 						PathSource::Remote {
-							host, port, user, ..
+							host,
+							port,
+							user,
+							user_explicit,
+							port_explicit,
+							..
 						} => PathSource::Remote {
 							host: host.clone(),
 							port: *port,
 							user: user.clone(),
 							path: canonical.to_string_lossy().to_string(),
+							user_explicit: *user_explicit,
+							port_explicit: *port_explicit,
 						},
 						PathSource::Local(_) => unreachable!(),
 					};

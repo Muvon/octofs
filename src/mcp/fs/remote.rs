@@ -33,6 +33,8 @@ pub enum PathSource {
 		port: u16,
 		user: String,
 		path: String,
+		user_explicit: bool,
+		port_explicit: bool,
 	},
 }
 
@@ -71,8 +73,21 @@ impl PathSource {
 				port,
 				user,
 				path,
+				user_explicit,
+				port_explicit,
 			} => {
-				format!("ssh://{user}@{host}:{port}{path}")
+				let user = user_explicit
+					.then(|| format!("{user}@"))
+					.unwrap_or_default();
+				let host = if host.contains(':') {
+					format!("[{host}]")
+				} else {
+					host.clone()
+				};
+				let port = port_explicit
+					.then(|| format!(":{port}"))
+					.unwrap_or_default();
+				format!("ssh://{user}{host}{port}{path}")
 			}
 		}
 	}
@@ -94,6 +109,8 @@ impl PathSource {
 				port,
 				user,
 				path,
+				user_explicit,
+				port_explicit,
 			} => {
 				let parent = Path::new(path).parent()?;
 				Some(PathSource::Remote {
@@ -101,6 +118,8 @@ impl PathSource {
 					port: *port,
 					user: user.clone(),
 					path: parent.to_string_lossy().to_string(),
+					user_explicit: *user_explicit,
+					port_explicit: *port_explicit,
 				})
 			}
 		}
@@ -139,11 +158,12 @@ pub fn parse_path_source(path: &str) -> PathSource {
 	};
 
 	// Split user from host part
-	let (user, host_part) = match rest.find('@') {
-		Some(idx) => (rest[..idx].to_string(), &rest[idx + 1..]),
+	let (user, host_part, user_explicit) = match rest.find('@') {
+		Some(idx) => (rest[..idx].to_string(), &rest[idx + 1..], true),
 		None => (
 			std::env::var("USER").unwrap_or_else(|_| "root".to_string()),
 			rest,
+			false,
 		),
 	};
 
@@ -154,25 +174,23 @@ pub fn parse_path_source(path: &str) -> PathSource {
 	};
 
 	// Split host from port — handle IPv6 brackets
-	let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
+	let (host, port, port_explicit) = if let Some(inner) = host_port.strip_prefix('[') {
 		match inner.find(']') {
 			Some(idx) => {
 				let addr = &inner[..idx];
-				let port = inner[idx + 1..]
-					.strip_prefix(':')
-					.and_then(|s| s.parse::<u16>().ok())
-					.unwrap_or(22);
-				(addr.to_string(), port)
+				let explicit = inner[idx + 1..].strip_prefix(':');
+				let port = explicit.and_then(|s| s.parse::<u16>().ok()).unwrap_or(22);
+				(addr.to_string(), port, explicit.is_some())
 			}
-			None => (host_port.to_string(), 22),
+			None => (host_port.to_string(), 22, false),
 		}
 	} else {
 		match host_port.rfind(':') {
 			Some(idx) => {
 				let port = host_port[idx + 1..].parse::<u16>().unwrap_or(22);
-				(host_port[..idx].to_string(), port)
+				(host_port[..idx].to_string(), port, true)
 			}
-			None => (host_port.to_string(), 22),
+			None => (host_port.to_string(), 22, false),
 		}
 	};
 
@@ -181,6 +199,8 @@ pub fn parse_path_source(path: &str) -> PathSource {
 		port,
 		user,
 		path: remote_path.to_string(),
+		user_explicit,
+		port_explicit,
 	}
 }
 
@@ -202,6 +222,8 @@ pub fn resolve_path_source(path_str: &str, workdir: &Path) -> PathSource {
 				port,
 				user,
 				path,
+				user_explicit,
+				port_explicit,
 			} => {
 				let rel = path_str.replace('\\', "/");
 				let joined = if path.ends_with('/') {
@@ -214,6 +236,8 @@ pub fn resolve_path_source(path_str: &str, workdir: &Path) -> PathSource {
 					port,
 					user,
 					path: joined,
+					user_explicit,
+					port_explicit,
 				}
 			}
 			_ => PathSource::Local(workdir.join(p)),
@@ -286,14 +310,24 @@ mod sftp {
 		}
 	}
 
-	/// The bits of `~/.ssh/config` we honor for a host: `IdentityAgent`
-	/// (e.g. the 1Password agent socket) and `IdentityFile` entries.
-	/// This is what makes octofs authenticate exactly where plain `ssh`
-	/// would, with zero octofs-specific setup.
-	#[derive(Default)]
+	/// Connection and authentication settings read from `~/.ssh/config`.
+	#[derive(Clone, Default)]
 	struct SshHostConfig {
+		host_name: Option<String>,
+		user: Option<String>,
+		port: Option<u16>,
+		proxy_jump: Option<String>,
+		proxy_command: Option<String>,
 		identity_agent: Option<String>,
 		identity_files: Vec<String>,
+	}
+
+	struct ResolvedSshTarget {
+		alias: String,
+		host: String,
+		port: u16,
+		user: String,
+		config: SshHostConfig,
 	}
 
 	fn home_dir() -> Option<std::path::PathBuf> {
@@ -341,18 +375,10 @@ mod sftp {
 		matched
 	}
 
-	/// Parse `~/.ssh/config` for `host` — the same lookup plain `ssh` does,
-	/// with OpenSSH semantics: first obtained value wins for IdentityAgent,
-	/// IdentityFile entries accumulate. `Match` blocks are not supported and
-	/// conservatively end applicability.
-	fn ssh_host_config(host: &str) -> SshHostConfig {
+	/// Parse OpenSSH config text for `host`. Scalar options use OpenSSH's
+	/// first-obtained-value rule; IdentityFile entries accumulate.
+	fn parse_ssh_host_config(text: &str, host: &str, home: &std::path::Path) -> SshHostConfig {
 		let mut cfg = SshHostConfig::default();
-		let Some(home) = home_dir() else {
-			return cfg;
-		};
-		let Ok(text) = std::fs::read_to_string(home.join(".ssh").join("config")) else {
-			return cfg;
-		};
 		// Options before the first Host line apply to every host.
 		let mut applies = true;
 		for line in text.lines() {
@@ -368,6 +394,21 @@ mod sftp {
 			match keyword.to_ascii_lowercase().as_str() {
 				"host" => applies = host_line_matches(value, host),
 				"match" => applies = false,
+				"hostname" if applies && cfg.host_name.is_none() => {
+					cfg.host_name = Some(value.to_string());
+				}
+				"user" if applies && cfg.user.is_none() => {
+					cfg.user = Some(value.to_string());
+				}
+				"port" if applies && cfg.port.is_none() => {
+					cfg.port = value.parse::<u16>().ok();
+				}
+				"proxyjump" if applies && cfg.proxy_jump.is_none() => {
+					cfg.proxy_jump = Some(value.to_string());
+				}
+				"proxycommand" if applies && cfg.proxy_command.is_none() => {
+					cfg.proxy_command = Some(value.to_string());
+				}
 				// `none` disables the agent; SSH_AUTH_SOCK means the env
 				// default, which is our fallback anyway.
 				"identityagent"
@@ -376,15 +417,105 @@ mod sftp {
 						&& !value.eq_ignore_ascii_case("none")
 						&& !value.eq_ignore_ascii_case("SSH_AUTH_SOCK") =>
 				{
-					cfg.identity_agent = Some(expand_tilde(value, &home));
+					cfg.identity_agent = Some(expand_tilde(value, home));
 				}
 				"identityfile" if applies => {
-					cfg.identity_files.push(expand_tilde(value, &home));
+					cfg.identity_files.push(expand_tilde(value, home));
 				}
 				_ => {}
 			}
 		}
 		cfg
+	}
+
+	async fn ssh_host_config(host: &str) -> SshHostConfig {
+		let Some(home) = home_dir() else {
+			return SshHostConfig::default();
+		};
+		// Let OpenSSH flatten Include, Match, token expansion, and platform-specific
+		// config locations. `-G` only prints configuration; it never connects.
+		let resolution = tokio::process::Command::new("ssh")
+			.args(["-G", "--", host])
+			.output();
+		if let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(5), resolution).await {
+			if output.status.success() {
+				if let Ok(text) = String::from_utf8(output.stdout) {
+					return parse_ssh_host_config(&text, host, &home);
+				}
+			}
+		}
+
+		// Keep native direct-host support when an OpenSSH client is unavailable.
+		let Ok(text) = tokio::fs::read_to_string(home.join(".ssh").join("config")).await else {
+			return SshHostConfig::default();
+		};
+		parse_ssh_host_config(&text, host, &home)
+	}
+
+	async fn resolve_ssh_target(
+		host: &str,
+		port: u16,
+		user: &str,
+		user_explicit: bool,
+		port_explicit: bool,
+	) -> ResolvedSshTarget {
+		let config = ssh_host_config(host).await;
+		apply_ssh_host_config(host, port, user, user_explicit, port_explicit, config)
+	}
+
+	fn apply_ssh_host_config(
+		host: &str,
+		port: u16,
+		user: &str,
+		user_explicit: bool,
+		port_explicit: bool,
+		config: SshHostConfig,
+	) -> ResolvedSshTarget {
+		ResolvedSshTarget {
+			alias: host.to_string(),
+			host: config.host_name.clone().unwrap_or_else(|| host.to_string()),
+			port: if port_explicit {
+				port
+			} else {
+				config.port.unwrap_or(port)
+			},
+			user: if user_explicit {
+				user.to_string()
+			} else {
+				config.user.clone().unwrap_or_else(|| user.to_string())
+			},
+			config,
+		}
+	}
+
+	fn parse_jump_target(value: &str) -> Result<(&str, u16, &str, bool, bool)> {
+		if value.contains(',') {
+			return Err(anyhow!(
+				"Multiple ProxyJump hops are not supported; configure a single jump host"
+			));
+		}
+		let value = value.trim();
+		let (user, host_port, user_explicit) = match value.rsplit_once('@') {
+			Some((user, host)) => (user, host, true),
+			None => ("", value, false),
+		};
+		let (host, port, port_explicit) = if let Some(inner) = host_port.strip_prefix('[') {
+			let end = inner
+				.find(']')
+				.ok_or_else(|| anyhow!("Invalid bracketed IPv6 ProxyJump host: {value}"))?;
+			let suffix = &inner[end + 1..];
+			match suffix.strip_prefix(':') {
+				Some(port) => (&inner[..end], port.parse::<u16>()?, true),
+				None if suffix.is_empty() => (&inner[..end], 22, false),
+				None => return Err(anyhow!("Invalid ProxyJump host: {value}")),
+			}
+		} else {
+			match host_port.rsplit_once(':') {
+				Some((host, port)) => (host, port.parse::<u16>()?, true),
+				None => (host_port, 22, false),
+			}
+		};
+		Ok((host, port, user, user_explicit, port_explicit))
 	}
 
 	/// SSH connection configuration for the SFTP pool.
@@ -411,6 +542,8 @@ mod sftp {
 	/// session so liveness can be checked without a network round trip.
 	struct PooledSession {
 		handle: client::Handle<SshHandler>,
+		// A target reached through ProxyJump depends on the jump transport.
+		proxy_handle: Option<client::Handle<SshHandler>>,
 		sftp: Arc<Mutex<SftpSession>>,
 	}
 
@@ -444,11 +577,21 @@ mod sftp {
 			host: &str,
 			port: u16,
 			user: &str,
+			user_explicit: bool,
+			port_explicit: bool,
 		) -> Result<Arc<Mutex<SftpSession>>> {
-			let key = format!("{user}@{host}:{port}");
+			let key = format!(
+				"{user}@{host}:{port}:user-explicit={user_explicit}:port-explicit={port_explicit}"
+			);
 			let mut sessions = self.sessions.lock().await;
 			match sessions.get(&key) {
-				Some(pooled) if !pooled.handle.is_closed() => {
+				Some(pooled)
+					if !pooled.handle.is_closed()
+						&& pooled
+							.proxy_handle
+							.as_ref()
+							.is_none_or(|handle| !handle.is_closed()) =>
+				{
 					return Ok(pooled.sftp.clone());
 				}
 				Some(_) => {
@@ -457,12 +600,14 @@ mod sftp {
 				None => {}
 			}
 
-			let (handle, session) = self.connect_sftp(host, port, user).await?;
+			let target = resolve_ssh_target(host, port, user, user_explicit, port_explicit).await;
+			let (handle, proxy_handle, session) = self.connect_sftp(&target).await?;
 			let sftp = Arc::new(Mutex::new(session));
 			sessions.insert(
 				key,
 				PooledSession {
 					handle,
+					proxy_handle,
 					sftp: sftp.clone(),
 				},
 			);
@@ -471,43 +616,52 @@ mod sftp {
 
 		async fn connect_sftp(
 			&self,
-			host: &str,
-			port: u16,
-			user: &str,
-		) -> Result<(client::Handle<SshHandler>, SftpSession)> {
+			target: &ResolvedSshTarget,
+		) -> Result<(
+			client::Handle<SshHandler>,
+			Option<client::Handle<SshHandler>>,
+			SftpSession,
+		)> {
 			// Keepalives keep idle NAT/firewall paths open and let russh detect a
 			// dead peer (the transport closes after keepalive_max missed replies,
 			// which get_or_connect turns into a reconnect). config.timeout bounds
 			// the WHOLE session setup below — TCP connect, auth (including a
-			// possibly-pending agent approval prompt), and the SFTP handshake —
-			// never idle session lifetime. Without the auth being under the
-			// timeout, an unanswered agent prompt hangs the tool call forever.
+			// possibly-pending agent approval prompt), and the SFTP handshake.
+			// Transport-route setup and target auth/SFTP setup each get this bound;
+			// idle pooled sessions do not. Without bounded auth, an unanswered agent
+			// prompt hangs the tool call forever.
 			let config = client::Config {
 				keepalive_interval: Some(KEEPALIVE_INTERVAL),
 				..Default::default()
 			};
 
-			tracing::debug!("ssh: connecting to {host}:{port}");
-			let mut handle = tokio::time::timeout(
-				self.config.timeout,
-				client::connect(
-					Arc::new(config),
-					(host, port),
-					SshHandler {
-						host: host.to_string(),
-						port,
-					},
-				),
-			)
-			.await
-			.map_err(|_| anyhow!("SSH connect to {host}:{port} timed out"))?
-			.map_err(|e| anyhow!("SSH connect to {host}:{port} failed: {e}"))?;
+			let config = Arc::new(config);
+			let (mut handle, proxy_handle) =
+				tokio::time::timeout(self.config.timeout, self.connect_transport(target, config))
+					.await
+					.map_err(|_| {
+						anyhow!(
+							"SSH transport setup for {} ({}:{}) timed out after {}s while connecting or authenticating the configured route. Check ProxyJump reachability and approve any SSH-agent prompt; --ssh-timeout raises the limit",
+							target.alias,
+							target.host,
+							target.port,
+							self.config.timeout.as_secs()
+						)
+					})??;
 			tracing::debug!("ssh: connected, starting auth");
 
 			let setup = async {
-				self.try_auth(&mut handle, host, user).await.map_err(|e| {
-					anyhow!("SSH authentication failed for {user}@{host}:{port}: {e}")
-				})?;
+				self.try_auth(&mut handle, &target.config, &target.user)
+					.await
+					.map_err(|e| {
+						anyhow!(
+							"SSH authentication failed for {}@{} ({}:{}): {e}",
+							target.user,
+							target.alias,
+							target.host,
+							target.port
+						)
+					})?;
 				tracing::debug!("ssh: auth ok, opening channel");
 
 				let channel = handle
@@ -532,8 +686,12 @@ mod sftp {
 			// from this address.
 			match tokio::time::timeout(self.config.timeout, setup).await {
 				Ok(Ok(session)) => {
-					tracing::debug!("ssh: sftp session ready for {host}:{port}");
-					Ok((handle, session))
+					tracing::debug!(
+						"ssh: sftp session ready for {}:{}",
+						target.host,
+						target.port
+					);
+					Ok((handle, proxy_handle, session))
 				}
 				Ok(Err(e)) => {
 					let _ = handle
@@ -546,11 +704,149 @@ mod sftp {
 						.disconnect(russh::Disconnect::ByApplication, "", "en")
 						.await;
 					Err(anyhow!(
-						"SSH session setup for {host}:{port} timed out after {}s. Most likely your SSH agent (e.g. 1Password) is holding the signature request until you authorize octofs: unlock the agent app, look for its authorization prompt, approve it, and retry — later calls are instant. --ssh-timeout raises the limit",
+						"SSH session setup for {}:{} timed out after {}s. Most likely your SSH agent (e.g. 1Password) is holding the signature request until you authorize octofs: unlock the agent app, look for its authorization prompt, approve it, and retry — later calls are instant. --ssh-timeout raises the limit",
+						target.host,
+						target.port,
 						self.config.timeout.as_secs()
 					))
 				}
 			}
+		}
+
+		async fn connect_transport(
+			&self,
+			target: &ResolvedSshTarget,
+			config: Arc<client::Config>,
+		) -> Result<(
+			client::Handle<SshHandler>,
+			Option<client::Handle<SshHandler>>,
+		)> {
+			if target
+				.config
+				.proxy_command
+				.as_deref()
+				.is_some_and(|value| !value.eq_ignore_ascii_case("none"))
+			{
+				return Err(anyhow!(
+					"SSH alias '{}' uses ProxyCommand, which octofs does not support; use a direct host or a single ProxyJump",
+					target.alias
+				));
+			}
+			let proxy = target
+				.config
+				.proxy_jump
+				.as_deref()
+				.filter(|value| !value.eq_ignore_ascii_case("none"));
+			let Some(proxy) = proxy else {
+				tracing::debug!("ssh: connecting to {}:{}", target.host, target.port);
+				let handle = client::connect(
+					config,
+					(target.host.as_str(), target.port),
+					SshHandler {
+						host: target.host.clone(),
+						port: target.port,
+					},
+				)
+				.await
+				.map_err(|e| {
+					anyhow!(
+						"SSH connect to {} ({}:{}) failed: {e}",
+						target.alias,
+						target.host,
+						target.port
+					)
+				})?;
+				return Ok((handle, None));
+			};
+
+			let (jump_host, jump_port, jump_user, user_explicit, port_explicit) =
+				parse_jump_target(proxy)?;
+			let default_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+			let jump_user = if user_explicit {
+				jump_user
+			} else {
+				&default_user
+			};
+			let jump = resolve_ssh_target(
+				jump_host,
+				jump_port,
+				jump_user,
+				user_explicit,
+				port_explicit,
+			)
+			.await;
+			if jump
+				.config
+				.proxy_jump
+				.as_deref()
+				.is_some_and(|value| !value.eq_ignore_ascii_case("none"))
+			{
+				return Err(anyhow!(
+					"Nested ProxyJump on jump host '{}' is not supported",
+					jump.alias
+				));
+			}
+
+			tracing::debug!(
+				"ssh: connecting to jump host {} ({}:{})",
+				jump.alias,
+				jump.host,
+				jump.port
+			);
+			let mut jump_handle = client::connect(
+				config.clone(),
+				(jump.host.as_str(), jump.port),
+				SshHandler {
+					host: jump.host.clone(),
+					port: jump.port,
+				},
+			)
+			.await
+			.map_err(|e| {
+				anyhow!(
+					"SSH connect to jump host {} ({}:{}) failed: {e}",
+					jump.alias,
+					jump.host,
+					jump.port
+				)
+			})?;
+			self.try_auth(&mut jump_handle, &jump.config, &jump.user)
+				.await
+				.map_err(|e| {
+					anyhow!(
+						"SSH authentication failed for jump host {}@{}: {e}",
+						jump.user,
+						jump.alias
+					)
+				})?;
+			let channel = jump_handle
+				.channel_open_direct_tcpip(&target.host, u32::from(target.port), "127.0.0.1", 0)
+				.await
+				.map_err(|e| {
+					anyhow!(
+						"ProxyJump '{}' could not reach {}:{}: {e}",
+						jump.alias,
+						target.host,
+						target.port
+					)
+				})?;
+			let handle = client::connect_stream(
+				config,
+				channel.into_stream(),
+				SshHandler {
+					host: target.host.clone(),
+					port: target.port,
+				},
+			)
+			.await
+			.map_err(|e| {
+				anyhow!(
+					"SSH connect to {} through ProxyJump '{}' failed: {e}",
+					target.alias,
+					jump.alias
+				)
+			})?;
+			Ok((handle, Some(jump_handle)))
 		}
 
 		/// Authenticate automatically, the way OpenSSH does. Agent first — the
@@ -565,11 +861,10 @@ mod sftp {
 		async fn try_auth(
 			&self,
 			handle: &mut client::Handle<SshHandler>,
-			host: &str,
+			host_cfg: &SshHostConfig,
 			user: &str,
 		) -> Result<()> {
 			let mut reasons: Vec<String> = Vec::new();
-			let host_cfg = ssh_host_config(host);
 
 			// 1. SSH agent
 			#[cfg(unix)]
@@ -719,17 +1014,26 @@ mod sftp {
 			.get()
 			.expect("SFTP pool not initialized — call init_sftp_pool at startup")
 	}
-	/// Extract (host, port, user, path) from a remote PathSource.
-	fn remote_parts(source: &super::PathSource) -> (&str, u16, &str, &str) {
+	/// Extract connection and path fields from a remote PathSource.
+	fn remote_parts(source: &super::PathSource) -> (&str, u16, &str, &str, bool, bool) {
 		match source {
 			super::PathSource::Remote {
 				host,
 				port,
 				user,
 				path,
-			} => (host, *port, user, path),
+				user_explicit,
+				port_explicit,
+			} => (host, *port, user, path, *user_explicit, *port_explicit),
 			_ => panic!("remote_parts called on non-remote PathSource"),
 		}
+	}
+
+	async fn remote_session(source: &super::PathSource) -> Result<Arc<Mutex<SftpSession>>> {
+		let (host, port, user, _, user_explicit, port_explicit) = remote_parts(source);
+		sftp_pool()
+			.get_or_connect(host, port, user, user_explicit, port_explicit)
+			.await
 	}
 
 	/// Remote file metadata mirroring fields we need from std::fs::Metadata.
@@ -743,9 +1047,8 @@ mod sftp {
 
 	/// Read a remote file as bytes.
 	pub async fn remote_read(source: &super::PathSource) -> Result<Vec<u8>> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.read(path)
 			.await
@@ -764,9 +1067,8 @@ mod sftp {
 	/// Write content to a remote file (creates or truncates).
 	pub async fn remote_write(source: &super::PathSource, content: &[u8]) -> Result<()> {
 		use tokio::io::AsyncWriteExt;
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let mut file = sftp
 			.create(path)
@@ -782,9 +1084,8 @@ mod sftp {
 
 	/// Check if a remote path exists.
 	pub async fn remote_exists(source: &super::PathSource) -> Result<bool> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.try_exists(path)
 			.await
@@ -793,9 +1094,8 @@ mod sftp {
 
 	/// Get metadata for a remote path.
 	pub async fn remote_metadata(source: &super::PathSource) -> Result<RemoteMetadata> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let attrs = sftp
 			.metadata(path)
@@ -811,9 +1111,8 @@ mod sftp {
 
 	/// Create directories recursively (SFTP create_dir only creates a single dir).
 	pub async fn remote_create_dir_all(source: &super::PathSource) -> Result<()> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 		let mut current = String::new();
@@ -830,9 +1129,8 @@ mod sftp {
 
 	/// Remove a remote file.
 	pub async fn remote_remove_file(source: &super::PathSource) -> Result<()> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.remove_file(path)
 			.await
@@ -843,9 +1141,8 @@ mod sftp {
 	pub async fn remote_list_dir(
 		source: &super::PathSource,
 	) -> Result<Vec<(String, RemoteMetadata)>> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let read_dir = sftp
 			.read_dir(path)
@@ -871,13 +1168,76 @@ mod sftp {
 
 	/// Canonicalize a remote path.
 	pub async fn remote_canonicalize(source: &super::PathSource) -> Result<String> {
-		let (host, port, user, path) = remote_parts(source);
-		let pool = sftp_pool();
-		let session = pool.get_or_connect(host, port, user).await?;
+		let path = source.path_str();
+		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.canonicalize(path)
 			.await
 			.map_err(|e| anyhow!("SFTP canonicalize failed for {path}: {e}"))
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+
+		#[test]
+		fn parses_connection_and_authentication_options() {
+			let text = r#"
+Host *
+  IdentityAgent ~/.ssh/agent.sock
+  Port 2200
+Host dev
+  HostName 192.0.2.10
+  User box
+  Port 2222
+  ProxyJump jump
+  IdentityFile ~/.ssh/dev_ed25519
+"#;
+			let config = parse_ssh_host_config(text, "dev", std::path::Path::new("/home/me"));
+
+			assert_eq!(config.host_name.as_deref(), Some("192.0.2.10"));
+			assert_eq!(config.user.as_deref(), Some("box"));
+			// OpenSSH uses the first value obtained, so Host * wins here.
+			assert_eq!(config.port, Some(2200));
+			assert_eq!(config.proxy_jump.as_deref(), Some("jump"));
+			assert_eq!(
+				config.identity_agent.as_deref(),
+				Some("/home/me/.ssh/agent.sock")
+			);
+			assert_eq!(config.identity_files, vec!["/home/me/.ssh/dev_ed25519"]);
+		}
+
+		#[test]
+		fn explicit_url_user_and_port_override_ssh_config() {
+			let config = SshHostConfig {
+				host_name: Some("192.0.2.10".to_string()),
+				user: Some("configured-user".to_string()),
+				port: Some(2200),
+				..Default::default()
+			};
+			let target = apply_ssh_host_config("dev", 2222, "url-user", true, true, config);
+
+			assert_eq!(target.host, "192.0.2.10");
+			assert_eq!(target.user, "url-user");
+			assert_eq!(target.port, 2222);
+		}
+
+		#[test]
+		fn parses_proxy_jump_forms() {
+			assert_eq!(
+				parse_jump_target("jump").unwrap(),
+				("jump", 22, "", false, false)
+			);
+			assert_eq!(
+				parse_jump_target("user@jump:2222").unwrap(),
+				("jump", 2222, "user", true, true)
+			);
+			assert_eq!(
+				parse_jump_target("user@[2001:db8::1]:2222").unwrap(),
+				("2001:db8::1", 2222, "user", true, true)
+			);
+			assert!(parse_jump_target("one,two").is_err());
+		}
 	}
 }
 
@@ -1063,6 +1423,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "host");
 				assert_eq!(port, 2222);
@@ -1082,6 +1443,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "example.com");
 				assert_eq!(port, 22);
@@ -1101,6 +1463,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "host");
 				assert_eq!(port, 22);
@@ -1120,6 +1483,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "host");
 				assert_eq!(port, 2222);
@@ -1140,6 +1504,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "host");
 				assert_eq!(port, 2222);
@@ -1159,6 +1524,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "::1");
 				assert_eq!(port, 2222);
@@ -1178,6 +1544,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "::1");
 				assert_eq!(port, 22);
@@ -1186,6 +1553,26 @@ mod tests {
 			}
 			_ => panic!("expected Remote"),
 		}
+	}
+
+	#[test]
+	fn test_remote_display_preserves_explicit_authority_parts() {
+		assert_eq!(
+			parse_path_source("ssh://dev/path").display(),
+			"ssh://dev/path"
+		);
+		assert_eq!(
+			parse_path_source("ssh://box@dev/path").display(),
+			"ssh://box@dev/path"
+		);
+		assert_eq!(
+			parse_path_source("ssh://box@dev:2222/path").display(),
+			"ssh://box@dev:2222/path"
+		);
+		assert_eq!(
+			parse_path_source("ssh://[2001:db8::1]/path").display(),
+			"ssh://[2001:db8::1]/path"
+		);
 	}
 
 	#[test]
@@ -1216,6 +1603,7 @@ mod tests {
 				port,
 				user,
 				path,
+				..
 			} => {
 				assert_eq!(host, "host");
 				assert_eq!(port, 2222);
