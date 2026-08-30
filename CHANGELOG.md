@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.14.0] - 2026-08-30
+
+### 📋 Release Summary
+
+This release adds support for resolving configured SSH remote targets (eecab705). Background jobs now support distinct jobs running concurrently, with improved filesystem path handling and matching validation (6882fa96, 0c43019c, a5d03072).
+
+
+### ✨ New Features & Enhancements
+
+- **ssh**: resolve configured remote targets `eecab705`
+
+### 🔧 Improvements & Optimizations
+
+- **fs**: derive SSH paths from home directory `0c43019c`
+- **fs**: split tests and fix matching `a5d03072`
+
+### 🐛 Bug Fixes & Stability
+
+- **background**: allow distinct jobs concurrently `6882fa96`
+
 ## [0.13.0] - 2026-08-29
 
 ### 📋 Release Summary
