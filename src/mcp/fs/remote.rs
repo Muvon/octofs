@@ -312,21 +312,21 @@ mod sftp {
 
 	/// Connection and authentication settings read from `~/.ssh/config`.
 	#[derive(Clone, Default)]
-	struct SshHostConfig {
-		host_name: Option<String>,
-		user: Option<String>,
-		port: Option<u16>,
-		proxy_jump: Option<String>,
-		proxy_command: Option<String>,
-		identity_agent: Option<String>,
-		identity_files: Vec<String>,
+	pub(super) struct SshHostConfig {
+		pub(super) host_name: Option<String>,
+		pub(super) user: Option<String>,
+		pub(super) port: Option<u16>,
+		pub(super) proxy_jump: Option<String>,
+		pub(super) proxy_command: Option<String>,
+		pub(super) identity_agent: Option<String>,
+		pub(super) identity_files: Vec<String>,
 	}
 
-	struct ResolvedSshTarget {
+	pub(super) struct ResolvedSshTarget {
 		alias: String,
-		host: String,
-		port: u16,
-		user: String,
+		pub(super) host: String,
+		pub(super) port: u16,
+		pub(super) user: String,
 		config: SshHostConfig,
 	}
 
@@ -377,7 +377,11 @@ mod sftp {
 
 	/// Parse OpenSSH config text for `host`. Scalar options use OpenSSH's
 	/// first-obtained-value rule; IdentityFile entries accumulate.
-	fn parse_ssh_host_config(text: &str, host: &str, home: &std::path::Path) -> SshHostConfig {
+	pub(super) fn parse_ssh_host_config(
+		text: &str,
+		host: &str,
+		home: &std::path::Path,
+	) -> SshHostConfig {
 		let mut cfg = SshHostConfig::default();
 		// Options before the first Host line apply to every host.
 		let mut applies = true;
@@ -463,7 +467,7 @@ mod sftp {
 		apply_ssh_host_config(host, port, user, user_explicit, port_explicit, config)
 	}
 
-	fn apply_ssh_host_config(
+	pub(super) fn apply_ssh_host_config(
 		host: &str,
 		port: u16,
 		user: &str,
@@ -488,7 +492,7 @@ mod sftp {
 		}
 	}
 
-	fn parse_jump_target(value: &str) -> Result<(&str, u16, &str, bool, bool)> {
+	pub(super) fn parse_jump_target(value: &str) -> Result<(&str, u16, &str, bool, bool)> {
 		if value.contains(',') {
 			return Err(anyhow!(
 				"Multiple ProxyJump hops are not supported; configure a single jump host"
@@ -1175,70 +1179,6 @@ mod sftp {
 			.await
 			.map_err(|e| anyhow!("SFTP canonicalize failed for {path}: {e}"))
 	}
-
-	#[cfg(test)]
-	mod tests {
-		use super::*;
-
-		#[test]
-		fn parses_connection_and_authentication_options() {
-			let text = r#"
-Host *
-  IdentityAgent ~/.ssh/agent.sock
-  Port 2200
-Host dev
-  HostName 192.0.2.10
-  User box
-  Port 2222
-  ProxyJump jump
-  IdentityFile ~/.ssh/dev_ed25519
-"#;
-			let config = parse_ssh_host_config(text, "dev", std::path::Path::new("/home/me"));
-
-			assert_eq!(config.host_name.as_deref(), Some("192.0.2.10"));
-			assert_eq!(config.user.as_deref(), Some("box"));
-			// OpenSSH uses the first value obtained, so Host * wins here.
-			assert_eq!(config.port, Some(2200));
-			assert_eq!(config.proxy_jump.as_deref(), Some("jump"));
-			assert_eq!(
-				config.identity_agent.as_deref(),
-				Some("/home/me/.ssh/agent.sock")
-			);
-			assert_eq!(config.identity_files, vec!["/home/me/.ssh/dev_ed25519"]);
-		}
-
-		#[test]
-		fn explicit_url_user_and_port_override_ssh_config() {
-			let config = SshHostConfig {
-				host_name: Some("192.0.2.10".to_string()),
-				user: Some("configured-user".to_string()),
-				port: Some(2200),
-				..Default::default()
-			};
-			let target = apply_ssh_host_config("dev", 2222, "url-user", true, true, config);
-
-			assert_eq!(target.host, "192.0.2.10");
-			assert_eq!(target.user, "url-user");
-			assert_eq!(target.port, 2222);
-		}
-
-		#[test]
-		fn parses_proxy_jump_forms() {
-			assert_eq!(
-				parse_jump_target("jump").unwrap(),
-				("jump", 22, "", false, false)
-			);
-			assert_eq!(
-				parse_jump_target("user@jump:2222").unwrap(),
-				("jump", 2222, "user", true, true)
-			);
-			assert_eq!(
-				parse_jump_target("user@[2001:db8::1]:2222").unwrap(),
-				("2001:db8::1", 2222, "user", true, true)
-			);
-			assert!(parse_jump_target("one,two").is_err());
-		}
-	}
 }
 
 pub use sftp::{
@@ -1397,222 +1337,5 @@ pub async fn io_list_dir(source: &PathSource) -> Result<Vec<(String, IoMetadata)
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_local_absolute_path() {
-		let result = parse_path_source("/home/user/file.txt");
-		assert!(matches!(result, PathSource::Local(_)));
-		assert_eq!(result.path_str(), "/home/user/file.txt");
-	}
-
-	#[test]
-	fn test_local_relative_path() {
-		let result = parse_path_source("src/main.rs");
-		assert!(matches!(result, PathSource::Local(_)));
-		assert_eq!(result.path_str(), "src/main.rs");
-	}
-
-	#[test]
-	fn test_ssh_full_url() {
-		let result = parse_path_source("ssh://user@host:2222/path/to/file.txt");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "host");
-				assert_eq!(port, 2222);
-				assert_eq!(user, "user");
-				assert_eq!(path, "/path/to/file.txt");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_sftp_scheme() {
-		let result = parse_path_source("sftp://admin@example.com/var/log/syslog");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "example.com");
-				assert_eq!(port, 22);
-				assert_eq!(user, "admin");
-				assert_eq!(path, "/var/log/syslog");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_ssh_no_port() {
-		let result = parse_path_source("ssh://user@host/path");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "host");
-				assert_eq!(port, 22);
-				assert_eq!(user, "user");
-				assert_eq!(path, "/path");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_ssh_no_user() {
-		let result = parse_path_source("ssh://host:2222/path");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "host");
-				assert_eq!(port, 2222);
-				// user defaults to $USER or "root"
-				assert!(!user.is_empty());
-				assert_eq!(path, "/path");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_ssh_no_path() {
-		let result = parse_path_source("ssh://user@host:2222");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "host");
-				assert_eq!(port, 2222);
-				assert_eq!(user, "user");
-				assert_eq!(path, "/");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_ssh_ipv6_with_port() {
-		let result = parse_path_source("ssh://user@[::1]:2222/path");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "::1");
-				assert_eq!(port, 2222);
-				assert_eq!(user, "user");
-				assert_eq!(path, "/path");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_ssh_ipv6_no_port() {
-		let result = parse_path_source("ssh://user@[::1]/path");
-		match result {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "::1");
-				assert_eq!(port, 22);
-				assert_eq!(user, "user");
-				assert_eq!(path, "/path");
-			}
-			_ => panic!("expected Remote"),
-		}
-	}
-
-	#[test]
-	fn test_remote_display_preserves_explicit_authority_parts() {
-		assert_eq!(
-			parse_path_source("ssh://dev/path").display(),
-			"ssh://dev/path"
-		);
-		assert_eq!(
-			parse_path_source("ssh://box@dev/path").display(),
-			"ssh://box@dev/path"
-		);
-		assert_eq!(
-			parse_path_source("ssh://box@dev:2222/path").display(),
-			"ssh://box@dev:2222/path"
-		);
-		assert_eq!(
-			parse_path_source("ssh://[2001:db8::1]/path").display(),
-			"ssh://[2001:db8::1]/path"
-		);
-	}
-
-	#[test]
-	fn test_is_remote() {
-		assert!(!parse_path_source("/local/path").is_remote());
-		assert!(parse_path_source("ssh://host/path").is_remote());
-		assert!(parse_path_source("sftp://host/path").is_remote());
-	}
-
-	#[test]
-	fn test_lock_key_local() {
-		let source = parse_path_source("/local/path");
-		assert_eq!(source.lock_key(), "/local/path");
-	}
-
-	#[test]
-	fn test_lock_key_remote() {
-		let source = parse_path_source("ssh://user@host:2222/path");
-		assert_eq!(source.lock_key(), "host:2222/path");
-	}
-
-	#[test]
-	fn test_resolve_relative_under_remote_workdir() {
-		let workdir = PathBuf::from("ssh://user@host:2222/root");
-		match resolve_path_source("src/main.rs", &workdir) {
-			PathSource::Remote {
-				host,
-				port,
-				user,
-				path,
-				..
-			} => {
-				assert_eq!(host, "host");
-				assert_eq!(port, 2222);
-				assert_eq!(user, "user");
-				assert_eq!(path, "/root/src/main.rs");
-			}
-			_ => panic!("expected Remote"),
-		}
-		// A local workdir keeps relative paths local.
-		assert!(!resolve_path_source("src/main.rs", Path::new("/tmp/w")).is_remote());
-	}
-}
+#[path = "remote_tests.rs"]
+mod remote_tests;

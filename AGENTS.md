@@ -24,7 +24,8 @@ src/
       search.rs              — search_content: fixed-string match with context blocks
       shell.rs               — execute_shell_command, foreground/background, PGID process group cleanup
       workdir.rs             — execute_workdir_command, WorkdirResult
-      fs_tests.rs            — Integration tests (cfg(test) only)
+      *_tests.rs             — Unit tests for the matching production module
+      fs_tests.rs            — Cross-module integration tests (cfg(test) only)
   utils/
     glob.rs                  — expand_glob_patterns_filtered (gitignore-aware, max 1000 files)
     truncation.rs            — estimate_tokens, truncate_to_tokens, format_content_with_line_numbers,
@@ -143,6 +144,7 @@ std::fs::read_to_string(&path)?;
 - **Comments**: explain *why*, not *what*; module-level doc comment on every file; avoid obvious comments
 - **Line length**: 100 chars max (enforced by `rustfmt.toml`)
 - **Copyright header**: every `.rs` file must start with the Apache 2.0 header — `Copyright 2026 Muvon Un Limited`. Verify year when modifying files in a new calendar year.
+- **Test layout**: production `.rs` files must not contain inline test modules or test bodies. Put unit tests in a sibling `<module>_tests.rs` file and wire it with `#[cfg(test)]`, `#[path = "<module>_tests.rs"]`, and `mod <module>_tests;`. Keep cross-module filesystem integration tests in `fs/fs_tests.rs`.
 
 ## Validation
 
@@ -169,3 +171,4 @@ std::fs::read_to_string(&path)?;
 - Skip the copyright header on new `.rs` files
 - Add a new dependency without first checking if an existing one covers the need
 - Reference `functions.rs` — it was removed; tool definitions are in `server.rs`
+- Define inline `mod tests { ... }` or other test bodies in a production `.rs` file — use a sibling `*_tests.rs` file
