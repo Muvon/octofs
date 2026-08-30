@@ -483,7 +483,10 @@ finish within about 10 seconds:
 If a command is still running at that boundary, the same process continues in
 the background. The response returns its PID and linked output resource, and a
 completion notification arrives when it exits. There is no `background` flag
-and the command is never killed or restarted during the handoff.
+and the command is never killed or restarted during the handoff. Multiple
+distinct commands may run concurrently, including from the same working
+directory. An exact duplicate command in the same working directory is rejected
+while the first copy is still running.
 
 > On Windows, shutdown cleanup terminates only direct child processes (no Unix
 > process-group semantics); use `taskkill /PID <pid> /T` for process trees.

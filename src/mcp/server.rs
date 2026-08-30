@@ -401,7 +401,9 @@ impl OctofsServer {
 			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched. \
 			Every command starts in the foreground. If it is still running after ~10s, the same \
 			process automatically moves to the background and the call returns a linked job \
-			resource. CRITICAL: after a command moves to the background, \
+			resource. Distinct commands may run concurrently; an exact duplicate in the same \
+			working directory is rejected while it is still running. CRITICAL: after a command \
+			moves to the background, \
 			do NOT poll or babysit it — no `ps`, no `kill -0`, no `sleep`, and do not re-run the \
 			command. Its completion is delivered to you automatically as a new message the moment \
 			it exits, with the exit code and output tail. Simply move on: start the next \

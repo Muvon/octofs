@@ -78,10 +78,9 @@ async fn connect_with_lifecycle(
 ) {
 	let (client_io, server_io) = tokio::io::duplex(4096);
 	let server_task = tokio::spawn(async move {
-		// A per-test temp root: background jobs are serialized per working
-		// directory, so sibling tests sharing the session root would reject
-		// each other's `sleep` jobs. The TempDir lives inside this task, so it
-		// is cleaned up only after the connection closes.
+		// A per-test temp root keeps identical background commands from sibling
+		// tests independent. The TempDir lives inside this task, so it is cleaned
+		// up only after the connection closes.
 		let root = tempfile::tempdir().expect("temp session root");
 		let server = OctofsServer::with_root(root.path().to_path_buf())
 			.serve(server_io)

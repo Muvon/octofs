@@ -21,7 +21,7 @@ src/
       file_ops.rs            — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs        — str_replace_spec, batch_edit_spec, per-file async locking
       directory.rs           — Directory listing and content search (ignore crate + pure-Rust regex)
-      search.rs              — search_content: fixed-string match with context blocks
+      search.rs              — Matcher + search_lines: literal/regex matching with context blocks
       shell.rs               — execute_shell_command, foreground/background, PGID process group cleanup
       workdir.rs             — execute_workdir_command, WorkdirResult
       *_tests.rs             — Unit tests for the matching production module

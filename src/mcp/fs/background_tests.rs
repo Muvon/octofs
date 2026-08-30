@@ -119,7 +119,7 @@ fn reading_an_unknown_job_is_none() {
 }
 
 #[tokio::test]
-async fn refuses_a_second_job_in_the_same_working_dir() {
+async fn allows_distinct_jobs_but_refuses_a_duplicate_in_the_same_working_dir() {
 	// A dir unique to this test so it never collides with other tests' jobs.
 	let dir = std::env::temp_dir().join(format!("octofs-guard-{}", std::process::id()));
 	std::fs::create_dir_all(&dir).unwrap();
@@ -132,10 +132,10 @@ async fn refuses_a_second_job_in_the_same_working_dir() {
 		"sleep 2"
 	};
 	let first = spawn_test_job(hold, &dir, |_: String| {}).await;
-	let refused = prepare("echo second", &dir).await;
+	let refused = prepare(hold, &dir).await;
 	assert!(
 		refused.is_err(),
-		"a second job in the same dir is refused while the first runs"
+		"an identical job in the same dir is refused while the first runs"
 	);
 	assert!(
 		refused
@@ -145,17 +145,34 @@ async fn refuses_a_second_job_in_the_same_working_dir() {
 		"the rejection points at the running job's resource"
 	);
 
-	// A different directory is unaffected by the exclusion.
+	// A distinct command in the same directory is independent and may overlap.
+	let second_hold = if cfg!(target_os = "windows") {
+		"ping -n 4 127.0.0.1"
+	} else {
+		"sleep 3"
+	};
+	let second = spawn_test_job(second_hold, &dir, |_: String| {}).await;
+	assert_eq!(second.status(), JobStatus::Running);
+	let running_ids: Vec<String> = list()
+		.into_iter()
+		.filter(|job| job.working_dir == dir && job.status() == JobStatus::Running)
+		.map(|job| job.id)
+		.collect();
+	assert!(running_ids.contains(&first.id));
+	assert!(running_ids.contains(&second.id));
+
+	// The same command in a different directory is also independent.
 	let other = dir.join("nested");
 	std::fs::create_dir_all(&other).unwrap();
-	let _other_job = spawn_test_job("echo ok", &other, |_: String| {}).await;
+	let _other_job = spawn_test_job(hold, &other, |_: String| {}).await;
 
-	// Once the first exits, its directory frees up again.
+	// Once the first exits, the same command may be launched there again even
+	// while another, distinct command is still running.
 	for _ in 0..250 {
 		if matches!(read(&first.id).unwrap().status, JobStatus::Exited(_)) {
 			break;
 		}
 		tokio::time::sleep(Duration::from_millis(20)).await;
 	}
-	let _next_job = spawn_test_job("echo ok", &dir, |_: String| {}).await;
+	let _next_job = spawn_test_job(hold, &dir, |_: String| {}).await;
 }

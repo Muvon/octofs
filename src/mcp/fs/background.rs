@@ -107,21 +107,23 @@ pub(super) struct PreparedJob {
 }
 
 /// Prepare durable output capture for a command that initially runs in the
-/// foreground. A known background job in the same directory still blocks a new
-/// shell command, preserving the build-tree corruption guard.
+/// foreground. Only an identical command already running in the same directory
+/// is rejected; independent commands may run concurrently.
 pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<PreparedJob> {
 	if let Some(running) = jobs()
 		.lock()
 		.expect("jobs registry mutex poisoned")
 		.values()
-		.find(|j| j.working_dir.as_path() == working_dir && j.status() == JobStatus::Running)
-	{
+		.find(|j| {
+			j.working_dir.as_path() == working_dir
+				&& j.command == command
+				&& j.status() == JobStatus::Running
+		}) {
 		return Err(anyhow!(
-			"A background job is already running in this directory: {} (`{}`). \
+			"The same shell command is already running as background job {} (`{}`). \
 			 Wait for its completion — you will get a resources/updated notification \
-			 with its output — before starting another shell command here. Do not launch \
-			 overlapping builds; concurrent writers to the same build tree corrupt \
-			 each other's artifacts.",
+			 with its output — instead of starting a duplicate. Independent commands may \
+			 run concurrently in this directory.",
 			resource_uri(&running.id),
 			running.command
 		));
