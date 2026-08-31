@@ -243,6 +243,18 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 			_ => {}
 		}
 
+		// A remote command obeys the same rules as a local one — `ssh host
+		// 'grep …'` must not dodge the gate that view/text_editor already
+		// cover via ssh:// paths.
+		if prog == "ssh" {
+			if let Some(remote) = ssh_remote_command(segment) {
+				if let Some(hint) = detect_shell_misuse(remote) {
+					return Some(hint);
+				}
+			}
+			continue;
+		}
+
 		// Content-authoring programs writing a file via redirect, or standalone
 		// tee (writes stdin to a file). Checked before the hint table so
 		// `cat > file` gets the write guidance, not the read guidance.
@@ -355,6 +367,125 @@ fn split_shell_segments(command: &str) -> Vec<&str> {
 	}
 	segments.push(&command[start..]);
 	segments
+}
+
+/// The remote-command part of an `ssh …` segment, cut at any local pipe and
+/// with one whole-string quote layer stripped, so `detect_shell_misuse` can
+/// check it by the same rules as a local command. None when ssh runs no
+/// remote command (interactive session, -N port forwarding).
+fn ssh_remote_command(segment: &str) -> Option<&str> {
+	// Single-letter ssh options that take the next token as their argument
+	// when not glued to it (`-p 22` vs `-p22`).
+	const ARG_OPTS: &[u8] = b"bBcDEeFIiJLlmOopQRSWw";
+
+	let spans = shell_token_spans(segment);
+	// Land on the `ssh` token itself, skipping env prefixes and group openers
+	// the same way prog extraction does.
+	let mut idx = spans.iter().position(|&(s, e)| {
+		let tok = segment[s..e].trim_start_matches('(');
+		!tok.is_empty() && !tok.contains('=') && tok != "{"
+	})?;
+	idx += 1; // step past `ssh`
+
+	// Skip options; the first non-option token is the destination.
+	while idx < spans.len() {
+		let (s, e) = spans[idx];
+		let tok = &segment[s..e];
+		idx += 1;
+		let Some(opt) = tok.strip_prefix('-') else {
+			// Destination reached; the remote command is everything after it,
+			// up to a local pipe — `ssh host 'dmesg' | grep x` pipes locally,
+			// keeping the same downstream-transform leniency as pipelines.
+			let rest = segment[e..].trim();
+			let rest = rest[..unquoted_pipe(rest).unwrap_or(rest.len())].trim();
+			if rest.is_empty() {
+				return None;
+			}
+			// Strip one whole-string quote layer so the remote command parses
+			// like a local one (`"cd /x && grep y"` → `cd /x && grep y`).
+			let b = rest.as_bytes();
+			if rest.len() >= 2
+				&& (b[0] == b'\'' || b[0] == b'"')
+				&& b[rest.len() - 1] == b[0]
+				&& shell_token_spans(rest).len() == 1
+			{
+				return Some(&rest[1..rest.len() - 1]);
+			}
+			return Some(rest);
+		};
+		// A cluster of plain option letters ending in an arg-taker consumes
+		// the next token; glued args (`-p22`, `-oKey=val`) do not.
+		if opt.bytes().all(|c| c.is_ascii_alphabetic())
+			&& opt.bytes().last().is_some_and(|c| ARG_OPTS.contains(&c))
+		{
+			idx += 1;
+		}
+	}
+	None
+}
+
+/// Byte offset of the first `|` outside quotes. `||` cannot appear here —
+/// segment splitting already consumed it — so any unquoted `|` is a pipe.
+fn unquoted_pipe(s: &str) -> Option<usize> {
+	let bytes = s.as_bytes();
+	let mut in_single = false;
+	let mut in_double = false;
+	let mut i = 0;
+	while i < bytes.len() {
+		match bytes[i] {
+			b'\'' if !in_double => in_single = !in_single,
+			b'"' if !in_single => in_double = !in_double,
+			b'\\' if !in_single && i + 1 < bytes.len() => i += 1,
+			b'|' if !in_single && !in_double => return Some(i),
+			_ => {}
+		}
+		i += 1;
+	}
+	None
+}
+
+/// Whitespace-delimited token spans with shell quoting respected, so a quoted
+/// argument containing spaces stays one token.
+fn shell_token_spans(s: &str) -> Vec<(usize, usize)> {
+	let bytes = s.as_bytes();
+	let mut spans = Vec::new();
+	let mut i = 0;
+	while i < bytes.len() {
+		while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+			i += 1;
+		}
+		if i >= bytes.len() {
+			break;
+		}
+		let start = i;
+		let mut in_single = false;
+		let mut in_double = false;
+		while i < bytes.len() {
+			let b = bytes[i];
+			if in_single {
+				if b == b'\'' {
+					in_single = false;
+				}
+			} else if in_double {
+				if b == b'\\' && i + 1 < bytes.len() {
+					i += 1;
+				} else if b == b'"' {
+					in_double = false;
+				}
+			} else {
+				match b {
+					b'\'' => in_single = true,
+					b'"' => in_double = true,
+					b'\\' if i + 1 < bytes.len() => i += 1,
+					_ if b.is_ascii_whitespace() => break,
+					_ => {}
+				}
+			}
+			i += 1;
+		}
+		spans.push((start, i));
+	}
+	spans
 }
 
 /// Delivers a finished background job's resource URI so the server layer can

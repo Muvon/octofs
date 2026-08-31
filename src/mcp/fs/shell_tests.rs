@@ -165,17 +165,33 @@ fn test_detect_shell_misuse() {
 	assert!(detect_shell_misuse("echo grep").is_none());
 
 	// Quoted separators are not treated as local command separators
-	// (e.g. SSH remote commands with && inside quotes)
-	assert!(detect_shell_misuse("ssh host 'cd /path && ls'").is_none());
-	assert!(detect_shell_misuse("ssh host 'cat file'").is_none());
-	assert!(detect_shell_misuse("ssh host \"cd /path && grep foo\"").is_none());
 	assert!(detect_shell_misuse("echo \"hello && ls\"").is_none());
 	assert!(detect_shell_misuse("bash -lc 'cd /x && git log && ls'").is_none());
+
+	// ssh remote commands obey the same rules as local ones
+	assert!(detect_shell_misuse("ssh host 'cat file'").is_some());
+	assert!(detect_shell_misuse("ssh host 'cd /path && ls'").is_some());
+	assert!(detect_shell_misuse("ssh host \"cd /path && grep foo\"").is_some());
+	assert!(detect_shell_misuse("ssh dev grep -rn foo /path").is_some());
+	assert!(detect_shell_misuse("ssh -p 2222 user@host 'grep foo /x'").is_some());
+	assert!(detect_shell_misuse("ssh -o StrictHostKeyChecking=no host 'ls /x'").is_some());
+	assert!(detect_shell_misuse("ssh a 'ssh b \"grep x /y\"'").is_some());
+	// Unquoted separators after a quoted block are still caught
+	assert!(detect_shell_misuse("ssh host 'ls' && cat file").is_some());
+	// Legitimate remote commands stay allowed
+	assert!(detect_shell_misuse("ssh host uptime").is_none());
+	assert!(detect_shell_misuse("ssh host 'systemctl status nginx'").is_none());
+	assert!(detect_shell_misuse("ssh host 'cd /x && git log'").is_none());
+	assert!(detect_shell_misuse("ssh host").is_none());
+	assert!(detect_shell_misuse("ssh -N -L 8080:localhost:80 host").is_none());
+	// Remote pipelines keep the local stream-transform leniency
+	assert!(detect_shell_misuse("ssh host 'journalctl -u app | grep error'").is_none());
+	// A pipe after ssh is a local downstream transform, not the remote command
+	assert!(detect_shell_misuse("ssh host 'dmesg' | grep oops").is_none());
+	// One quote layer strips; a nested interpreter stays opaque, same as locally
 	assert!(
 		detect_shell_misuse("ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'").is_none()
 	);
-	// Unquoted separators after a quoted block are still caught
-	assert!(detect_shell_misuse("ssh host 'ls' && cat file").is_some());
 
 	// Bare / chained sleep is blocked in every common shape
 	assert!(detect_shell_misuse("sleep 40").is_some());
