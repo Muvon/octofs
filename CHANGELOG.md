@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.1] - 2026-08-31
+
+### 📋 Release Summary
+
+Remote SSH shell command handling was improved for more reliable inspection (f573a0ae). The project’s development and quality processes were updated with Rust 1.98.0 support and automated coverage reporting (61d36223, e5dd4967).
+
+
+### 🔧 Improvements & Optimizations
+
+- **coverage**: add coverage workflow and badge `e5dd4967`
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: inspect remote ssh commands `f573a0ae`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.14.0] - 2026-08-30
 
 ### 📋 Release Summary
