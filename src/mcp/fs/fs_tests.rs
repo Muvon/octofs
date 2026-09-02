@@ -1881,7 +1881,7 @@ mod tests {
 			msg
 		);
 		assert!(
-			msg.contains("operations failed during parsing"),
+			msg.contains("are malformed"),
 			"Should indicate parsing failure: {}",
 			msg
 		);
@@ -4947,7 +4947,7 @@ mod tests {
 			err
 		);
 		assert!(
-			err.contains("Did you mean"),
+			err.contains("swap them"),
 			"Error should suggest correct order: {}",
 			err
 		);
@@ -5236,8 +5236,8 @@ mod tests {
 			"start-only should show from line 10 to EOF: {content}"
 		);
 		assert!(
-			content.contains("[..."),
-			"earlier lines should be elided: {content}"
+			content.ends_with("[end of file, 20 lines total]"),
+			"range to EOF ends with the total-line marker: {content}"
 		);
 		assert!(
 			!content.contains("L05"),

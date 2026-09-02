@@ -84,34 +84,34 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with this command is forbidden — use `view` instead (line-numbered, supports ranges, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\"                # read whole file\n    view path=\"src/main.rs\" start=10 end=50  # read lines 10–50\n    view path=\"ssh://host/~/path/file\"   # remote file (host = ssh config alias, ~ = login home) — no `ssh cat` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
+		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching file text with this command is forbidden — use `view` with content= instead (gitignore-aware, context lines, line numbers, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\" content=\"fulfill_input_requests\"\n    view path=\"src/\" content=\"TODO\" regex=true\n    view path=\"ssh://host/~/dir\" content=\"TODO\"  # remote search (~ = login home) — no `ssh grep` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
+		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed.",
 	),
 	(
 		&["find", "ls"],
-		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering, works on remote hosts).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # ripgrep-compatible glob grammar (`*`, `**`, `?`, `[abc]`, `{a,b}`, leading `!`)\n    view path=\"ssh://host/~/dir\"  # remote listing (~ = login home) — no `ssh ls` needed\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the returned relative path. Use `|` for ordered globs.\n  Shell is allowed only for system paths outside the project.",
+		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\".",
 	),
 	(
 		&["sed", "awk"],
-		"Editing files with this command is forbidden — use `text_editor` str_replace or `batch_edit` instead (atomic, tracked, works on remote hosts via ssh:// paths).\n\n  Example:\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Shell is allowed only for stream transforms in pipelines.",
+		"Editing files with the shell is blocked — use `text_editor` str_replace or `batch_edit` (atomic, tracked, remote-capable). Only a later pipeline stage (`... | sed 's/a/b/'`) stays allowed.",
 	),
 	(
 		&["sleep"],
-		"Waiting with a bare `sleep` is forbidden — it burns the whole tool call doing nothing.\n\n  To wait for a condition, poll it in a loop (sleep inside a loop body is allowed):\n    until <check>; do sleep 2; done\n  To wait for a command you started, run it normally; long-running commands automatically move to the background and notify you when they finish.\n\n  Do not chain shorter sleeps to work around this block.",
+		"Bare `sleep` is blocked — it wastes the call. Poll a condition instead: until <check>; do sleep 2; done. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
 	),
 	(
 		&["watch", "top", "htop"],
-		"This program never exits. Run the underlying command once instead; long-running commands automatically move to the background and expose a linked resource, but a deliberately endless monitor would never deliver a completion notification.",
+		"This program never exits, so it would never complete or notify you. Run the underlying command once; long runs move to the background automatically.",
 	),
 ];
 
 // Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
 // breaks on quoting/escaping and bypasses tracked edits. Redirecting other
 // programs' OUTPUT to a file stays allowed — only content-authoring is blocked.
-static REDIRECT_WRITE_HINT: &str = "Writing files with echo/printf/cat/tee redirects is forbidden — shell quoting silently corrupts content and the write is untracked. Use `text_editor` instead (atomic, tracked, works on remote hosts).\n\n  Example:\n    text_editor command=\"create\" path=\"notes.txt\" content=\"line 1\\nline 2\"\n    text_editor command=\"str_replace\" path=\"src/main.rs\" old_text=\"foo\" new_text=\"bar\"\n\n  Redirecting other programs' output (e.g. `cargo test > out.log`) stays allowed.";
+static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat/tee redirects is blocked — quoting corrupts content and the write is untracked. Use text_editor command=\"create\" or str_replace. Redirecting a program's output (e.g. `cargo test > out.log`) stays allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + process_group(0) already makes input physically impossible;
@@ -556,7 +556,7 @@ async fn execute_with_timeout(
 	// cryptic spawn failure on the URL-shaped cwd.
 	if crate::mcp::fs::parse_path_source(&working_dir.to_string_lossy()).is_remote() {
 		bail!(
-			"The shell tool runs commands on the local machine only, but the working directory is remote ({}). Use view/text_editor/batch_edit/extract_lines for remote file access.",
+			"The shell runs on the local machine, but the working directory is remote ({}). Use view/text_editor/batch_edit for remote files.",
 			working_dir.display()
 		);
 	}
@@ -642,11 +642,9 @@ async fn execute_with_timeout(
 			super::background::promote(job, child, notify);
 			return Ok(ShellOutcome {
 				text: format!(
-					"Command exceeded the foreground wait limit and was automatically moved to \
-					 background job `{}` (PID {}). The same process is still running; its \
-					 stdout+stderr continue streaming to the linked resource. You will be \
-					 notified when it finishes and can read the resource for the exit code and \
-					 output tail. Stop it early with: kill -- -{} (whole group).",
+					"Still running after the foreground limit — moved to background job `{}` \
+					 (PID {}). Output keeps streaming to the linked resource; you will be \
+					 notified on exit with the exit code and output tail. Stop early: kill -- -{}",
 					job_id, job_pid, job_pid
 				),
 				resource_uri: Some(uri),

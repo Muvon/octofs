@@ -159,7 +159,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 		let second = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert_eq!(
 			second,
-			"[unchanged since you last viewed or edited it: 20 lines. Pass full=true to re-read.]"
+			"[unchanged since you last viewed or edited it: 20 lines. Pass full: true to re-read.]"
 		);
 
 		// Ranged views neither use nor touch the cache.
@@ -188,7 +188,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 		);
 		assert_eq!(third.lines().count(), 9);
 
-		// full=true forces the complete file and refreshes the cache.
+		// full: true forces the complete file and refreshes the cache.
 		let full = execute_view(&view_call(&file, json!({ "full": true })))
 			.await
 			.unwrap();

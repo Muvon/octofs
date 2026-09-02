@@ -334,7 +334,7 @@ To read several files, make multiple `view` calls — they run in parallel.
 **Delta views:** a whole-file view of a file the session already served returns
 only the hunks changed since — the same `...`/`-`/`+` style as edit results, with
 removed lines collapsed to their old id range — or
-`[unchanged since you last viewed or edited it: N lines. Pass full=true to re-read.]`.
+`[unchanged since you last viewed or edited it: N lines. Pass full: true to re-read.]`.
 Octofs' own edits keep the cache current, so a re-view after your own `batch_edit`
 costs one line. Ranged views and content search always render exactly what was asked.
 ```json

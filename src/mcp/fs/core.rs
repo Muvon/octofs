@@ -305,7 +305,7 @@ async fn resolve_view_range(
 	}
 	if clamped {
 		crate::mcp::request_ctx::push_hint(&format!(
-			"Requested line range was out of bounds for a {total_lines}-line file; clamped to [{start}, {end}]. Use line numbers within 1..={total_lines} (negative indices count from the end)."
+			"Range clamped to [{start}, {end}]: the file has {total_lines} lines (negative indices count from the end)."
 		));
 	}
 	Ok(Some((start, end as i64)))
@@ -723,7 +723,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	};
 
 	Ok(format!(
-		"Successfully extracted {lines_extracted} lines (lines {}-{}) from '{from_path}' and appended to '{append_path}' at {position_desc}.\n\nExtracted content:\n{extracted_content_display}",
+		"Appended {lines_extracted} lines ({}-{}) from '{from_path}' to '{append_path}' at {position_desc}:\n{extracted_content_display}",
 		from_range.0,
 		from_range.1
 	))

@@ -120,12 +120,11 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 				&& j.status() == JobStatus::Running
 		}) {
 		return Err(anyhow!(
-			"The same shell command is already running as background job {} (`{}`). \
-			 Wait for its completion — you will get a resources/updated notification \
-			 with its output — instead of starting a duplicate. Independent commands may \
-			 run concurrently in this directory.",
-			resource_uri(&running.id),
-			running.command
+			"`{}` is already running as background job {}. Wait for its completion \
+			 notification instead of starting a duplicate; different commands may run \
+			 concurrently.",
+			running.command,
+			resource_uri(&running.id)
 		));
 	}
 

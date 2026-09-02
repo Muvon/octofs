@@ -251,16 +251,13 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Read files, view directories, and search file content. Unified read-only tool. \
-			File lines are rendered as `N:hh|content` — N is the line number, hh a 2-char content \
-			hash. Together `N:hh` is the line id that edit tools (batch_edit, extract_lines) take \
-			as targets; copy ids verbatim from this output. Listing a directory returns each file \
-			with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope \
-			unfamiliar trees and budget reads before opening files. For rg-style content search \
-			across several roots, separate literal files/directories in `path` with `|`. The \
-			`pattern` filter accepts ripgrep -g glob grammar, including `**` and leading `!`. \
-			Viewing a whole file you already viewed returns only the hunks changed since (or an \
-			unchanged marker); pass `full: true` to get the complete content again."
+		description = "Read files, list directories, search content. Lines render as `N:hh|content`; \
+			`N:hh` is the line id edit tools take as targets — copy it verbatim. Directory listings \
+			show each file as `path\tNL\t~Nt` (lines, estimated tokens) for budgeting reads. For \
+			content search across several roots, separate them in `path` with `|`. `pattern` takes \
+			ripgrep -g globs (`**`, leading `!`). Re-viewing a whole file returns only the hunks \
+			changed since your last view (or an unchanged marker); `full: true` forces the complete \
+			content."
 	)]
 	async fn view(
 		&self,
@@ -290,13 +287,10 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Perform text editing operations on files: create, str_replace, delete, undo_edit. \
-			For str_replace pass raw file text in old_text/new_text — real newlines and tabs, no \\n \
-			escaping, and no `N:hh|` line-id prefixes. old_text must match the file exactly and \
-			uniquely, or pass replace_all: true to replace every occurrence (rename-style edits); \
-			on multiple matches or no match, the error lists candidate locations with line ids you \
-			can use with batch_edit instead. When you already know the target line ids, prefer \
-			batch_edit — it verifies ids against the file and avoids content-match ambiguity."
+		description = "File operations: create, str_replace, delete, undo_edit. str_replace takes raw \
+			file text (real newlines, no `N:hh|` prefixes); old_text must match exactly once, or set \
+			replace_all: true. On no or multiple matches the error lists candidate line ids for \
+			batch_edit. Prefer batch_edit when you already hold line ids."
 	)]
 	async fn text_editor(
 		&self,
@@ -328,13 +322,11 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Perform multiple insert/replace operations on a SINGLE file atomically. \
-			Targets are line ids (e.g. \"12:a3\") copied from view or previous edit output; each id \
-			is verified against the file before anything is applied, so a stale id fails with the \
-			current content instead of editing the wrong line. The result is a diff of every \
-			operation with FRESH line ids — use those ids directly for follow-up edits; no need to \
-			re-view the file. Insert anchors 0 (file start) and -1 (append after last line) are \
-			plain integers. Content is raw text without line-id prefixes."
+		description = "Apply several insert/replace operations to one file atomically. Targets are \
+			line ids (\"12:a3\") from view or edit output, verified before anything is written; a \
+			stale id fails with the current content. The result diff carries fresh ids for follow-up \
+			edits — no re-view needed. Insert anchors 0 (file start) and -1 (end) are plain \
+			integers. Content is raw text without id prefixes."
 	)]
 	async fn batch_edit(
 		&self,
@@ -398,23 +390,14 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Execute a command in the shell — builds, tests, git, the project's own \
-			CLIs. Not a file reader: `view` reads files, lists directories, and does rg-style \
-			content search, so prefer it over cat/grep/ls/sed for inspection. Output is what a \
-			real terminal would display: ANSI escapes and progress-bar redraw frames are \
-			removed, and runs of identical consecutive lines collapse to the line plus a \
-			repeat count. For byte-exact inspection (line endings, control bytes) pipe through \
-			`od -c`, `xxd`, or `cat -v` — their printable output passes through untouched. \
-			Every command starts in the foreground. If it is still running after ~10s, the same \
-			process automatically moves to the background and the call returns a linked job \
-			resource. Distinct commands may run concurrently; an exact duplicate in the same \
-			working directory is rejected while it is still running. CRITICAL: after a command \
-			moves to the background, \
-			do NOT poll or babysit it — no `ps`, no `kill -0`, no `sleep`, and do not re-run the \
-			command. Its completion is delivered to you automatically as a new message the moment \
-			it exits, with the exit code and output tail. Simply move on: start the next \
-			independent step, or if nothing else can be done until it finishes, end your turn — \
-			you will be woken with the result. Polling wastes turns and is never necessary."
+		description = "Run a shell command: builds, tests, git, project CLIs. Use `view` to read, \
+			list and search files (cat/grep/ls/sed are rejected). Output is terminal-clean: ANSI \
+			and progress redraws stripped, repeated lines collapsed with a count; pipe through \
+			`od -c` or `xxd` for byte-exact output. A command still running after ~10s moves to \
+			the background and returns a job resource; you are notified automatically with the \
+			exit code and output tail when it exits. Do NOT poll, sleep, re-run or `ps` it — start \
+			the next independent step or end your turn. Distinct commands run concurrently; an \
+			identical command in the same directory is rejected while it is running."
 	)]
 	async fn shell(
 		&self,
@@ -502,12 +485,9 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Change the working directory used by subsequent tool calls. \
-			Do NOT call this just to check the current directory — all tools accept \
-			both relative and absolute paths and resolve relative paths against the \
-			session's working directory automatically. Only invoke this tool when you \
-			actually need to switch to a different directory (set `path`) or revert \
-			to the session root (`reset: true`)."
+		description = "Switch the working directory for later calls (`path`) or revert to the \
+			session root (`reset: true`). Do not call it just to check the directory; every tool \
+			resolves relative paths against it."
 	)]
 	async fn workdir(
 		&self,
@@ -793,15 +773,9 @@ fn append_hints(mut result: String) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// A single file or directory path (e.g. "src/main.rs"). During content search,
-	/// `|` may separate literal search roots (e.g. "docs|scripts|README.md"). An existing
-	/// path containing `|` takes precedence. Multi-root search is limited to 32 unique,
-	/// single-line roots and 8192 UTF-8 bytes. To read several files without content
-	/// search, make multiple `view` calls — they run in parallel.
-	/// Supports ssh://user@host:port/path or sftp://user@host:port/path for remote
-	/// filesystem access. `host` may be an ~/.ssh/config alias (user and port come
-	/// from the config when omitted); `ssh://host` or `ssh://host/~/dir` is the
-	/// login home, `ssh://host/dir` is absolute.
+	/// File or directory path. With content search, `|` separates several roots (max 32).
+	/// To read several files, make parallel `view` calls. Remote: ssh://[user@]host[:port]/path
+	/// — host may be an ~/.ssh/config alias; `ssh://host` or `ssh://host/~/dir` is the login home.
 	pub path: String,
 	/// First line to show (inclusive). Integer line number (negative counts from the
 	/// end: -1 = last line) or a line id like "12:a3". Omit to start at line 1.
@@ -814,22 +788,14 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Ripgrep `-g/--glob` compatible filter for directory listing and content search.
-	/// A glob without `/` matches filenames at any depth; a glob with `/` matches the
-	/// returned relative path. Supports `*`, `**`, `?`, character classes (`[abc]`),
-	/// brace alternatives (`*.{rs,toml}`), and leading `!` exclusions. Use `|` to supply
-	/// ordered globs in one string, e.g. `**/*.rs|!target/**` (later globs take precedence).
-	/// Filtering is applied after gitignore/hidden traversal; use `include_hidden: true`
-	/// for hidden paths, while gitignored paths remain excluded. Maximum 4096 UTF-8 bytes,
-	/// 64 `|`-separated globs, and 16 nested brace levels. Must be a single line. Escape
-	/// a literal leading `#` or `!` as `\#` or `\!`; malformed patterns fail before
-	/// directory traversal.
+	/// Ripgrep -g glob filter for listings and content search: without `/` it matches
+	/// filenames at any depth, with `/` the relative path. Supports `*`, `**`, `?`, `[abc]`,
+	/// `{rs,toml}`, leading `!`; `|` joins ordered globs (later wins), e.g. `**/*.rs|!target/**`.
+	/// Applied after gitignore/hidden filtering. Single line, max 4096 bytes, 64 globs.
 	#[serde(default)]
 	pub pattern: Option<String>,
-	/// Content search string. By default treated as a literal substring.
-	/// Set `regex: true` to interpret as a Rust regex (case-insensitive via `(?i)` prefix,
-	/// e.g. `(?i)error`). Only used when path is a directory or a single file.
-	/// When set, `start`/`end` are ignored (the whole file/tree is searched).
+	/// Content search: literal substring, or a Rust regex with `regex: true` (`(?i)` for
+	/// case-insensitive). Searches the whole file/tree; `start`/`end` are ignored.
 	#[serde(default)]
 	pub content: Option<String>,
 	/// When true, `content` is a regex pattern instead of a literal substring. Default: false.
@@ -859,7 +825,7 @@ pub struct ViewParams {
 /// it has strictly wider cross-stack support.
 fn line_endpoint_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
 	let schema = serde_json::json!({
-		"description": "A line endpoint: a line id \"N:hh\" copied from view/edit output (e.g. \"12:a3\") or an integer line number (negative counts from the end, -1 = last line). Edit targets require ids; view ranges accept plain numbers.",
+		"description": "Line id \"N:hh\" from view/edit output, or an integer line number (negative counts from the end). Edit targets require ids.",
 		"anyOf": [
 			{ "type": "string" },
 			{ "type": "integer", "format": "int64" }

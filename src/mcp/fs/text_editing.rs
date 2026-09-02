@@ -104,7 +104,7 @@ pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
 	let meta = io_metadata(source).await?;
 	if meta.is_dir {
 		bail!(
-			"Path is a directory, not a file: {}. Use the shell tool with `rm -r` to remove directories.",
+			"{} is a directory; use shell `rm -r` for directories.",
 			source.display()
 		);
 	}
@@ -181,7 +181,7 @@ fn resolve_unresolved_line_range(
 		UnresolvedLineRange::Anchor(0) => Ok(LineRange::Single(0)),
 		UnresolvedLineRange::Anchor(-1) => Ok(LineRange::Single(total_lines)),
 		UnresolvedLineRange::Anchor(n) => Err(format!(
-			"Invalid insert anchor {n}: use 0 (file start), -1 (after last line), or a line id like \"12:a3\" from view output"
+			"Invalid insert anchor {n}: use 0 (file start), -1 (end), or a line id like \"12:a3\""
 		)),
 		UnresolvedLineRange::IdAnchor { line, hash } => {
 			let resolved = verify_line_id(*line, hash, lines)?;
@@ -203,8 +203,8 @@ fn resolve_unresolved_line_range(
 			};
 			if s > e {
 				return Err(format!(
-					"Range is reversed: start \"{}:{}\" is after end \"{}:{}\". Did you mean start: \"{}:{}\", end: \"{}:{}\"?",
-					start.0, start.1, end.0, end.1, end.0, end.1, start.0, start.1
+					"Range is reversed: start \"{}:{}\" is after end \"{}:{}\"; swap them.",
+					start.0, start.1, end.0, end.1
 				));
 			}
 			Ok(LineRange::Range(s, e))
@@ -668,10 +668,9 @@ pub async fn str_replace_spec(
 			.collect();
 
 		bail!(
-			"Found {} matches for replacement text at:\n{}\nAdd more surrounding context to make a unique match, pass `replace_all: true` to replace all {} occurrences, or use `batch_edit` with the specific line ids.",
+			"Found {} matches at:\n{}\nAdd context to make old_text unique, pass replace_all: true, or use batch_edit with one of these ids.",
 			occurrences,
-			locations.join("\n"),
-			occurrences
+			locations.join("\n")
 		);
 	}
 
@@ -686,13 +685,13 @@ pub async fn str_replace_spec(
 			let un_new = unescape_literals(new_text);
 			if replace_all && un_occurrences >= 1 {
 				crate::mcp::request_ctx::push_hint(
-					"old_text contained literal \\n/\\t escapes; they were interpreted as real newlines/tabs.",
+					"Literal \\n/\\t in old_text were treated as real newlines/tabs.",
 				);
 				return apply_replace_all(source, &content, &un_old, &un_new, uses_crlf).await;
 			}
 			if un_occurrences == 1 {
 				crate::mcp::request_ctx::push_hint(
-					"old_text contained literal \\n/\\t escapes; they were interpreted as real newlines/tabs (unique match).",
+					"Literal \\n/\\t in old_text were treated as real newlines/tabs.",
 				);
 				return apply_unique_replacement(source, &content, &un_old, &un_new, uses_crlf)
 					.await;
@@ -739,7 +738,7 @@ pub async fn str_replace_spec(
 			super::delta::note_write(source, &content, &new_content);
 
 			crate::mcp::request_ctx::push_hint(
-				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
+				"Matched with whitespace normalized; indentation adjusted to the file.",
 			);
 
 			let new_lines: Vec<&str> = new_content.lines().collect();
@@ -758,12 +757,10 @@ pub async fn str_replace_spec(
 	// === Stage 3: No match — provide rich diagnostics ===
 	let candidates = find_closest_matches(&content, old_text, 3);
 
-	let mut msg = String::from(
-		"No exact match found. Make sure you pass raw content (no escaped \\t, \\n).\n",
-	);
+	let mut msg = String::from("No exact match found (pass raw text, no \\n/\\t escapes).\n");
 
 	if candidates.is_empty() {
-		msg.push_str("No similar text found in the file. Verify the content exists.");
+		msg.push_str("Nothing similar in the file.");
 	} else {
 		let diag_lines: Vec<&str> = content.lines().collect();
 
@@ -792,9 +789,7 @@ pub async fn str_replace_spec(
 				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
 			}
 		}
-		msg.push_str(
-			"\nTip: use `batch_edit` with the line ids shown above, or fix the `old_text` content.",
-		);
+		msg.push_str("\nFix old_text, or use batch_edit with these ids.");
 	}
 
 	bail!("{}", msg);
@@ -843,13 +838,10 @@ fn check_replace_duplicates(
 		let line_before = file_lines[start_line - 2];
 		if content_lines[0] == line_before && !is_structural_noise(line_before) {
 			return Err(format!(
-				"Duplicate line detected in operation {}: content's first line matches {} \
-				(just before the replacement range {}). \
-				{}: {:?}. Do NOT include surrounding unchanged lines — \
-				only provide the lines that replace {}.",
+				"Duplicate line detected in operation {}: content's first line repeats {} ({:?}), \
+				the line just before the range {}. Give only the replacement lines, not \
+				surrounding context; use str_replace if the repeat is intended.",
 				operation_index,
-				id(start_line - 1),
-				range_id(start_line, end_line),
 				id(start_line - 1),
 				line_before,
 				range_id(start_line, end_line)
@@ -862,13 +854,10 @@ fn check_replace_duplicates(
 		let last = content_lines[content_lines.len() - 1];
 		if last == line_after && !is_structural_noise(line_after) {
 			return Err(format!(
-				"Duplicate line detected in operation {}: content's last line matches {} \
-				(just after the replacement range {}). \
-				{}: {:?}. Do NOT include surrounding unchanged lines — \
-				only provide the lines that replace {}.",
+				"Duplicate line detected in operation {}: content's last line repeats {} ({:?}), \
+				the line just after the range {}. Give only the replacement lines, not \
+				surrounding context; use str_replace if the repeat is intended.",
 				operation_index,
-				id(end_line + 1),
-				range_id(start_line, end_line),
 				id(end_line + 1),
 				line_after,
 				range_id(start_line, end_line)
@@ -1140,7 +1129,7 @@ fn parse_line_range(
 		OperationType::Insert => match start {
 			Endpoint::Number(n @ (0 | -1)) => Ok(UnresolvedLineRange::Anchor(n)),
 			Endpoint::Number(n) => Err(format!(
-				"insert anchor {n} is not verifiable: use a line id like \"12:a3\" from view output, or 0 (file start) / -1 (after last line)"
+				"insert anchor {n} is not verifiable: use a line id like \"12:a3\", or 0 (file start) / -1 (end)"
 			)),
 			Endpoint::Id { line, hash } => Ok(UnresolvedLineRange::IdAnchor { line, hash }),
 		},
@@ -1157,7 +1146,7 @@ fn parse_line_range(
 					})
 				}
 				_ => Err(
-					"replace targets must be line ids like \"12:a3\" copied from view output — plain line numbers are not verified against the file"
+					"replace targets must be line ids like \"12:a3\" from view output, not plain numbers"
 						.to_string(),
 				),
 			}
@@ -1284,7 +1273,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// a bad op while applying the rest would half-execute the caller's intent.
 	if !parse_failures.is_empty() {
 		bail!(
-			"No operations were applied — {} of {} operations failed during parsing:\n{}",
+			"No operations were applied: {} of {} are malformed:\n{}",
 			parse_failures.len(),
 			operations.len(),
 			parse_failures.join("\n")
@@ -1318,7 +1307,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 	if !resolve_failures.is_empty() {
 		bail!(
-			"No operations were applied to {path_str} — {} of {} operations have invalid or stale targets:\n{}",
+			"No operations were applied to {path_str}: {} of {} have stale or invalid targets:\n{}",
 			resolve_failures.len(),
 			operations.len(),
 			resolve_failures.join("\n---\n")
@@ -1374,7 +1363,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 						let line_after = original_lines[insert_after];
 						if content_lines[0] == line_after && !is_structural_noise(line_after) {
 							bail!(
-								"Duplicate line detected in operation {}: inserting after {} would duplicate {} which already reads {:?}. Do NOT re-insert content that already exists in the file.",
+								"Duplicate line detected in operation {}: inserting after {} repeats {} ({:?}), which already exists.",
 								op.operation_index, orig_line_id(insert_after), orig_line_id(insert_after + 1), line_after
 							);
 						}
@@ -1388,7 +1377,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 							== original_lines[insert_after..insert_after + check_len]
 					{
 						bail!(
-							"Duplicate block detected in operation {}: the {} inserted lines starting after {} already exist verbatim at {}-{}. Do NOT re-insert content that already exists in the file.",
+							"Duplicate block detected in operation {}: the {} lines inserted after {} already exist at {}-{}.",
 							op.operation_index, check_len, orig_line_id(insert_after), orig_line_id(insert_after + 1), orig_line_id(insert_after + check_len)
 						);
 					}

@@ -60,7 +60,7 @@ async fn test_foreground_timeout_promotes_same_command() {
 		.await
 		.expect("an overrun must be promoted, not killed");
 	assert!(
-		outcome.text.contains("automatically moved") && outcome.text.contains("same process"),
+		outcome.text.contains("moved to background job") && outcome.text.contains("Stop early"),
 		"outcome: {}",
 		outcome.text
 	);

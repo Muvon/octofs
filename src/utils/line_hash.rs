@@ -65,10 +65,10 @@ pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Resul
 	let total = lines.len();
 	if line == 0 || line > total {
 		let mut msg = format!(
-			"Line id \"{line}:{expected_hash}\" is out of range: the file has {total} lines now."
+			"Line id \"{line}:{expected_hash}\" is out of range: the file has {total} lines."
 		);
 		push_relocation(&mut msg, expected_hash, line, lines);
-		msg.push_str("\nRun `view` on this file to get fresh ids, then retry.");
+		msg.push_str("\nRe-view the file for fresh ids.");
 		return Err(msg);
 	}
 
@@ -80,7 +80,7 @@ pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Resul
 	let win_start = line.saturating_sub(CONTEXT).max(1);
 	let win_end = (line + CONTEXT).min(total);
 	let mut msg = format!(
-		"Line id \"{line}:{expected_hash}\" does not match: line {line} is currently \"{}\". Content around it:\n",
+		"Line id \"{line}:{expected_hash}\" does not match: line {line} is now \"{}\". Current content:\n",
 		line_id_at(lines, line)
 	);
 	for i in win_start..=win_end {
@@ -88,7 +88,7 @@ pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Resul
 	}
 	push_relocation(&mut msg, expected_hash, line, lines);
 	msg.push_str(&format!(
-		"\nRetry with the fresh ids above, or run `view` with start: {win_start}, end: {win_end} (or a wider range) to confirm before editing."
+		"\nRetry with these ids, or view start={win_start} end={win_end} for more."
 	));
 	Err(msg)
 }
@@ -112,7 +112,7 @@ fn push_relocation(msg: &mut String, expected_hash: &str, expected_line: usize, 
 		.map(|&n| line_id_at(lines, n))
 		.collect();
 	msg.push_str(&format!(
-		"Hash {expected_hash} currently matches: {} — you may have paired line {expected_line} with a neighbour's hash, or the content moved.",
+		"Hash {expected_hash} now matches {} (content moved, or hash paired with the wrong line).",
 		shown.join(", ")
 	));
 }
