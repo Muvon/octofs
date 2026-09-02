@@ -5922,7 +5922,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_view_with_id_endpoints() {
 		// view start/end accept line ids; the position part selects the span.
-		// Long file so out-of-range lines are elided (small margins render as context).
+		// Out-of-range lines never render; a trailing marker reports what remains.
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file = temp_dir.path().join("v.txt");
 		let body: String = (1..=20).map(|i| format!("v{i}\n")).collect();
@@ -5948,8 +5948,8 @@ mod tests {
 			"elided line 5 must not render: {out}"
 		);
 		assert!(
-			out.contains("lines more]"),
-			"elision markers present: {out}"
+			out.ends_with("[... 10 more lines, 20 total]"),
+			"trailing range marker present: {out}"
 		);
 	}
 

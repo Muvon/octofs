@@ -42,7 +42,7 @@ async fn test_quick_command_keeps_foreground_response() {
 		.await
 		.expect("quick command succeeds");
 	assert!(outcome.resource_uri.is_none(), "quick command stays inline");
-	assert_eq!(outcome.text, "stdout\n\nError: stderr");
+	assert_eq!(outcome.text, "stdout\n\nstderr:\nstderr");
 }
 
 #[tokio::test]

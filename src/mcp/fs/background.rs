@@ -255,7 +255,7 @@ pub fn read(id: &str) -> Option<JobView> {
 	} else if stdout.is_empty() {
 		stderr.into_owned()
 	} else {
-		format!("{stdout}\n\nError: {stderr}")
+		format!("{stdout}\n\nstderr:\n{stderr}")
 	};
 	let output_truncated = output.len() > MAX_TAIL_BYTES;
 	let output = if output_truncated {

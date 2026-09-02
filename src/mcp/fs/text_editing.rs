@@ -549,13 +549,6 @@ async fn apply_unique_replacement(
 	let new_content = content.replace(old_text, new_text);
 	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
 
-	if old_line_count > 1 {
-		crate::mcp::request_ctx::push_hint(&format!(
-			"`str_replace` matched {} lines. Prefer `batch_edit` when you know the line ids — it's faster and avoids content-search ambiguity.",
-			old_line_count
-		));
-	}
-
 	let new_lines: Vec<&str> = new_content.lines().collect();
 	let new_text_lines: Vec<&str> = new_text.lines().collect();
 	Ok(build_str_replace_diff(

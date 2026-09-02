@@ -669,13 +669,14 @@ async fn execute_with_timeout(
 			let stdout = clean_terminal_noise(&String::from_utf8_lossy(&stdout));
 			let stderr = clean_terminal_noise(&String::from_utf8_lossy(&stderr));
 
-			// Format the output more clearly with error handling
+			// Label stderr by stream, not verdict: warnings and progress land there
+			// on success too, and the exit code below is the only failure signal.
 			let final_output = if stderr.is_empty() {
 				stdout
 			} else if stdout.is_empty() {
 				stderr
 			} else {
-				format!("{stdout}\n\nError: {stderr}")
+				format!("{stdout}\n\nstderr:\n{stderr}")
 			};
 
 			// Add detailed execution results including status code

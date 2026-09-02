@@ -26,7 +26,8 @@ fn render_line(line_1idx: usize, content: &str) -> String {
 	format!("{}|{}", line_id(line_1idx, content), content)
 }
 
-/// Format content with composite line ids and smart elision for display.
+/// Format content with composite line ids. A ranged view renders exactly the
+/// requested lines plus one trailing marker with the remaining/total line count.
 pub fn format_content_with_line_numbers(
 	lines: &[&str],
 	start_line_number: usize,
@@ -61,39 +62,18 @@ pub fn format_content_with_line_numbers(
 			};
 		}
 
-		let mut result_lines = Vec::new();
+		let mut result_lines: Vec<String> = (start_idx..end_idx).map(render).collect();
 
-		if start_idx > 3 {
-			for i in 0..2 {
-				result_lines.push(render(i));
-			}
-			if start_idx > 5 {
-				result_lines.push(format!("[...{} lines more]", start_idx - 2));
+		// The caller chose this range; the only thing worth adding is how much
+		// file lies beyond it. No head/tail context lines — they cost tokens on
+		// every ranged read and carry nothing the model asked for.
+		let remaining = lines.len() - end_idx;
+		if start_idx > 0 || remaining > 0 {
+			result_lines.push(if remaining == 0 {
+				format!("[end of file, {} lines total]", lines.len())
 			} else {
-				for i in 2..start_idx {
-					result_lines.push(render(i));
-				}
-			}
-		} else {
-			for i in 0..start_idx {
-				result_lines.push(render(i));
-			}
-		}
-
-		for i in start_idx..end_idx {
-			result_lines.push(render(i));
-		}
-
-		let remaining_lines = lines.len() - end_idx;
-		if remaining_lines > 5 {
-			result_lines.push(format!("[...{} lines more]", remaining_lines - 2));
-			for i in (lines.len() - 2)..lines.len() {
-				result_lines.push(render(i));
-			}
-		} else {
-			for i in end_idx..lines.len() {
-				result_lines.push(render(i));
-			}
+				format!("[... {remaining} more lines, {} total]", lines.len())
+			});
 		}
 
 		result_lines.join("\n")
