@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.15.0] - 2026-09-02
+
+### 📋 Release Summary
+
+This release adds delta file views, edit line-shift reporting, and support for SSH aliases and home-relative paths (ef4e8d07, f284e63c, 101f259e). Filesystem editing and MCP output handling were improved with safer replacement inserts, clearer stderr and ranged-output guidance, and more streamlined tool messages (3ab6f6a4, 5cca3e73, f5f3b8b9).
+
+
+### ✨ New Features & Enhancements
+
+- **fs**: report edit line shifts `ef4e8d07`
+- **fs**: support delta file views `f284e63c`
+- **ssh**: support aliases and home-relative paths `101f259e`
+
+### 🔧 Improvements & Optimizations
+
+- **fs**: streamline filesystem tool messages `f5f3b8b9`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: reject inserts inside replacements `3ab6f6a4`
+- **mcp**: clarify stderr and ranged output `5cca3e73`
+
 ## [0.14.1] - 2026-08-31
 
 ### 📋 Release Summary

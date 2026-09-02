@@ -3,7 +3,7 @@
   "name": "io.github.Muvon/octofs",
   "title": "Octofs",
   "description": "Standalone MCP filesystem tools server — view, edit, shell, workdir.",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "websiteUrl": "https://github.com/muvon/octofs",
   "repository": {
     "url": "https://github.com/muvon/octofs",
