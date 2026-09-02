@@ -917,8 +917,10 @@ fn check_replace_duplicates(
 // Conflict rules:
 //   Replace vs Replace — ranges overlap → conflict (both try to modify same lines)
 //   Insert  vs Insert  — same anchor line → conflict (ambiguous ordering)
-//   Insert  vs Replace — NEVER conflict. Insert operates in the *gap* after a line,
-//                        Replace operates on the line's *content*. They are independent.
+//   Insert  vs Replace — conflict when the insert's gap lies inside the replaced
+//                        range (s <= anchor < e): the anchor line is being rewritten,
+//                        so where the insert lands would be a guess. Inserting after
+//                        the range's last line or before the range is unambiguous.
 fn detect_conflicts(operations: &[BatchOperation], file_lines: &[&str]) -> Result<(), String> {
 	let id = |line_1idx: usize| -> String {
 		// Anchor 0 means "file start" — there is no line to identify, and `0 - 1`
@@ -961,10 +963,22 @@ fn detect_conflicts(operations: &[BatchOperation], file_lines: &[&str]) -> Resul
 						));
 					}
 				}
-				// Insert + Replace: never conflict — they operate on different
-				// conceptual positions (gap vs content)
 				(OperationType::Insert, OperationType::Replace)
-				| (OperationType::Replace, OperationType::Insert) => {}
+				| (OperationType::Replace, OperationType::Insert) => {
+					let (ins, rep) = if op1.operation_type == OperationType::Insert {
+						(op1, op2)
+					} else {
+						(op2, op1)
+					};
+					let anchor = insert_anchor(&ins.line_range);
+					let (s, e) = replace_range(&rep.line_range);
+					if s <= anchor && anchor < e {
+						return Err(format!(
+							"Conflicting operations: operation {} inserts after {}, inside the range operation {} replaces (\"{}-{}\"). Put those lines in the replacement content instead.",
+							ins.operation_index, id(anchor), rep.operation_index, id(s), id(e)
+						));
+					}
+				}
 			}
 		}
 	}
@@ -1098,35 +1112,14 @@ async fn apply_batch_operations(
 			));
 		}
 
-		// Compute adjusted position: start from original anchor, apply offsets
-		// from all replaces that END at or before this anchor.
-		// A replace at [s,e] with delta D shifts everything after line e by D.
-		// If anchor >= e (insert is after the replaced region), apply the full delta.
-		// If anchor < s (insert is before the replaced region), no shift.
-		// If s <= anchor < e (insert is inside the replaced region), the anchor
-		// falls within replacement content — shift by (anchor - s) positions into
-		// the new content, capped at the new content length.
+		// A replace at [s,e] with delta D shifts everything after line e by D; an
+		// anchor before the range is unaffected, and one inside it was rejected by
+		// detect_conflicts.
 		let mut adjusted = original_anchor as i64;
-		for &(rs, re, delta) in &replace_deltas {
+		for &(_, re, delta) in &replace_deltas {
 			if original_anchor >= re {
-				// Insert anchor is at or after the replace's end — full shift
 				adjusted += delta;
-			} else if original_anchor >= rs {
-				// Insert anchor is inside the replaced range.
-				// Map it proportionally: anchor was at offset (anchor - rs) into
-				// the old range. In the new content, cap at new_count.
-				let old_count = (re - rs + 1) as i64;
-				let new_count = old_count + delta;
-				let offset_in_old = (original_anchor - rs) as i64;
-				// Proportional position in new content, capped
-				let offset_in_new = offset_in_old.min(new_count);
-				// The replace starts at rs in original. After this replace,
-				// position rs maps to rs (unchanged start). So anchor maps to
-				// rs + offset_in_new. But we started with adjusted = original_anchor,
-				// so the delta to apply is: (rs as i64 + offset_in_new) - original_anchor as i64
-				adjusted += (rs as i64 + offset_in_new) - original_anchor as i64;
 			}
-			// else: anchor is before the replace — no shift needed
 		}
 
 		let insert_pos = adjusted.max(0) as usize;
@@ -1466,9 +1459,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	// line-count delta keeps every later op's rendered positions (and hash prefixes) aligned
 	// with where its content actually landed — without this, every op after the first
 	// length-changing one shows wrong line numbers/hashes.
-	// ponytail: assumes non-overlapping ops (guaranteed by detect_conflicts for replaces and
-	// equal-anchor inserts); an insert anchored strictly inside a replaced range renders
-	// approximately. The on-disk write is always correct regardless.
+	// Non-overlapping ops are guaranteed by detect_conflicts (replace/replace overlap,
+	// equal-anchor inserts, inserts inside a replaced range).
 	let mut offset: i64 = 0;
 
 	// 1-indexed position in the final file = original position + offset of prior ops.

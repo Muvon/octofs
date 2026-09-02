@@ -16,9 +16,13 @@
 
 use super::line_hash::line_id;
 
-/// Rough token estimate: ~4 chars per token (good enough for truncation decisions).
-pub fn estimate_tokens(content: &str) -> usize {
-	content.len().div_ceil(4)
+/// Source code averages ~3.5 chars per token: indentation and punctuation
+/// tokenize densely, so the prose figure of 4 undercounts by ~20%.
+pub const CHARS_PER_TOKEN: f64 = 3.5;
+
+/// Rough token estimate for budgeting reads, from a byte length.
+pub fn estimate_tokens(bytes: usize) -> usize {
+	(bytes as f64 / CHARS_PER_TOKEN).ceil() as usize
 }
 
 /// Render one line as "N:hh|content" — the single line-id format all tools share.

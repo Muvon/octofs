@@ -4489,7 +4489,9 @@ mod tests {
 	// Insert after N + replace range that INCLUDES N → should succeed
 	// Insert goes into gap after line N, replace changes lines including N
 	#[tokio::test]
-	async fn test_batch_edit_insert_after_n_replace_range_including_n() {
+	async fn test_batch_edit_insert_inside_replace_range_conflicts() {
+		// Inserting after line 3 while lines 2-4 are replaced: the anchor line is
+		// being rewritten, so the landing spot would be a guess — reject, apply nothing.
 		let content = "A\nB\nC\nD\nE\n";
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
@@ -4505,15 +4507,16 @@ mod tests {
 		)
 		.await;
 
-		crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-
-		// Reverse-order: replace [2,4] first (B,C,D → X,Y,Z), then insert NEW after line 3
-		// After replace: A / X / Y / Z / E
-		// Insert after line 3 (Y): A / X / Y / NEW / Z / E
+			.unwrap_err()
+			.to_string();
+		assert!(
+			err.contains("Conflicting operations") && err.contains("inside the range"),
+			"got: {err}"
+		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
-		assert_eq!(actual, "A\nX\nY\nNEW\nZ\nE\n");
+		assert_eq!(actual, content);
 	}
 
 	// Insert after 0 + replace line 1 → should succeed

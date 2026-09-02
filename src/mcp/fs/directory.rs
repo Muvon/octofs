@@ -75,7 +75,11 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 		} else {
 			newlines + 1
 		};
-		format!("{}L\t~{}t", line_count, bytes.len().div_ceil(4))
+		format!(
+			"{}L\t~{}t",
+			line_count,
+			crate::utils::truncation::estimate_tokens(bytes.len())
+		)
 	};
 
 	if let Some(mt) = mtime {
