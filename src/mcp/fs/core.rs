@@ -722,11 +722,23 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		n => format!("after line {n}"),
 	};
 
-	Ok(format!(
+	let mut out = format!(
 		"Appended {lines_extracted} lines ({}-{}) from '{from_path}' to '{append_path}' at {position_desc}:\n{extracted_content_display}",
 		from_range.0,
 		from_range.1
-	))
+	);
+	let target_orig: Vec<&str> = target_content.lines().collect();
+	let anchor = if append_line == -1 {
+		target_orig.len()
+	} else {
+		append_line as usize
+	};
+	if let Some(note) = text_editing::shift_note(&target_orig, &[(anchor, lines_extracted as i64)])
+	{
+		out.push('\n');
+		out.push_str(&note);
+	}
+	Ok(out)
 }
 
 // Execute batch_edit operations on a single file.

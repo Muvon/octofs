@@ -325,8 +325,9 @@ impl OctofsServer {
 		description = "Apply several insert/replace operations to one file atomically. Targets are \
 			line ids (\"12:a3\") from view or edit output, verified before anything is written; a \
 			stale id fails with the current content. The result diff carries fresh ids for follow-up \
-			edits — no re-view needed. Insert anchors 0 (file start) and -1 (end) are plain \
-			integers. Content is raw text without id prefixes."
+			edits — no re-view needed; removed lines show as an id range, and a trailing `shift:` \
+			line says how original line numbers after each edit moved. Insert anchors 0 (file \
+			start) and -1 (end) are plain integers. Content is raw text without id prefixes."
 	)]
 	async fn batch_edit(
 		&self,

@@ -235,7 +235,10 @@ Edit tools take these ids back as targets and verify the hash against the file
 before applying anything. A stale id (the file changed since it was viewed) fails
 with the current content around the target and where the expected content moved —
 so the model retargets from the error instead of re-reading the file. Edit results
-are diffs with fresh ids, so edits chain without re-viewing.
+are diffs with fresh ids, so edits chain without re-viewing. Removed lines collapse
+to their old id range (`-12:a3..15:f1 (4 lines)`), and a trailing
+`shift: lines after 40:b2 +3` line says how original line numbers below each edit
+moved, so ids the model still holds can be adjusted without a failed call.
 
 This is the single line-id format — there is no mode switch. Plain line numbers
 are still accepted where a position alone is safe: `view` ranges (negative counts

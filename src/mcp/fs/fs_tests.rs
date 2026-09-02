@@ -683,7 +683,7 @@ mod tests {
 			}),
 		};
 		let diff = execute_batch_edit(&call).await.unwrap();
-		let removed = format!("-{}|line 2", lid(content, 2));
+		let removed = format!("-{} (1 line)", lid(content, 2));
 		assert!(
 			diff.contains(&removed),
 			"diff must show removed line: {diff}"
@@ -693,6 +693,68 @@ mod tests {
 		assert!(
 			diff.contains(&added),
 			"diff must show added line with fresh id: {diff}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_edits_collapse_removed_lines_and_report_shift() {
+		// batch_edit: 2 lines -> 4 (+2) and one inserted line after line 5 (+1, cumulative +3).
+		let content = "l1\nl2\nl3\nl4\nl5\nl6\nl7\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [
+					{"operation": "replace", "start": lid(content, 2), "end": lid(content, 3), "content": "a\nb\nc\nd"},
+					{"operation": "insert", "start": lid(content, 5), "content": "x"}
+				]
+			}),
+		};
+		let diff = execute_batch_edit(&call).await.unwrap();
+		let removed = format!("-{}..{} (2 lines)", lid(content, 2), lid(content, 3));
+		assert!(diff.contains(&removed), "collapsed removal: {diff}");
+		assert!(
+			!diff.contains("|l2"),
+			"removed content is not echoed: {diff}"
+		);
+		let note = format!(
+			"shift: lines after {} +2, after {} +3",
+			lid(content, 3),
+			lid(content, 5)
+		);
+		assert!(diff.ends_with(&note), "shift note: {diff}");
+		assert_eq!(
+			fs::read_to_string(temp_file.path()).await.unwrap(),
+			"l1\na\nb\nc\nd\nl4\nl5\nx\nl6\nl7\n"
+		);
+
+		// str_replace: 1 line -> 3 (+2); no note when nothing follows the edit.
+		let content = "one\ntwo\nthree\n";
+		let temp_file = create_test_file(content).await;
+		let source = PathSource::from(temp_file.path());
+		let diff =
+			crate::mcp::fs::text_editing::str_replace_spec(&source, "two", "2a\n2b\n2c", false)
+				.await
+				.unwrap();
+		assert!(
+			diff.contains(&format!("-{} (1 line)", lid(content, 2))),
+			"{diff}"
+		);
+		assert!(
+			diff.ends_with(&format!("shift: lines after {} +2", lid(content, 2))),
+			"{diff}"
+		);
+		let diff =
+			crate::mcp::fs::text_editing::str_replace_spec(&source, "three", "3a\n3b", false)
+				.await
+				.unwrap();
+		assert!(
+			!diff.contains("shift:"),
+			"nothing follows the last line: {diff}"
 		);
 	}
 
@@ -2424,8 +2486,8 @@ mod tests {
 		);
 		assert!(diff.contains("+2:"), "diff must show added line: {}", diff);
 		assert!(
-			diff.contains("beta"),
-			"diff must show old content: {}",
+			diff.contains("(1 line)") && !diff.contains("|beta"),
+			"removed line collapses to its id, content not echoed: {}",
 			diff
 		);
 		assert!(

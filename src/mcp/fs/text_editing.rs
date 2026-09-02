@@ -415,14 +415,13 @@ fn build_str_replace_diff(
 		diff.push(format!("{}|{}", line_id_at(new_lines, i + 1), new_lines[i]));
 	}
 
-	// Removed lines (old ids)
-	for (i, line) in orig_lines
-		.iter()
-		.enumerate()
-		.skip(start)
-		.take(old_line_count)
-	{
-		diff.push(format!("-{}|{}", line_id_at(orig_lines, i + 1), line));
+	// Removed lines collapse to their old id range — the model supplied them.
+	if old_line_count > 0 {
+		diff.push(super::delta::removed_marker(
+			orig_lines,
+			start,
+			start + old_line_count - 1,
+		));
 	}
 
 	// Added lines — at their final positions with fresh ids.
@@ -445,7 +444,36 @@ fn build_str_replace_diff(
 		diff.push("...".to_string());
 	}
 
+	let delta = new_lines.len() as i64 - orig_lines.len() as i64;
+	diff.extend(shift_note(orig_lines, &[(start + old_line_count, delta)]));
+
 	diff.join("\n")
+}
+
+/// Trailing line telling how ORIGINAL line numbers after each edited region
+/// moved, so ids the model still holds can be adjusted instead of failing a
+/// call. `regions` are (last original line of the region — 0 for a file-start
+/// insert, line delta); deltas accumulate downwards.
+pub(crate) fn shift_note(orig_lines: &[&str], regions: &[(usize, i64)]) -> Option<String> {
+	let mut by_end = std::collections::BTreeMap::new();
+	for &(end, delta) in regions {
+		*by_end.entry(end).or_insert(0i64) += delta;
+	}
+	let mut total = 0i64;
+	let mut parts = Vec::new();
+	for (end, delta) in by_end {
+		total += delta;
+		if delta == 0 || end >= orig_lines.len() {
+			continue;
+		}
+		let anchor = if end == 0 {
+			"0".to_string()
+		} else {
+			line_id_at(orig_lines, end)
+		};
+		parts.push(format!("after {anchor} {total:+}"));
+	}
+	(!parts.is_empty()).then(|| format!("shift: lines {}", parts.join(", ")))
 }
 
 /// Atomic write: write to a temp file in the same directory, then rename over the target.
@@ -596,11 +624,28 @@ async fn apply_replace_all(
 		})
 		.collect();
 
-	Ok(format!(
+	let orig_lines: Vec<&str> = content.lines().collect();
+	let line_delta = new_text.matches('\n').count() as i64 - old_text.matches('\n').count() as i64;
+	let regions: Vec<(usize, i64)> = positions
+		.iter()
+		.map(|&pos| {
+			// Last line the match touches: a trailing newline belongs to that line,
+			// not the next one.
+			let end = pos + old_text.trim_end_matches('\n').len();
+			(byte_offset_to_line(content, end), line_delta)
+		})
+		.collect();
+
+	let mut out = format!(
 		"Replaced {} occurrences. Replacements start at: {}",
 		positions.len(),
 		sites.join(", ")
-	))
+	);
+	if let Some(note) = shift_note(&orig_lines, &regions) {
+		out.push('\n');
+		out.push_str(&note);
+	}
+	Ok(out)
 }
 
 // Replace a string in a file with progressive matching strategy:
@@ -1405,7 +1450,6 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	const CONTEXT: usize = 2;
 	let new_lines: Vec<&str> = final_content.lines().collect();
 
-	let orig_prefix = |line_1idx: usize| -> String { line_id_at(&original_lines, line_1idx) };
 	let new_prefix = |line_1idx: usize| -> String { line_id_at(&new_lines, line_1idx) };
 
 	let mut diffs: Vec<String> = Vec::new();
@@ -1457,10 +1501,12 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				for new_i in ctx_before_start..new_start {
 					diff.extend(ctx_line(new_i));
 				}
-				// Removed lines — original content at ORIGINAL coordinates.
-				for (i, old_line) in original_lines[start - 1..end].iter().enumerate() {
-					diff.push(format!("-{}|{}", orig_prefix(start + i), old_line));
-				}
+				// Removed lines collapse to their ORIGINAL id range — the model saw them.
+				diff.push(super::delta::removed_marker(
+					&original_lines,
+					start - 1,
+					end - 1,
+				));
 				// Added lines — at their FINAL positions, ids computed from the
 				// added content itself (always correct, no bounds concern).
 				for (i, new_line) in content_lines.iter().enumerate() {
@@ -1528,7 +1574,26 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 	// The diff IS the result — plain text, same style as `view` output.
 	// LLM reads it to verify edits landed correctly without needing a separate view call.
-	let diff_output = diffs.join("\n---\n");
+	let mut diff_output = diffs.join("\n---\n");
+
+	let regions: Vec<(usize, i64)> = batch_operations
+		.iter()
+		.map(|op| {
+			let added = op.content.lines().count() as i64;
+			match (&op.operation_type, &op.line_range) {
+				(OperationType::Replace, LineRange::Range(s, e)) => {
+					(*e, added - (*e - *s + 1) as i64)
+				}
+				(OperationType::Replace, LineRange::Single(l)) => (*l, added - 1),
+				(OperationType::Insert, LineRange::Single(after)) => (*after, added),
+				(OperationType::Insert, LineRange::Range(s, _)) => (*s, added),
+			}
+		})
+		.collect();
+	if let Some(note) = shift_note(&original_lines, &regions) {
+		diff_output.push('\n');
+		diff_output.push_str(&note);
+	}
 
 	Ok(diff_output)
 }
