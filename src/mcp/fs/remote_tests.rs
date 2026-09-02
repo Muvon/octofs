@@ -186,10 +186,28 @@ fn test_ssh_no_path() {
 			assert_eq!(host, "host");
 			assert_eq!(port, 2222);
 			assert_eq!(user, "user");
-			assert_eq!(path, "/");
+			assert_eq!(path, "/~");
 		}
 		_ => panic!("expected Remote"),
 	}
+	assert_eq!(parse_path_source("ssh://dev").display(), "ssh://dev/~");
+}
+
+#[test]
+fn test_sftp_path_home_relative() {
+	let sftp = |url: &str| parse_path_source(url).sftp_path().to_string();
+	assert_eq!(sftp("ssh://dev"), ".");
+	assert_eq!(sftp("ssh://dev/~"), ".");
+	assert_eq!(sftp("ssh://dev/~/"), ".");
+	assert_eq!(sftp("ssh://dev/~/src/main.rs"), "src/main.rs");
+	assert_eq!(sftp("ssh://dev/"), "/");
+	assert_eq!(sftp("ssh://dev/etc/hosts"), "/etc/hosts");
+	assert_eq!(sftp("ssh://dev/~box/x"), "/~box/x");
+	let workdir = PathBuf::from("ssh://dev");
+	assert_eq!(
+		resolve_path_source("src/main.rs", &workdir).sftp_path(),
+		"src/main.rs"
+	);
 }
 
 #[test]

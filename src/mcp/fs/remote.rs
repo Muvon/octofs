@@ -52,6 +52,18 @@ impl PathSource {
 		matches!(self, PathSource::Remote { .. })
 	}
 
+	/// Path as sent over SFTP. `/~` (URL form `ssh://host/~/x`) is the login
+	/// home: SFTP resolves relative paths against it, so `/~` becomes `.` and
+	/// `/~/x` becomes `x`. Absolute paths pass through unchanged.
+	pub fn sftp_path(&self) -> &str {
+		let path = self.path_str();
+		let tilde = path.strip_prefix('/').unwrap_or(path);
+		match tilde {
+			"~" | "~/" => ".",
+			_ => tilde.strip_prefix("~/").unwrap_or(path),
+		}
+	}
+
 	/// Returns a lock key unique per host+path to avoid cross-host collisions.
 	pub fn lock_key(&self) -> String {
 		match self {
@@ -144,10 +156,15 @@ impl From<&PathBuf> for PathSource {
 /// - `ssh://user@host:port/path`
 /// - `sftp://user@host:port/path`
 ///
+/// `host` may be an OpenSSH config alias. A path of `/~` or `/~/x` is relative
+/// to the login home (see [`PathSource::sftp_path`]); no path at all means `/~`,
+/// matching `ssh host` / `scp host:`.
+///
 /// If no scheme is present, the path is treated as local and returned as-is
 /// (the caller is responsible for resolving it against the workdir).
 ///
-/// Defaults: port 22, user from `$USER` (or "root" if unset).
+/// Defaults: port 22, user from `$USER` (or "root" if unset); both are
+/// overridden by `~/.ssh/config` when not explicit in the URL.
 pub fn parse_path_source(path: &str) -> PathSource {
 	let rest = path
 		.strip_prefix("ssh://")
@@ -170,7 +187,7 @@ pub fn parse_path_source(path: &str) -> PathSource {
 	// Split host:port from path (first '/' separates)
 	let (host_port, remote_path) = match host_part.find('/') {
 		Some(idx) => (&host_part[..idx], &host_part[idx..]),
-		None => (host_part, "/"),
+		None => (host_part, "/~"),
 	};
 
 	// Split host from port — handle IPv6 brackets
@@ -1051,7 +1068,7 @@ mod sftp {
 
 	/// Read a remote file as bytes.
 	pub async fn remote_read(source: &super::PathSource) -> Result<Vec<u8>> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.read(path)
@@ -1071,7 +1088,7 @@ mod sftp {
 	/// Write content to a remote file (creates or truncates).
 	pub async fn remote_write(source: &super::PathSource, content: &[u8]) -> Result<()> {
 		use tokio::io::AsyncWriteExt;
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let mut file = sftp
@@ -1088,7 +1105,7 @@ mod sftp {
 
 	/// Check if a remote path exists.
 	pub async fn remote_exists(source: &super::PathSource) -> Result<bool> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.try_exists(path)
@@ -1098,7 +1115,7 @@ mod sftp {
 
 	/// Get metadata for a remote path.
 	pub async fn remote_metadata(source: &super::PathSource) -> Result<RemoteMetadata> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let attrs = sftp
@@ -1115,16 +1132,17 @@ mod sftp {
 
 	/// Create directories recursively (SFTP create_dir only creates a single dir).
 	pub async fn remote_create_dir_all(source: &super::PathSource) -> Result<()> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
-		let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+		// Home-relative paths (`/~/x`) must stay relative so SFTP resolves them
+		// against the login home.
 		let mut current = String::new();
-		for part in parts {
-			current = if current.is_empty() {
-				format!("/{part}")
-			} else {
-				format!("{current}/{part}")
+		for part in path.split('/').filter(|s| !s.is_empty()) {
+			current = match (current.is_empty(), path.starts_with('/')) {
+				(true, true) => format!("/{part}"),
+				(true, false) => part.to_string(),
+				(false, _) => format!("{current}/{part}"),
 			};
 			let _ = sftp.create_dir(&current).await;
 		}
@@ -1133,7 +1151,7 @@ mod sftp {
 
 	/// Remove a remote file.
 	pub async fn remote_remove_file(source: &super::PathSource) -> Result<()> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.remove_file(path)
@@ -1145,7 +1163,7 @@ mod sftp {
 	pub async fn remote_list_dir(
 		source: &super::PathSource,
 	) -> Result<Vec<(String, RemoteMetadata)>> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		let read_dir = sftp
@@ -1172,7 +1190,7 @@ mod sftp {
 
 	/// Canonicalize a remote path.
 	pub async fn remote_canonicalize(source: &super::PathSource) -> Result<String> {
-		let path = source.path_str();
+		let path = source.sftp_path();
 		let session = remote_session(source).await?;
 		let sftp = session.lock().await;
 		sftp.canonicalize(path)

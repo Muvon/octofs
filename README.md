@@ -301,6 +301,7 @@ octofs mcp --path ssh://deploy@example.com/var/www/app --ssh-key ~/.ssh/id_ed255
 view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 ```
 
+- **Login home** — `ssh://host` (no path) and `ssh://host/~/dir` resolve against the login user's home, like `ssh host` / `scp host:dir`. `ssh://host/dir` stays absolute.
 - **OpenSSH config** — host aliases are resolved through the local OpenSSH config (including `Include` and `Match`) and honor `HostName`, `User`, `Port`, and a single `ProxyJump`. Explicit URL values win, so both `ssh://dev/path` and `ssh://user@example.com:2222/path` work as expected. Multi-hop `ProxyJump` and `ProxyCommand` routing are rejected with a clear error.
 - **Authentication** — uses the host's `IdentityAgent` (e.g. 1Password) or `$SSH_AUTH_SOCK`, then key files — `--ssh-key` if given, the host's `IdentityFile` entries, then the defaults in `~/.ssh` (`id_ed25519`, `id_ecdsa`). Passphrase-protected key files are not supported directly; use an agent instead.
 - **RSA keys are not supported** — the Rust `rsa` crate has an unfixed timing side-channel (Marvin attack, [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071)), so octofs is built without RSA entirely. Use an ed25519 key instead (`ssh-keygen -t ed25519`); ecdsa also works. RSA-only setups fail with a clear error naming the key.

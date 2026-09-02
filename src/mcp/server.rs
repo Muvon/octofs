@@ -793,7 +793,9 @@ pub struct ViewParams {
 	/// single-line roots and 8192 UTF-8 bytes. To read several files without content
 	/// search, make multiple `view` calls — they run in parallel.
 	/// Supports ssh://user@host:port/path or sftp://user@host:port/path for remote
-	/// filesystem access.
+	/// filesystem access. `host` may be an ~/.ssh/config alias (user and port come
+	/// from the config when omitted); `ssh://host` or `ssh://host/~/dir` is the
+	/// login home, `ssh://host/dir` is absolute.
 	pub path: String,
 	/// First line to show (inclusive). Integer line number (negative counts from the
 	/// end: -1 = last line) or a line id like "12:a3". Omit to start at line 1.
@@ -956,7 +958,8 @@ pub struct ShellParams {
 pub struct WorkdirParams {
 	/// Absolute path or path relative to current workdir to switch into.
 	/// Required unless `reset: true`. Do not pass `"."` — that is a no-op.
-	/// Supports ssh://user@host:port/path for remote filesystem access.
+	/// Supports ssh://user@host:port/path for remote filesystem access;
+	/// `ssh://host` or `ssh://host/~/dir` is the login home.
 	#[serde(default)]
 	pub path: Option<String>,
 	/// If true, revert to the original session working directory.

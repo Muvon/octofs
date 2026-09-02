@@ -84,15 +84,15 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with this command is forbidden — use `view` instead (line-numbered, supports ranges, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\"                # read whole file\n    view path=\"src/main.rs\" start=10 end=50  # read lines 10–50\n    view path=\"ssh://user@host/path/file\"   # remote file — no `ssh cat` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
+		"Reading files with this command is forbidden — use `view` instead (line-numbered, supports ranges, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\"                # read whole file\n    view path=\"src/main.rs\" start=10 end=50  # read lines 10–50\n    view path=\"ssh://host/~/path/file\"   # remote file (host = ssh config alias, ~ = login home) — no `ssh cat` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching file text with this command is forbidden — use `view` with content= instead (gitignore-aware, context lines, line numbers, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\" content=\"fulfill_input_requests\"\n    view path=\"src/\" content=\"TODO\" regex=true\n    view path=\"ssh://user@host/dir\" content=\"TODO\"  # remote search — no `ssh grep` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
+		"Searching file text with this command is forbidden — use `view` with content= instead (gitignore-aware, context lines, line numbers, works on remote hosts).\n\n  Example:\n    view path=\"src/main.rs\" content=\"fulfill_input_requests\"\n    view path=\"src/\" content=\"TODO\" regex=true\n    view path=\"ssh://host/~/dir\" content=\"TODO\"  # remote search (~ = login home) — no `ssh grep` needed\n\n  Shell is allowed only for pipelines or system paths outside the project.",
 	),
 	(
 		&["find", "ls"],
-		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering, works on remote hosts).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # ripgrep-compatible glob grammar (`*`, `**`, `?`, `[abc]`, `{a,b}`, leading `!`)\n    view path=\"ssh://user@host/dir\"  # remote listing — no `ssh ls` needed\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the returned relative path. Use `|` for ordered globs.\n  Shell is allowed only for system paths outside the project.",
+		"Directory listing with this command is forbidden — use `view` instead (.gitignore-aware, pattern/content filtering, works on remote hosts).\n\n  Example:\n    view path=\"src/\"                # list directory\n    view path=\"src/\" pattern=\"*.rs\"  # ripgrep-compatible glob grammar (`*`, `**`, `?`, `[abc]`, `{a,b}`, leading `!`)\n    view path=\"ssh://host/~/dir\"  # remote listing (~ = login home) — no `ssh ls` needed\n\n  A pattern without `/` matches filenames at any depth; with `/`, it matches the returned relative path. Use `|` for ordered globs.\n  Shell is allowed only for system paths outside the project.",
 	),
 	(
 		&["sed", "awk"],
