@@ -118,6 +118,7 @@ pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
 	io_remove_file(source)
 		.await
 		.map_err(|e| anyhow!("Failed to delete '{}': {}", source.display(), e))?;
+	super::delta::forget(source);
 
 	Ok(format!("Successfully deleted {}", source.display()))
 }
@@ -548,6 +549,7 @@ async fn apply_unique_replacement(
 	save_file_history(source).await?;
 	let new_content = content.replace(old_text, new_text);
 	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+	super::delta::note_write(source, content, &new_content);
 
 	let new_lines: Vec<&str> = new_content.lines().collect();
 	let new_text_lines: Vec<&str> = new_text.lines().collect();
@@ -573,6 +575,7 @@ async fn apply_replace_all(
 	save_file_history(source).await?;
 	let new_content = content.replace(old_text, new_text);
 	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+	super::delta::note_write(source, content, &new_content);
 
 	let new_lines: Vec<&str> = new_content.lines().collect();
 	// Each occurrence shifts later ones by the length delta; map original offsets
@@ -733,6 +736,7 @@ pub async fn str_replace_spec(
 			save_file_history(source).await?;
 			let new_content = content.replace(&actual_old, &adjusted_new);
 			atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+			super::delta::note_write(source, &content, &new_content);
 
 			crate::mcp::request_ctx::push_hint(
 				"Replaced via fuzzy match (whitespace-normalized). Indentation was auto-adjusted to match the file.",
@@ -1404,6 +1408,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	atomic_write(&source, &restore_endings(uses_crlf, final_content.clone()))
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
+	super::delta::note_write(&source, &original_content, &final_content);
 
 	// Build annotated diff for each operation so the AI can verify edits landed correctly.
 	// Context and added lines carry FRESH ids from the final file — usable directly as

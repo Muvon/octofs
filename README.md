@@ -58,6 +58,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart — but it's 
 | **Transport** | STDIO + Streamable HTTP | STDIO only |
 | **Shell Integration** | Automatic foreground-to-background handoff | Limited or none |
 | **Remote Files** | Transparent SSH/SFTP on every file tool | None |
+| **Re-reads** | Delta views — re-viewing a file returns only the hunks changed since | Full file every time |
 | **Safety** | Gitignore-aware, stale-write detection, path validation | Full filesystem access |
 
 ---
@@ -329,6 +330,16 @@ Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
 that `batch_edit` and `extract_lines` take as targets.
 
 To read several files, make multiple `view` calls — they run in parallel.
+
+**Delta views:** a whole-file view of a file the session already served returns
+only the hunks changed since — the same `...`/`-`/`+` style as edit results, with
+removed lines collapsed to their old id range — or
+`[unchanged since you last viewed or edited it: N lines. Pass full=true to re-read.]`.
+Octofs' own edits keep the cache current, so a re-view after your own `batch_edit`
+costs one line. Ranged views and content search always render exactly what was asked.
+```json
+{"path": "src/main.rs", "full": true}   // force the complete file (e.g. after context compaction)
+```
 
 **Directory listing:**
 ```json

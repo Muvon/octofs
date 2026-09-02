@@ -173,6 +173,9 @@ pub struct OctofsServer {
 	/// Listen streams opened by this client, for contract-clean delivery of
 	/// background-job completion notifications.
 	subscriptions: Arc<SubscriptionRegistry>,
+	/// Last full content served per file, so repeat whole-file views can
+	/// return only what changed.
+	view_cache: Arc<fs::delta::ViewCache>,
 }
 
 impl OctofsServer {
@@ -189,6 +192,7 @@ impl OctofsServer {
 			workdir: Arc::new(SessionWorkdir::new(root)),
 			session_applied: Arc::new(std::sync::atomic::AtomicBool::new(false)),
 			subscriptions: Arc::new(SubscriptionRegistry::default()),
+			view_cache: Arc::new(fs::delta::ViewCache::default()),
 		}
 	}
 
@@ -254,7 +258,9 @@ impl OctofsServer {
 			with its line count and estimated token cost (`path\tNL\t~Nt`) — use it to scope \
 			unfamiliar trees and budget reads before opening files. For rg-style content search \
 			across several roots, separate literal files/directories in `path` with `|`. The \
-			`pattern` filter accepts ripgrep -g glob grammar, including `**` and leading `!`."
+			`pattern` filter accepts ripgrep -g glob grammar, including `**` and leading `!`. \
+			Viewing a whole file you already viewed returns only the hunks changed since (or an \
+			unchanged marker); pass `full: true` to get the complete content again."
 	)]
 	async fn view(
 		&self,
@@ -269,7 +275,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(async move {
+		request_ctx::with_request_context(self.view_cache.clone(), async move {
 			let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
 		})
@@ -305,7 +311,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(async move {
+		request_ctx::with_request_context(self.view_cache.clone(), async move {
 			let result = fs::execute_text_editor(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -343,7 +349,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(async move {
+		request_ctx::with_request_context(self.view_cache.clone(), async move {
 			let result = fs::execute_batch_edit(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -375,7 +381,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(async move {
+		request_ctx::with_request_context(self.view_cache.clone(), async move {
 			let result = fs::execute_extract_lines(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -450,7 +456,7 @@ impl OctofsServer {
 		// describe the job ("make reldebug … still running") without re-deriving
 		// it — e.g. when preserving pending jobs across a context compaction.
 		let job_label: String = params.command.trim().chars().take(80).collect();
-		let exec = request_ctx::with_request_context(async move {
+		let exec = request_ctx::with_request_context(self.view_cache.clone(), async move {
 			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
 				.map_err(|e| e.to_string())?;
@@ -838,6 +844,11 @@ pub struct ViewParams {
 	/// Context lines around content search matches.
 	#[serde(default)]
 	pub context: Option<usize>,
+	/// Whole-file views of a file you already viewed return only the changed hunks
+	/// (or an unchanged marker). Set true to force the complete content, e.g. after
+	/// losing earlier context.
+	#[serde(default)]
+	pub full: Option<bool>,
 }
 
 /// JSON schema for a single line endpoint (`start`/`end`/`append_line`/op `start`/`end`).

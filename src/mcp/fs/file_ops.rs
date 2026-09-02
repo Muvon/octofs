@@ -37,6 +37,7 @@ fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i
 pub async fn view_file_spec(
 	source: &PathSource,
 	line_range: Option<(usize, i64)>,
+	full: bool,
 ) -> Result<String> {
 	if !io_exists(source).await? {
 		bail!("File not found");
@@ -58,9 +59,15 @@ pub async fn view_file_spec(
 	let content = io_read_to_string(source)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+
+	// Whole-file views go through the session delta cache; ranged views render
+	// exactly what was asked and leave the cache alone.
+	let Some(range) = line_range else {
+		return Ok(super::delta::render_whole_file(source, &content, full));
+	};
 	let lines: Vec<&str> = content.lines().collect();
 
-	let content_with_numbers = format_file_content_with_numbers(&lines, line_range);
+	let content_with_numbers = format_file_content_with_numbers(&lines, Some(range));
 
 	// Defensive: the range is pre-clamped in resolve_view_range, but if the formatter ever
 	// returns its out-of-range error string, surface it as an error rather than content.
@@ -157,6 +164,7 @@ pub async fn create_file_spec(source: &PathSource, content: &str) -> Result<Stri
 	io_write(source, content.as_bytes())
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
+	super::delta::note_create(source, content);
 
 	Ok(format!(
 		"File created successfully with {} bytes",

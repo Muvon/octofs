@@ -19,7 +19,7 @@ use super::remote::{
 	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_to_string, resolve_path_source,
 	PathSource,
 };
-use crate::mcp::fs::{directory, file_ops, text_editing};
+use crate::mcp::fs::{delta, directory, file_ops, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::format_extracted_content_smart;
 use anyhow::{anyhow, bail, Result};
@@ -139,6 +139,8 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 
 	if let Some(prev_content) = previous_content {
 		text_editing::atomic_write(source, &prev_content).await?;
+		// The restored content is not what the model last saw as a whole.
+		delta::forget(source);
 
 		Ok(format!(
 			"Successfully undid the last edit to {}",
@@ -342,7 +344,12 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
 	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
 	let range = resolve_view_range(start_ep, end_ep, source).await?;
-	file_ops::view_file_spec(source, range).await
+	let full = call
+		.parameters
+		.get("full")
+		.and_then(|v| v.as_bool())
+		.unwrap_or(false);
+	file_ops::view_file_spec(source, range, full).await
 }
 
 const MAX_SEARCH_PATH_BYTES: usize = 8192;
@@ -705,6 +712,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	if let Err(e) = text_editing::atomic_write(&append_source, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}
+	delta::note_write(&append_source, &target_content, &final_content);
 
 	// Return success result with useful information
 	let lines_extracted = from_range.1 - from_range.0 + 1;
