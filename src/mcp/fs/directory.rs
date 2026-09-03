@@ -25,7 +25,7 @@ use ignore::{overrides::Override, overrides::OverrideBuilder, WalkBuilder};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 // Listing annotations are a pure function of file content; keying on (mtime, len)
@@ -340,71 +340,184 @@ fn remote_child(source: &PathSource, name: &str) -> PathSource {
 	}
 }
 
-// Remote listings without an explicit max_depth stop at the root entries: an
-// unbounded walk of e.g. a home directory is thousands of sequential SFTP
-// round trips (target/, node_modules/ under every checkout) and looks hung.
+// Remote listings without an explicit max_depth stop at the root entries: a
+// full walk of e.g. a home directory (target/, node_modules/ under every
+// checkout) is the wrong default for `ls`-style use.
 const REMOTE_DEFAULT_MAX_DEPTH: usize = 1;
 
-// Recursively list remote files, returning relative paths with the metadata
-// the directory listing already provided — one read_dir round trip per
-// directory and NOTHING per file. Directories matching the root .gitignore
-// are pruned BEFORE recursing: without this a repo listing walks target/,
-// node_modules/ etc, thousands of round trips.
+// In-flight SFTP requests per walk level / content search. One channel
+// multiplexes them by request id and OpenSSH's sftp-server handles this many
+// outstanding without stalling; each read_dir is 3+ round trips, so serial
+// walks of a thousand directories took minutes.
+const REMOTE_CONCURRENCY: usize = 32;
+
+// Drive futures with at most REMOTE_CONCURRENCY in flight. Results come back
+// in completion order; callers sort.
+async fn join_bounded<F, T>(futures: Vec<F>) -> Result<Vec<T>>
+where
+	F: std::future::Future<Output = T> + Send + 'static,
+	T: Send + 'static,
+{
+	let mut set = tokio::task::JoinSet::new();
+	let mut pending = futures.into_iter();
+	for f in pending.by_ref().take(REMOTE_CONCURRENCY) {
+		set.spawn(f);
+	}
+	let mut out = Vec::new();
+	while let Some(joined) = set.join_next().await {
+		out.push(joined.map_err(|e| anyhow::anyhow!("remote task failed: {e}"))?);
+		if let Some(f) = pending.next() {
+			set.spawn(f);
+		}
+	}
+	Ok(out)
+}
+
+fn parse_gitignore(root: &str, text: &str) -> Option<ignore::gitignore::Gitignore> {
+	let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+	for line in text.lines() {
+		let _ = builder.add_line(None, line);
+	}
+	builder.build().ok()
+}
+
+// A directory queued for listing during a remote walk.
+struct RemoteDir {
+	source: PathSource,
+	rel: String,
+	depth: usize,
+	// .gitignore of this directory and its ancestors, each rooted at its own
+	// directory so `matched` sees paths relative to it.
+	ignores: Vec<Arc<ignore::gitignore::Gitignore>>,
+}
+
+// Walk a remote tree breadth-first: every directory of a level is listed
+// concurrently, then the .gitignore files that level revealed are fetched
+// concurrently, so wall time scales with depth rather than directory count.
+// Only the metadata read_dir already returns is used — nothing per file.
+// Each directory's .gitignore prunes its subtree before it is descended, so
+// target/ and node_modules/ under nested checkouts are skipped like rg does.
 async fn collect_remote_files(
-	source: &PathSource,
-	base_rel: &str,
+	root: &PathSource,
 	max_depth: Option<usize>,
 	include_hidden: bool,
-	gitignore: Option<&ignore::gitignore::Gitignore>,
-	current_depth: usize,
 ) -> Result<Vec<(String, IoMetadata)>> {
 	let mut files = Vec::new();
-	let entries = io_list_dir(source).await?;
+	let mut level = vec![RemoteDir {
+		source: root.clone(),
+		rel: String::new(),
+		depth: 0,
+		ignores: Vec::new(),
+	}];
 
-	for (name, meta) in entries {
-		if !include_hidden && name.starts_with('.') {
-			continue;
-		}
+	while !level.is_empty() {
+		let listings: Vec<_> = level
+			.drain(..)
+			.map(|dir| async move {
+				let entries = io_list_dir(&dir.source).await;
+				(dir, entries)
+			})
+			.collect();
+		let mut listed: Vec<(RemoteDir, Vec<(String, IoMetadata)>)> = join_bounded(listings)
+			.await?
+			.into_iter()
+			.map(|(dir, entries)| entries.map(|e| (dir, e)))
+			.collect::<Result<_>>()?;
 
-		let rel_path = if base_rel.is_empty() {
-			name.clone()
-		} else {
-			format!("{base_rel}/{name}")
-		};
-
-		if let Some(gi) = gitignore {
-			if gi
-				.matched_path_or_any_parents(&rel_path, meta.is_dir)
-				.is_ignore()
-			{
-				continue;
+		let ignore_reads: Vec<_> = listed
+			.iter()
+			.enumerate()
+			.filter(|(_, (_, entries))| {
+				entries
+					.iter()
+					.any(|(name, meta)| name == ".gitignore" && meta.is_file)
+			})
+			.map(|(i, (dir, _))| {
+				let gitignore = remote_child(&dir.source, ".gitignore");
+				let rel = dir.rel.clone();
+				async move { (i, rel, io_read_to_string(&gitignore).await) }
+			})
+			.collect();
+		for (i, rel, text) in join_bounded(ignore_reads).await? {
+			if let Some(gi) = text.ok().and_then(|t| parse_gitignore(&rel, &t)) {
+				listed[i].0.ignores.push(Arc::new(gi));
 			}
 		}
 
-		if meta.is_dir {
-			if let Some(max_d) = max_depth {
-				if current_depth >= max_d {
+		for (dir, entries) in listed {
+			for (name, meta) in entries {
+				if !include_hidden && name.starts_with('.') {
 					continue;
 				}
+				let rel_path = if dir.rel.is_empty() {
+					name.clone()
+				} else {
+					format!("{}/{name}", dir.rel)
+				};
+				if dir
+					.ignores
+					.iter()
+					.any(|gi| gi.matched(&rel_path, meta.is_dir).is_ignore())
+				{
+					continue;
+				}
+				if meta.is_dir {
+					if max_depth.is_some_and(|d| dir.depth >= d) {
+						continue;
+					}
+					level.push(RemoteDir {
+						source: remote_child(&dir.source, &name),
+						rel: rel_path,
+						depth: dir.depth + 1,
+						ignores: dir.ignores.clone(),
+					});
+				} else {
+					files.push((rel_path, meta));
+				}
 			}
-			let sub_source = remote_child(source, &name);
-			let sub_files = Box::pin(collect_remote_files(
-				&sub_source,
-				&rel_path,
-				max_depth,
-				include_hidden,
-				gitignore,
-				current_depth + 1,
-			))
-			.await?;
-			files.extend(sub_files);
-		} else {
-			files.push((rel_path, meta));
 		}
 	}
 
 	files.sort_by(|a, b| a.0.cmp(&b.0));
 	Ok(files)
+}
+
+// Render content-search hits for one remote file, or None when it is binary,
+// unreadable or has no match.
+fn render_content_matches(
+	rel_path: &str,
+	bytes: &[u8],
+	matcher: &Matcher,
+	context_lines: usize,
+) -> Option<String> {
+	let sample_size = bytes.len().min(512);
+	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
+	if null_count > sample_size / 10 {
+		return None;
+	}
+
+	let file_content = String::from_utf8_lossy(bytes);
+	let blocks = search::search_lines(&file_content, matcher, context_lines);
+	if blocks.is_empty() {
+		return None;
+	}
+
+	let file_lines: Vec<&str> = file_content.lines().collect();
+	let mut rendered_blocks: Vec<String> = Vec::new();
+	for block in &blocks {
+		let mut rendered = Vec::new();
+		for &n in &block.line_numbers {
+			if n <= file_lines.len() {
+				rendered.push(format!(
+					"{}|{}",
+					line_id_at(&file_lines, n),
+					file_lines[n - 1]
+				));
+			}
+		}
+		rendered_blocks.push(rendered.join("\n"));
+	}
+	Some(format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")))
 }
 
 // Annotation suffix for a remote file, from metadata ONLY — downloading each
@@ -420,8 +533,8 @@ fn annotation_suffix_remote(meta: &IoMetadata) -> String {
 }
 
 // List a remote directory — file listing or content search via SFTP.
-// Honors the .gitignore at the listed root (nested ones are not consulted);
-// hidden files are controlled by `include_hidden` like the local path.
+// Honors .gitignore at every level of the walk; hidden files are controlled
+// by `include_hidden` like the local path.
 async fn list_directory_remote(
 	source: &PathSource,
 	pattern: Option<String>,
@@ -438,21 +551,7 @@ async fn list_directory_remote(
 		.transpose()
 		.map_err(|e| anyhow::anyhow!(e))?;
 
-	// Root .gitignore (repo checkouts always have one) — parsed with the same
-	// `ignore` crate the local walker uses. ponytail: root file only; nested
-	// .gitignore support if someone actually hits it.
-	let gitignore = match io_read_to_string(&remote_child(source, ".gitignore")).await {
-		Ok(text) => {
-			let mut builder = ignore::gitignore::GitignoreBuilder::new("");
-			for line in text.lines() {
-				let _ = builder.add_line(None, line);
-			}
-			builder.build().ok()
-		}
-		Err(_) => None,
-	};
-	let mut files =
-		collect_remote_files(source, "", max_depth, include_hidden, gitignore.as_ref(), 0).await?;
+	let mut files = collect_remote_files(source, max_depth, include_hidden).await?;
 
 	if let Some(ref matcher) = pattern_matcher {
 		let mut names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
@@ -467,53 +566,42 @@ async fn list_directory_remote(
 
 	if has_content {
 		let content_pattern = content.unwrap();
-		let matcher = Matcher::new(&content_pattern, regex_flag)?;
+		let matcher = Arc::new(Matcher::new(&content_pattern, regex_flag)?);
 
-		let mut results: Vec<String> = Vec::new();
-		for (rel_path, meta) in &files {
-			if meta.size > super::file_ops::MAX_VIEW_FILE_BYTES {
-				continue;
-			}
-			let file_source = remote_child(source, rel_path);
-
-			let bytes = match io_read(&file_source).await {
-				Ok(b) => b,
-				Err(_) => continue,
-			};
-
-			let sample_size = bytes.len().min(512);
-			let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
-			if null_count > sample_size / 10 {
-				continue;
-			}
-
-			let file_content = String::from_utf8_lossy(&bytes);
-			let blocks = search::search_lines(&file_content, &matcher, context_lines);
-			if blocks.is_empty() {
-				continue;
-			}
-
-			let file_lines: Vec<&str> = file_content.lines().collect();
-
-			let mut rendered_blocks: Vec<String> = Vec::new();
-			for block in &blocks {
-				let mut rendered = Vec::new();
-				for &n in &block.line_numbers {
-					if n <= file_lines.len() {
-						rendered.push(format!(
-							"{}|{}",
-							line_id_at(&file_lines, n),
-							file_lines[n - 1]
-						));
-					}
+		// Read and match concurrently; each task returns only its rendered
+		// hits, so memory is bounded by matches, not tree size. Index keeps
+		// the sorted file order in the output.
+		let reads: Vec<_> = files
+			.iter()
+			.enumerate()
+			.filter(|(_, (_, meta))| meta.size <= super::file_ops::MAX_VIEW_FILE_BYTES)
+			.map(|(i, (rel_path, _))| {
+				let file_source = remote_child(source, rel_path);
+				let rel_path = rel_path.clone();
+				let matcher = matcher.clone();
+				async move {
+					let hit = match io_read(&file_source).await {
+						Ok(bytes) => {
+							render_content_matches(&rel_path, &bytes, &matcher, context_lines)
+						}
+						Err(_) => None,
+					};
+					(i, hit)
 				}
-				rendered_blocks.push(rendered.join("\n"));
-			}
+			})
+			.collect();
+		let mut hits: Vec<(usize, String)> = join_bounded(reads)
+			.await?
+			.into_iter()
+			.filter_map(|(i, hit)| hit.map(|h| (i, h)))
+			.collect();
+		hits.sort_by_key(|(i, _)| *i);
 
-			results.push(format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")));
-		}
-
-		Ok(results.join("\n\n"))
+		Ok(hits
+			.into_iter()
+			.map(|(_, h)| h)
+			.collect::<Vec<_>>()
+			.join("\n\n"))
 	} else {
 		let mut lines: Vec<String> = Vec::new();
 		for (rel_path, meta) in &files {
@@ -561,11 +649,19 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			.get("regex")
 			.and_then(|v| v.as_bool())
 			.unwrap_or(false);
+		// A bare listing stops at the root; pattern/content searches walk the
+		// whole tree like rg, since a depth cap would silently drop matches.
+		let is_search = pattern.is_some() || content.as_ref().is_some_and(|c| !c.trim().is_empty());
+		let max_depth = if is_search {
+			max_depth
+		} else {
+			max_depth.or(Some(REMOTE_DEFAULT_MAX_DEPTH))
+		};
 		return list_directory_remote(
 			&source,
 			pattern,
 			content,
-			max_depth.or(Some(REMOTE_DEFAULT_MAX_DEPTH)),
+			max_depth,
 			include_hidden,
 			context_lines,
 			regex_flag,

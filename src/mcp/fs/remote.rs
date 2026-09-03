@@ -565,13 +565,14 @@ mod sftp {
 		handle: client::Handle<SshHandler>,
 		// A target reached through ProxyJump depends on the jump transport.
 		proxy_handle: Option<client::Handle<SshHandler>>,
-		sftp: Arc<Mutex<SftpSession>>,
+		sftp: Arc<SftpSession>,
 	}
 
 	/// SFTP connection pool caching sessions per (host, port, user).
 	///
-	/// Sessions are wrapped in `Arc<Mutex<SftpSession>>` so concurrent tool
-	/// calls targeting the same host serialize on the same SSH channel.
+	/// Sessions are shared as `Arc<SftpSession>`: SFTP multiplexes requests by
+	/// id and every session method takes `&self`, so concurrent tool calls to
+	/// the same host pipeline on one channel instead of serializing.
 	pub struct SftpPool {
 		sessions: Mutex<HashMap<String, PooledSession>>,
 		config: SshConfig,
@@ -600,7 +601,7 @@ mod sftp {
 			user: &str,
 			user_explicit: bool,
 			port_explicit: bool,
-		) -> Result<Arc<Mutex<SftpSession>>> {
+		) -> Result<Arc<SftpSession>> {
 			let key = format!(
 				"{user}@{host}:{port}:user-explicit={user_explicit}:port-explicit={port_explicit}"
 			);
@@ -623,7 +624,7 @@ mod sftp {
 
 			let target = resolve_ssh_target(host, port, user, user_explicit, port_explicit).await;
 			let (handle, proxy_handle, session) = self.connect_sftp(&target).await?;
-			let sftp = Arc::new(Mutex::new(session));
+			let sftp = Arc::new(session);
 			sessions.insert(
 				key,
 				PooledSession {
@@ -1050,7 +1051,7 @@ mod sftp {
 		}
 	}
 
-	async fn remote_session(source: &super::PathSource) -> Result<Arc<Mutex<SftpSession>>> {
+	async fn remote_session(source: &super::PathSource) -> Result<Arc<SftpSession>> {
 		let (host, port, user, _, user_explicit, port_explicit) = remote_parts(source);
 		sftp_pool()
 			.get_or_connect(host, port, user, user_explicit, port_explicit)
@@ -1069,8 +1070,7 @@ mod sftp {
 	/// Read a remote file as bytes.
 	pub async fn remote_read(source: &super::PathSource) -> Result<Vec<u8>> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		sftp.read(path)
 			.await
 			.map_err(|e| anyhow!("SFTP read failed for {path}: {e}"))
@@ -1089,8 +1089,7 @@ mod sftp {
 	pub async fn remote_write(source: &super::PathSource, content: &[u8]) -> Result<()> {
 		use tokio::io::AsyncWriteExt;
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		let mut file = sftp
 			.create(path)
 			.await
@@ -1106,8 +1105,7 @@ mod sftp {
 	/// Check if a remote path exists.
 	pub async fn remote_exists(source: &super::PathSource) -> Result<bool> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		sftp.try_exists(path)
 			.await
 			.map_err(|e| anyhow!("SFTP exists check failed for {path}: {e}"))
@@ -1116,8 +1114,7 @@ mod sftp {
 	/// Get metadata for a remote path.
 	pub async fn remote_metadata(source: &super::PathSource) -> Result<RemoteMetadata> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		let attrs = sftp
 			.metadata(path)
 			.await
@@ -1133,8 +1130,7 @@ mod sftp {
 	/// Create directories recursively (SFTP create_dir only creates a single dir).
 	pub async fn remote_create_dir_all(source: &super::PathSource) -> Result<()> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		// Home-relative paths (`/~/x`) must stay relative so SFTP resolves them
 		// against the login home.
 		let mut current = String::new();
@@ -1152,8 +1148,7 @@ mod sftp {
 	/// Remove a remote file.
 	pub async fn remote_remove_file(source: &super::PathSource) -> Result<()> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		sftp.remove_file(path)
 			.await
 			.map_err(|e| anyhow!("SFTP remove failed for {path}: {e}"))
@@ -1164,8 +1159,7 @@ mod sftp {
 		source: &super::PathSource,
 	) -> Result<Vec<(String, RemoteMetadata)>> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		let read_dir = sftp
 			.read_dir(path)
 			.await
@@ -1191,8 +1185,7 @@ mod sftp {
 	/// Canonicalize a remote path.
 	pub async fn remote_canonicalize(source: &super::PathSource) -> Result<String> {
 		let path = source.sftp_path();
-		let session = remote_session(source).await?;
-		let sftp = session.lock().await;
+		let sftp = remote_session(source).await?;
 		sftp.canonicalize(path)
 			.await
 			.map_err(|e| anyhow!("SFTP canonicalize failed for {path}: {e}"))
