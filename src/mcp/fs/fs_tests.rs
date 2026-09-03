@@ -4696,9 +4696,11 @@ mod tests {
 		assert_eq!(actual, "A\nB\nREPLACED_C\nFOOTER\n");
 	}
 
-	// Replace that deletes lines + insert at same position → should succeed
+	// Delete lines 2-3 + insert after line 2 → conflict: the anchor line is
+	// inside the deleted range, so where NEW lands would be a guess. Reject,
+	// apply nothing.
 	#[tokio::test]
-	async fn test_batch_edit_delete_replace_with_insert_same_pos() {
+	async fn test_batch_edit_insert_inside_delete_range_conflicts() {
 		let content = "A\nB\nC\nD\nE\n";
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
@@ -4714,15 +4716,16 @@ mod tests {
 		)
 		.await;
 
-		crate::mcp::fs::core::execute_batch_edit(&call)
+		let err = crate::mcp::fs::core::execute_batch_edit(&call)
 			.await
-			.unwrap();
-
-		// Reverse-order: both pos=2, replace first
-		// Replace [2,3] with empty (delete B,C): A / D / E
-		// Insert after line 2 (NEW after D): A / D / NEW / E
+			.unwrap_err()
+			.to_string();
+		assert!(
+			err.contains("Conflicting operations") && err.contains("inside the range"),
+			"got: {err}"
+		);
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
-		assert_eq!(actual, "A\nD\nNEW\nE\n");
+		assert_eq!(actual, content);
 	}
 
 	// Stress test: insert at every gap + replace every other line
