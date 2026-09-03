@@ -802,7 +802,9 @@ pub struct ViewParams {
 	/// When true, `content` is a regex pattern instead of a literal substring. Default: false.
 	#[serde(default)]
 	pub regex: Option<bool>,
-	/// Maximum directory traversal depth.
+	/// Maximum directory traversal depth. Local paths default to unlimited;
+	/// remote (ssh://) paths default to 1 — root entries only — pass a larger
+	/// value to walk deeper.
 	#[serde(default)]
 	pub max_depth: Option<usize>,
 	/// Include hidden files/directories starting with '.'.

@@ -351,6 +351,10 @@ costs one line. Ranged views and content search always render exactly what was a
 {"path": "src/", "max_depth": 2, "include_hidden": true}
 ```
 
+Remote directories (`ssh://host/path`) default to `max_depth: 1` — root entries
+only — because every subdirectory costs an SFTP round trip; pass `max_depth`
+explicitly to walk deeper.
+
 `pattern` uses the same gitignore-style glob grammar as ripgrep's `-g/--glob`:
 without `/` it matches filenames at any depth, while a pattern containing `/`
 matches the returned relative path. It supports `*` within one path component,

@@ -340,6 +340,11 @@ fn remote_child(source: &PathSource, name: &str) -> PathSource {
 	}
 }
 
+// Remote listings without an explicit max_depth stop at the root entries: an
+// unbounded walk of e.g. a home directory is thousands of sequential SFTP
+// round trips (target/, node_modules/ under every checkout) and looks hung.
+const REMOTE_DEFAULT_MAX_DEPTH: usize = 1;
+
 // Recursively list remote files, returning relative paths with the metadata
 // the directory listing already provided — one read_dir round trip per
 // directory and NOTHING per file. Directories matching the root .gitignore
@@ -560,7 +565,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			&source,
 			pattern,
 			content,
-			max_depth,
+			max_depth.or(Some(REMOTE_DEFAULT_MAX_DEPTH)),
 			include_hidden,
 			context_lines,
 			regex_flag,
