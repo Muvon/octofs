@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.1] - 2026-09-03
+
+### 📋 Release Summary
+
+This release improves remote filesystem interactions by making tree searches more accurate and limiting remote listing depth by default (7cba1bb5, 40b9ebf8).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: search remote trees correctly `7cba1bb5`
+- **fs**: limit remote listing depth by default `40b9ebf8`
+
 ## [0.15.0] - 2026-09-02
 
 ### 📋 Release Summary
