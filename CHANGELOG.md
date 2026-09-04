@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.15.2] - 2026-09-04
+
+### 📋 Release Summary
+
+This release improves guidance for continuing background shell jobs, making the workflow clearer for users (cdd60d59). Filesystem editing validation was also strengthened to reject insertions inside delete ranges (b134da20).
+
+
+### 🔧 Improvements & Optimizations
+
+- **fs**: reject insertions inside delete ranges `b134da20`
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: clarify background job continuation guidance `cdd60d59`
+
 ## [0.15.1] - 2026-09-03
 
 ### 📋 Release Summary
