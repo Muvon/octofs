@@ -644,7 +644,10 @@ async fn execute_with_timeout(
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
 					 (PID {}). Output keeps streaming to the linked resource; you will be \
-					 notified on exit with the exit code and output tail. Stop early: kill -- -{}",
+					 notified on exit with the exit code and output tail. Do not poll, wait \
+					 or run filler commands for it — take the next independent step or end \
+					 your turn; the notification reaches you either way. Stop early: \
+					 kill -- -{}",
 					job_id, job_pid, job_pid
 				),
 				resource_uri: Some(uri),
