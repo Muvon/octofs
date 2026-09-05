@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! MCP server handlers, session state, and tool parameter schemas.
+
 use std::sync::{Arc, RwLock};
 
 use rmcp::{
@@ -251,13 +253,20 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Read files, list directories, search content. Lines render as `N:hh|content`; \
+		description = "Read files, list directories, search content. Reuse content already returned: \
+			do not re-read overlapping ranges or narrow a previously read range just to select edit \
+			targets. Read a complete relevant function/block in one call; for adjacent windows, \
+			combine them. If its location is unknown, search with `content` and enough `context` \
+			to understand the match, then read only missing surrounding code. Re-read when the \
+			file may have changed, earlier output was truncated, or earlier context is unavailable. \
+			Lines render as `N:hh|content`; \
 			`N:hh` is the line id edit tools take as targets — copy it verbatim. Directory listings \
 			show each file as `path\tNL\t~Nt` (lines, estimated tokens) for budgeting reads. For \
 			content search across several roots, separate them in `path` with `|`. `pattern` takes \
 			ripgrep -g globs (`**`, leading `!`). Re-viewing a whole file returns only the hunks \
-			changed since your last view (or an unchanged marker); `full: true` forces the complete \
-			content."
+			changed since your last view (or an unchanged marker). Ranged reads always return the \
+			requested lines; `full` has no effect on ranges or searches. Omit `start`/`end` and \
+			set `full: true` only when you need the complete file again."
 	)]
 	async fn view(
 		&self,
@@ -604,7 +613,9 @@ impl ServerHandler for OctofsServer {
 				 extract_lines (copy lines between files), shell (execute commands), \
 				 workdir (get/set working directory). File lines are rendered as `N:hh|content`; \
 				 the `N:hh` prefix is the line id edit tools take as targets. Edit results are \
-				 diffs with fresh ids, so edits can be chained without re-viewing files."
+				 diffs with fresh ids, so edits can be chained without re-viewing files. Reuse \
+				 previously returned content and ids; avoid overlapping reads and repeated narrowing \
+				 of a range already available. Read complete relevant blocks, then act on them."
 				.to_string(),
 		)
 	}
@@ -780,12 +791,14 @@ pub struct ViewParams {
 	pub path: String,
 	/// First line to show (inclusive). Integer line number (negative counts from the
 	/// end: -1 = last line) or a line id like "12:a3". Omit to start at line 1.
+	/// Choose a complete relevant block; reuse previously returned lines and ids.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub start: Option<serde_json::Value>,
 	/// Last line to show (inclusive). Integer line number (negative counts from the end)
 	/// or a line id like "20:f1". Omit to read to the end of the file.
 	/// Omit BOTH `start` and `end` to view the whole file.
+	/// Combine adjacent windows; do not narrow an already returned range to pick edit targets.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
@@ -797,6 +810,7 @@ pub struct ViewParams {
 	pub pattern: Option<String>,
 	/// Content search: literal substring, or a Rust regex with `regex: true` (`(?i)` for
 	/// case-insensitive). Searches the whole file/tree; `start`/`end` are ignored.
+	/// Use to locate unknown code; combine related terms with regex alternation when useful.
 	#[serde(default)]
 	pub content: Option<String>,
 	/// When true, `content` is a regex pattern instead of a literal substring. Default: false.
@@ -811,12 +825,14 @@ pub struct ViewParams {
 	/// Include hidden files/directories starting with '.'.
 	#[serde(default)]
 	pub include_hidden: Option<bool>,
-	/// Context lines around content search matches.
+	/// Context lines before and after each content search match. Default: 0.
+	/// Request enough surrounding code to answer the question without another tiny read.
 	#[serde(default)]
 	pub context: Option<usize>,
 	/// Whole-file views of a file you already viewed return only the changed hunks
 	/// (or an unchanged marker). Set true to force the complete content, e.g. after
-	/// losing earlier context.
+	/// losing earlier context. Only applies when `start`/`end` and content search are omitted;
+	/// has no effect on ranged reads or searches and does not change output limits.
 	#[serde(default)]
 	pub full: Option<bool>,
 }

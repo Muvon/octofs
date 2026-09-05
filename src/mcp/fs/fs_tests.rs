@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Cross-module filesystem tool integration tests.
+
 #[cfg(test)]
 mod tests {
 	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view};
@@ -6060,7 +6062,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_view_range_on_empty_file_is_graceful() {
-		// A range on an empty file renders the (empty) whole file rather than erroring.
+		// An explicit marker distinguishes an empty file from a missing tool response.
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file = temp_dir.path().join("empty.txt");
 		fs::write(&file, "").await.unwrap();
@@ -6072,10 +6074,7 @@ mod tests {
 			parameters: json!({ "path": file.to_string_lossy(), "start": 5, "end": 10 }),
 		};
 		let out = execute_view(&call).await.unwrap();
-		assert!(
-			out.is_empty(),
-			"empty file with range should be empty: {out:?}"
-		);
+		assert_eq!(out, "[empty file, 0 lines]");
 	}
 
 	#[tokio::test]

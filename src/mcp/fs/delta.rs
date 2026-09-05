@@ -129,6 +129,7 @@ pub fn render_whole_file(source: &PathSource, content: &str, full: bool) -> Stri
 				),
 			}
 		}
+		None if new_lines.is_empty() => "[empty file, 0 lines]".to_string(),
 		None => format_content_with_line_numbers(&new_lines, 1, None),
 	}
 }

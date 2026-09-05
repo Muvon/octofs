@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Line diff and session view-cache regression tests.
+
 use std::sync::Arc;
 
 use serde_json::json;
@@ -139,6 +141,40 @@ fn view_call(path: &std::path::Path, extra: serde_json::Value) -> McpToolCall {
 		params[k.as_str()] = v.clone();
 	}
 	McpToolCall::test_call("view", params)
+}
+
+#[tokio::test]
+async fn empty_file_views_are_explicit_and_preserve_deletion_deltas() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("empty.txt");
+	tokio::fs::write(&file, "").await.unwrap();
+
+	with_request_context(Arc::new(ViewCache::default()), async {
+		let first = execute_view(&view_call(&file, json!({}))).await.unwrap();
+		assert_eq!(first, "[empty file, 0 lines]");
+		let unchanged = execute_view(&view_call(&file, json!({}))).await.unwrap();
+		assert_eq!(
+			unchanged,
+			"[unchanged since you last viewed or edited it: 0 lines. Pass full: true to re-read.]"
+		);
+		let forced = execute_view(&view_call(&file, json!({ "full": true })))
+			.await
+			.unwrap();
+		assert_eq!(forced, "[empty file, 0 lines]");
+
+		tokio::fs::write(&file, "hello\n").await.unwrap();
+		execute_view(&view_call(&file, json!({}))).await.unwrap();
+		tokio::fs::write(&file, "").await.unwrap();
+		let deleted = execute_view(&view_call(&file, json!({}))).await.unwrap();
+		assert_eq!(
+			deleted,
+			format!(
+				"[changed since your last view: 1 hunk(s), 0 lines now]\n-{} (1 line)",
+				line_id(1, "hello")
+			)
+		);
+	})
+	.await;
 }
 
 #[tokio::test]
