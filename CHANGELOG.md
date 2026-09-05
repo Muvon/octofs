@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.15.3] - 2026-09-05
+
+### 📋 Release Summary
+
+Clarified empty views and range handling for more predictable filesystem tool behavior (3397b5c3). CI workflows now automatically cancel superseded runs, improving feedback efficiency (db039051).
+
+
+### 🔧 Improvements & Optimizations
+
+- **workflow**: cancel superseded CI runs `db039051`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: clarify empty views and ranges `3397b5c3`
+
 ## [0.15.2] - 2026-09-04
 
 ### 📋 Release Summary
