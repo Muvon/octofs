@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.15.4] - 2026-09-08
+
+### 📋 Release Summary
+
+Improved existing edit functionality by supporting more flexible input formats, making file modifications easier to perform reliably (81a2b60f).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: normalize flexible edit inputs `81a2b60f`
+
 ## [0.15.3] - 2026-09-05
 
 ### 📋 Release Summary
