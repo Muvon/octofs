@@ -943,6 +943,67 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_str_replace_preserves_mixed_line_endings() {
+		let original = "alpha\nbeta\r\ngamma\ndelta\r\nepsilon\n";
+		let temp_file = create_test_file(original).await;
+
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"gamma",
+			"GAMMA",
+			false,
+		)
+		.await
+		.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\nbeta\r\nGAMMA\ndelta\r\nepsilon\n");
+		assert_eq!(
+			actual.matches("\r\n").count(),
+			original.matches("\r\n").count()
+		);
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_keeps_all_crlf() {
+		test_str_replace(
+			"alpha\r\nbeta\r\ngamma\r\n",
+			"beta",
+			"BETA",
+			"alpha\r\nBETA\r\ngamma\r\n",
+		)
+		.await;
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_keeps_pure_lf() {
+		let temp_file = create_test_file("alpha\nbeta\ngamma\n").await;
+		crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"beta",
+			"BETA",
+			false,
+		)
+		.await
+		.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\nBETA\ngamma\n");
+		assert!(!actual.contains('\r'));
+	}
+
+	#[tokio::test]
+	async fn test_str_replace_strips_final_cr_from_new_text() {
+		test_str_replace(
+			"alpha\nbeta\ngamma\n",
+			"beta",
+			"BETA\r",
+			"alpha\nBETA\ngamma\n",
+		)
+		.await;
+	}
+
+	#[tokio::test]
 	async fn test_str_replace_replace_all() {
 		let temp_file = create_test_file("foo(a)\nbar()\nfoo(b)\nbaz()\nfoo(c)\n").await;
 
@@ -1750,6 +1811,93 @@ mod tests {
 				"operations": operations
 			}),
 		}
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_preserves_mixed_line_endings() {
+		let original = "alpha\nbeta\r\ngamma\ndelta\r\nepsilon\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			ops_with_ids(
+				original,
+				json!([{"operation": "replace", "start": 3, "content": "GAMMA"}]),
+			),
+		)
+		.await;
+
+		execute_batch_edit(&call).await.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\nbeta\r\nGAMMA\ndelta\r\nepsilon\n");
+		assert_eq!(
+			actual.matches("\r\n").count(),
+			original.matches("\r\n").count()
+		);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_keeps_all_crlf() {
+		let original = "alpha\r\nbeta\r\ngamma\r\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			ops_with_ids(
+				original,
+				json!([{"operation": "replace", "start": 2, "content": "BETA"}]),
+			),
+		)
+		.await;
+
+		execute_batch_edit(&call).await.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\r\nBETA\r\ngamma\r\n");
+		assert_eq!(actual.matches("\r\n").count(), 3);
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_keeps_pure_lf() {
+		let original = "alpha\nbeta\ngamma\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			ops_with_ids(
+				original,
+				json!([{"operation": "replace", "start": 2, "content": "BETA"}]),
+			),
+		)
+		.await;
+
+		execute_batch_edit(&call).await.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\nBETA\ngamma\n");
+		assert!(!actual.contains('\r'));
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_strips_final_cr_from_content() {
+		let original = "alpha\nbeta\ngamma\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			ops_with_ids(
+				original,
+				json!([{"operation": "replace", "start": 2, "content": "BETA\r"}]),
+			),
+		)
+		.await;
+
+		execute_batch_edit(&call).await.unwrap();
+
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, "alpha\nBETA\ngamma\n");
+		assert!(!actual.contains('\r'));
 	}
 
 	#[tokio::test]

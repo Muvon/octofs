@@ -539,15 +539,222 @@ pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
 		}
 	}
 }
-/// Restore CRLF line endings on the outgoing content when the original file used
-/// them. All matching/replacement happens in LF space; without this, edited CRLF
-/// files would be silently rewritten to LF.
-pub(crate) fn restore_endings(uses_crlf: bool, s: String) -> String {
-	if uses_crlf {
-		s.replace('\n', "\r\n")
-	} else {
-		s
+const LF_ENDING: &str = "\n";
+const CRLF_ENDING: &str = "\r\n";
+
+#[derive(Clone)]
+struct EditableLine {
+	text: String,
+	ending: &'static str,
+}
+
+#[derive(Clone)]
+struct EditableContent {
+	lines: Vec<EditableLine>,
+	dominant_ending: &'static str,
+	had_trailing_newline: bool,
+}
+
+impl EditableContent {
+	fn from_raw(raw: &str) -> Self {
+		let mut lf_count = 0;
+		let mut crlf_count = 0;
+		let lines = if raw.is_empty() {
+			Vec::new()
+		} else {
+			raw.split_inclusive('\n')
+				.map(|line| {
+					if let Some(text) = line.strip_suffix(CRLF_ENDING) {
+						crlf_count += 1;
+						EditableLine {
+							text: text.to_string(),
+							ending: CRLF_ENDING,
+						}
+					} else if let Some(text) = line.strip_suffix(LF_ENDING) {
+						lf_count += 1;
+						EditableLine {
+							text: text.to_string(),
+							ending: LF_ENDING,
+						}
+					} else {
+						EditableLine {
+							text: line.to_string(),
+							ending: "",
+						}
+					}
+				})
+				.collect()
+		};
+
+		Self {
+			lines,
+			dominant_ending: if crlf_count > lf_count {
+				CRLF_ENDING
+			} else {
+				LF_ENDING
+			},
+			had_trailing_newline: raw.ends_with('\n'),
+		}
 	}
+
+	fn normalized(&self) -> String {
+		let mut content = String::new();
+		for line in &self.lines {
+			content.push_str(&line.text);
+			if !line.ending.is_empty() {
+				content.push('\n');
+			}
+		}
+		content
+	}
+
+	fn rendered(&self) -> String {
+		let mut content = String::new();
+		for line in &self.lines {
+			content.push_str(&line.text);
+			content.push_str(line.ending);
+		}
+		content
+	}
+
+	fn replace_normalized_range(
+		&mut self,
+		start: usize,
+		end: usize,
+		replacement: &str,
+	) -> Result<()> {
+		let content = self.normalized();
+		if start > end
+			|| end > content.len()
+			|| !content.is_char_boundary(start)
+			|| !content.is_char_boundary(end)
+		{
+			bail!("Invalid internal replacement range {start}..{end}");
+		}
+
+		if self.lines.is_empty() {
+			self.lines = lines_with_ending(replacement, self.dominant_ending);
+			return Ok(());
+		}
+
+		let last_offset = if end > start {
+			end - 1
+		} else {
+			start.min(content.len().saturating_sub(1))
+		};
+		let mut offset = 0;
+		let mut start_line = None;
+		let mut end_line = None;
+		let mut region_start = 0;
+		let mut region_end = 0;
+
+		for (index, line) in self.lines.iter().enumerate() {
+			let line_len = line.text.len() + usize::from(!line.ending.is_empty());
+			let next_offset = offset + line_len;
+			if start_line.is_none()
+				&& (start < next_offset
+					|| (start == content.len() && index + 1 == self.lines.len()))
+			{
+				start_line = Some(index);
+				region_start = offset;
+			}
+			if last_offset < next_offset {
+				end_line = Some(index);
+				region_end = next_offset;
+				break;
+			}
+			offset = next_offset;
+		}
+
+		let start_line = start_line.ok_or_else(|| anyhow!("Replacement start is out of bounds"))?;
+		let end_line = end_line.ok_or_else(|| anyhow!("Replacement end is out of bounds"))?;
+		let mut changed = String::new();
+		changed.push_str(&content[region_start..start]);
+		changed.push_str(replacement);
+		changed.push_str(&content[end..region_end]);
+
+		let mut suffix = self.lines.split_off(end_line + 1);
+		self.lines.truncate(start_line);
+		let mut changed_lines = lines_with_ending(&changed, self.dominant_ending);
+		if !changed.is_empty() && !changed.ends_with('\n') && !suffix.is_empty() {
+			let changed_tail = changed_lines
+				.pop()
+				.ok_or_else(|| anyhow!("Replacement line is missing"))?;
+			let suffix_head = suffix.remove(0);
+			changed_lines.push(EditableLine {
+				text: changed_tail.text + &suffix_head.text,
+				ending: self.dominant_ending,
+			});
+		}
+		self.lines.extend(changed_lines);
+		self.lines.extend(suffix);
+		Ok(())
+	}
+
+	fn preserve_trailing_newline(&mut self) {
+		if self.lines.is_empty() {
+			if self.had_trailing_newline {
+				self.lines.push(EditableLine {
+					text: String::new(),
+					ending: self.dominant_ending,
+				});
+			}
+			return;
+		}
+
+		let last = self.lines.len() - 1;
+		for line in &mut self.lines[..last] {
+			if line.ending.is_empty() {
+				line.ending = self.dominant_ending;
+			}
+		}
+		if self.had_trailing_newline {
+			if self.lines[last].ending.is_empty() {
+				self.lines[last].ending = self.dominant_ending;
+			}
+		} else {
+			self.lines[last].ending = "";
+		}
+	}
+}
+
+fn lines_with_ending(content: &str, ending: &'static str) -> Vec<EditableLine> {
+	if content.is_empty() {
+		return Vec::new();
+	}
+	content
+		.split_inclusive('\n')
+		.map(|line| {
+			if let Some(text) = line.strip_suffix('\n') {
+				EditableLine {
+					text: text.to_string(),
+					ending,
+				}
+			} else {
+				EditableLine {
+					text: line.to_string(),
+					ending: "",
+				}
+			}
+		})
+		.collect()
+}
+
+// Operation text is line content, never a source of file-format bytes. In particular,
+// `str::lines` does not remove a CR from a final segment without a following newline.
+fn incoming_content_lines(content: &str) -> Vec<&str> {
+	content
+		.lines()
+		.map(|line| line.trim_end_matches('\r'))
+		.collect()
+}
+
+fn sanitize_incoming_content(content: &str) -> String {
+	content
+		.split('\n')
+		.map(|line| line.trim_end_matches('\r'))
+		.collect::<Vec<_>>()
+		.join("\n")
 }
 
 /// Interpret double-escaped whitespace sequences (`\n`, `\t`, `\r` arriving as
@@ -563,10 +770,10 @@ fn unescape_literals(s: &str) -> String {
 /// Shared by stage 1 (exact match) and stage 1.5 (escaped-literal recovery).
 async fn apply_unique_replacement(
 	source: &PathSource,
+	original: &EditableContent,
 	content: &str,
 	old_text: &str,
 	new_text: &str,
-	uses_crlf: bool,
 ) -> Result<String> {
 	let orig_lines: Vec<&str> = content.lines().collect();
 	let old_line_count = old_text.lines().count();
@@ -575,8 +782,11 @@ async fn apply_unique_replacement(
 	let match_start = byte_offset_to_line(content, match_offset) - 1;
 
 	save_file_history(source).await?;
-	let new_content = content.replace(old_text, new_text);
-	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+	let mut edited = original.clone();
+	edited.replace_normalized_range(match_offset, match_offset + old_text.len(), new_text)?;
+	edited.preserve_trailing_newline();
+	let new_content = edited.normalized();
+	atomic_write(source, &edited.rendered()).await?;
 	super::delta::note_write(source, content, &new_content);
 
 	let new_lines: Vec<&str> = new_content.lines().collect();
@@ -594,15 +804,20 @@ async fn apply_unique_replacement(
 /// landed (fresh line ids in the final file).
 async fn apply_replace_all(
 	source: &PathSource,
+	original: &EditableContent,
 	content: &str,
 	old_text: &str,
 	new_text: &str,
-	uses_crlf: bool,
 ) -> Result<String> {
 	let positions = find_all_positions(content, old_text);
 	save_file_history(source).await?;
-	let new_content = content.replace(old_text, new_text);
-	atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+	let mut edited = original.clone();
+	for &position in positions.iter().rev() {
+		edited.replace_normalized_range(position, position + old_text.len(), new_text)?;
+	}
+	edited.preserve_trailing_newline();
+	let new_content = edited.normalized();
+	atomic_write(source, &edited.rendered()).await?;
 	super::delta::note_write(source, content, &new_content);
 
 	let new_lines: Vec<&str> = new_content.lines().collect();
@@ -653,7 +868,7 @@ async fn apply_replace_all(
 // 1.5. Escaped-literal recovery (double-escaped \n/\t interpreted, unique match)
 // 2. Whitespace-normalized fuzzy match with indentation adjustment
 // 3. Rich diagnostics with closest candidates on failure
-// CRLF files are matched and edited in LF space; original endings are restored on write.
+// Matching and diffs stay in LF space; writes retain each untouched line's original ending.
 pub async fn str_replace_spec(
 	source: &PathSource,
 	old_text: &str,
@@ -674,16 +889,10 @@ pub async fn str_replace_spec(
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 
-	// Normalize CRLF for matching (and in the inputs, in case the model echoed
-	// CRLF back); `restore_endings` puts the file's endings back on write.
-	let uses_crlf = raw.contains("\r\n");
-	let content = if uses_crlf {
-		raw.replace("\r\n", "\n")
-	} else {
-		raw
-	};
+	let original = EditableContent::from_raw(&raw);
+	let content = original.normalized();
 	let old_text = old_text.replace("\r\n", "\n");
-	let new_text = new_text.replace("\r\n", "\n");
+	let new_text = sanitize_incoming_content(new_text);
 	let old_text = old_text.as_str();
 	let new_text = new_text.as_str();
 
@@ -691,11 +900,11 @@ pub async fn str_replace_spec(
 	let occurrences = content.matches(old_text).count();
 
 	if replace_all && occurrences >= 1 {
-		return apply_replace_all(source, &content, old_text, new_text, uses_crlf).await;
+		return apply_replace_all(source, &original, &content, old_text, new_text).await;
 	}
 
 	if occurrences == 1 {
-		return apply_unique_replacement(source, &content, old_text, new_text, uses_crlf).await;
+		return apply_unique_replacement(source, &original, &content, old_text, new_text).await;
 	}
 
 	if occurrences > 1 {
@@ -727,18 +936,18 @@ pub async fn str_replace_spec(
 		let un_old = unescape_literals(old_text);
 		if un_old != old_text {
 			let un_occurrences = content.matches(&un_old).count();
-			let un_new = unescape_literals(new_text);
+			let un_new = sanitize_incoming_content(&unescape_literals(new_text));
 			if replace_all && un_occurrences >= 1 {
 				crate::mcp::request_ctx::push_hint(
 					"Literal \\n/\\t in old_text were treated as real newlines/tabs.",
 				);
-				return apply_replace_all(source, &content, &un_old, &un_new, uses_crlf).await;
+				return apply_replace_all(source, &original, &content, &un_old, &un_new).await;
 			}
 			if un_occurrences == 1 {
 				crate::mcp::request_ctx::push_hint(
 					"Literal \\n/\\t in old_text were treated as real newlines/tabs.",
 				);
-				return apply_unique_replacement(source, &content, &un_old, &un_new, uses_crlf)
+				return apply_unique_replacement(source, &original, &content, &un_old, &un_new)
 					.await;
 			}
 		}
@@ -776,10 +985,18 @@ pub async fn str_replace_spec(
 		if let Some(start) = match_start {
 			let actual_old = content_lines[start..start + old_line_count].join("\n");
 			let adjusted_new = adjust_indentation(new_text, old_text, &actual_old);
+			let match_offset = content.find(&actual_old).unwrap_or(0);
 
 			save_file_history(source).await?;
-			let new_content = content.replace(&actual_old, &adjusted_new);
-			atomic_write(source, &restore_endings(uses_crlf, new_content.clone())).await?;
+			let mut edited = original.clone();
+			edited.replace_normalized_range(
+				match_offset,
+				match_offset + actual_old.len(),
+				&adjusted_new,
+			)?;
+			edited.preserve_trailing_newline();
+			let new_content = edited.normalized();
+			atomic_write(source, &edited.rendered()).await?;
 			super::delta::note_write(source, &content, &new_content);
 
 			crate::mcp::request_ctx::push_hint(
@@ -1009,10 +1226,10 @@ fn insert_anchor(line_range: &LineRange) -> usize {
 // later ones. After all replaces, we compute an offset map so inserts can find
 // their correct position in the (now modified) line array.
 async fn apply_batch_operations(
-	original_content: &str,
+	original: &EditableContent,
 	operations: &[BatchOperation],
-) -> Result<String> {
-	let mut lines: Vec<String> = original_content.lines().map(|s| s.to_string()).collect();
+) -> Result<EditableContent> {
+	let mut lines = original.lines.clone();
 	let original_len = lines.len();
 
 	// Separate into replaces and inserts
@@ -1065,7 +1282,13 @@ async fn apply_batch_operations(
 		}
 
 		let old_count = end - start + 1;
-		let content_lines: Vec<String> = operation.content.lines().map(|s| s.to_string()).collect();
+		let content_lines: Vec<EditableLine> = incoming_content_lines(&operation.content)
+			.into_iter()
+			.map(|text| EditableLine {
+				text: text.to_string(),
+				ending: original.dominant_ending,
+			})
+			.collect();
 		let new_count = content_lines.len();
 
 		// Remove old lines (0-indexed)
@@ -1125,7 +1348,13 @@ async fn apply_batch_operations(
 		let insert_pos = adjusted.max(0) as usize;
 
 		// Split content by lines and insert
-		let content_lines: Vec<String> = operation.content.lines().map(|s| s.to_string()).collect();
+		let content_lines: Vec<EditableLine> = incoming_content_lines(&operation.content)
+			.into_iter()
+			.map(|text| EditableLine {
+				text: text.to_string(),
+				ending: original.dominant_ending,
+			})
+			.collect();
 
 		if insert_pos == 0 {
 			for (i, line) in content_lines.into_iter().enumerate() {
@@ -1139,13 +1368,10 @@ async fn apply_batch_operations(
 		}
 	}
 
-	// Preserve original file ending format
-	let result = lines.join("\n");
-	if original_content.ends_with('\n') && !result.ends_with('\n') {
-		Ok(format!("{}\n", result))
-	} else {
-		Ok(result)
-	}
+	let mut result = original.clone();
+	result.lines = lines;
+	result.preserve_trailing_newline();
+	Ok(result)
 }
 
 // Parse an operation's `start` (+ optional `end`) into an unresolved line range.
@@ -1253,12 +1479,13 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let file_lock = acquire_file_lock(&source).await?;
 	let _lock_guard = file_lock.lock().await;
 
-	// Read original file content. Line splitting/hashing strips `\r` everywhere, so
-	// ids and diffs are ending-agnostic; `uses_crlf` restores the endings on write.
-	let original_content = io_read_to_string(&source)
+	// Matching, ids, conflicts, and diffs remain ending-agnostic while writes retain
+	// the original terminator of every line that no operation touches.
+	let original_raw = io_read_to_string(&source)
 		.await
 		.map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
-	let uses_crlf = original_content.contains("\r\n");
+	let original = EditableContent::from_raw(&original_raw);
+	let original_content = original.normalized();
 
 	// Parse and validate all operations (with unresolved line ranges)
 	let original_lines: Vec<&str> = original_content.lines().collect();
@@ -1397,7 +1624,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}
 	};
 	for op in &batch_operations {
-		let content_lines: Vec<&str> = op.content.lines().collect();
+		let content_lines = incoming_content_lines(&op.content);
 		if content_lines.is_empty() {
 			continue;
 		}
@@ -1453,15 +1680,15 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		}
 	}
 
-	// Apply all operations to the original content (LF-joined by construction)
-	let final_content = apply_batch_operations(&original_content, &batch_operations)
+	let edited = apply_batch_operations(&original, &batch_operations)
 		.await
 		.map_err(|e| anyhow!("Failed to apply operations: {}", e))?;
+	let final_content = edited.normalized();
 
 	// Save file history for undo functionality
 	save_file_history(&source).await?;
 
-	atomic_write(&source, &restore_endings(uses_crlf, final_content.clone()))
+	atomic_write(&source, &edited.rendered())
 		.await
 		.map_err(|e| anyhow!("Atomic write failed for '{}': {}", path_str, e))?;
 	super::delta::note_write(&source, &original_content, &final_content);
@@ -1508,7 +1735,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Range(s, e) => (s, e),
 					LineRange::Single(line) => (line, line),
 				};
-				let content_lines: Vec<&str> = op.content.lines().collect();
+				let content_lines = incoming_content_lines(&op.content);
 				let old_count = end - start + 1;
 				let new_count = content_lines.len();
 				let new_start = shift(start, offset);
@@ -1556,7 +1783,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Single(line) => line,
 					LineRange::Range(start, _) => start,
 				};
-				let content_lines: Vec<&str> = op.content.lines().collect();
+				let content_lines = incoming_content_lines(&op.content);
 				// First inserted line's position in the final file.
 				let insert_at = shift(after, offset) + if after == 0 { 0 } else { 1 };
 				let mut diff: Vec<String> = Vec::new();
@@ -1600,7 +1827,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let regions: Vec<(usize, i64)> = batch_operations
 		.iter()
 		.map(|op| {
-			let added = op.content.lines().count() as i64;
+			let added = incoming_content_lines(&op.content).len() as i64;
 			match (&op.operation_type, &op.line_range) {
 				(OperationType::Replace, LineRange::Range(s, e)) => {
 					(*e, added - (*e - *s + 1) as i64)
