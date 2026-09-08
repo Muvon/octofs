@@ -539,6 +539,17 @@ pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
 		}
 	}
 }
+
+// The extract_lines path still passes only a file-level format flag. Editors must use
+// EditableContent because this conversion cannot preserve mixed endings.
+pub(crate) fn restore_endings(uses_crlf: bool, content: String) -> String {
+	if uses_crlf {
+		content.replace('\n', CRLF_ENDING)
+	} else {
+		content
+	}
+}
+
 const LF_ENDING: &str = "\n";
 const CRLF_ENDING: &str = "\r\n";
 
