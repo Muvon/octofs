@@ -298,10 +298,15 @@ async fn resolve_view_range(
 	let end_ep = end_ep.unwrap_or(Endpoint::Number(-1));
 
 	let mut clamped = false;
-	let start = resolve_endpoint_to_line(&start_ep, total_lines, &mut clamped)?;
-	let end = resolve_endpoint_to_line(&end_ep, total_lines, &mut clamped)?;
+	let mut start = resolve_endpoint_to_line(&start_ep, total_lines, &mut clamped)?;
+	let mut end = resolve_endpoint_to_line(&end_ep, total_lines, &mut clamped)?;
+	// Transposed endpoints name exactly one range, so serve it and say what was
+	// read. Erroring here costs a whole round-trip to be told the obvious.
 	if start > end {
-		bail!("Invalid lines parameter: start line {start} is after end line {end}");
+		std::mem::swap(&mut start, &mut end);
+		crate::mcp::request_ctx::push_hint(&format!(
+			"start was after end, so the range was read as [{start}, {end}]."
+		));
 	}
 	if clamped {
 		crate::mcp::request_ctx::push_hint(&format!(
@@ -400,18 +405,42 @@ async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<Stri
 		}
 	}
 
-	// Resolve and validate every root before searching any of them. Otherwise a typo in a
-	// later root could be reported only after an expensive traversal of an earlier tree.
+	// Resolve every root before searching any of them, so a typo is reported without
+	// first traversing an earlier tree. Roots are alternatives, not a conjunction: a
+	// caller probing where something lives ("pyproject.toml|setup.cfg|setup.py") is
+	// asking about whichever of them exist, so absent roots are skipped and only an
+	// entirely absent set is an error.
 	let mut sources = Vec::with_capacity(roots.len());
+	let mut missing = Vec::new();
 	for root in roots {
 		let source = resolve_path_source(root, &call.workdir);
 		if !io_exists(&source).await? {
-			let root_preview = path_error_preview(root);
-			let resolved_preview = path_error_preview(&source.display());
-			bail!("Search root not found: {root_preview} (resolved to {resolved_preview})");
+			missing.push(path_error_preview(root));
+			continue;
 		}
 		let is_directory = io_is_dir(&source).await?;
 		sources.push((root, source, is_directory));
+	}
+	// Root lists can be long and each root is caller-supplied, so summarise rather
+	// than echoing every one back.
+	let summarize = |roots: &[String]| {
+		let shown = roots.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+		match roots.len().saturating_sub(3) {
+			0 => shown,
+			more => format!("{shown} (+{more} more)"),
+		}
+	};
+	if sources.is_empty() {
+		bail!(
+			"No search root found: none of {} exist.",
+			summarize(&missing)
+		);
+	}
+	if !missing.is_empty() {
+		crate::mcp::request_ctx::push_hint(&format!(
+			"Skipped absent search root(s): {}.",
+			summarize(&missing)
+		));
 	}
 
 	let mut results = Vec::new();
@@ -436,6 +465,10 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// Single path (the common case). An array is rejected with a pointer to parallel calls.
 	let path = match call.parameters.get("path") {
 		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
+		// An explicit empty path names the workspace root — the only thing it can
+		// mean once a root is required. Common when searching the whole tree with
+		// content= and a pattern= glob.
+		Some(Value::String(_)) => ".".to_string(),
 		Some(Value::Array(_)) => bail!(
 			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
 		),

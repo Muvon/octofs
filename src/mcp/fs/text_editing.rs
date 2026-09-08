@@ -1158,8 +1158,26 @@ fn parse_line_range(
 	start_val: &Value,
 	end_val: Option<&Value>,
 	operation_type: &OperationType,
+	lines: &[&str],
 ) -> Result<UnresolvedLineRange, String> {
-	use crate::utils::line_hash::{parse_endpoint, Endpoint};
+	use crate::utils::line_hash::{line_id_at, parse_endpoint, Endpoint};
+
+	// Name the id the caller almost certainly meant, with its content so the
+	// target can be confirmed rather than assumed. A stale id already reports
+	// itself this way; a plain number left the caller re-reading the file to
+	// learn one id, then re-issuing the whole batch.
+	let id_hint = |n: i64| -> String {
+		if n >= 1 && (n as usize) <= lines.len() {
+			let idx = n as usize;
+			format!(
+				" — line {n} is currently `{}` containing: {}",
+				line_id_at(lines, idx),
+				lines[idx - 1].trim()
+			)
+		} else {
+			String::new()
+		}
+	};
 
 	let start = parse_endpoint(start_val).map_err(|e| format!("invalid `start`: {e}"))?;
 
@@ -1167,7 +1185,8 @@ fn parse_line_range(
 		OperationType::Insert => match start {
 			Endpoint::Number(n @ (0 | -1)) => Ok(UnresolvedLineRange::Anchor(n)),
 			Endpoint::Number(n) => Err(format!(
-				"insert anchor {n} is not verifiable: use a line id like \"12:a3\", or 0 (file start) / -1 (end)"
+				"insert anchor {n} is not verifiable: use a line id like \"12:a3\", or 0 (file start) / -1 (end){}",
+				id_hint(n)
 			)),
 			Endpoint::Id { line, hash } => Ok(UnresolvedLineRange::IdAnchor { line, hash }),
 		},
@@ -1183,10 +1202,18 @@ fn parse_line_range(
 						end: (el, eh),
 					})
 				}
-				_ => Err(
-					"replace targets must be line ids like \"12:a3\" from view output, not plain numbers"
-						.to_string(),
-				),
+				(s, e) => {
+					let mut hint = String::new();
+					if let Endpoint::Number(n) = s {
+						hint.push_str(&id_hint(n));
+					}
+					if let Endpoint::Number(n) = e {
+						hint.push_str(&id_hint(n));
+					}
+					Err(format!(
+						"replace targets must be line ids like \"12:a3\" from view output, not plain numbers{hint}"
+					))
+				}
 			}
 		}
 	}
@@ -1234,6 +1261,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let uses_crlf = original_content.contains("\r\n");
 
 	// Parse and validate all operations (with unresolved line ranges)
+	let original_lines: Vec<&str> = original_content.lines().collect();
 	let mut unresolved_operations = Vec::new();
 	let mut parse_failures: Vec<String> = Vec::new();
 
@@ -1276,6 +1304,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					start_value,
 					operation_obj.get("end").filter(|v| !v.is_null()),
 					&operation_type,
+					&original_lines,
 				) {
 					Ok(range) => range,
 					Err(e) => {

@@ -1952,6 +1952,42 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_batch_edit_plain_line_number_error_names_the_id_and_content() {
+		// A plain number is still refused (it carries no hash), but the error must
+		// name the id it almost certainly meant, with that line's content to confirm
+		// against — otherwise the caller re-reads the file just to learn one id and
+		// re-issues the whole batch.
+		let content = "alpha\nbravo\ncharlie\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		for operations in [
+			json!([{"operation": "replace", "start": 2, "content": "x"}]),
+			json!([{"operation": "insert", "start": 2, "content": "x"}]),
+		] {
+			let call = create_batch_edit_call(&path, operations).await;
+			let msg = crate::mcp::fs::core::execute_batch_edit(&call)
+				.await
+				.unwrap_err()
+				.to_string();
+			assert!(msg.contains("line 2 is currently"), "no id hint: {msg}");
+			assert!(msg.contains("bravo"), "hint omits the content: {msg}");
+		}
+
+		// Out-of-range numbers have no line to name, so no hint is invented.
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "start": 99, "content": "x"}]),
+		)
+		.await;
+		let msg = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap_err()
+			.to_string();
+		assert!(!msg.contains("is currently"), "invented a hint: {msg}");
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_is_atomic_when_one_op_is_malformed() {
 		// One valid replace + one malformed op: NOTHING must be applied.
 		let content = "line 1\nline 2\n";
@@ -5723,6 +5759,27 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_view_empty_path_searches_the_workspace_root() {
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		tokio::fs::write(dir.path().join("a.txt"), "needle here\n")
+			.await
+			.unwrap();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": "", "content": "needle" }),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(
+			out.contains("needle"),
+			"empty path should mean the root: {out}"
+		);
+	}
+
+	#[tokio::test]
 	async fn test_view_pipe_search_rejects_unsafe_or_wasteful_root_lists() {
 		use tempfile::TempDir;
 
@@ -5739,7 +5796,7 @@ mod tests {
 			("docs|\nsecret".to_string(), "control characters"),
 			(too_many, "32-root limit"),
 			(oversized, "8192-byte limit"),
-			(long_missing, "Search root not found"),
+			(long_missing, "No search root found"),
 		] {
 			let call = McpToolCall {
 				tool_id: "test".to_string(),
@@ -5756,20 +5813,36 @@ mod tests {
 			);
 		}
 
+		// Roots are alternatives: probing "a|b" where only one exists searches the one
+		// that does instead of failing the whole call.
 		let first_root = dir.path().join("first");
 		tokio::fs::create_dir(&first_root).await.unwrap();
+		tokio::fs::write(first_root.join("f.txt"), "needle here\n")
+			.await
+			.unwrap();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": "first|missing", "content": "needle" }),
+		};
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains("needle"), "present root not searched: {out}");
+
+		// Preflight still precedes the search: with no root present the roots are
+		// reported rather than the invalid regex that would be used later.
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: dir.path().to_path_buf(),
 			tool_name: "view".to_string(),
 			parameters: json!({
-				"path": "first|missing",
+				"path": "gone|missing",
 				"content": "[",
 				"regex": true
 			}),
 		};
 		let err = execute_view(&call).await.unwrap_err().to_string();
-		assert!(err.contains("Search root not found"), "got: {err}");
+		assert!(err.contains("No search root found"), "got: {err}");
 		assert!(
 			!err.contains("Invalid regex"),
 			"searched before preflight: {err}"
@@ -6024,7 +6097,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_view_start_after_end_errors() {
+	async fn test_view_start_after_end_reads_the_named_range() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file = temp_dir.path().join("v.txt");
 		fs::write(&file, "a\nb\nc\nd\ne\n").await.unwrap();
@@ -6035,8 +6108,17 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({ "path": file.to_string_lossy(), "start": 4, "end": 2 }),
 		};
-		let err = execute_view(&call).await.unwrap_err().to_string();
-		assert!(err.contains("after"), "start>end should error: {err}");
+		// Transposed endpoints still name exactly one range, so it is served rather
+		// than costing a round-trip to be told to swap two numbers.
+		let out = execute_view(&call).await.unwrap();
+		assert!(
+			out.contains("|b") && out.contains("|c") && out.contains("|d"),
+			"expected lines 2..4: {out}"
+		);
+		assert!(
+			!out.contains("|a") && !out.contains("|e"),
+			"range not honoured: {out}"
+		);
 	}
 
 	#[tokio::test]

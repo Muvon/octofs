@@ -290,3 +290,45 @@ async fn finished_job_is_replayed_to_a_late_legacy_subscription() {
 		.expect("legacy subscription succeeds");
 	wait_for_unsolicited(&unsolicited, &uri).await;
 }
+
+// A model that names one edit in a shape the schema did not anticipate is still
+// naming one edit; these coercions keep that from costing a round-trip.
+#[test]
+fn batch_edit_accepts_content_as_a_list_of_lines() {
+	let params: super::BatchEditParams = serde_json::from_value(serde_json::json!({
+		"path": "src/lib.rs",
+		"operations": [{
+			"operation": "replace",
+			"start": "7:56",
+			"end": "7:56",
+			"content": ["use a::B;", "use c::D;"],
+		}],
+	}))
+	.expect("list content is joined");
+	assert_eq!(params.operations[0].content, "use a::B;\nuse c::D;");
+}
+
+#[test]
+fn batch_edit_hoists_a_path_carried_on_every_operation() {
+	let params: super::BatchEditParams = serde_json::from_value(serde_json::json!({
+		"operations": [
+			{"operation": "replace", "start": "7:56", "content": "a", "path": "src/lib.rs"},
+			{"operation": "insert", "start": 0, "content": "b", "path": "src/lib.rs"},
+		],
+	}))
+	.expect("a single agreed path is the target");
+	assert_eq!(params.path, "src/lib.rs");
+	assert_eq!(params.operations.len(), 2);
+}
+
+#[test]
+fn batch_edit_rejects_operations_naming_different_files() {
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
+		"operations": [
+			{"operation": "replace", "start": "7:56", "content": "a", "path": "src/one.rs"},
+			{"operation": "replace", "start": "9:aa", "content": "b", "path": "src/two.rs"},
+		],
+	}))
+	.expect_err("no single target is named");
+	assert!(err.to_string().contains("single file"), "got: {err}");
+}
