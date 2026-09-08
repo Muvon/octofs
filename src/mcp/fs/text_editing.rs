@@ -540,16 +540,6 @@ pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
 	}
 }
 
-// The extract_lines path still passes only a file-level format flag. Editors must use
-// EditableContent because this conversion cannot preserve mixed endings.
-pub(crate) fn restore_endings(uses_crlf: bool, content: String) -> String {
-	if uses_crlf {
-		content.replace('\n', CRLF_ENDING)
-	} else {
-		content
-	}
-}
-
 const LF_ENDING: &str = "\n";
 const CRLF_ENDING: &str = "\r\n";
 
@@ -560,14 +550,14 @@ struct EditableLine {
 }
 
 #[derive(Clone)]
-struct EditableContent {
+pub(crate) struct EditableContent {
 	lines: Vec<EditableLine>,
 	dominant_ending: &'static str,
 	had_trailing_newline: bool,
 }
 
 impl EditableContent {
-	fn from_raw(raw: &str) -> Self {
+	pub(crate) fn from_raw(raw: &str) -> Self {
 		let mut lf_count = 0;
 		let mut crlf_count = 0;
 		let lines = if raw.is_empty() {
@@ -619,13 +609,47 @@ impl EditableContent {
 		content
 	}
 
-	fn rendered(&self) -> String {
+	pub(crate) fn rendered(&self) -> String {
 		let mut content = String::new();
 		for line in &self.lines {
 			content.push_str(&line.text);
 			content.push_str(line.ending);
 		}
 		content
+	}
+
+	pub(crate) fn insert_lines(
+		&mut self,
+		position: usize,
+		content_lines: &[&str],
+		trailing_newline: bool,
+	) -> Result<()> {
+		if position > self.lines.len() {
+			bail!("Invalid internal insertion position {position}");
+		}
+
+		let mut inserted: Vec<EditableLine> = content_lines
+			.iter()
+			.map(|line| EditableLine {
+				text: line.trim_end_matches('\r').to_string(),
+				ending: self.dominant_ending,
+			})
+			.collect();
+		if inserted.is_empty() {
+			return Ok(());
+		}
+
+		if position > 0 && self.lines[position - 1].ending.is_empty() {
+			self.lines[position - 1].ending = self.dominant_ending;
+		}
+		if position == self.lines.len() && !trailing_newline {
+			let last = inserted.len() - 1;
+			inserted[last].ending = "";
+		}
+
+		self.lines.splice(position..position, inserted);
+		self.had_trailing_newline = trailing_newline;
+		Ok(())
 	}
 
 	fn replace_normalized_range(

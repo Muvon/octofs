@@ -6112,13 +6112,13 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_extract_lines_crlf_target_preserves_endings() {
-		// Splicing LF-extracted lines into a CRLF target must not mix endings.
+	async fn test_extract_lines_mixed_target_preserves_untouched_endings() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let source = temp_dir.path().join("s.txt");
 		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "new line\n").await.unwrap();
-		fs::write(&target, "a\r\nb\r\n").await.unwrap();
+		fs::write(&source, "new one\r\nnew two\r\n").await.unwrap();
+		let target_content = "alpha\nbeta\r\ngamma\ndelta\n";
+		fs::write(&target, target_content).await.unwrap();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
@@ -6127,13 +6127,93 @@ mod tests {
 			parameters: json!({
 				"from_path": source.to_string_lossy(),
 				"from_start": 1,
+				"from_end": 2,
+				"append_path": target.to_string_lossy(),
+				"append_line": 0
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, "new one\nnew two\nalpha\nbeta\r\ngamma\ndelta\n");
+		assert_eq!(out.matches("\r\n").count(), 1);
+		assert_eq!(target_content.matches("\r\n").count(), 1);
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_crlf_target_uses_crlf_for_inserted_lines() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "new one\nnew two").await.unwrap();
+		fs::write(&target, "alpha\r\nbeta\r\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"from_end": 2,
 				"append_path": target.to_string_lossy(),
 				"append_line": -1
 			}),
 		};
 		execute_extract_lines(&call).await.unwrap();
 		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "a\r\nb\r\nnew line\r\n");
+		assert_eq!(out, "alpha\r\nbeta\r\nnew one\r\nnew two");
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_crlf_source_does_not_add_cr_to_lf_target() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "new one\r\nnew two\r\n").await.unwrap();
+		fs::write(&target, "alpha\nbeta\ngamma\n").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"from_end": 2,
+				"append_path": target.to_string_lossy(),
+				"append_line": 2
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, "alpha\nbeta\nnew one\nnew two\ngamma\n");
+		assert!(!out.contains('\r'));
+	}
+
+	#[tokio::test]
+	async fn test_extract_lines_empty_target_strips_final_bare_cr() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let source = temp_dir.path().join("s.txt");
+		let target = temp_dir.path().join("t.txt");
+		fs::write(&source, "first\r\nlast\r").await.unwrap();
+		fs::write(&target, "").await.unwrap();
+
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "extract_lines".to_string(),
+			parameters: json!({
+				"from_path": source.to_string_lossy(),
+				"from_start": 1,
+				"from_end": 2,
+				"append_path": target.to_string_lossy(),
+				"append_line": 0
+			}),
+		};
+		execute_extract_lines(&call).await.unwrap();
+		let out = fs::read_to_string(&target).await.unwrap();
+		assert_eq!(out, "first\nlast");
+		assert!(!out.contains('\r'));
 	}
 
 	#[tokio::test]

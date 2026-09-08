@@ -595,7 +595,10 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let from_range = (from_start, from_end);
 
 	// Extract the specified lines (convert to 0-indexed)
-	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1].to_vec();
+	let extracted_lines: Vec<&str> = source_lines[(from_range.0 - 1)..from_range.1]
+		.iter()
+		.map(|line| line.trim_end_matches('\r'))
+		.collect();
 
 	// Confirmation echo with SOURCE-position line ids (content hashes stay valid
 	// wherever the lines land in the target).
@@ -650,15 +653,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		String::new()
 	};
 
-	// Extracted lines are LF by construction (`lines()` strips `\r`), so a CRLF
-	// target is spliced in LF space and its endings restored on write — otherwise
-	// the concatenation branches would produce mixed-ending files.
-	let target_uses_crlf = target_content.contains("\r\n");
-	let target_content = if target_uses_crlf {
-		target_content.replace("\r\n", "\n")
-	} else {
-		target_content
-	};
+	let target_lines: Vec<&str> = target_content.lines().collect();
 
 	// Resolve append_line: line id → verified line number, or keep integer as-is (0/-1/N).
 	let append_line: i64 =
@@ -675,73 +670,35 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 				if target_content.is_empty() {
 					bail!("Cannot use a line id for append_line on an empty or non-existent target file");
 				}
-				let target_lines: Vec<&str> = target_content.lines().collect();
 				let line = line_hash::verify_line_id(line, &hash, &target_lines)
 					.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
 				line as i64
 			}
 		};
 
-	// Determine insertion logic based on append_line
-	let final_content = if append_line == 0 {
-		// Insert at beginning
-		if target_content.is_empty() {
-			extracted_content.clone()
-		} else {
-			// Check if extracted content already ends with newline
-			if extracted_content.ends_with('\n') {
-				format!("{extracted_content}{target_content}")
-			} else {
-				format!("{extracted_content}\n{target_content}")
-			}
-		}
-	} else if append_line == -1 {
-		// Append at end
-		if target_content.is_empty() {
-			extracted_content.clone()
-		} else if target_content.ends_with('\n') {
-			format!("{target_content}{extracted_content}")
-		} else {
-			format!("{target_content}\n{extracted_content}")
-		}
+	let insert_after = if append_line == -1 {
+		target_lines.len()
 	} else {
-		// Insert after specific line
-		let target_lines: Vec<&str> = target_content.lines().collect();
-		let insert_after = append_line as usize;
-
-		if insert_after > target_lines.len() {
-			bail!(
-				"Insert position {insert_after} exceeds target file length ({} lines) in '{append_path}'",
-				target_lines.len()
-			);
-		}
-
-		let mut new_lines = Vec::new();
-
-		// Add lines before insertion point
-		new_lines.extend(target_lines[..insert_after].iter().map(|s| s.to_string()));
-
-		// Add extracted content
-		new_lines.extend(extracted_lines.iter().map(|s| s.to_string()));
-
-		// Add remaining lines after insertion point
-		if insert_after < target_lines.len() {
-			new_lines.extend(target_lines[insert_after..].iter().map(|s| s.to_string()));
-		}
-
-		// Preserve target file's newline structure
-		let target_ends_with_newline = target_content.ends_with('\n');
-		if target_ends_with_newline {
-			format!("{}\n", new_lines.join("\n"))
-		} else {
-			new_lines.join("\n")
-		}
+		append_line as usize
 	};
+	if insert_after > target_lines.len() {
+		bail!(
+			"Insert position {insert_after} exceeds target file length ({} lines) in '{append_path}'",
+			target_lines.len()
+		);
+	}
+	let trailing_newline = if target_content.is_empty() || append_line == -1 {
+		extracted_content.ends_with('\n')
+	} else {
+		target_content.ends_with('\n')
+	};
+	let mut edited = text_editing::EditableContent::from_raw(&target_content);
+	edited.insert_lines(insert_after, &extracted_lines, trailing_newline)?;
+	let final_content = edited.rendered();
 
 	// Snapshot the target for undo_edit, then write atomically — same guarantees as
 	// every other edit path (no partial file on interruption, permissions preserved).
 	save_file_history(&append_source).await?;
-	let final_content = text_editing::restore_endings(target_uses_crlf, final_content);
 	if let Err(e) = text_editing::atomic_write(&append_source, &final_content).await {
 		bail!("Failed to write to target file '{append_path}': {e}");
 	}
