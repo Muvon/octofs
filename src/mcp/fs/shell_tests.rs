@@ -245,3 +245,29 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 		"states the whole command was rejected: {msg}"
 	);
 }
+
+#[test]
+fn a_read_only_awk_check_is_not_an_edit() {
+	// Observed six times across one benchmark arm: `awk 'length > 88 …' files`
+	// (a line-length check that writes nothing) rejected as "editing files",
+	// and the agent retrying variants of it.
+	assert_eq!(
+		detect_shell_misuse("git diff; awk 'length > 88 {print FILENAME\": \"FNR}' src/a.py"),
+		None
+	);
+	assert_eq!(detect_shell_misuse("sed -n '1,5p' file.txt | wc -l"), None);
+}
+
+#[test]
+fn an_in_place_sed_is_blocked_as_an_edit() {
+	for cmd in [
+		"cd /workspace && sed -i 's/a/b/' src/x.c",
+		"sed -i.bak -e 's/a/b/' src/x.c",
+		"sed --in-place 's/a/b/' src/x.c",
+		"sed -ni 's/a/b/p' src/x.c",
+	] {
+		let msg = detect_shell_misuse(cmd).unwrap_or_else(|| panic!("{cmd} must be blocked"));
+		assert!(msg.contains("`sed` is blocked"), "{msg}");
+		assert!(msg.contains("in place"), "{msg}");
+	}
+}

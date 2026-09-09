@@ -95,10 +95,6 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\".",
 	),
 	(
-		&["sed", "awk"],
-		"Editing files with the shell is blocked — use `text_editor` str_replace or `batch_edit` (atomic, tracked, remote-capable). Only a later pipeline stage (`... | sed 's/a/b/'`) stays allowed.",
-	),
-	(
 		&["sleep"],
 		"Bare `sleep` is blocked — it wastes the call. Poll a condition instead: until <check>; do sleep 2; done. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
 	),
@@ -107,6 +103,10 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 		"This program never exits, so it would never complete or notify you. Run the underlying command once; long runs move to the background automatically.",
 	),
 ];
+
+// Only in-place `sed` edits a file; `sed`/`awk` streaming to stdout is text
+// processing (line-length checks, previews) that no dedicated tool covers.
+static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_editor` str_replace or `batch_edit` (atomic, tracked, remote-capable).";
 
 // Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
 // breaks on quoting/escaping and bypasses tracked edits. Redirecting other
@@ -269,6 +269,10 @@ fn detect_shell_misuse(command: &str) -> Option<String> {
 			return Some(blocked_message(prog, REDIRECT_WRITE_HINT));
 		}
 
+		if prog == "sed" && sed_edits_in_place(segment) {
+			return Some(blocked_message(prog, IN_PLACE_EDIT_HINT));
+		}
+
 		for (progs, hint) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
 				return Some(blocked_message(prog, hint));
@@ -277,6 +281,16 @@ fn detect_shell_misuse(command: &str) -> Option<String> {
 	}
 
 	None
+}
+
+/// True if a `sed` segment carries `-i`/`--in-place` (also as a bundled short
+/// flag like `-ni` or with a backup suffix like `-i.bak`).
+fn sed_edits_in_place(segment: &str) -> bool {
+	segment.split_whitespace().skip(1).any(|tok| {
+		tok == "--in-place"
+			|| tok.starts_with("--in-place=")
+			|| (tok.starts_with('-') && !tok.starts_with("--") && tok[1..].contains('i'))
+	})
 }
 
 /// Name the blocked program and state that nothing ran, so a compound command
