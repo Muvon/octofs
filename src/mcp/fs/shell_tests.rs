@@ -231,3 +231,17 @@ fn test_detect_shell_misuse() {
 	assert!(detect_shell_misuse("watch -n1 date").is_some());
 	assert!(detect_shell_misuse("top").is_some());
 }
+
+#[test]
+fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
+	// Observed: an agent sent `php -v && git status && git log && find …` three
+	// times, permuting joiners, because the rejection named neither the offending
+	// program nor the fact that the legitimate parts never ran.
+	let msg = detect_shell_misuse("php -v && git log --oneline -3 && find . -name x")
+		.expect("find is blocked");
+	assert!(msg.contains("`find`"), "names the program: {msg}");
+	assert!(
+		msg.contains("no part of it ran"),
+		"states the whole command was rejected: {msg}"
+	);
+}

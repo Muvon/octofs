@@ -206,7 +206,12 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 
 // Detect shell commands that should use a dedicated MCP tool instead.
 // Returns the misuse guidance message the caller rejects the command with.
-fn detect_shell_misuse(command: &str) -> Option<&'static str> {
+//
+// The message names the offending program and says the whole command was
+// rejected: one blocked verb inside a compound (`php -v && git log && find …`)
+// takes the legitimate parts down with it, and a hint that names neither leaves
+// the caller permuting joiners and re-sending the same command.
+fn detect_shell_misuse(command: &str) -> Option<String> {
 	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
 	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
 	let mut loop_depth = 0usize;
@@ -261,17 +266,23 @@ fn detect_shell_misuse(command: &str) -> Option<&'static str> {
 		if prog == "tee"
 			|| (matches!(prog, "echo" | "printf" | "cat") && has_file_redirect(segment))
 		{
-			return Some(REDIRECT_WRITE_HINT);
+			return Some(blocked_message(prog, REDIRECT_WRITE_HINT));
 		}
 
 		for (progs, hint) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
-				return Some(hint);
+				return Some(blocked_message(prog, hint));
 			}
 		}
 	}
 
 	None
+}
+
+/// Name the blocked program and state that nothing ran, so a compound command
+/// can be split instead of retried.
+fn blocked_message(prog: &str, hint: &str) -> String {
+	format!("`{prog}` is blocked, so the whole command was rejected and no part of it ran — re-send the rest as its own call. {hint}")
 }
 
 /// True if the segment contains an unquoted `>` or `>>` file redirect.
