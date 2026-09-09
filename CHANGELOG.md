@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.6] - 2026-09-09
+
+### 📋 Release Summary
+
+This release improves shell command handling by allowing safe read-only `sed` and `awk` checks and providing clearer feedback when commands are blocked (8fe1a82a, 48f7b65c). It also improves filesystem input validation by rejecting empty view paths (1e602452).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: allow read-only sed and awk checks `8fe1a82a`
+- **mcp**: clarify blocked shell command rejection `48f7b65c`
+- **fs**: reject empty view paths `1e602452`
+
 ## [0.15.5] - 2026-09-09
 
 ### 📋 Release Summary
