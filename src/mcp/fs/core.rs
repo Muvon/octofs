@@ -465,10 +465,6 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// Single path (the common case). An array is rejected with a pointer to parallel calls.
 	let path = match call.parameters.get("path") {
 		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
-		// An explicit empty path names the workspace root — the only thing it can
-		// mean once a root is required. Common when searching the whole tree with
-		// content= and a pattern= glob.
-		Some(Value::String(_)) => ".".to_string(),
 		Some(Value::Array(_)) => bail!(
 			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
 		),

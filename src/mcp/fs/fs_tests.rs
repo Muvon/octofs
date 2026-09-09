@@ -5907,7 +5907,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_view_empty_path_searches_the_workspace_root() {
+	async fn test_view_rejects_an_empty_path() {
 		use tempfile::TempDir;
 
 		let dir = TempDir::new().unwrap();
@@ -5920,10 +5920,12 @@ mod tests {
 			tool_name: "view".to_string(),
 			parameters: json!({ "path": "", "content": "needle" }),
 		};
-		let out = execute_view(&call).await.unwrap();
+		let err = execute_view(&call)
+			.await
+			.expect_err("an empty path names nothing");
 		assert!(
-			out.contains("needle"),
-			"empty path should mean the root: {out}"
+			err.to_string().contains("path"),
+			"the error has to name the parameter: {err}"
 		);
 	}
 
