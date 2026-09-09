@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.5] - 2026-09-09
+
+### 📋 Release Summary
+
+Improved text editing to preserve existing line endings during insertions and edits, including restoring CRLF formatting where applicable (8ead8352, b1c23841, e21c21fb).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: preserve line endings during insertion `8ead8352`
+- **fs**: restore CRLF endings after text edits `b1c23841`
+- **fs**: preserve line endings in edits `e21c21fb`
+
 ## [0.15.4] - 2026-09-08
 
 ### 📋 Release Summary
