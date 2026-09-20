@@ -400,7 +400,9 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs. Use `view` to read, \
+		description = "Run a shell command: builds, tests, git, project CLIs. Runs in the current \
+			workdir — never prefix with `cd` to it; `cd <other> && …` is fine for a one-off \
+			command elsewhere, `workdir` switches permanently. Use `view` to read, \
 			list and search files (cat/grep/ls/sed are rejected). Output is terminal-clean: ANSI \
 			and progress redraws stripped, repeated lines collapsed with a count; pipe through \
 			`od -c` or `xxd` for byte-exact output. A command still running after ~10s moves to \
