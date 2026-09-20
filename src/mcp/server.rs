@@ -253,20 +253,18 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Read files, list directories, search content. Reuse content already returned: \
-			do not re-read overlapping ranges or narrow a previously read range just to select edit \
-			targets. Read a complete relevant function/block in one call; for adjacent windows, \
-			combine them. If its location is unknown, search with `content` and enough `context` \
-			to understand the match, then read only missing surrounding code. Re-read when the \
-			file may have changed, earlier output was truncated, or earlier context is unavailable. \
-			Lines render as `N:hh|content`; \
-			`N:hh` is the line id edit tools take as targets — copy it verbatim. Directory listings \
-			show each file as `path\tNL\t~Nt` (lines, estimated tokens) for budgeting reads. For \
-			content search across several roots, separate them in `path` with `|`. `pattern` takes \
-			ripgrep -g globs (`**`, leading `!`). Re-viewing a whole file returns only the hunks \
-			changed since your last view (or an unchanged marker). Ranged reads always return the \
-			requested lines; `full` has no effect on ranges or searches. Omit `start`/`end` and \
-			set `full: true` only when you need the complete file again."
+		description = "Read files, list directories, search content. Lines render as \
+			`N:hh|content`; `N:hh` is the line id edit tools take as targets — copy it verbatim. \
+			Directory listings are recursive and gitignore-aware, one `path\tNL\t~Nt` (lines, \
+			estimated tokens) per file; bound large trees with `max_depth` or `pattern` (ripgrep \
+			-g globs, `**`, leading `!`). To locate unknown code, search with `content` and enough \
+			`context` to understand the match; several roots in `path` separated by `|`. \
+			Re-viewing a whole file returns only the hunks changed since your last view (or an \
+			unchanged marker); set `full: true` only when you need the complete file again. Ranged \
+			reads always return the requested lines. Reuse content already returned: do not \
+			re-read overlapping ranges or narrow a range just to pick edit targets; read a \
+			complete block in one call and combine adjacent windows. Re-read only when the file \
+			may have changed or earlier output was truncated."
 	)]
 	async fn view(
 		&self,
@@ -296,10 +294,12 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "File operations: create, str_replace, delete, undo_edit. str_replace takes raw \
-			file text (real newlines, no `N:hh|` prefixes); old_text must match exactly once, or set \
-			replace_all: true. On no or multiple matches the error lists candidate line ids for \
-			batch_edit. Prefer batch_edit when you already hold line ids."
+		description = "File operations. create: new file only — fails if it exists, parent \
+			directories are made. str_replace: raw file text (real newlines, no `N:hh|` \
+			prefixes); old_text must match exactly once, or set replace_all: true — on no or \
+			multiple matches the error lists candidate line ids for batch_edit. delete: remove a \
+			file (not a directory). undo_edit: revert the last edit to `path` (10 levels, delete \
+			included). Prefer batch_edit when you already hold line ids."
 	)]
 	async fn text_editor(
 		&self,
@@ -333,7 +333,8 @@ impl OctofsServer {
 		),
 		description = "Apply several insert/replace operations to one file atomically. Targets are \
 			line ids (\"12:a3\") from view or edit output, verified before anything is written; a \
-			stale id fails with the current content. The result diff carries fresh ids for follow-up \
+			stale id fails with the current content. All targets refer to the original file and \
+			must not overlap; max 50 operations. The result diff carries fresh ids for follow-up \
 			edits — no re-view needed; removed lines show as an id range, and a trailing `shift:` \
 			line says how original line numbers after each edit moved. Insert anchors 0 (file \
 			start) and -1 (end) are plain integers. Content is raw text without id prefixes."
@@ -368,7 +369,9 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Copy lines from a source file and append them into a target file."
+		description = "Copy a line range from one file and append it into another without \
+			retyping it — moving code between files, splitting modules. The source is left \
+			untouched; to move, follow with a batch_edit that removes the range."
 	)]
 	async fn extract_lines(
 		&self,
@@ -400,12 +403,15 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs. Runs in the current \
-			workdir — never prefix with `cd` to it; `cd <other> && …` is fine for a one-off \
-			command elsewhere, `workdir` switches permanently. Use `view` to read, \
-			list and search files (cat/grep/ls/sed are rejected). Output is terminal-clean: ANSI \
-			and progress redraws stripped, repeated lines collapsed with a count; pipe through \
-			`od -c` or `xxd` for byte-exact output. A command still running after ~10s moves to \
+		description = "Run a shell command: builds, tests, git, project CLIs. Runs via `sh -c` \
+			(`cmd /C` on Windows) in the current workdir, on the local machine only, with no \
+			stdin or TTY — never prefix with `cd` to the workdir, never run interactive commands. \
+			`cd <other> && …` is fine for a one-off command elsewhere; `workdir` switches \
+			permanently, and a remote (ssh://) workdir makes shell unavailable. Use `view` to \
+			read, list and search files (cat/grep/ls/sed are rejected). Output is \
+			terminal-clean: ANSI and progress redraws stripped, repeated lines collapsed with a \
+			count; pipe through `od -c` or `xxd` for byte-exact output. Non-zero exit is \
+			returned as an error with the output. A command still running after ~10s moves to \
 			the background and returns a job resource; you are notified automatically with the \
 			exit code and output tail when it exits. Do NOT poll, sleep, re-run or `ps` it — start \
 			the next independent step or end your turn. Distinct commands run concurrently; an \
@@ -498,8 +504,8 @@ impl OctofsServer {
 			open_world_hint = false
 		),
 		description = "Switch the working directory for later calls (`path`) or revert to the \
-			session root (`reset: true`). Do not call it just to check the directory; every tool \
-			resolves relative paths against it."
+			session root (`reset: true`). Every tool resolves relative paths against it; do not \
+			call it just to check the directory. A remote (ssh://) workdir disables `shell`."
 	)]
 	async fn workdir(
 		&self,
@@ -870,7 +876,7 @@ pub enum TextEditorCommand {
 pub struct TextEditorParams {
 	/// The operation to perform: create, str_replace, delete, undo_edit
 	pub command: TextEditorCommand,
-	/// REQUIRED. Path to the file to operate on.
+	/// Path to the file to operate on.
 	/// Supports ssh://user@host:port/path for remote filesystem access.
 	pub path: String,
 	/// File content for create command.
@@ -1032,7 +1038,8 @@ pub struct ExtractLinesParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ShellParams {
-	/// The shell command to execute
+	/// Command line passed to `sh -c`. No stdin or TTY: use non-interactive flags
+	/// (`-y`, `--no-pager`, `CI=1`) for anything that might prompt.
 	pub command: String,
 }
 
