@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::model::{
-	CallToolRequestParams, ClientCapabilities, ClientInfo, ContentBlock, Implementation,
+	CallToolRequestParams, ClientCapabilities, ClientConfig, ContentBlock, Implementation,
 	ProtocolVersion, SubscribeRequestParams, SubscriptionFilter,
 };
 use rmcp::service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, RunningService};
@@ -44,8 +44,8 @@ struct RecordingClient {
 }
 
 impl ClientHandler for RecordingClient {
-	fn get_info(&self) -> ClientInfo {
-		ClientInfo::new(
+	fn get_info(&self) -> ClientConfig {
+		ClientConfig::new(
 			ClientCapabilities::default(),
 			Implementation::new("octofs-test-client", "0.0.0"),
 		)
