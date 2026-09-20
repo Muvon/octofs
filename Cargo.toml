@@ -57,7 +57,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 # use ed25519/ecdsa keys and host keys instead. The `ring` crypto backend (not
 # aws-lc-rs) is chosen because the Alpine/musl release builds have no cmake.
 russh = { version = "0.63", default-features = false, features = ["flate2", "ring"] }
-russh-sftp = "2.4"
+russh-sftp = "3.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
