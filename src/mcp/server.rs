@@ -21,8 +21,8 @@ use rmcp::{
 	model::{
 		CallToolResult, ContentBlock, Implementation, ListResourcesResult, ListToolsResult,
 		PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-		ReadResourceResult, RequestId, Resource, ResourceContents, ServerCapabilities, ServerInfo,
-		SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
+		ReadResourceResult, RequestId, Resource, ResourceContents, ServerCapabilities,
+		ServerConfig, SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
 	},
 	schemars,
 	service::{Peer, RequestContext, SubscriptionContext, SubscriptionSink},
@@ -599,8 +599,8 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for OctofsServer {
-	fn get_info(&self) -> ServerInfo {
-		ServerInfo::new(
+	fn get_info(&self) -> ServerConfig {
+		ServerConfig::new(
 			// Resources (read/list) advertise automatically promoted shell jobs
 			// as handles. `subscribe` is advertised because resource updates are
 			// deliverable both ways: on a `subscriptions/listen` stream (the
