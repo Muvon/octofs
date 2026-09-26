@@ -518,6 +518,19 @@ distinct commands may run concurrently, including from the same working
 directory. An exact duplicate command in the same working directory is rejected
 while the first copy is still running.
 
+The completion is delivered as `resources/updated` for the job resource (on a
+`subscriptions/listen` stream when the client opened one). Claude Code does not
+surface that to the model, so octofs also sends it as a Claude Code channel
+message (`notifications/claude/channel`) on pre-2026-07-28 connections — the
+exit code and output tail wake the session. Claude Code accepts channel
+messages only from servers enabled for the session, in interactive mode:
+
+```bash
+claude --dangerously-load-development-channels server:octofs
+```
+
+Without it, read the job's resource link when you need the result.
+
 > On Windows, shutdown cleanup terminates only direct child processes (no Unix
 > process-group semantics); use `taskkill /PID <pid> /T` for process trees.
 

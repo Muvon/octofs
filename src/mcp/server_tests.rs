@@ -37,10 +37,12 @@ use tokio::sync::Mutex;
 
 use super::OctofsServer;
 
-/// Minimal client that records unsolicited `resources/updated` pushes.
+/// Minimal client that records unsolicited `resources/updated` pushes and Claude
+/// Code channel messages.
 #[derive(Clone, Debug)]
 struct RecordingClient {
 	unsolicited: Arc<Mutex<Vec<String>>>,
+	channel: Arc<Mutex<Vec<serde_json::Value>>>,
 	protocol_version: ProtocolVersion,
 }
 
@@ -59,6 +61,19 @@ impl ClientHandler for RecordingClient {
 		_context: NotificationContext<RoleClient>,
 	) {
 		self.unsolicited.lock().await.push(params.uri);
+	}
+
+	async fn on_custom_notification(
+		&self,
+		notification: rmcp::model::CustomNotification,
+		_context: NotificationContext<RoleClient>,
+	) {
+		if notification.method == "notifications/claude/channel" {
+			self.channel
+				.lock()
+				.await
+				.push(notification.params.unwrap_or_default());
+		}
 	}
 }
 
@@ -94,6 +109,7 @@ async fn connect_with_lifecycle(
 		Duration::from_secs(5),
 		RecordingClient {
 			unsolicited: unsolicited.clone(),
+			channel: Arc::new(Mutex::new(Vec::new())),
 			protocol_version,
 		}
 		.serve_with_lifecycle(client_io, lifecycle),
@@ -290,6 +306,52 @@ async fn finished_job_is_replayed_to_a_late_legacy_subscription() {
 		.await
 		.expect("legacy subscription succeeds");
 	wait_for_unsolicited(&unsolicited, &uri).await;
+}
+
+/// Claude Code wakes its model only on channel messages, so on a pre-2026-07-28
+/// connection a job's exit also goes out as one, carrying the job resource text.
+#[tokio::test(flavor = "multi_thread")]
+async fn job_completion_is_pushed_as_a_claude_channel_message_on_legacy_connections() {
+	let (client, _server_task, unsolicited) = connect_legacy().await;
+	let info = client.peer_info().expect("server info");
+	assert!(
+		info.capabilities
+			.experimental
+			.as_ref()
+			.is_some_and(|experimental| experimental.contains_key("claude/channel")),
+		"the claude/channel capability must be advertised"
+	);
+	let uri = start_job(&client).await;
+	wait_for_unsolicited(&unsolicited, &uri).await;
+
+	let id = crate::mcp::fs::background::job_id_from_uri(&uri).expect("job URI");
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+	let message = loop {
+		if let Some(message) = client.service().channel.lock().await.first().cloned() {
+			break message;
+		}
+		assert!(
+			tokio::time::Instant::now() < deadline,
+			"channel message for {uri} never arrived"
+		);
+		tokio::time::sleep(Duration::from_millis(100)).await;
+	};
+	assert_eq!(message["meta"]["job"], id, "{message}");
+	let content = message["content"].as_str().expect("text content");
+	assert!(content.starts_with(&format!("job {id}\n")), "{content}");
+	assert!(content.contains("status: exited with code 0"), "{content}");
+}
+
+/// 2026-07-28 carries no unsolicited notifications and Claude Code drops channels
+/// on such a connection, so none is sent there.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_claude_channel_message_on_2026_07_28_connections() {
+	let (client, _server_task, unsolicited) = connect().await;
+	let uri = start_job(&client).await;
+	wait_for_unsolicited(&unsolicited, &uri).await;
+	// The channel message would follow the resources/updated push from the same task.
+	tokio::time::sleep(Duration::from_millis(500)).await;
+	assert!(client.service().channel.lock().await.is_empty());
 }
 
 /// 2026-07-28 requires `ttlMs` and `cacheScope` on list and read results. A

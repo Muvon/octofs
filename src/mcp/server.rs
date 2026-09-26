@@ -19,11 +19,11 @@ use std::sync::{Arc, RwLock};
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
 	model::{
-		CacheScope, CallToolResult, ContentBlock, Implementation, ListResourcesResult,
-		ListToolsResult, PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams,
-		ReadResourceResponse, ReadResourceResult, RequestId, Resource, ResourceContents,
-		ServerCapabilities, ServerConfig, SubscribeRequestParams, SubscriptionFilter,
-		UnsubscribeRequestParams,
+		CacheScope, CallToolResult, ContentBlock, CustomNotification, ExperimentalCapabilities,
+		Implementation, JsonObject, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+		ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+		RequestId, Resource, ResourceContents, ServerCapabilities, ServerConfig,
+		ServerNotification, SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
 	},
 	schemars,
 	service::{Peer, RequestContext, SubscriptionContext, SubscriptionSink},
@@ -158,6 +158,63 @@ async fn notify_peer_resource_updated(peer: &Peer<RoleServer>, uri: &str) {
 			 completion remains available through the job resource"
 		);
 	}
+}
+
+/// Claude Code ignores `resources/updated` for the model (it only evicts its read
+/// cache), so a job's exit would never wake the session. Its one server-to-model
+/// push is a channel: a server declaring the `claude/channel` experimental
+/// capability sends `notifications/claude/channel`, and Claude Code injects the
+/// content as `<channel source="octofs" job="…">` into the session, starting a turn.
+/// It accepts channels only from servers the user enabled (`--channels`, or
+/// `--dangerously-load-development-channels server:<name>` for a local server), in
+/// interactive sessions, on pre-2026-07-28 connections; other clients ignore it.
+const CLAUDE_CHANNEL_CAPABILITY: &str = "claude/channel";
+const CLAUDE_CHANNEL_NOTIFICATION: &str = "notifications/claude/channel";
+
+/// Push a finished job to Claude Code as a channel message carrying what
+/// `resources/read` returns for it: the exit code and the output tail.
+async fn notify_claude_channel(peer: &Peer<RoleServer>, uri: &str) {
+	let Some(id) = fs::background::job_id_from_uri(uri) else {
+		return;
+	};
+	let Some(body) = job_resource_text(id) else {
+		return;
+	};
+	let params = serde_json::json!({ "content": body, "meta": { "job": id } });
+	let notification = CustomNotification::new(CLAUDE_CHANNEL_NOTIFICATION, Some(params));
+	if let Err(error) = peer
+		.send_notification(ServerNotification::CustomNotification(notification))
+		.await
+	{
+		warn!("background job channel message for {uri} could not be delivered: {error}");
+	}
+}
+
+/// A job's resource text: status and output tail, as `resources/read` serves it.
+fn job_resource_text(id: &str) -> Option<String> {
+	let view = fs::background::read(id)?;
+	let status = match view.status {
+		fs::background::JobStatus::Running => "running".to_string(),
+		fs::background::JobStatus::Exited(code) => format!("exited with code {code}"),
+	};
+	let truncated = if view.truncated {
+		"\n[earlier output dropped — showing the last 30000 bytes]"
+	} else {
+		""
+	};
+	Some(format!(
+		"job {id}\ncommand: {}\nstatus: {status}{truncated}\n\n{}",
+		view.command, view.output
+	))
+}
+
+/// Before 2026-07-28 a server may push notifications nobody subscribed to; the
+/// 2026-07-28 revision routes every notification through a listen stream, and
+/// Claude Code drops channels on such a connection.
+fn allows_unsolicited_notifications(context: &RequestContext<RoleServer>) -> bool {
+	!context
+		.protocol_version()
+		.is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
 }
 
 /// How often a running foreground `shell` command reports liveness. Well below
@@ -440,14 +497,20 @@ impl OctofsServer {
 		// clients that opened a `subscriptions/listen` stream get the
 		// notification on it (tagged with their subscription id by the sink);
 		// everyone else gets the unsolicited push the pre-2026-07-28 spec
-		// allowed. The peer and registry handles are captured here and hidden
-		// behind an opaque callback so the fs layer stays protocol-free.
+		// allowed. On pre-2026-07-28 connections the exit also goes out as a Claude
+		// Code channel message, the only push that reaches its model. The peer and
+		// registry handles are captured here and hidden behind an opaque callback so
+		// the fs layer stays protocol-free.
 		let completion_peer = context.peer.clone();
 		let subscriptions = self.subscriptions.clone();
+		let push_channel = allows_unsolicited_notifications(&context);
 		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
 			tokio::spawn(async move {
 				if !notify_subscriptions(&subscriptions, &uri).await {
 					notify_peer_resource_updated(&completion_peer, &uri).await;
+				}
+				if push_channel {
+					notify_claude_channel(&completion_peer, &uri).await;
 				}
 			});
 		});
@@ -650,8 +713,14 @@ impl ServerHandler for OctofsServer {
 			// deliverable both ways: on a `subscriptions/listen` stream (the
 			// 2026-07-28 contract path, see `listen` below) and as the
 			// unsolicited push legacy clients expect (the `shell` notifier's
-			// fallback path).
+			// fallback path). `claude/channel` lets Claude Code sessions that
+			// enabled octofs as a channel receive job exits (see
+			// `notify_claude_channel`).
 			ServerCapabilities::builder()
+				.enable_experimental_with(ExperimentalCapabilities::from([(
+					CLAUDE_CHANNEL_CAPABILITY.to_string(),
+					JsonObject::new(),
+				)]))
 				.enable_tools()
 				.enable_resources()
 				.enable_resources_subscribe()
@@ -732,22 +801,9 @@ impl ServerHandler for OctofsServer {
 		let uri = request.uri;
 		let id = fs::background::job_id_from_uri(&uri)
 			.ok_or_else(|| ErrorData::resource_not_found(format!("Not a job URI: {uri}"), None))?;
-		let view = fs::background::read(id).ok_or_else(|| {
+		let body = job_resource_text(id).ok_or_else(|| {
 			ErrorData::resource_not_found(format!("No such background job: {uri}"), None)
 		})?;
-		let status = match view.status {
-			fs::background::JobStatus::Running => "running".to_string(),
-			fs::background::JobStatus::Exited(code) => format!("exited with code {code}"),
-		};
-		let truncated = if view.truncated {
-			"\n[earlier output dropped — showing the last 30000 bytes]"
-		} else {
-			""
-		};
-		let body = format!(
-			"job {id}\ncommand: {}\nstatus: {status}{truncated}\n\n{}",
-			view.command, view.output
-		);
 		let result = ReadResourceResult::new(vec![ResourceContents::text(body, uri)]);
 		if !supports_cache_hints(&context) {
 			return Ok(result.into());
