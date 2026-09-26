@@ -19,10 +19,11 @@ use std::sync::{Arc, RwLock};
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
 	model::{
-		CallToolResult, ContentBlock, Implementation, ListResourcesResult, ListToolsResult,
-		PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-		ReadResourceResult, RequestId, Resource, ResourceContents, ServerCapabilities,
-		ServerConfig, SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
+		CacheScope, CallToolResult, ContentBlock, Implementation, ListResourcesResult,
+		ListToolsResult, PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams,
+		ReadResourceResponse, ReadResourceResult, RequestId, Resource, ResourceContents,
+		ServerCapabilities, ServerConfig, SubscribeRequestParams, SubscriptionFilter,
+		UnsubscribeRequestParams,
 	},
 	schemars,
 	service::{Peer, RequestContext, SubscriptionContext, SubscriptionSink},
@@ -597,6 +598,16 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 	}
 }
 
+/// 2026-07-28 makes `ttlMs` and `cacheScope` required on list and read results;
+/// older protocol versions don't define them. rmcp's generated `list_tools` sets
+/// them, so the overrides below must too — a strict 2026-07-28 client (Claude
+/// Code's `server/discover` runtime) rejects the result and loads no tools at all.
+fn supports_cache_hints(context: &RequestContext<RoleServer>) -> bool {
+	context
+		.protocol_version()
+		.is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+}
+
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for OctofsServer {
 	fn get_info(&self) -> ServerConfig {
@@ -631,7 +642,7 @@ impl ServerHandler for OctofsServer {
 	async fn list_tools(
 		&self,
 		_request: Option<PaginatedRequestParams>,
-		_context: RequestContext<RoleServer>,
+		context: RequestContext<RoleServer>,
 	) -> Result<ListToolsResult, ErrorData> {
 		let tools = Self::tool_router()
 			.list_all()
@@ -645,7 +656,12 @@ impl ServerHandler for OctofsServer {
 				tool
 			})
 			.collect();
-		Ok(ListToolsResult::with_all_items(tools))
+		let result = ListToolsResult::with_all_items(tools);
+		if !supports_cache_hints(&context) {
+			return Ok(result);
+		}
+		// ttl 0 matches rmcp's generated handler; the list is identical for every caller.
+		Ok(result.with_ttl_ms(0).with_cache_scope(CacheScope::Public))
 	}
 
 	// Background shell jobs are surfaced as resources: each promoted command is
@@ -655,7 +671,7 @@ impl ServerHandler for OctofsServer {
 	async fn list_resources(
 		&self,
 		_request: Option<PaginatedRequestParams>,
-		_context: RequestContext<RoleServer>,
+		context: RequestContext<RoleServer>,
 	) -> Result<ListResourcesResult, ErrorData> {
 		let resources = fs::background::list()
 			.into_iter()
@@ -670,13 +686,18 @@ impl ServerHandler for OctofsServer {
 				)
 			})
 			.collect();
-		Ok(ListResourcesResult::with_all_items(resources))
+		let result = ListResourcesResult::with_all_items(resources);
+		if !supports_cache_hints(&context) {
+			return Ok(result);
+		}
+		// Jobs come and go and belong to this session: never fresh, never shared.
+		Ok(result.with_ttl_ms(0).with_cache_scope(CacheScope::Private))
 	}
 
 	async fn read_resource(
 		&self,
 		request: ReadResourceRequestParams,
-		_context: RequestContext<RoleServer>,
+		context: RequestContext<RoleServer>,
 	) -> Result<ReadResourceResponse, ErrorData> {
 		let uri = request.uri;
 		let id = fs::background::job_id_from_uri(&uri)
@@ -697,7 +718,15 @@ impl ServerHandler for OctofsServer {
 			"job {id}\ncommand: {}\nstatus: {status}{truncated}\n\n{}",
 			view.command, view.output
 		);
-		Ok(ReadResourceResult::new(vec![ResourceContents::text(body, uri)]).into())
+		let result = ReadResourceResult::new(vec![ResourceContents::text(body, uri)]);
+		if !supports_cache_hints(&context) {
+			return Ok(result.into());
+		}
+		// A running job's tail changes between reads, and it is this session's job.
+		Ok(result
+			.with_ttl_ms(0)
+			.with_cache_scope(CacheScope::Private)
+			.into())
 	}
 
 	// 2026-07-28 change notifications are opt-in: the client opens a

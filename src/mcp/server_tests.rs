@@ -26,8 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::model::{
-	CallToolRequestParams, ClientCapabilities, ClientConfig, ContentBlock, Implementation,
-	ProtocolVersion, SubscribeRequestParams, SubscriptionFilter,
+	CacheScope, CallToolRequestParams, ClientCapabilities, ClientConfig, ContentBlock,
+	Implementation, ProtocolVersion, ReadResourceRequestParams, SubscribeRequestParams,
+	SubscriptionFilter,
 };
 use rmcp::service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, RunningService};
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
@@ -289,6 +290,52 @@ async fn finished_job_is_replayed_to_a_late_legacy_subscription() {
 		.await
 		.expect("legacy subscription succeeds");
 	wait_for_unsolicited(&unsolicited, &uri).await;
+}
+
+/// 2026-07-28 requires `ttlMs` and `cacheScope` on list and read results. A
+/// strict client (Claude Code's `server/discover` runtime) rejects results
+/// without them and never loads octofs's tools.
+#[tokio::test(flavor = "multi_thread")]
+async fn results_carry_cache_hints_on_2026_07_28() {
+	let (client, _server_task, _unsolicited) = connect().await;
+
+	let tools = client.list_tools(None).await.expect("list tools");
+	assert_eq!(tools.ttl_ms, Some(0));
+	assert_eq!(tools.cache_scope, Some(CacheScope::Public));
+
+	let uri = start_job(&client).await;
+	let resources = client.list_resources(None).await.expect("list resources");
+	assert_eq!(resources.ttl_ms, Some(0));
+	assert_eq!(resources.cache_scope, Some(CacheScope::Private));
+
+	let read = client
+		.read_resource(ReadResourceRequestParams::new(uri))
+		.await
+		.expect("read job resource");
+	assert_eq!(read.ttl_ms, Some(0));
+	assert_eq!(read.cache_scope, Some(CacheScope::Private));
+}
+
+/// The hints don't exist before 2026-07-28, so legacy results stay unchanged.
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_results_carry_no_cache_hints() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+
+	let tools = client.list_tools(None).await.expect("list tools");
+	assert_eq!(tools.ttl_ms, None);
+	assert_eq!(tools.cache_scope, None);
+
+	let uri = start_job(&client).await;
+	let resources = client.list_resources(None).await.expect("list resources");
+	assert_eq!(resources.ttl_ms, None);
+	assert_eq!(resources.cache_scope, None);
+
+	let read = client
+		.read_resource(ReadResourceRequestParams::new(uri))
+		.await
+		.expect("read job resource");
+	assert_eq!(read.ttl_ms, None);
+	assert_eq!(read.cache_scope, None);
 }
 
 // A model that names one edit in a shape the schema did not anticipate is still
