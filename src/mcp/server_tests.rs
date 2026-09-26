@@ -379,3 +379,73 @@ fn batch_edit_rejects_operations_naming_different_files() {
 	.expect_err("no single target is named");
 	assert!(err.to_string().contains("single file"), "got: {err}");
 }
+
+#[test]
+fn generator_noise_is_stripped_but_parameters_named_like_it_survive() {
+	let serde_json::Value::Object(mut schema) = serde_json::json!({
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"context": {"type": "integer", "format": "uint", "minimum": 0, "default": null},
+			"mode": {"type": "string", "default": "fast"},
+			"format": {"type": "string", "default": null},
+			"start": {"anyOf": [{"type": "string"}, {"type": "integer", "format": "int64"}]},
+		},
+		"$defs": {"Op": {"type": "integer", "format": "int64"}},
+	}) else {
+		unreachable!("literal object")
+	};
+	super::strip_generator_noise(&mut schema);
+	assert_eq!(
+		serde_json::Value::Object(schema),
+		serde_json::json!({
+			"type": "object",
+			"properties": {
+				"context": {"type": "integer", "minimum": 0},
+				"mode": {"type": "string", "default": "fast"},
+				"format": {"type": "string"},
+				"start": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+			},
+			"$defs": {"Op": {"type": "integer"}},
+		})
+	);
+}
+
+/// The served tool list carries no generator noise and keeps every parameter.
+#[tokio::test(flavor = "multi_thread")]
+async fn served_tool_schemas_carry_no_generator_noise() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+	let tools = client.list_tools(None).await.expect("list tools");
+	assert_eq!(tools.tools.len(), 6);
+	for tool in &tools.tools {
+		let schema = serde_json::to_string(tool.input_schema.as_ref()).expect("schema json");
+		assert!(
+			!schema.contains("\"$schema\"")
+				&& !schema.contains("\"format\"")
+				&& !schema.contains("\"default\":null"),
+			"{}: {schema}",
+			tool.name
+		);
+	}
+	let view = tools
+		.tools
+		.iter()
+		.find(|tool| tool.name == "view")
+		.expect("view tool");
+	let properties = view.input_schema["properties"]
+		.as_object()
+		.expect("view properties");
+	for name in [
+		"path",
+		"start",
+		"end",
+		"pattern",
+		"content",
+		"regex",
+		"max_depth",
+		"context",
+		"full",
+	] {
+		assert!(properties.contains_key(name), "view keeps `{name}`");
+	}
+}

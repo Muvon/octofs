@@ -255,17 +255,13 @@ impl OctofsServer {
 			open_world_hint = false
 		),
 		description = "Read files, list directories, search content. Lines render as \
-			`N:hh|content`; `N:hh` is the line id edit tools take as targets — copy it verbatim. \
-			Directory listings are recursive and gitignore-aware, one `path\tNL\t~Nt` (lines, \
-			estimated tokens) per file; bound large trees with `max_depth` or `pattern` (ripgrep \
-			-g globs, `**`, leading `!`). To locate unknown code, search with `content` and enough \
-			`context` to understand the match; several roots in `path` separated by `|`. \
+			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target. Listings \
+			are recursive and gitignore-aware, one `path\tNL\t~Nt` (lines, ~tokens) per file. \
 			Re-viewing a whole file returns only the hunks changed since your last view (or an \
-			unchanged marker); set `full: true` only when you need the complete file again. Ranged \
-			reads always return the requested lines. Reuse content already returned: do not \
-			re-read overlapping ranges or narrow a range just to pick edit targets; read a \
-			complete block in one call and combine adjacent windows. Re-read only when the file \
-			may have changed or earlier output was truncated."
+			unchanged marker); ranged reads always return the requested lines. Reuse returned \
+			content: read a complete block in one call, combine adjacent windows, never re-read \
+			overlapping ranges or narrow one just to pick edit targets; re-read only when the file \
+			may have changed or output was truncated."
 	)]
 	async fn view(
 		&self,
@@ -332,13 +328,13 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Apply several insert/replace operations to one file atomically. Targets are \
-			line ids (\"12:a3\") from view or edit output, verified before anything is written; a \
-			stale id fails with the current content. All targets refer to the original file and \
-			must not overlap; max 50 operations. The result diff carries fresh ids for follow-up \
-			edits — no re-view needed; removed lines show as an id range, and a trailing `shift:` \
-			line says how original line numbers after each edit moved. Insert anchors 0 (file \
-			start) and -1 (end) are plain integers. Content is raw text without id prefixes."
+		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
+			are line ids (\"12:a3\") from view or edit output, verified before anything is written; \
+			a stale id fails with the current content. All targets refer to the original file and \
+			must not overlap. The result diff carries fresh ids for follow-up edits — no re-view \
+			needed; removed lines show as an id range, and a trailing `shift:` line says how later \
+			original line numbers moved. Insert anchors 0 (file start) and -1 (end) are plain \
+			integers. Content is raw text without id prefixes."
 	)]
 	async fn batch_edit(
 		&self,
@@ -404,19 +400,18 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs. Runs via `sh -c` \
-			(`cmd /C` on Windows) in the current workdir, on the local machine only, with no \
-			stdin or TTY — never prefix with `cd` to the workdir, never run interactive commands. \
-			`cd <other> && …` is fine for a one-off command elsewhere; `workdir` switches \
-			permanently, and a remote (ssh://) workdir makes shell unavailable. Use `view` to \
-			read, list and search files (cat/grep/ls/sed are rejected). Output is \
-			terminal-clean: ANSI and progress redraws stripped, repeated lines collapsed with a \
-			count; pipe through `od -c` or `xxd` for byte-exact output. Non-zero exit is \
-			returned as an error with the output. A command still running after ~10s moves to \
-			the background and returns a job resource; you are notified automatically with the \
-			exit code and output tail when it exits. Do NOT poll, sleep, re-run or `ps` it — start \
-			the next independent step or end your turn. Distinct commands run concurrently; an \
-			identical command in the same directory is rejected while it is running."
+		description = "Run a shell command: builds, tests, git, project CLIs. `sh -c` (`cmd /C` \
+			on Windows) in the current workdir, local machine only, no stdin or TTY — never run \
+			interactive commands or prefix `cd` to the workdir (`cd <other> && …` is fine one-off; \
+			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
+			read, list and search files (cat/grep/ls/sed are rejected). Output is terminal-clean \
+			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
+			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
+			the output. A command still running after ~10s moves to the background and returns a \
+			job resource; you are notified with the exit code and output tail when it exits. Do \
+			NOT poll, sleep, re-run or `ps` it — start the next independent step or end your turn. \
+			Distinct commands run concurrently; an identical command in the same directory is \
+			rejected while it runs."
 	)]
 	async fn shell(
 		&self,
@@ -598,6 +593,42 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 	}
 }
 
+/// schemars emits keys no model acts on: `$schema`, the `format` of every integer
+/// (`int64`, `uint` — `minimum` already bounds the unsigned ones) and `default: null`
+/// on every optional field. Always-loaded tool definitions ride on every request, so
+/// they are dropped. Keyword-aware: under `properties`/`$defs` the keys are names,
+/// so a parameter called `format` or `default` survives.
+fn strip_generator_noise(schema: &mut serde_json::Map<String, serde_json::Value>) {
+	schema.remove("$schema");
+	schema.remove("format");
+	if schema
+		.get("default")
+		.is_some_and(serde_json::Value::is_null)
+	{
+		schema.remove("default");
+	}
+	for (key, value) in schema.iter_mut() {
+		match (key.as_str(), value) {
+			("properties" | "$defs", serde_json::Value::Object(named)) => {
+				for sub in named.values_mut() {
+					if let serde_json::Value::Object(sub) = sub {
+						strip_generator_noise(sub);
+					}
+				}
+			}
+			(_, serde_json::Value::Object(sub)) => strip_generator_noise(sub),
+			(_, serde_json::Value::Array(items)) => {
+				for item in items {
+					if let serde_json::Value::Object(sub) = item {
+						strip_generator_noise(sub);
+					}
+				}
+			}
+			_ => {}
+		}
+	}
+}
+
 /// 2026-07-28 makes `ttlMs` and `cacheScope` required on list and read results;
 /// older protocol versions don't define them. rmcp's generated `list_tools` sets
 /// them, so the overrides below must too — a strict 2026-07-28 client (Claude
@@ -627,14 +658,10 @@ impl ServerHandler for OctofsServer {
 		.with_server_info(Implementation::from_build_env())
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
-			"This server provides filesystem tools: view (read files/dirs), \
-				 text_editor (create/str_replace/delete/undo), batch_edit (multi-op line edits), \
-				 extract_lines (copy lines between files), shell (execute commands), \
-				 workdir (get/set working directory). File lines are rendered as `N:hh|content`; \
-				 the `N:hh` prefix is the line id edit tools take as targets. Edit results are \
-				 diffs with fresh ids, so edits can be chained without re-viewing files. Reuse \
-				 previously returned content and ids; avoid overlapping reads and repeated narrowing \
-				 of a range already available. Read complete relevant blocks, then act on them."
+			"Filesystem tools. File lines render as `N:hh|content`; `N:hh` is the line id edit \
+				 tools target, and edit results are diffs with fresh ids, so edits chain without \
+				 re-viewing files. Reuse returned content and ids; read complete relevant blocks, \
+				 then act on them."
 				.to_string(),
 		)
 	}
@@ -652,6 +679,7 @@ impl ServerHandler for OctofsServer {
 				for value in schema.values_mut() {
 					strip_null_variants(value);
 				}
+				strip_generator_noise(&mut schema);
 				tool.input_schema = Arc::new(schema);
 				tool
 			})
@@ -822,54 +850,48 @@ fn append_hints(mut result: String) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// File or directory path. With content search, `|` separates several roots (max 32).
-	/// To read several files, make parallel `view` calls. Remote: ssh://[user@]host[:port]/path
-	/// — host may be an ~/.ssh/config alias; `ssh://host` or `ssh://host/~/dir` is the login home.
+	/// File or directory. `a|b` searches several roots with `content` (max 32); several
+	/// files take parallel view calls. Remote: ssh://[user@]host[:port]/path (host may be an
+	/// ~/.ssh/config alias; `ssh://host` or `ssh://host/~/dir` is the login home).
 	pub path: String,
-	/// First line to show (inclusive). Integer line number (negative counts from the
-	/// end: -1 = last line) or a line id like "12:a3". Omit to start at line 1.
-	/// Choose a complete relevant block; reuse previously returned lines and ids.
+	/// First line (inclusive): line id or integer (negative counts from the end, -1 = last).
+	/// Default: line 1.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub start: Option<serde_json::Value>,
-	/// Last line to show (inclusive). Integer line number (negative counts from the end)
-	/// or a line id like "20:f1". Omit to read to the end of the file.
-	/// Omit BOTH `start` and `end` to view the whole file.
-	/// Combine adjacent windows; do not narrow an already returned range to pick edit targets.
+	/// Last line (inclusive): line id or integer (negative counts from the end). Default: end
+	/// of file; omit both `start` and `end` for the whole file.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Ripgrep -g glob filter for listings and content search: without `/` it matches
-	/// filenames at any depth, with `/` the relative path. Supports `*`, `**`, `?`, `[abc]`,
-	/// `{rs,toml}`, leading `!`; `|` joins ordered globs (later wins), e.g. `**/*.rs|!target/**`.
-	/// Applied after gitignore/hidden filtering. Single line, max 4096 bytes, 64 globs.
+	/// Ripgrep -g globs bounding listings and searches: without `/` a name at any depth,
+	/// with `/` the relative path; `*`, `**`, `?`, `[abc]`, `{rs,toml}`, leading `!`; `|`
+	/// joins ordered globs (later wins), e.g. `**/*.rs|!target/**`. Applied after
+	/// gitignore/hidden filtering; one line, max 4096 bytes, 64 globs.
 	#[serde(default)]
 	pub pattern: Option<String>,
-	/// Content search: literal substring, or a Rust regex with `regex: true` (`(?i)` for
-	/// case-insensitive). Searches the whole file/tree; `start`/`end` are ignored.
-	/// Use to locate unknown code; combine related terms with regex alternation when useful.
+	/// Locate code: searches the whole file/tree (`start`/`end` ignored) for a literal
+	/// substring, or a Rust regex with `regex: true` (`(?i)` case-insensitive; alternation for
+	/// related terms).
 	#[serde(default)]
 	pub content: Option<String>,
-	/// When true, `content` is a regex pattern instead of a literal substring. Default: false.
+	/// Treat `content` as a regex. Default: false.
 	#[serde(default)]
 	pub regex: Option<bool>,
-	/// Maximum directory traversal depth. Default: unlimited, except a bare
-	/// remote (ssh://) listing without `pattern`/`content`, which stops at the
-	/// root entries — pass a larger value to walk deeper. Searches always walk
-	/// the whole tree.
+	/// Directory depth bound. Default: unlimited, except a bare remote listing (no
+	/// `pattern`/`content`) stops at the root entries. Searches walk the whole tree.
 	#[serde(default)]
 	pub max_depth: Option<usize>,
-	/// Include hidden files/directories starting with '.'.
+	/// Include dotfiles and dot-directories.
 	#[serde(default)]
 	pub include_hidden: Option<bool>,
-	/// Context lines before and after each content search match. Default: 0.
-	/// Request enough surrounding code to answer the question without another tiny read.
+	/// Lines around each `content` match. Default: 0 — ask for enough to answer without
+	/// another tiny read.
 	#[serde(default)]
 	pub context: Option<usize>,
-	/// Whole-file views of a file you already viewed return only the changed hunks
-	/// (or an unchanged marker). Set true to force the complete content, e.g. after
-	/// losing earlier context. Only applies when `start`/`end` and content search are omitted;
-	/// has no effect on ranged reads or searches and does not change output limits.
+	/// Force the complete file when re-viewing a whole file (normally only changed hunks),
+	/// e.g. after losing earlier context. No effect on ranges or searches; output limits
+	/// unchanged.
 	#[serde(default)]
 	pub full: Option<bool>,
 }
@@ -903,22 +925,20 @@ pub enum TextEditorCommand {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct TextEditorParams {
-	/// The operation to perform: create, str_replace, delete, undo_edit
+	/// Operation to perform.
 	pub command: TextEditorCommand,
-	/// Path to the file to operate on.
-	/// Supports ssh://user@host:port/path for remote filesystem access.
+	/// File path (ssh://user@host:port/path for remote).
 	pub path: String,
-	/// File content for create command.
+	/// Content for `create`.
 	#[serde(default)]
 	pub content: Option<String>,
-	/// Text to find (must match exactly). REQUIRED for str_replace.
+	/// `str_replace`: exact text to find (required).
 	#[serde(default)]
 	pub old_text: Option<String>,
-	/// Replacement text. REQUIRED for str_replace.
+	/// `str_replace`: replacement text (required).
 	#[serde(default)]
 	pub new_text: Option<String>,
-	/// str_replace only: replace ALL occurrences of old_text (rename-style edits).
-	/// Default false — old_text must then match exactly once.
+	/// `str_replace`: replace every occurrence (rename-style). Default: false.
 	#[serde(default)]
 	pub replace_all: Option<bool>,
 }
@@ -932,21 +952,17 @@ pub enum BatchEditOperationType {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct BatchEditOperation {
-	/// Type of operation: 'insert' (after a line) or 'replace' (a line range)
+	/// `insert` (after `start`) or `replace` (`start`..`end`).
 	pub operation: BatchEditOperationType,
-	/// Target in the ORIGINAL file, as a line id from view output (e.g. "12:a3").
-	/// For `replace` this is the first line of the range to replace.
-	/// For `insert` this is the anchor to insert after — a line id, or the integers
-	/// 0 (file start) / -1 (after last line).
+	/// Line id in the ORIGINAL file: first line to replace, or the anchor to insert after
+	/// (for `insert` also the integers 0 = file start, -1 = after the last line).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub start: serde_json::Value,
-	/// Last line of the range to replace (inclusive), as a line id (e.g. "20:f1"),
-	/// for `replace` only. Omit for a single-line replace (defaults to `start`).
-	/// Ignored for `insert`.
+	/// `replace` only: last line to replace (inclusive), as a line id. Default: `start`.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Raw content to insert or replace with (no line-id prefixes).
+	/// Raw text to insert or replace with, no line-id prefixes.
 	#[serde(deserialize_with = "string_or_lines")]
 	pub content: String,
 }
@@ -978,9 +994,9 @@ where
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct BatchEditParams {
-	/// Path to the file to edit. Supports ssh://user@host:port/path for remote access.
+	/// File to edit (ssh://user@host:port/path for remote).
 	pub path: String,
-	/// Array of operations for batch_edit on SINGLE file. Max 50 operations.
+	/// Operations on this one file (max 50).
 	#[schemars(length(max = 50))]
 	pub operations: Vec<BatchEditOperation>,
 }
@@ -1044,43 +1060,38 @@ impl<'de> Deserialize<'de> for BatchEditParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ExtractLinesParams {
-	/// Path to the source file to extract lines from.
-	/// Supports ssh://user@host:port/path for remote filesystem access.
+	/// Source file (ssh://user@host:port/path for remote).
 	pub from_path: String,
-	/// First line to copy (inclusive). Integer line number or a line id like "12:a3"
-	/// (ids are verified against the source file).
+	/// First line to copy (inclusive): integer or line id (verified against the source).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub from_start: serde_json::Value,
-	/// Last line to copy (inclusive). Integer line number or a line id.
-	/// Omit to copy a single line (defaults to `from_start`).
+	/// Last line to copy (inclusive): integer or line id. Default: `from_start`.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub from_end: Option<serde_json::Value>,
-	/// Path to the target file where extracted lines will be appended.
-	/// Supports ssh://user@host:port/path for remote filesystem access.
+	/// Target file the lines are appended to (ssh://user@host:port/path for remote).
 	pub append_path: String,
-	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N
-	/// (integer), or a line id like "12:a3" (verified against the target file).
+	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N, or a line
+	/// id (verified against the target).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub append_line: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ShellParams {
-	/// Command line passed to `sh -c`. No stdin or TTY: use non-interactive flags
-	/// (`-y`, `--no-pager`, `CI=1`) for anything that might prompt.
+	/// Command line for `sh -c`; use non-interactive flags (`-y`, `--no-pager`, `CI=1`) for
+	/// anything that might prompt.
 	pub command: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
-	/// Absolute path or path relative to current workdir to switch into.
-	/// Required unless `reset: true`. Do not pass `"."` — that is a no-op.
-	/// Supports ssh://user@host:port/path for remote filesystem access;
-	/// `ssh://host` or `ssh://host/~/dir` is the login home.
+	/// Directory to switch into, absolute or relative to the current workdir; required unless
+	/// `reset`. Not `"."` (a no-op). Remote: ssh://user@host:port/path; `ssh://host` or
+	/// `ssh://host/~/dir` is the login home.
 	#[serde(default)]
 	pub path: Option<String>,
-	/// If true, revert to the original session working directory.
+	/// Revert to the session root.
 	#[serde(default)]
 	pub reset: Option<bool>,
 }
