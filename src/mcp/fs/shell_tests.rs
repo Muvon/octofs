@@ -137,99 +137,148 @@ fn test_clean_terminal_noise() {
 	assert_eq!(clean_terminal_noise("hello\nworld"), "hello\nworld");
 }
 
+const WORKDIR: &str = "/work";
+
+/// The rejection message, when the gate refuses the command run from `WORKDIR`.
+fn rejection(command: &str) -> Option<String> {
+	match detect_shell_misuse(command, Some(Path::new(WORKDIR))) {
+		Some(Misuse::Reject(msg)) => Some(msg),
+		_ => None,
+	}
+}
+
+/// The hint, when the gate lets the command run but points at a dedicated tool.
+fn hint(command: &str) -> Option<String> {
+	match detect_shell_misuse(command, Some(Path::new(WORKDIR))) {
+		Some(Misuse::Hint(hint)) => Some(hint),
+		_ => None,
+	}
+}
+
+fn passes(command: &str) -> bool {
+	detect_shell_misuse(command, Some(Path::new(WORKDIR))).is_none()
+}
+
 #[test]
 fn test_detect_shell_misuse() {
-	// Bare commands are caught
-	assert!(detect_shell_misuse("grep -rn foo src/").is_some());
-	assert!(detect_shell_misuse("cat src/main.rs").is_some());
-	assert!(detect_shell_misuse("ls -la").is_some());
-	assert!(detect_shell_misuse("find . -name '*.rs'").is_some());
-
-	// Compound commands: forbidden tool after a separator is caught
-	assert!(detect_shell_misuse("cd /path && grep -rn foo").is_some());
-	assert!(detect_shell_misuse("cd /path; cat file.rs").is_some());
-	assert!(detect_shell_misuse("true || ls -la").is_some());
-	assert!(detect_shell_misuse("echo $(grep foo bar)").is_some());
-	assert!(detect_shell_misuse("echo `cat file`").is_some());
-	assert!(detect_shell_misuse("cd /path\ngrep -rn foo").is_some());
+	// A lone read is exactly one `view` call, so it is rejected
+	assert!(rejection("grep -rn foo src/").is_some());
+	assert!(rejection("cat src/main.rs").is_some());
+	assert!(rejection("ls -la").is_some());
+	assert!(rejection("find . -name '*.rs'").is_some());
 
 	// Path-qualified and env-prefixed invocations are caught
-	assert!(detect_shell_misuse("/bin/grep foo bar").is_some());
-	assert!(detect_shell_misuse("FOO=bar grep x y").is_some());
+	assert!(rejection("/bin/grep foo bar").is_some());
+	assert!(rejection("FOO=bar grep x y").is_some());
+
+	// Subshell/group openers don't hide a lone read, nor make it more than one
+	assert!(rejection("(cat file)").is_some());
+	assert!(rejection("{ grep foo bar; }").is_some());
+
+	// A read program in a chain, a pipeline head or a substitution runs with a hint:
+	// the command does more than one view call could, and a rejection costs a round trip
+	for cmd in [
+		"cd /path && grep -rn foo",
+		"cd /path; cat file.rs",
+		"true || ls -la",
+		"echo $(grep foo bar)",
+		"echo `cat file`",
+		"cd /path\ngrep -rn foo",
+		"grep -rn foo src | head -30",
+		"ls test | grep route",
+		"npm test > /tmp/unit.log 2>&1; grep -E '^not ok' /tmp/unit.log",
+	] {
+		let hint = hint(cmd).unwrap_or_else(|| panic!("{cmd} must run with a hint"));
+		assert!(hint.contains("`view`"), "{hint}");
+	}
 
 	// Pipelines stay allowed (stream transforms)
-	assert!(detect_shell_misuse("cargo build 2>&1 | grep error").is_none());
+	assert!(passes("cargo build 2>&1 | grep error"));
 	// Legitimate commands pass
-	assert!(detect_shell_misuse("cargo test").is_none());
-	assert!(detect_shell_misuse("git status && git diff").is_none());
-	assert!(detect_shell_misuse("echo grep").is_none());
+	assert!(passes("cargo test"));
+	assert!(passes("git status && git diff"));
+	assert!(passes("echo grep"));
 
 	// Quoted separators are not treated as local command separators
-	assert!(detect_shell_misuse("echo \"hello && ls\"").is_none());
-	assert!(detect_shell_misuse("bash -lc 'cd /x && git log && ls'").is_none());
+	assert!(passes("echo \"hello && ls\""));
+	assert!(passes("bash -lc 'cd /x && git log && ls'"));
 
-	// ssh remote commands obey the same rules as local ones
-	assert!(detect_shell_misuse("ssh host 'cat file'").is_some());
-	assert!(detect_shell_misuse("ssh host 'cd /path && ls'").is_some());
-	assert!(detect_shell_misuse("ssh host \"cd /path && grep foo\"").is_some());
-	assert!(detect_shell_misuse("ssh dev grep -rn foo /path").is_some());
-	assert!(detect_shell_misuse("ssh -p 2222 user@host 'grep foo /x'").is_some());
-	assert!(detect_shell_misuse("ssh -o StrictHostKeyChecking=no host 'ls /x'").is_some());
-	assert!(detect_shell_misuse("ssh a 'ssh b \"grep x /y\"'").is_some());
-	// Unquoted separators after a quoted block are still caught
-	assert!(detect_shell_misuse("ssh host 'ls' && cat file").is_some());
+	// ssh remote commands obey the same rules, checked as their own command
+	assert!(rejection("ssh host 'cat file'").is_some());
+	assert!(rejection("ssh dev grep -rn foo /path").is_some());
+	assert!(rejection("ssh -p 2222 user@host 'grep foo /x'").is_some());
+	assert!(rejection("ssh -o StrictHostKeyChecking=no host 'ls /x'").is_some());
+	assert!(rejection("ssh a 'ssh b \"grep x /y\"'").is_some());
+	assert!(rejection("ssh host 'ls' && cat file").is_some());
+	assert!(hint("ssh host 'cd /path && ls'").is_some());
+	assert!(hint("ssh host \"cd /path && grep foo\"").is_some());
 	// Legitimate remote commands stay allowed
-	assert!(detect_shell_misuse("ssh host uptime").is_none());
-	assert!(detect_shell_misuse("ssh host 'systemctl status nginx'").is_none());
-	assert!(detect_shell_misuse("ssh host 'cd /x && git log'").is_none());
-	assert!(detect_shell_misuse("ssh host").is_none());
-	assert!(detect_shell_misuse("ssh -N -L 8080:localhost:80 host").is_none());
+	assert!(passes("ssh host uptime"));
+	assert!(passes("ssh host 'systemctl status nginx'"));
+	assert!(passes("ssh host 'cd /x && git log'"));
+	assert!(passes("ssh host"));
+	assert!(passes("ssh -N -L 8080:localhost:80 host"));
 	// Remote pipelines keep the local stream-transform leniency
-	assert!(detect_shell_misuse("ssh host 'journalctl -u app | grep error'").is_none());
+	assert!(passes("ssh host 'journalctl -u app | grep error'"));
 	// A pipe after ssh is a local downstream transform, not the remote command
-	assert!(detect_shell_misuse("ssh host 'dmesg' | grep oops").is_none());
+	assert!(passes("ssh host 'dmesg' | grep oops"));
 	// One quote layer strips; a nested interpreter stays opaque, same as locally
-	assert!(
-		detect_shell_misuse("ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'").is_none()
-	);
+	assert!(passes(
+		"ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'"
+	));
 
 	// Bare / chained sleep is blocked in every common shape
-	assert!(detect_shell_misuse("sleep 40").is_some());
-	assert!(detect_shell_misuse("sleep 40; echo done").is_some());
-	assert!(detect_shell_misuse("sleep 5 && cargo test").is_some());
-	assert!(detect_shell_misuse("cargo build && sleep 5").is_some());
-	assert!(detect_shell_misuse("sleep 30 || true").is_some());
-	assert!(detect_shell_misuse("sleep $((5*60))").is_some());
-	assert!(detect_shell_misuse("(sleep 5 && echo hi) &").is_some());
+	assert!(rejection("sleep 40").is_some());
+	assert!(rejection("sleep 40; echo done").is_some());
+	assert!(rejection("sleep 5 && cargo test").is_some());
+	assert!(rejection("cargo build && sleep 5").is_some());
+	assert!(rejection("sleep 30 || true").is_some());
+	assert!(rejection("sleep $((5*60))").is_some());
+	assert!(rejection("(sleep 5 && echo hi) &").is_some());
 	// Sleep inside a do...done loop body is legitimate polling
-	assert!(detect_shell_misuse("until test -f /tmp/x; do sleep 2; done").is_none());
-	assert!(detect_shell_misuse("while ! nc -z localhost 8080; do sleep 1; done").is_none());
-	assert!(detect_shell_misuse("while true; do echo waiting; sleep 5; done").is_none());
+	assert!(passes("until test -f /tmp/x; do sleep 2; done"));
+	assert!(passes("while ! nc -z localhost 8080; do sleep 1; done"));
+	assert!(passes("while true; do echo waiting; sleep 5; done"));
 	// Loop depth resets after `done` — a trailing sleep is still caught
-	assert!(detect_shell_misuse("until ok; do sleep 1; done; sleep 40").is_some());
+	assert!(rejection("until ok; do sleep 1; done; sleep 40").is_some());
 
-	// Subshell/group openers no longer hide a forbidden program
-	assert!(detect_shell_misuse("(cat file)").is_some());
-	assert!(detect_shell_misuse("{ grep foo bar; }").is_some());
-
-	// Writing file content via shell redirects is blocked
-	assert!(detect_shell_misuse("echo 'fn main() {}' > src/main.rs").is_some());
-	assert!(detect_shell_misuse("printf '%s\\n' hi >> notes.txt").is_some());
-	assert!(detect_shell_misuse("tee out.txt").is_some());
-	assert!(detect_shell_misuse("cd /x && echo data > f").is_some());
+	// Writing file content into the workdir via shell redirects is blocked
+	assert!(rejection("echo 'fn main() {}' > src/main.rs").is_some());
+	assert!(rejection("printf '%s\\n' hi >> notes.txt").is_some());
+	assert!(rejection("echo hi > /work/notes.txt").is_some());
+	assert!(rejection("tee out.txt").is_some());
+	assert!(rejection("cd /x && echo data > f").is_some());
+	// A redirect that also writes into the workdir is still a tracked-file write
+	assert!(rejection("echo hi > /tmp/a > src/b").is_some());
 	// cat with a redirect gets the write guidance, not the read guidance
-	let msg = detect_shell_misuse("cat > f.txt").unwrap();
+	let msg = rejection("cat > f.txt").unwrap();
 	assert!(msg.contains("text_editor"), "msg: {msg}");
+	// Scratch files outside the workdir are no tracked edit: they run with a hint
+	let scratch = hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js")
+		.expect("a /tmp heredoc runs");
+	assert!(scratch.contains("text_editor"), "{scratch}");
+	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
 	// Redirecting other programs' output stays allowed
-	assert!(detect_shell_misuse("cargo test > out.log 2>&1").is_none());
-	assert!(detect_shell_misuse("make 2>&1 | tee build.log").is_none());
+	assert!(passes("cargo test > out.log 2>&1"));
+	assert!(passes("make 2>&1 | tee build.log"));
 	// Fd duplication and quoted `>` are not file writes
-	assert!(detect_shell_misuse("echo error >&2").is_none());
-	assert!(detect_shell_misuse("echo \"a > b\"").is_none());
+	assert!(passes("echo error >&2"));
+	assert!(passes("echo \"a > b\""));
 
 	// Never-terminating programs are blocked
-	assert!(detect_shell_misuse("watch -n1 date").is_some());
-	assert!(detect_shell_misuse("top").is_some());
+	assert!(rejection("watch -n1 date").is_some());
+	assert!(rejection("top").is_some());
+}
+
+#[test]
+fn remote_writes_count_as_tracked() {
+	// Without a local workdir (an ssh remote command) no write target is known to be
+	// scratch, so content writes stay rejected wherever they point.
+	assert!(matches!(
+		detect_shell_misuse("echo hi > /tmp/x", None),
+		Some(Misuse::Reject(_))
+	));
+	assert!(rejection("ssh host 'echo hi > /tmp/x'").is_some());
 }
 
 #[test]
@@ -237,9 +286,8 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 	// Observed: an agent sent `php -v && git status && git log && find …` three
 	// times, permuting joiners, because the rejection named neither the offending
 	// program nor the fact that the legitimate parts never ran.
-	let msg = detect_shell_misuse("php -v && git log --oneline -3 && find . -name x")
-		.expect("find is blocked");
-	assert!(msg.contains("`find`"), "names the program: {msg}");
+	let msg = rejection("php -v && git log --oneline -3 && sleep 5").expect("sleep is blocked");
+	assert!(msg.contains("`sleep`"), "names the program: {msg}");
 	assert!(
 		msg.contains("no part of it ran"),
 		"states the whole command was rejected: {msg}"
@@ -247,15 +295,21 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 }
 
 #[test]
+fn a_read_in_a_compound_is_named_in_its_hint() {
+	// The command ran, so the hint names the program it could have used `view` for.
+	let msg = hint("php -v && git log --oneline -3 && find . -name x").expect("runs with a hint");
+	assert!(msg.contains("`find` ran"), "{msg}");
+}
+
+#[test]
 fn a_read_only_awk_check_is_not_an_edit() {
 	// Observed six times across one benchmark arm: `awk 'length > 88 …' files`
 	// (a line-length check that writes nothing) rejected as "editing files",
 	// and the agent retrying variants of it.
-	assert_eq!(
-		detect_shell_misuse("git diff; awk 'length > 88 {print FILENAME\": \"FNR}' src/a.py"),
-		None
-	);
-	assert_eq!(detect_shell_misuse("sed -n '1,5p' file.txt | wc -l"), None);
+	assert!(passes(
+		"git diff; awk 'length > 88 {print FILENAME\": \"FNR}' src/a.py"
+	));
+	assert!(passes("sed -n '1,5p' file.txt | wc -l"));
 }
 
 #[test]
@@ -266,8 +320,24 @@ fn an_in_place_sed_is_blocked_as_an_edit() {
 		"sed --in-place 's/a/b/' src/x.c",
 		"sed -ni 's/a/b/p' src/x.c",
 	] {
-		let msg = detect_shell_misuse(cmd).unwrap_or_else(|| panic!("{cmd} must be blocked"));
+		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be blocked"));
 		assert!(msg.contains("`sed` is blocked"), "{msg}");
 		assert!(msg.contains("in place"), "{msg}");
 	}
+}
+
+#[tokio::test]
+async fn a_compound_read_and_a_scratch_heredoc_run() {
+	// End to end: what the gate lets through actually executes.
+	let scratch = tempfile::tempdir().unwrap();
+	let file = scratch.path().join("repro.txt");
+	let command = format!(
+		"cat > {f} <<'EOF'\nhello\nEOF\ncat {f}; ls Cargo.toml",
+		f = file.display()
+	);
+	let call =
+		crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+	let out = execute_shell_command(&call, None).await.expect("runs");
+	assert!(out.text.contains("hello"), "{}", out.text);
+	assert!(out.text.contains("Cargo.toml"), "{}", out.text);
 }

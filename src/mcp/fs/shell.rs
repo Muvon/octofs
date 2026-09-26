@@ -18,6 +18,7 @@ use super::super::McpToolCall;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -77,32 +78,46 @@ pub fn kill_all_shell_children() {
 	}
 }
 
-// Each entry: (triggering programs, error message with usage example).
-// Checked before execution — misuse is always a hard error: the dedicated tools
-// are strictly better for the model (line ids, gitignore-awareness, remote hosts),
-// so shell access to these programs is intentionally blocked.
-static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
+// Each entry: (triggering programs, error message with usage example, whether the
+// program still runs inside a larger command). A lone read (`cat f`, `ls d`) is
+// exactly one `view` call, so it is rejected; inside a pipeline or a chain the
+// command does more than one view call could, so it runs with a hint instead of
+// costing a round trip. Waiting programs are rejected wherever they appear.
+static SHELL_MISUSE_HINTS: &[(&[&str], &str, bool)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
 		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed.",
+		true,
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
 		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed.",
+		true,
 	),
 	(
 		&["find", "ls"],
 		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\".",
+		true,
 	),
 	(
 		&["sleep"],
 		"Bare `sleep` is blocked — it wastes the call. Poll a condition instead: until <check>; do sleep 2; done. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
+		false,
 	),
 	(
 		&["watch", "top", "htop"],
 		"This program never exits, so it would never complete or notify you. Run the underlying command once; long runs move to the background automatically.",
+		false,
 	),
 ];
+
+/// What the gate decides for a command using a program a dedicated tool covers.
+enum Misuse {
+	/// Refuse to run; the message names the tool to use instead.
+	Reject(String),
+	/// Run, and append this hint to the result.
+	Hint(String),
+}
 
 // Only in-place `sed` edits a file; `sed`/`awk` streaming to stdout is text
 // processing (line-length checks, previews) that no dedicated tool covers.
@@ -205,13 +220,17 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 }
 
 // Detect shell commands that should use a dedicated MCP tool instead.
-// Returns the misuse guidance message the caller rejects the command with.
+// Returns whether to reject the command or run it with a hint.
 //
-// The message names the offending program and says the whole command was
-// rejected: one blocked verb inside a compound (`php -v && git log && find …`)
+// A rejection names the offending program and says the whole command was
+// rejected: one blocked verb inside a compound (`php -v && sleep 5 && …`)
 // takes the legitimate parts down with it, and a hint that names neither leaves
 // the caller permuting joiners and re-sending the same command.
-fn detect_shell_misuse(command: &str) -> Option<String> {
+//
+// `workdir` is where tracked edits live: content written by echo/printf/cat
+// redirects outside it (scratch files under /tmp) runs with a hint. `None`
+// (remote commands) treats every write target as tracked.
+fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> {
 	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
 	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
 	let mut loop_depth = 0usize;
@@ -220,7 +239,20 @@ fn detect_shell_misuse(command: &str) -> Option<String> {
 	// commands: `ssh host 'cd /path && ls'`) are not treated as local
 	// separators. Pipelines (`|`) are intentionally NOT split: stream
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
-	for segment in split_shell_segments(command) {
+	let segments = split_shell_segments(command);
+	// One program with no pipe is what a single `view` call replaces; group braces and
+	// parens around it (`{ cat f; }`, `(cat f)`) don't make it more.
+	let programs: Vec<&str> = segments
+		.iter()
+		.copied()
+		.filter(|s| {
+			!s.trim_matches(|c: char| c.is_whitespace() || "{}()".contains(c))
+				.is_empty()
+		})
+		.collect();
+	let lone = programs.len() == 1 && unquoted_pipe(programs[0]).is_none();
+	let mut hint = None;
+	for segment in segments {
 		let segment = segment.trim();
 		// Skip leading env assignments (FOO=bar cmd ...) and group openers
 		// (`{`) to reach the program; strip subshell parens glued to tokens
@@ -253,8 +285,12 @@ fn detect_shell_misuse(command: &str) -> Option<String> {
 		// cover via ssh:// paths.
 		if prog == "ssh" {
 			if let Some(remote) = ssh_remote_command(segment) {
-				if let Some(hint) = detect_shell_misuse(remote) {
-					return Some(hint);
+				match detect_shell_misuse(remote, None) {
+					Some(Misuse::Reject(msg)) => return Some(Misuse::Reject(msg)),
+					Some(Misuse::Hint(h)) => {
+						hint.get_or_insert(h);
+					}
+					None => {}
 				}
 			}
 			continue;
@@ -263,24 +299,47 @@ fn detect_shell_misuse(command: &str) -> Option<String> {
 		// Content-authoring programs writing a file via redirect, or standalone
 		// tee (writes stdin to a file). Checked before the hint table so
 		// `cat > file` gets the write guidance, not the read guidance.
-		if prog == "tee"
-			|| (matches!(prog, "echo" | "printf" | "cat") && has_file_redirect(segment))
-		{
-			return Some(blocked_message(prog, REDIRECT_WRITE_HINT));
+		if prog == "tee" {
+			return Some(Misuse::Reject(blocked_message(prog, REDIRECT_WRITE_HINT)));
+		}
+		if matches!(prog, "echo" | "printf" | "cat") {
+			let targets = redirect_targets(segment);
+			if !targets.is_empty() {
+				let untracked =
+					workdir.is_some_and(|dir| targets.iter().all(|t| outside_workdir(t, dir)));
+				if !untracked {
+					return Some(Misuse::Reject(blocked_message(prog, REDIRECT_WRITE_HINT)));
+				}
+				hint.get_or_insert_with(|| {
+					format!("`{prog}` wrote a file via redirect; text_editor create writes content without shell quoting.")
+				});
+				continue;
+			}
 		}
 
 		if prog == "sed" && sed_edits_in_place(segment) {
-			return Some(blocked_message(prog, IN_PLACE_EDIT_HINT));
+			return Some(Misuse::Reject(blocked_message(prog, IN_PLACE_EDIT_HINT)));
 		}
 
-		for (progs, hint) in SHELL_MISUSE_HINTS {
+		for (progs, message, runs_in_compound) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
-				return Some(blocked_message(prog, hint));
+				if lone || !runs_in_compound {
+					return Some(Misuse::Reject(blocked_message(prog, message)));
+				}
+				hint.get_or_insert_with(|| {
+					format!("`{prog}` ran; `view` reads, lists and searches files with line ids that edits can target.")
+				});
 			}
 		}
 	}
 
-	None
+	hint.map(Misuse::Hint)
+}
+
+/// True for an absolute redirect target outside the workdir, e.g. /tmp/x.
+fn outside_workdir(target: &str, workdir: &Path) -> bool {
+	let path = Path::new(target.trim_matches(|c| c == '"' || c == '\''));
+	path.is_absolute() && !path.starts_with(workdir)
 }
 
 /// True if a `sed` segment carries `-i`/`--in-place` (also as a bundled short
@@ -299,12 +358,13 @@ fn blocked_message(prog: &str, hint: &str) -> String {
 	format!("`{prog}` is blocked, so the whole command was rejected and no part of it ran — re-send the rest as its own call. {hint}")
 }
 
-/// True if the segment contains an unquoted `>` or `>>` file redirect.
+/// Targets of the segment's unquoted `>` / `>>` file redirects.
 /// Fd duplications (`>&2`, `2>&1`) are not file writes and don't count.
-fn has_file_redirect(segment: &str) -> bool {
+fn redirect_targets(segment: &str) -> Vec<&str> {
 	let bytes = segment.as_bytes();
 	let mut in_single = false;
 	let mut in_double = false;
+	let mut targets = Vec::new();
 	let mut i = 0;
 	while i < bytes.len() {
 		match bytes[i] {
@@ -320,7 +380,12 @@ fn has_file_redirect(segment: &str) -> bool {
 					j += 1;
 				}
 				if j < bytes.len() && bytes[j] != b'&' {
-					return true;
+					let end = segment[j..]
+						.find(|c: char| c.is_whitespace() || matches!(c, '|' | '<' | '&' | ';'))
+						.map_or(bytes.len(), |k| j + k);
+					targets.push(&segment[j..end]);
+					i = end;
+					continue;
 				}
 				i = j;
 				continue;
@@ -329,7 +394,7 @@ fn has_file_redirect(segment: &str) -> bool {
 		}
 		i += 1;
 	}
-	false
+	targets
 }
 
 /// Split a shell command string into segments on `;`, `&&`, `||`, `\n`,
@@ -569,8 +634,10 @@ async fn execute_with_timeout(
 	};
 
 	// Reject commands that can be done with dedicated MCP tools.
-	if let Some(msg) = detect_shell_misuse(&command) {
-		bail!("{msg}");
+	match detect_shell_misuse(&command, Some(&call.workdir)) {
+		Some(Misuse::Reject(msg)) => bail!("{msg}"),
+		Some(Misuse::Hint(hint)) => crate::mcp::request_ctx::push_hint(&hint),
+		None => {}
 	}
 
 	// Get the working directory from the call context
