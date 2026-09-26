@@ -816,6 +816,31 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_str_replace_mid_line_diff_shows_final_lines() {
+		// A match that starts or ends mid-line rewrites whole lines: each `+` line must
+		// show the final line its fresh id belongs to, not the fragment that was sent.
+		let temp_file = create_test_file("let a = 1;\nlet b = 2;\nlet c = 3;\n").await;
+		let diff = crate::mcp::fs::text_editing::str_replace_spec(
+			&PathSource::from(temp_file.path()),
+			"1;\nlet b",
+			"10;\nlet bb",
+			false,
+		)
+		.await
+		.unwrap();
+		let after = "let a = 10;\nlet bb = 2;\nlet c = 3;\n";
+		assert_eq!(fs::read_to_string(temp_file.path()).await.unwrap(), after);
+		assert!(
+			diff.contains(&format!("+{}|let a = 10;\n", lid(after, 1))),
+			"{diff}"
+		);
+		assert!(
+			diff.contains(&format!("+{}|let bb = 2;\n", lid(after, 2))),
+			"{diff}"
+		);
+	}
+
+	#[tokio::test]
 	async fn test_str_replace_multiline_old() {
 		test_str_replace(
 			"line 1\nline 2\nline 3\nline 4",

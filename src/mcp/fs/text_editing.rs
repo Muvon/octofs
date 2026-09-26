@@ -401,7 +401,7 @@ fn build_str_replace_diff(
 	new_lines: &[&str],
 	start: usize,
 	old_line_count: usize,
-	new_text_lines: &[&str],
+	new_line_count: usize,
 ) -> String {
 	const CONTEXT: usize = 2;
 	let mut diff: Vec<String> = Vec::new();
@@ -424,18 +424,19 @@ fn build_str_replace_diff(
 		));
 	}
 
-	// Added lines — at their final positions with fresh ids.
-	// In the new file the inserted block starts at `start + 1` (1-indexed)
-	for (i, line) in new_text_lines.iter().enumerate() {
+	// Added lines — at their final positions with fresh ids, rendered from the final file:
+	// a match starting or ending mid-line rewrites whole lines, and the id belongs to the
+	// whole line, not to the sent fragment. The block starts at `start + 1` (1-indexed).
+	for i in start..start + new_line_count {
 		diff.push(format!(
 			"+{}|{}",
-			line_id_at(new_lines, start + 1 + i),
-			line
+			line_id_at(new_lines, i + 1),
+			new_lines[i]
 		));
 	}
 
 	// Context after: read from new_lines (already has the replacement applied)
-	let new_after_start = start + new_text_lines.len(); // 0-indexed in new_lines
+	let new_after_start = start + new_line_count; // 0-indexed in new_lines
 	let ctx_after_end = (new_after_start + CONTEXT).min(new_lines.len());
 	for i in new_after_start..ctx_after_end {
 		diff.push(format!("{}|{}", line_id_at(new_lines, i + 1), new_lines[i]));
@@ -825,13 +826,12 @@ async fn apply_unique_replacement(
 	super::delta::note_write(source, content, &new_content);
 
 	let new_lines: Vec<&str> = new_content.lines().collect();
-	let new_text_lines: Vec<&str> = new_text.lines().collect();
 	Ok(build_str_replace_diff(
 		&orig_lines,
 		&new_lines,
 		match_start,
 		old_line_count,
-		&new_text_lines,
+		new_text.lines().count(),
 	))
 }
 
@@ -1039,13 +1039,12 @@ pub async fn str_replace_spec(
 			);
 
 			let new_lines: Vec<&str> = new_content.lines().collect();
-			let new_text_lines: Vec<&str> = adjusted_new.lines().collect();
 			let diff = build_str_replace_diff(
 				&content_lines,
 				&new_lines,
 				start,
 				old_line_count,
-				&new_text_lines,
+				adjusted_new.lines().count(),
 			);
 			return Ok(diff);
 		}
