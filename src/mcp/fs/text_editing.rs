@@ -1479,6 +1479,31 @@ fn parse_line_range(
 	}
 }
 
+// Blocks up to this many added lines are echoed whole: collapsing fewer saves nothing.
+const ECHO_WHOLE_MAX: usize = 3;
+
+// Added lines of an edit result. The model just sent this content, so a longer block
+// shows its first and last line (placement and boundaries) and collapses the middle to
+// its fresh id range, like removed lines; short blocks are shown whole.
+fn push_added_lines(diff: &mut Vec<String>, first_1idx: usize, content_lines: &[&str]) {
+	let id = |i: usize| crate::utils::line_hash::line_id(first_1idx + i, content_lines[i]);
+	let n = content_lines.len();
+	if n <= ECHO_WHOLE_MAX {
+		for (i, line) in content_lines.iter().enumerate() {
+			diff.push(format!("+{}|{}", id(i), line));
+		}
+		return;
+	}
+	diff.push(format!("+{}|{}", id(0), content_lines[0]));
+	diff.push(format!(
+		"+{}..{} ({} lines as sent)",
+		id(1),
+		id(n - 2),
+		n - 2
+	));
+	diff.push(format!("+{}|{}", id(n - 1), content_lines[n - 1]));
+}
+
 // NEW REVOLUTIONARY BATCH_EDIT: Single file, multiple operations, original line numbers
 pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result<String> {
 	// Extract path from the call parameters - NEW: single file only
@@ -1791,14 +1816,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 				));
 				// Added lines — at their FINAL positions, ids computed from the
 				// added content itself (always correct, no bounds concern).
-				for (i, new_line) in content_lines.iter().enumerate() {
-					let idx = new_start + i;
-					diff.push(format!(
-						"+{}|{}",
-						crate::utils::line_hash::line_id(idx, new_line),
-						new_line
-					));
-				}
+				push_added_lines(&mut diff, new_start, &content_lines);
 				// Context after — from the final file.
 				let new_after_start = new_start + new_count;
 				let new_after_end = (new_after_start + CONTEXT - 1).min(new_lines.len());
@@ -1830,14 +1848,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					diff.extend(ctx_line(new_i));
 				}
 
-				for (i, new_line) in content_lines.iter().enumerate() {
-					let idx = insert_at + i;
-					diff.push(format!(
-						"+{}|{}",
-						crate::utils::line_hash::line_id(idx, new_line),
-						new_line
-					));
-				}
+				push_added_lines(&mut diff, insert_at, &content_lines);
 
 				let after_end = insert_at + content_lines.len();
 				let ctx_after_end = (after_end + CONTEXT - 1).min(new_lines.len());

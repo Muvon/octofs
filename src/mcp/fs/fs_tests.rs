@@ -2709,6 +2709,58 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_batch_edit_diff_collapses_long_added_block() {
+		// The model just sent the added content: a long block echoes its first and last
+		// line in full and the middle as its fresh id range; short blocks stay whole.
+		let content = "a\nb\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			ops_with_ids(
+				content,
+				json!([
+					{"operation": "insert", "start": 1, "content": "n1\nn2\nn3\nn4\nn5\nn6"},
+					{"operation": "insert", "start": -1, "content": "t1\nt2\nt3"}
+				]),
+			),
+		)
+		.await;
+		let diff = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		let id = crate::utils::line_hash::line_id;
+		assert!(diff.contains(&format!("+{}\n", idl(2, "n1"))), "{diff}");
+		assert!(
+			diff.contains(&format!(
+				"+{}..{} (4 lines as sent)\n",
+				id(3, "n2"),
+				id(6, "n5")
+			)),
+			"{diff}"
+		);
+		assert!(diff.contains(&format!("+{}\n", idl(7, "n6"))), "{diff}");
+		assert!(!diff.contains("|n3"), "middle lines are not echoed: {diff}");
+		for (n, s) in [(9, "t1"), (10, "t2"), (11, "t3")] {
+			assert!(diff.contains(&format!("+{}", idl(n, s))), "{diff}");
+		}
+
+		// The collapsed range's ids are real fresh ids: they target a follow-up edit.
+		let call = create_batch_edit_call(
+			&path,
+			json!([{"operation": "replace", "start": id(3, "n2"), "end": id(6, "n5"), "content": "mid"}]),
+		)
+		.await;
+		crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			fs::read_to_string(temp_file.path()).await.unwrap(),
+			"a\nn1\nmid\nn6\nb\nt1\nt2\nt3\n"
+		);
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_insert_and_replace_combined() {
 		// Mix insert + replace in one call using original line numbers
 		let content = "fn foo() {\n    old_body();\n}\n";

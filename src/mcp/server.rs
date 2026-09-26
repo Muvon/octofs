@@ -332,7 +332,8 @@ impl OctofsServer {
 			are line ids (\"12:a3\") from view or edit output, verified before anything is written; \
 			a stale id fails with the current content. All targets refer to the original file and \
 			must not overlap. The result diff carries fresh ids for follow-up edits — no re-view \
-			needed; removed lines show as an id range, and a trailing `shift:` line says how later \
+			needed; removed lines, and the middle of a long added block, show as an id range, and \
+			a trailing `shift:` line says how later \
 			original line numbers moved. Insert anchors 0 (file start) and -1 (end) are plain \
 			integers. Content is raw text without id prefixes."
 	)]
