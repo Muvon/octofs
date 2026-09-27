@@ -127,8 +127,11 @@ process* becomes a background job; the tool call returns immediately with a
 wait task fires the completion callback exactly once when it exits: a
 subscription notification first, a peer `resources/updated` push as fallback.
 Reading the resource returns status plus the output tail (capped at
-`MAX_TAIL_BYTES` = 30 000). The guidance to the model: do not poll, sleep,
-re-run or `ps` — start the next independent step or end the turn.
+`MAX_TAIL_BYTES` = 30 000); `view` on the link first waits for the exit (up to
+10 minutes) — clients such as Claude Code never surface the completion
+notification to the model. The guidance to the model: do not poll, sleep,
+re-run or `ps` — start the next independent step and `view` the link when the
+result is needed.
 
 **Misuse gate** (`detect_shell_misuse`). The gate is nuanced; preserve this
 contract when touching it:

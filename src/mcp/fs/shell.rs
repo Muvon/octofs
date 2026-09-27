@@ -98,11 +98,11 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["sleep"],
-		"Bare `sleep` is blocked — it wastes the call. Poll a condition instead: until <check>; do sleep 2; done. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
+		"Bare `sleep` is blocked — it wastes the call. To wait for a background job, `view` its link: it returns once the job exits. To wait for anything else, poll the condition: until <check>; do sleep 2; done.",
 	),
 	(
 		&["watch", "top", "htop"],
-		"This program never exits, so it would never complete or notify you. Run the underlying command once; long runs move to the background automatically.",
+		"This program never exits, so the call would never complete. Run the underlying command once; long runs move to the background automatically.",
 	),
 ];
 
