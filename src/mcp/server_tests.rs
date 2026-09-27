@@ -445,6 +445,31 @@ async fn view_reads_a_job_link_like_resources_read() {
 	assert_eq!(missing.is_error, Some(true), "unknown job id is an error");
 }
 
+/// Viewing a running job's link waits for its exit: the one way a model can wait
+/// for a job when its client never surfaces the exit notification (Claude Code).
+#[tokio::test(flavor = "multi_thread")]
+async fn view_on_a_running_job_link_returns_after_the_exit() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+	let uri = start_job(&client).await;
+
+	let serde_json::Value::Object(arguments) = json!({ "path": uri }) else {
+		unreachable!("literal object argument")
+	};
+	let result = client
+		.call_tool(CallToolRequestParams::new("view").with_arguments(arguments))
+		.await
+		.expect("call view");
+	let text = result
+		.content
+		.iter()
+		.find_map(|block| match block {
+			ContentBlock::Text(text) => Some(text.text.clone()),
+			_ => None,
+		})
+		.expect("text result");
+	assert!(text.contains("status: exited with code 0"), "{text}");
+}
+
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]

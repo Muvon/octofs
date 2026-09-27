@@ -771,18 +771,17 @@ async fn execute_with_timeout(
 			// stashed state.
 			let stash_note = if stashes_changes(&command) {
 				" It stashed working-tree changes, which stay off disk until it exits: don't \
-				 edit files or finish the task before then (read its resource to check)."
+				 edit files or finish the task before then (view its link to wait for that)."
 			} else {
 				""
 			};
 			return Ok(ShellOutcome {
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
-					 (PID {}). Output keeps streaming to the linked resource; you will be \
-					 notified on exit with the exit code and output tail. Do not poll, wait \
-					 or run filler commands for it — take the next independent step or end \
-					 your turn; the notification reaches you either way.{} Stop early: \
-					 kill -- -{}",
+					 (PID {}). Output keeps streaming to the linked resource. Take the next \
+					 independent step; when you need the result, `view` the link — it waits for \
+					 the exit and returns the exit code and output tail. Do not poll, sleep, \
+					 re-run or run filler commands for it.{} Stop early: kill -- -{}",
 					job_id, job_pid, stash_note, job_pid
 				),
 				resource_uri: Some(uri),

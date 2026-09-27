@@ -119,6 +119,38 @@ fn reading_an_unknown_job_is_none() {
 }
 
 #[tokio::test]
+async fn waiting_for_exit_returns_at_the_exit_or_the_limit() {
+	// A dir unique to this test so its commands never count as duplicates of
+	// another test's jobs.
+	let dir = std::env::temp_dir().join(format!("octofs-wait-{}", std::process::id()));
+	std::fs::create_dir_all(&dir).unwrap();
+	let (short, long) = if cfg!(target_os = "windows") {
+		("ping -n 2 127.0.0.1", "ping -n 6 127.0.0.1")
+	} else {
+		("sleep 1", "sleep 5")
+	};
+
+	let quick = spawn_test_job(short, &dir, |_: String| {}).await;
+	assert_eq!(
+		wait_for_exit(&quick.id, Duration::from_secs(30)).await,
+		Some(true)
+	);
+	assert!(matches!(quick.status(), JobStatus::Exited(_)));
+
+	let slow = spawn_test_job(long, &dir, |_: String| {}).await;
+	assert_eq!(
+		wait_for_exit(&slow.id, Duration::from_millis(100)).await,
+		Some(false)
+	);
+	assert_eq!(slow.status(), JobStatus::Running);
+
+	assert_eq!(
+		wait_for_exit("no-such-job", Duration::from_millis(1)).await,
+		None
+	);
+}
+
+#[tokio::test]
 async fn allows_distinct_jobs_but_refuses_a_duplicate_in_the_same_working_dir() {
 	// A dir unique to this test so it never collides with other tests' jobs.
 	let dir = std::env::temp_dir().join(format!("octofs-guard-{}", std::process::id()));
