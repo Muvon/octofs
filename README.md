@@ -13,7 +13,7 @@
 
 *Standalone Rust binary that exposes filesystem tools over the Model Context Protocol. Built on `rmcp` 3.x, `tokio`, and `axum`.*
 
-[Installation](#installation) · [Quick Start](#quick-start) · [Features](#features) · [Tools Reference](#mcp-tools-reference) · [Architecture](#architecture) · [Changelog](CHANGELOG.md)
+[Installation](#installation) · [Quick Start](#quick-start) · [Features](#features) · [Tools Reference](#mcp-tools-reference) · [Docs](doc/tools.md) · [Architecture](#architecture) · [Changelog](CHANGELOG.md)
 
 MCP Registry: [`io.github.Muvon/octofs`](https://registry.modelcontextprotocol.io)
 
