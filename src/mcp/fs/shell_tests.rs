@@ -88,6 +88,54 @@ async fn test_foreground_timeout_promotes_same_command() {
 	);
 }
 
+#[test]
+fn stashing_commands_are_recognised() {
+	for cmd in [
+		"git stash",
+		"git stash -q && npm test; git stash pop",
+		"git stash push lib/a.js -q && node --test",
+		"cd /workspace; git -C /workspace stash save wip",
+		"/usr/bin/git --no-pager stash --keep-index",
+	] {
+		assert!(stashes_changes(cmd), "{cmd}");
+	}
+	for cmd in [
+		"git stash list",
+		"git stash pop",
+		"git stash show -p",
+		"git status && git diff",
+		"echo git stash",
+	] {
+		assert!(!stashes_changes(cmd), "{cmd}");
+	}
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_promoted_stashing_command_warns_that_changes_are_off_disk() {
+	// The tree lacks the caller's changes until the command pops them, so the
+	// promotion message must say so; other promotions carry no such note.
+	let temp = tempfile::tempdir().unwrap();
+	for (command, warns) in [
+		("false && git stash; for i in 1 2; do sleep 1; done", true),
+		("for i in 1 2; do sleep 1; done", false),
+	] {
+		let mut call =
+			crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+		call.workdir = temp.path().to_path_buf();
+		let outcome = execute_with_timeout(&call, Duration::from_millis(100), None)
+			.await
+			.expect("promoted");
+		assert!(outcome.resource_uri.is_some(), "{}", outcome.text);
+		assert_eq!(
+			outcome.text.contains("stashed working-tree changes"),
+			warns,
+			"{command}: {}",
+			outcome.text
+		);
+	}
+}
+
 #[tokio::test]
 async fn test_rejects_remote_workdir() {
 	let mut call =

@@ -342,6 +342,40 @@ fn outside_workdir(target: &str, workdir: &Path) -> bool {
 	path.is_absolute() && !path.starts_with(workdir)
 }
 
+/// True if `command` runs a `git stash` that stashes changes (bare, `push`, `save`,
+/// or options only) — not `list`/`show`/`pop`/`apply`/`drop`/`clear`/`branch`.
+fn stashes_changes(command: &str) -> bool {
+	split_shell_segments(command).iter().any(|segment| {
+		let tokens: Vec<&str> = shell_token_spans(segment)
+			.into_iter()
+			.map(|(s, e)| &segment[s..e])
+			.collect();
+		// The segment's program, past env assignments and group openers, must be git.
+		let Some(git) = tokens.iter().position(|tok| {
+			let tok = tok.trim_start_matches('(');
+			!tok.is_empty() && !tok.contains('=') && tok != "{"
+		}) else {
+			return false;
+		};
+		if tokens[git].trim_start_matches('(').rsplit('/').next() != Some("git") {
+			return false;
+		}
+		// Skip git's global options (`-C dir`, `-c key=val`, `--no-pager`) to its command.
+		let mut rest = tokens[git + 1..].iter();
+		while let Some(&tok) = rest.next() {
+			if matches!(tok, "-C" | "-c") {
+				rest.next();
+			} else if !tok.starts_with('-') {
+				return tok == "stash"
+					&& rest
+						.next()
+						.is_none_or(|sub| sub.starts_with('-') || matches!(*sub, "push" | "save"));
+			}
+		}
+		false
+	})
+}
+
 /// True if a `sed` segment carries `-i`/`--in-place` (also as a bundled short
 /// flag like `-ni` or with a backup suffix like `-i.bak`).
 fn sed_edits_in_place(segment: &str) -> bool {
@@ -732,15 +766,24 @@ async fn execute_with_timeout(
 			let uri = super::background::resource_uri(&job_id);
 			let notify = on_background.unwrap_or_else(|| Box::new(|_: String| {}));
 			super::background::promote(job, child, notify);
+			// A stash in flight means the tree is missing the caller's changes until the
+			// command pops them: editing or finishing now works on (or hands back) the
+			// stashed state.
+			let stash_note = if stashes_changes(&command) {
+				" It stashed working-tree changes, which stay off disk until it exits: don't \
+				 edit files or finish the task before then (read its resource to check)."
+			} else {
+				""
+			};
 			return Ok(ShellOutcome {
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
 					 (PID {}). Output keeps streaming to the linked resource; you will be \
 					 notified on exit with the exit code and output tail. Do not poll, wait \
 					 or run filler commands for it — take the next independent step or end \
-					 your turn; the notification reaches you either way. Stop early: \
+					 your turn; the notification reaches you either way.{} Stop early: \
 					 kill -- -{}",
-					job_id, job_pid, job_pid
+					job_id, job_pid, stash_note, job_pid
 				),
 				resource_uri: Some(uri),
 			});
