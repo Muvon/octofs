@@ -177,7 +177,7 @@ async fn notify_claude_channel(peer: &Peer<RoleServer>, uri: &str) {
 	let Some(id) = fs::background::job_id_from_uri(uri) else {
 		return;
 	};
-	let Some(body) = job_resource_text(id) else {
+	let Some(body) = fs::background::resource_text(id) else {
 		return;
 	};
 	let params = serde_json::json!({ "content": body, "meta": { "job": id } });
@@ -188,24 +188,6 @@ async fn notify_claude_channel(peer: &Peer<RoleServer>, uri: &str) {
 	{
 		warn!("background job channel message for {uri} could not be delivered: {error}");
 	}
-}
-
-/// A job's resource text: status and output tail, as `resources/read` serves it.
-fn job_resource_text(id: &str) -> Option<String> {
-	let view = fs::background::read(id)?;
-	let status = match view.status {
-		fs::background::JobStatus::Running => "running".to_string(),
-		fs::background::JobStatus::Exited(code) => format!("exited with code {code}"),
-	};
-	let truncated = if view.truncated {
-		"\n[earlier output dropped — showing the last 30000 bytes]"
-	} else {
-		""
-	};
-	Some(format!(
-		"job {id}\ncommand: {}\nstatus: {status}{truncated}\n\n{}",
-		view.command, view.output
-	))
 }
 
 /// Before 2026-07-28 a server may push notifications nobody subscribed to; the
@@ -801,7 +783,7 @@ impl ServerHandler for OctofsServer {
 		let uri = request.uri;
 		let id = fs::background::job_id_from_uri(&uri)
 			.ok_or_else(|| ErrorData::resource_not_found(format!("Not a job URI: {uri}"), None))?;
-		let body = job_resource_text(id).ok_or_else(|| {
+		let body = fs::background::resource_text(id).ok_or_else(|| {
 			ErrorData::resource_not_found(format!("No such background job: {uri}"), None)
 		})?;
 		let result = ReadResourceResult::new(vec![ResourceContents::text(body, uri)]);

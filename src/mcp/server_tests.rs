@@ -400,6 +400,51 @@ async fn legacy_results_carry_no_cache_hints() {
 	assert_eq!(read.cache_scope, None);
 }
 
+/// A job link reads through `view` exactly as through `resources/read`: models try
+/// `view` on it first, and a client's resource reader may be deferred.
+#[tokio::test(flavor = "multi_thread")]
+async fn view_reads_a_job_link_like_resources_read() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+	let uri = start_job(&client).await;
+	wait_for_job_exit(&uri).await;
+
+	let read = client
+		.read_resource(ReadResourceRequestParams::new(uri.clone()))
+		.await
+		.expect("read job resource");
+	let expected = match &read.contents[0] {
+		rmcp::model::ResourceContents::TextResourceContents { text, .. } => text.clone(),
+		other => panic!("job resource is text, got {other:?}"),
+	};
+	assert!(
+		expected.contains("status: exited with code 0"),
+		"{expected}"
+	);
+
+	let view = |path: String| {
+		let serde_json::Value::Object(arguments) = json!({ "path": path }) else {
+			unreachable!("literal object argument")
+		};
+		client.call_tool(CallToolRequestParams::new("view").with_arguments(arguments))
+	};
+	let result = view(uri.clone()).await.expect("call view");
+	assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+	let text = result
+		.content
+		.iter()
+		.find_map(|block| match block {
+			ContentBlock::Text(text) => Some(text.text.clone()),
+			_ => None,
+		})
+		.expect("text result");
+	assert_eq!(text, expected);
+
+	let missing = view("octofs://jobs/0-0".to_string())
+		.await
+		.expect("call view");
+	assert_eq!(missing.is_error, Some(true), "unknown job id is an error");
+}
+
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]

@@ -270,6 +270,25 @@ pub fn read(id: &str) -> Option<JobView> {
 	})
 }
 
+/// A job's resource text: status and output tail. One rendering for every way a
+/// job is read — `resources/read`, `view` on its link, a completion push.
+pub fn resource_text(id: &str) -> Option<String> {
+	let view = read(id)?;
+	let status = match view.status {
+		JobStatus::Running => "running".to_string(),
+		JobStatus::Exited(code) => format!("exited with code {code}"),
+	};
+	let truncated = if view.truncated {
+		format!("\n[earlier output dropped — showing the last {MAX_TAIL_BYTES} bytes]")
+	} else {
+		String::new()
+	};
+	Some(format!(
+		"job {id}\ncommand: {}\nstatus: {status}{truncated}\n\n{}",
+		view.command, view.output
+	))
+}
+
 /// Every registered job, for `resources/list`.
 pub fn list() -> Vec<Job> {
 	jobs()

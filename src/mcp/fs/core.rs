@@ -473,6 +473,14 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 		),
 	};
 
+	// A background job's resource link reads like a file. Models try `view` on it
+	// first, and a client's generic resource reader may sit behind tool search
+	// (Claude Code's ReadMcpResourceTool is deferred), costing a round trip.
+	if let Some(id) = super::background::job_id_from_uri(&path) {
+		return super::background::resource_text(id)
+			.ok_or_else(|| anyhow!("No such background job: {path}"));
+	}
+
 	let source = resolve_path_source(&path, &call.workdir);
 	if io_exists(&source).await? {
 		return view_existing_path(call, &path, &source).await;
