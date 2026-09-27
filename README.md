@@ -512,10 +512,7 @@ finish within about 10 seconds:
 
 If a command is still running at that boundary, the same process continues in
 the background. The response returns its PID and linked output resource, and a
-completion notification arrives when it exits. Viewing the link with `view`
-waits for the exit (up to 10 minutes) and returns the exit code and output
-tail — how a model waits for a job when its client does not surface the
-notification. There is no `background` flag
+completion notification arrives when it exits. There is no `background` flag
 and the command is never killed or restarted during the handoff. Multiple
 distinct commands may run concurrently, including from the same working
 directory. An exact duplicate command in the same working directory is rejected

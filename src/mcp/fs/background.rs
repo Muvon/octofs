@@ -20,8 +20,6 @@
 //! readable resource and, when the process exits, emits
 //! `notifications/resources/updated` for that URI. A subscribed client reads the
 //! resource to get the exit code and output tail — event-driven, no polling.
-//! Not every client surfaces that to the model (Claude Code does not), so a
-//! model waits for a job by viewing its link, which returns once the job exits.
 //! This module owns the registry and the log files; it knows nothing about the
 //! MCP client. The completion signal is delivered through an opaque callback
 //! the server layer supplies (it captures the rmcp peer there), so this file
@@ -32,8 +30,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::watch;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The most output any single resource read returns. Build logs run long; the
 /// tail is what carries the verdict (errors, the final test summary), so the
@@ -53,14 +50,14 @@ pub struct Job {
 	pub stdout_path: PathBuf,
 	pub stderr_path: PathBuf,
 	pub working_dir: PathBuf,
-	pub status: Arc<watch::Sender<JobStatus>>,
+	pub status: Arc<Mutex<JobStatus>>,
 	pub pid: u32,
 	pub started_unix: u64,
 }
 
 impl Job {
 	pub fn status(&self) -> JobStatus {
-		*self.status.borrow()
+		*self.status.lock().expect("job status mutex poisoned")
 	}
 }
 
@@ -123,8 +120,9 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 				&& j.status() == JobStatus::Running
 		}) {
 		return Err(anyhow!(
-			"`{}` is already running as background job {}. `view` that link to wait for \
-			 it instead of starting a duplicate; different commands may run concurrently.",
+			"`{}` is already running as background job {}. Wait for its completion \
+			 notification instead of starting a duplicate; different commands may run \
+			 concurrently.",
 			running.command,
 			resource_uri(&running.id)
 		));
@@ -158,7 +156,7 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 			stdout_path,
 			stderr_path,
 			working_dir: working_dir.to_path_buf(),
-			status: Arc::new(watch::Sender::new(JobStatus::Running)),
+			status: Arc::new(Mutex::new(JobStatus::Running)),
 			pid: 0,
 			started_unix: now_unix(),
 		},
@@ -194,7 +192,9 @@ where
 			Ok(status) => status.code().unwrap_or(-1),
 			Err(_) => -1,
 		};
-		status.send_replace(JobStatus::Exited(code));
+		if let Ok(mut guard) = status.lock() {
+			*guard = JobStatus::Exited(code);
+		}
 		super::shell::unregister_child(pid);
 		on_complete(uri);
 	});
@@ -207,20 +207,6 @@ pub(crate) fn status(id: &str) -> Option<JobStatus> {
 		.expect("jobs registry mutex poisoned")
 		.get(id)
 		.map(Job::status)
-}
-
-/// Wait up to `limit` for a job to exit. `None` if the id is unknown, otherwise
-/// whether it exited within the limit.
-pub async fn wait_for_exit(id: &str, limit: Duration) -> Option<bool> {
-	let mut updates = jobs()
-		.lock()
-		.expect("jobs registry mutex poisoned")
-		.get(id)?
-		.status
-		.subscribe();
-	let exit = updates.wait_for(|status| *status != JobStatus::Running);
-	let exited = tokio::time::timeout(limit, exit).await;
-	Some(exited.is_ok_and(|changed| changed.is_ok()))
 }
 
 /// A point-in-time read of a job: its status and the tail of its output.

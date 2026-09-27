@@ -28,11 +28,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::time::Duration;
-
-/// How long `view` on a running job's link waits for it to exit. Long enough for
-/// a full test suite; bounded so a hung job cannot hold the call forever.
-const JOB_VIEW_WAIT: Duration = Duration::from_secs(600);
 
 /// Resolve a path relative to the session working directory
 /// If the path is absolute, returns it as-is
@@ -481,23 +476,9 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	// A background job's resource link reads like a file. Models try `view` on it
 	// first, and a client's generic resource reader may sit behind tool search
 	// (Claude Code's ReadMcpResourceTool is deferred), costing a round trip.
-	// Viewing it also waits for the exit: that is the only way a model can wait
-	// for a job when its client never surfaces the exit notification (Claude Code),
-	// since a sleep or wait loop would itself be moved to the background.
 	if let Some(id) = super::background::job_id_from_uri(&path) {
-		let exited = super::background::wait_for_exit(id, JOB_VIEW_WAIT)
-			.await
-			.ok_or_else(|| anyhow!("No such background job: {path}"))?;
-		let text = super::background::resource_text(id)
-			.ok_or_else(|| anyhow!("No such background job: {path}"))?;
-		return Ok(if exited {
-			text
-		} else {
-			format!(
-				"{text}\n[still running after {} s of waiting — view the link again to keep waiting]",
-				JOB_VIEW_WAIT.as_secs()
-			)
-		});
+		return super::background::resource_text(id)
+			.ok_or_else(|| anyhow!("No such background job: {path}"));
 	}
 
 	let source = resolve_path_source(&path, &call.workdir);

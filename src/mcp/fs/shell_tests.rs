@@ -287,12 +287,6 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("sleep 30 || true").is_some());
 	assert!(rejection("sleep $((5*60))").is_some());
 	assert!(rejection("(sleep 5 && echo hi) &").is_some());
-	// Waiting for a job means viewing its link: no client-side wake-up is promised
-	let msg = rejection("sleep 40").expect("sleep is blocked");
-	assert!(
-		msg.contains("`view` its link") && !msg.contains("notify"),
-		"{msg}"
-	);
 	// Sleep inside a do...done loop body is legitimate polling
 	assert!(passes("until test -f /tmp/x; do sleep 2; done"));
 	assert!(passes("while ! nc -z localhost 8080; do sleep 1; done"));
