@@ -2988,6 +2988,54 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_blank_final_line_survives_a_missing_trailing_newline() {
+		// A blank last line exists only through its terminator: dropping it to keep the
+		// file's missing trailing newline deleted the line the diff had just reported.
+		for (content, anchor, expected, added) in [("", 0, "\n", 1), ("a", 1, "a\n\n", 2)] {
+			let temp_file = create_test_file(content).await;
+			let path = temp_file.path().to_string_lossy().to_string();
+			let call = create_batch_edit_call(
+				&path,
+				ops_with_ids(
+					content,
+					json!([{"operation": "insert", "start": anchor, "content": ""}]),
+				),
+			)
+			.await;
+			let diff = crate::mcp::fs::core::execute_batch_edit(&call)
+				.await
+				.unwrap();
+			assert_eq!(
+				fs::read_to_string(temp_file.path()).await.unwrap(),
+				expected
+			);
+			assert!(diff.contains(&format!("+{}", idl(added, ""))), "{diff}");
+		}
+
+		// str_replace built its diff from the sent line count and indexed past the
+		// shortened file: a panic after the write, which aborts a release build.
+		for (content, old, new, expected, added) in [
+			("a", "a", "\n", "\n", 1),
+			("x\ny", "y", "y\n\n", "x\ny\n\n", 3),
+		] {
+			let temp_file = create_test_file(content).await;
+			let diff = crate::mcp::fs::text_editing::str_replace_spec(
+				&PathSource::from(temp_file.path()),
+				old,
+				new,
+				false,
+			)
+			.await
+			.unwrap();
+			assert_eq!(
+				fs::read_to_string(temp_file.path()).await.unwrap(),
+				expected
+			);
+			assert!(diff.contains(&format!("+{}", idl(added, ""))), "{diff}");
+		}
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_replace_all_lines_with_different_count() {
 		// Replace all 3 lines with 5 lines
 		let content = "old1\nold2\nold3\n";

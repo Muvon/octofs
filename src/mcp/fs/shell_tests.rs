@@ -302,14 +302,10 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("cd /x && echo data > f").is_some());
 	// A redirect that also writes into the workdir is still a tracked-file write
 	assert!(rejection("echo hi > /tmp/a > src/b").is_some());
+	assert!(rejection("echo hi >/tmp/a>src/b").is_some());
 	// cat with a redirect gets the write guidance, not the read guidance
 	let msg = rejection("cat > f.txt").unwrap();
 	assert!(msg.contains("text_editor"), "msg: {msg}");
-	// Scratch files outside the workdir are no tracked edit: they run with a hint
-	let scratch = hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js")
-		.expect("a /tmp heredoc runs");
-	assert!(scratch.contains("text_editor"), "{scratch}");
-	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
 	// Redirecting other programs' output stays allowed
 	assert!(passes("cargo test > out.log 2>&1"));
 	assert!(passes("make 2>&1 | tee build.log"));
@@ -320,6 +316,17 @@ fn test_detect_shell_misuse() {
 	// Never-terminating programs are blocked
 	assert!(rejection("watch -n1 date").is_some());
 	assert!(rejection("top").is_some());
+}
+
+// `/tmp/...` is an absolute path only on Unix.
+#[cfg(unix)]
+#[test]
+fn scratch_writes_outside_the_workdir_run_with_a_hint() {
+	// Scratch files outside the workdir are no tracked edit: they run with a hint
+	let scratch = hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js")
+		.expect("a /tmp heredoc runs");
+	assert!(scratch.contains("text_editor"), "{scratch}");
+	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
 }
 
 #[test]
@@ -378,6 +385,7 @@ fn an_in_place_sed_is_blocked_as_an_edit() {
 	}
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_scratch_heredoc_and_a_piped_read_run() {
 	// End to end: what the gate lets through actually executes.

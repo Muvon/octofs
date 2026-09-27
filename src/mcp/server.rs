@@ -716,8 +716,7 @@ impl ServerHandler for OctofsServer {
 				 re-viewing files. Reuse returned content and ids; read complete relevant blocks, \
 				 then act on them. Each response costs a round trip: first decide what you need \
 				 next, then request every call that doesn't depend on another's result in that one \
-				 response — reads run in parallel, while edits and shell commands run in the order \
-				 given, so an edit and the command that tests it can go together."
+				 response."
 				.to_string(),
 		)
 	}

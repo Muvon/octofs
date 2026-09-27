@@ -757,7 +757,9 @@ impl EditableContent {
 			if self.lines[last].ending.is_empty() {
 				self.lines[last].ending = self.dominant_ending;
 			}
-		} else {
+		} else if !self.lines[last].text.is_empty() {
+			// An empty last line exists only through its terminator: stripping it would
+			// delete the blank line the edit wrote, not just the final newline.
 			self.lines[last].ending = "";
 		}
 	}

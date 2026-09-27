@@ -394,7 +394,9 @@ fn redirect_targets(segment: &str) -> Vec<&str> {
 				}
 				if j < bytes.len() && bytes[j] != b'&' {
 					let end = segment[j..]
-						.find(|c: char| c.is_whitespace() || matches!(c, '|' | '<' | '&' | ';'))
+						.find(|c: char| {
+							c.is_whitespace() || matches!(c, '|' | '<' | '>' | '&' | ';')
+						})
 						.map_or(bytes.len(), |k| j + k);
 					targets.push(&segment[j..end]);
 					i = end;
