@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.16.0] - 2026-09-27
+
+### 📋 Release Summary
+
+Background-job output is now returned without waiting, and legacy clients are notified when jobs complete. Filesystem editing preserves blank and final lines, parses redirects, treats empty inserts as blank lines, and compacts long exact replacements and additions in diffs. Shell and MCP behavior was corrected and clarified, including blocked-read checks, job viewing and wait guidance, stash warnings, call ordering, tool schemas, cache hints, and working-directory constraints.
+
+### 🚨 Breaking Changes
+
+- **mcp-fs**: return background-job output without waiting `6c67903d`
+
+### ✨ New Features & Enhancements
+
+- **mcp**: notify legacy clients when jobs complete `de3376fa`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: simplify context parameter comment `0c4ddc91`
+- **mcp**: update test client configuration type `5c037bf6`
+- **dependencies**: upgrade russh-sftp to 3.0 `92a4a653`
+- **mcp**: use ServerConfig for get_info `f245e2bd`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: preserve blank final lines and parse redirects `428b642d`
+- **shell**: correct background-job wait guidance `b03c0a62`
+- **shell**: reject blocked reads at every command start `2648b0d3`
+- **mcp**: wait for background jobs when viewing links `3914b417`
+- **shell**: warn when backgrounding stash commands `10713a61`
+- **mcp**: clarify batched tool-call ordering `d5301634`
+- **mcp**: read background jobs through view links `b98fc196`
+- **fs**: collapse long exact replacements in diffs `3338c294`
+- **mcp-fs**: treat empty inserts as blank lines `ccd0e267`
+- **shell**: refine shell misuse rejection and hints `4a181fdb`
+- **fs**: collapse long added blocks in edit diffs `17a28ffd`
+- **fs**: render final lines in replacement diffs `980b91ad`
+- **mcp**: remove noise from published tool schemas `df46a6f9`
+- **mcp**: emit cache hints for modern protocol results `f849db3a`
+- **mcp**: clarify tool behavior and constraints `3d3827b4`
+- **mcp**: clarify shell command working-directory usage `67ea4954`
+
+### 📚 Documentation & Examples
+
+- **docs**: expand project documentation `5b45f5e8`
+- **agents**: document agent workflows `71b6ecd9`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.15.6] - 2026-09-09
 
 ### 📋 Release Summary
