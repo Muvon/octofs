@@ -929,8 +929,7 @@ pub struct ViewParams {
 	/// Include dotfiles and dot-directories.
 	#[serde(default)]
 	pub include_hidden: Option<bool>,
-	/// Lines around each `content` match. Default: 0 — ask for enough to answer without
-	/// another tiny read.
+	/// Lines around each `content` match. Default: 0.
 	#[serde(default)]
 	pub context: Option<usize>,
 	/// Force the complete file when re-viewing a whole file (normally only changed hunks),
