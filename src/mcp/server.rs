@@ -444,8 +444,8 @@ impl OctofsServer {
 			on Windows) in the current workdir, local machine only, no stdin or TTY — never run \
 			interactive commands or prefix `cd` to the workdir (`cd <other> && …` is fine one-off; \
 			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
-			read, list and search files (a lone cat/grep/ls, `sed -i` and echo/cat writes into the \
-			workdir are rejected). Output is terminal-clean \
+			read, list and search files (cat/grep/ls except as a later pipe stage, `sed -i` and \
+			echo/cat writes into the workdir are rejected). Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. A command still running after ~10s moves to the background and returns a \

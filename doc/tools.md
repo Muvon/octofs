@@ -134,11 +134,11 @@ re-run or `ps` — start the next independent step or end the turn.
 contract when touching it:
 
 - rejected outright: `sed -i`, content writes into the workdir (`cat >`,
-  `echo >`, `tee`), a lone read program (cat/grep/find/ls with no pipe or
-  chain) — file reads belong to `view`;
-- run with a hint: a read inside a pipeline/chain, a write to a scratch path
-  outside the workdir;
-- pipelines are not split; read-only `sed`/`awk` pass;
+  `echo >`, `tee`), a read program (cat/grep/find/ls) starting any command —
+  alone, in a chain or as a pipeline head — file reads belong to `view`;
+- run with a hint: a write to a scratch path outside the workdir;
+- pipelines are not split, so a read as a later pipe stage passes; read-only
+  `sed`/`awk` pass;
 - `ssh host 'cmd'` bodies are checked recursively.
 
 **Output hygiene.** Output is terminal-clean — ANSI escapes and progress

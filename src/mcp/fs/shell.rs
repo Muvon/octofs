@@ -78,36 +78,31 @@ pub fn kill_all_shell_children() {
 	}
 }
 
-// Each entry: (triggering programs, error message with usage example, whether the
-// program still runs inside a larger command). A lone read (`cat f`, `ls d`) is
-// exactly one `view` call, so it is rejected; inside a pipeline or a chain the
-// command does more than one view call could, so it runs with a hint instead of
-// costing a round trip. Waiting programs are rejected wherever they appear.
-static SHELL_MISUSE_HINTS: &[(&[&str], &str, bool)] = &[
+// Each entry: (triggering programs, error message with usage example). A match is
+// rejected wherever it starts a command — alone, as a chain segment, in a `$(…)`
+// substitution or as a pipeline head — because a hint only arrives after the shell
+// read already ran. Pipelines are not split, so a later pipe stage
+// (`cargo test 2>&1 | tail -20`) is never checked and stays allowed.
+static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed.",
-		true,
+		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". To feed a program, redirect its stdin instead: `psql < dump.sql`, `python3 - <<'EOF'`. Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
 		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed.",
-		true,
 	),
 	(
 		&["find", "ls"],
 		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\".",
-		true,
 	),
 	(
 		&["sleep"],
 		"Bare `sleep` is blocked — it wastes the call. Poll a condition instead: until <check>; do sleep 2; done. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
-		false,
 	),
 	(
 		&["watch", "top", "htop"],
 		"This program never exits, so it would never complete or notify you. Run the underlying command once; long runs move to the background automatically.",
-		false,
 	),
 ];
 
@@ -240,17 +235,6 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 	// separators. Pipelines (`|`) are intentionally NOT split: stream
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
 	let segments = split_shell_segments(command);
-	// One program with no pipe is what a single `view` call replaces; group braces and
-	// parens around it (`{ cat f; }`, `(cat f)`) don't make it more.
-	let programs: Vec<&str> = segments
-		.iter()
-		.copied()
-		.filter(|s| {
-			!s.trim_matches(|c: char| c.is_whitespace() || "{}()".contains(c))
-				.is_empty()
-		})
-		.collect();
-	let lone = programs.len() == 1 && unquoted_pipe(programs[0]).is_none();
 	let mut hint = None;
 	for segment in segments {
 		let segment = segment.trim();
@@ -321,14 +305,9 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 			return Some(Misuse::Reject(blocked_message(prog, IN_PLACE_EDIT_HINT)));
 		}
 
-		for (progs, message, runs_in_compound) in SHELL_MISUSE_HINTS {
+		for (progs, message) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
-				if lone || !runs_in_compound {
-					return Some(Misuse::Reject(blocked_message(prog, message)));
-				}
-				hint.get_or_insert_with(|| {
-					format!("`{prog}` ran; `view` reads, lists and searches files with line ids that edits can target.")
-				});
+				return Some(Misuse::Reject(blocked_message(prog, message)));
 			}
 		}
 	}

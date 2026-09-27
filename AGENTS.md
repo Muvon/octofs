@@ -38,7 +38,7 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 
 ## Gotchas
 - Tool schemas/descriptions live in `src/mcp/server.rs`; execute logic in `src/mcp/fs/`. `functions.rs`, `mcp/shared_utils.rs`, `utils/glob.rs` do **not** exist — stale references from an older layout.
-- Shell misuse gate (`detect_shell_misuse`, `fs/shell.rs`) is nuanced: pipelines are not split; read-only `sed`/`awk` pass; `sed -i`, content writes into the workdir (`cat >`, `echo >`, `tee`) and a lone read program (cat/grep/find/ls with no pipe or chain) are rejected; a read inside a pipeline/chain and a write to a scratch path outside the workdir run with a hint; `ssh host 'cmd'` bodies are checked recursively. Preserve this contract when touching it.
+- Shell misuse gate (`detect_shell_misuse`, `fs/shell.rs`) is nuanced: pipelines are not split; read-only `sed`/`awk` pass; `sed -i`, content writes into the workdir (`cat >`, `echo >`, `tee`) and a read program (cat/grep/find/ls) starting any command — alone, in a chain or as a pipeline head — are rejected; a read as a later pipe stage passes; a write to a scratch path outside the workdir runs with a hint; `ssh host 'cmd'` bodies are checked recursively. Preserve this contract when touching it.
 - Every server-side write must keep the delta cache truthful — go through `delta::note_write` / `note_create`, or whole-file views serve wrong deltas.
 - `shell` always runs locally and bails on a remote workdir; join remote paths via `PathSource`, never `PathBuf::join` (it inserts `\` on Windows and corrupts URLs).
 - RSA SSH keys are unsupported by design (RUSTSEC-2023-0071) and russh uses the `ring` backend because Alpine/musl builds have no cmake — do not "fix" either.

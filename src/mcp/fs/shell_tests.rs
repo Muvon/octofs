@@ -219,12 +219,12 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("/bin/grep foo bar").is_some());
 	assert!(rejection("FOO=bar grep x y").is_some());
 
-	// Subshell/group openers don't hide a lone read, nor make it more than one
+	// Subshell/group openers don't hide a read
 	assert!(rejection("(cat file)").is_some());
 	assert!(rejection("{ grep foo bar; }").is_some());
 
-	// A read program in a chain, a pipeline head or a substitution runs with a hint:
-	// the command does more than one view call could, and a rejection costs a round trip
+	// A read in a chain, a substitution or a pipeline head is rejected too: a hint
+	// arrives only after the shell read already ran
 	for cmd in [
 		"cd /path && grep -rn foo",
 		"cd /path; cat file.rs",
@@ -236,9 +236,13 @@ fn test_detect_shell_misuse() {
 		"ls test | grep route",
 		"npm test > /tmp/unit.log 2>&1; grep -E '^not ok' /tmp/unit.log",
 	] {
-		let hint = hint(cmd).unwrap_or_else(|| panic!("{cmd} must run with a hint"));
-		assert!(hint.contains("`view`"), "{hint}");
+		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be rejected"));
+		assert!(msg.contains("`view`"), "{msg}");
 	}
+	// Piping a file or heredoc into a program is told to redirect stdin instead
+	let msg = rejection("cat dump.sql | psql").expect("cat as a pipeline head is blocked");
+	assert!(msg.contains("psql < dump.sql"), "{msg}");
+	assert!(rejection("cat <<'EOF' | kubectl apply -f -\nkind: Pod\nEOF").is_some());
 
 	// Pipelines stay allowed (stream transforms)
 	assert!(passes("cargo build 2>&1 | grep error"));
@@ -258,8 +262,8 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("ssh -o StrictHostKeyChecking=no host 'ls /x'").is_some());
 	assert!(rejection("ssh a 'ssh b \"grep x /y\"'").is_some());
 	assert!(rejection("ssh host 'ls' && cat file").is_some());
-	assert!(hint("ssh host 'cd /path && ls'").is_some());
-	assert!(hint("ssh host \"cd /path && grep foo\"").is_some());
+	assert!(rejection("ssh host 'cd /path && ls'").is_some());
+	assert!(rejection("ssh host \"cd /path && grep foo\"").is_some());
 	// Legitimate remote commands stay allowed
 	assert!(passes("ssh host uptime"));
 	assert!(passes("ssh host 'systemctl status nginx'"));
@@ -343,10 +347,10 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 }
 
 #[test]
-fn a_read_in_a_compound_is_named_in_its_hint() {
-	// The command ran, so the hint names the program it could have used `view` for.
-	let msg = hint("php -v && git log --oneline -3 && find . -name x").expect("runs with a hint");
-	assert!(msg.contains("`find` ran"), "{msg}");
+fn a_read_in_a_compound_is_rejected_by_name() {
+	let msg =
+		rejection("php -v && git log --oneline -3 && find . -name x").expect("find is blocked");
+	assert!(msg.contains("`find` is blocked"), "{msg}");
 }
 
 #[test]
@@ -375,17 +379,16 @@ fn an_in_place_sed_is_blocked_as_an_edit() {
 }
 
 #[tokio::test]
-async fn a_compound_read_and_a_scratch_heredoc_run() {
+async fn a_scratch_heredoc_and_a_piped_read_run() {
 	// End to end: what the gate lets through actually executes.
 	let scratch = tempfile::tempdir().unwrap();
 	let file = scratch.path().join("repro.txt");
 	let command = format!(
-		"cat > {f} <<'EOF'\nhello\nEOF\ncat {f}; ls Cargo.toml",
+		"cat > {f} <<'EOF'\nhello\nEOF\nsort {f} | grep hello",
 		f = file.display()
 	);
 	let call =
 		crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 	let out = execute_shell_command(&call, None).await.expect("runs");
 	assert!(out.text.contains("hello"), "{}", out.text);
-	assert!(out.text.contains("Cargo.toml"), "{}", out.text);
 }
