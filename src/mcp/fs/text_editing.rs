@@ -396,12 +396,16 @@ fn adjust_indentation(new_text: &str, provided_old: &str, actual_old: &str) -> S
 /// Context and added lines carry FRESH line ids from the final file, so the model can
 /// chain follow-up edits without re-viewing; removed lines carry their old ids.
 // `start` is 0-indexed position of the first replaced line in `orig_lines`.
+// `as_sent`: the added lines are the caller's text verbatim, so a long block can
+// collapse its middle like batch_edit's; after whitespace-normalized matching the
+// indentation changed, and the caller must see every line.
 fn build_str_replace_diff(
 	orig_lines: &[&str],
 	new_lines: &[&str],
 	start: usize,
 	old_line_count: usize,
 	new_line_count: usize,
+	as_sent: bool,
 ) -> String {
 	const CONTEXT: usize = 2;
 	let mut diff: Vec<String> = Vec::new();
@@ -427,12 +431,17 @@ fn build_str_replace_diff(
 	// Added lines — at their final positions with fresh ids, rendered from the final file:
 	// a match starting or ending mid-line rewrites whole lines, and the id belongs to the
 	// whole line, not to the sent fragment. The block starts at `start + 1` (1-indexed).
-	for i in start..start + new_line_count {
-		diff.push(format!(
-			"+{}|{}",
-			line_id_at(new_lines, i + 1),
-			new_lines[i]
-		));
+	let added = &new_lines[start..start + new_line_count];
+	if as_sent {
+		push_added_lines(&mut diff, start + 1, added);
+	} else {
+		for (i, line) in added.iter().enumerate() {
+			diff.push(format!(
+				"+{}|{}",
+				line_id_at(new_lines, start + 1 + i),
+				line
+			));
+		}
 	}
 
 	// Context after: read from new_lines (already has the replacement applied)
@@ -832,6 +841,7 @@ async fn apply_unique_replacement(
 		match_start,
 		old_line_count,
 		new_text.lines().count(),
+		true,
 	))
 }
 
@@ -1045,6 +1055,7 @@ pub async fn str_replace_spec(
 				start,
 				old_line_count,
 				adjusted_new.lines().count(),
+				false,
 			);
 			return Ok(diff);
 		}

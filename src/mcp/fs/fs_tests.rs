@@ -841,6 +841,41 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_str_replace_diff_collapses_long_exact_replacement() {
+		// An exact match writes the sent text verbatim, so a long block echoes its first
+		// and last line and the middle as its fresh id range, like batch_edit.
+		let temp_file = create_test_file("a\nb\nc\n").await;
+		let source = PathSource::from(temp_file.path());
+		let diff = crate::mcp::fs::text_editing::str_replace_spec(
+			&source,
+			"b",
+			"B1\nB2\nB3\nB4\nB5",
+			false,
+		)
+		.await
+		.unwrap();
+		let id = crate::utils::line_hash::line_id;
+		assert!(diff.contains(&format!("+{}\n", idl(2, "B1"))), "{diff}");
+		assert!(
+			diff.contains(&format!(
+				"+{}..{} (3 lines as sent)\n",
+				id(3, "B2"),
+				id(5, "B4")
+			)),
+			"{diff}"
+		);
+		assert!(diff.contains(&format!("+{}\n", idl(6, "B5"))), "{diff}");
+		assert!(!diff.contains("|B3"), "middle lines are not echoed: {diff}");
+
+		// A short replacement is echoed whole.
+		let diff = crate::mcp::fs::text_editing::str_replace_spec(&source, "c", "C1\nC2", false)
+			.await
+			.unwrap();
+		assert!(diff.contains(&format!("+{}\n", idl(7, "C1"))), "{diff}");
+		assert!(diff.contains(&format!("+{}", idl(8, "C2"))), "{diff}");
+	}
+
+	#[tokio::test]
 	async fn test_str_replace_multiline_old() {
 		test_str_replace(
 			"line 1\nline 2\nline 3\nline 4",
