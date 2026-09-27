@@ -2925,6 +2925,34 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_batch_edit_empty_insert_adds_a_blank_line() {
+		// Inserting "" means a blank line; applying nothing while reporting success made
+		// callers follow up with a second edit. Replacing with "" still deletes.
+		let content = "a\nb\nc\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = create_batch_edit_call(
+			&path,
+			ops_with_ids(
+				content,
+				json!([
+					{"operation": "insert", "start": 1, "content": ""},
+					{"operation": "replace", "start": 3, "end": 3, "content": ""}
+				]),
+			),
+		)
+		.await;
+		let diff = crate::mcp::fs::core::execute_batch_edit(&call)
+			.await
+			.unwrap();
+		assert_eq!(
+			fs::read_to_string(temp_file.path()).await.unwrap(),
+			"a\n\nb\n"
+		);
+		assert!(diff.contains(&format!("+{}", idl(2, ""))), "{diff}");
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_replace_all_lines_with_different_count() {
 		// Replace all 3 lines with 5 lines
 		let content = "old1\nold2\nold3\n";

@@ -1605,8 +1605,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			}
 		};
 
-		// Extract content
+		// Extract content. An insert of "" can only mean a blank line: inserting nothing
+		// is no edit, and reporting it as applied hides the miss. A replace of "" deletes.
 		let content = match operation_obj.get("content").and_then(|v| v.as_str()) {
+			Some("") if operation_type == OperationType::Insert => "\n".to_string(),
 			Some(c) => c.to_string(),
 			None => {
 				parse_failures.push(format!("  op {index}: Missing 'content' field"));
