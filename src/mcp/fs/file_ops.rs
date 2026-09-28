@@ -124,7 +124,9 @@ pub async fn view_file_with_content_search(
 		));
 	}
 
-	// Render each block; separate blocks with "--"
+	// Render each block. Blocks follow each other directly: every line carries its
+	// number, so a jump in numbering already marks a gap, and a separator line would
+	// cost 2 tokens per gap.
 	let mut parts: Vec<String> = Vec::new();
 	for block in &blocks {
 		let mut rendered = Vec::new();
@@ -138,7 +140,7 @@ pub async fn view_file_with_content_search(
 		parts.push(rendered.join("\n"));
 	}
 
-	Ok(parts.join("\n--\n"))
+	Ok(parts.join("\n"))
 }
 
 // Create a new file.

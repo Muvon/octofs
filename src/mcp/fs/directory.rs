@@ -517,7 +517,7 @@ fn render_content_matches(
 		}
 		rendered_blocks.push(rendered.join("\n"));
 	}
-	Some(format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")))
+	Some(format!("{}:\n{}", rel_path, rendered_blocks.join("\n")))
 }
 
 // Annotation suffix for a remote file, from metadata ONLY — downloading each
@@ -758,10 +758,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 						rendered_blocks.push(rendered.join("\n"));
 					}
 
-					Some((
-						i,
-						format!("{}:\n{}", rel_path, rendered_blocks.join("\n--\n")),
-					))
+					Some((i, format!("{}:\n{}", rel_path, rendered_blocks.join("\n"))))
 				})
 				.collect();
 

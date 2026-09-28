@@ -5533,25 +5533,19 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_view_file_content_search_context_blocks_separated_by_dashes() {
-		// Two non-adjacent matches with context should be separated by "--"
+	async fn test_view_file_content_search_blocks_have_no_separator() {
+		// Non-adjacent blocks follow each other directly: the line numbers show the gap.
 		let temp_file = create_test_file("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
-		// Match "a" (line 1) and "j" (line 10) with no context — they are non-adjacent
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": path, "content": "a" }),
+			parameters: json!({ "path": path, "content": "^(a|j)$", "regex": true }),
 		};
 		let output = execute_view(&call).await.unwrap();
-		// Single match, no separator needed
-		assert!(output.contains(&idl(1, "a")), "match: {output}");
-		assert!(
-			!output.contains("\n--\n"),
-			"no separator for single block: {output}"
-		);
+		assert_eq!(output, format!("{}\n{}", idl(1, "a"), idl(10, "j")));
 	}
 
 	#[tokio::test]
