@@ -45,7 +45,7 @@ where
 		.kill_on_drop(true);
 	#[cfg(unix)]
 	{
-		command_process.process_group(0);
+		super::super::shell::detach_from_terminal(&mut command_process);
 	}
 	let child = command_process.spawn().expect("spawn test job");
 	job.pid = child.id().expect("test job pid");

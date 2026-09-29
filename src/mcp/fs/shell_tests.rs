@@ -45,6 +45,32 @@ async fn test_quick_command_keeps_foreground_response() {
 	assert_eq!(outcome.text, "stdout\n\nstderr:\nstderr");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn children_run_without_a_controlling_terminal() {
+	// An inherited terminal lets an interactive shell (`zsh -ic`) take its foreground
+	// and leave the MCP client stopped. `ps` prints `?` (Linux) or `??` (macOS) for
+	// no controlling tty; PGID == PID keeps kill(-pid) cleanup reaching the group.
+	let temp = tempfile::tempdir().expect("temp workdir");
+	let mut call = crate::mcp::McpToolCall::test_call(
+		"shell",
+		serde_json::json!({ "command": "echo $$; ps -o pgid= -o tty= -p $$" }),
+	);
+	call.workdir = temp.path().to_path_buf();
+	let outcome = execute_with_timeout(&call, Duration::from_secs(5), None)
+		.await
+		.expect("ps runs");
+	let fields: Vec<&str> = outcome.text.split_whitespace().collect();
+	let [pid, pgid, tty] = fields[..] else {
+		panic!("unexpected ps output: {:?}", outcome.text);
+	};
+	assert_eq!(pgid, pid, "the child leads its own process group");
+	assert!(
+		tty.chars().all(|c| c == '?'),
+		"the child must have no controlling terminal, got {tty:?}"
+	);
+}
+
 #[tokio::test]
 async fn test_foreground_timeout_promotes_same_command() {
 	let command = if cfg!(target_os = "windows") {

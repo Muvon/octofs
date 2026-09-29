@@ -31,7 +31,7 @@ const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const FOREGROUND_TIMEOUT: Duration = Duration::from_millis(200);
 // Track PIDs of in-flight foreground shell children.
-// Each child is spawned with process_group(0) so PGID == child PID.
+// Each child is spawned as a session leader (setsid) so PGID == child PID.
 // On shutdown we kill(-pid, SIGKILL) to terminate the entire process group,
 // including any grandchildren the command may have spawned.
 static SHELL_CHILDREN: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
@@ -47,6 +47,26 @@ pub(super) fn register_child(pid: u32) {
 pub(super) fn unregister_child(pid: u32) {
 	if let Some(set) = SHELL_CHILDREN.lock().unwrap().as_mut() {
 		set.remove(&pid);
+	}
+}
+
+/// Start the child in a new session. A separate process group alone still shares
+/// the MCP client's terminal, so an interactive shell (`zsh -ic`) could
+/// tcsetpgrp() itself into the foreground and leave the client stopped as a
+/// background job. setsid() leaves the child with no controlling terminal
+/// (/dev/tty opens fail with ENXIO) and makes it a process group leader
+/// (PGID == PID) for kill(-pid) cleanup. Don't combine with process_group(0):
+/// setsid() fails with EPERM for a process that already leads a group.
+#[cfg(unix)]
+pub(super) fn detach_from_terminal(cmd: &mut tokio::process::Command) {
+	// SAFETY: setsid() is async-signal-safe, so it may run between fork and exec.
+	unsafe {
+		cmd.pre_exec(|| {
+			if libc::setsid() == -1 {
+				return Err(std::io::Error::last_os_error());
+			}
+			Ok(())
+		});
 	}
 }
 
@@ -125,7 +145,7 @@ static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is bloc
 static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat/tee redirects is blocked — quoting corrupts content and the write is untracked. Use text_editor command=\"create\" or str_replace. Redirecting a program's output (e.g. `cargo test > out.log`) stays allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
-// stdin=null + process_group(0) already makes input physically impossible;
+// stdin=null + no controlling terminal already makes input physically impossible;
 // these env vars make cooperative tools surface a clean error instead of
 // printing a prompt and hitting EOF mid-read (or invoking a pager that
 // misbehaves without a TTY).
@@ -682,16 +702,9 @@ async fn execute_with_timeout(
 		cmd
 	};
 
-	// Force non-interactive: put the child in its own process group so it
-	// cannot access the controlling terminal (/dev/tty opens fail with ENXIO
-	// when combined with stdin=null set below). We use process_group(0)
-	// instead of setsid() — setsid() creates a new *session* which makes the
-	// child unreachable by the parent's process-group signals (e.g. when the
-	// MCP client kills our process group on Ctrl+C). process_group(0) gives
-	// us the /dev/tty isolation we need while keeping the child killable.
 	#[cfg(unix)]
 	{
-		cmd.process_group(0);
+		detach_from_terminal(&mut cmd);
 	}
 
 	// Inject environment variables that force non-interactive behavior.
