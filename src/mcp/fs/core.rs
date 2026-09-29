@@ -21,7 +21,9 @@ use super::remote::{
 };
 use crate::mcp::fs::{delta, directory, file_ops, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
-use crate::utils::truncation::format_extracted_content_smart;
+use crate::utils::truncation::{
+	format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES,
+};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -462,6 +464,18 @@ async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<Stri
 // Execute view command - unified read-only tool for a single file, directory, or content search.
 // To view multiple files, the caller makes multiple `view` calls (they run in parallel).
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
+	let result = render_view(call).await?;
+	if result.len() > MAX_RESULT_BYTES {
+		bail!(
+			"Result is {}, too large to return in one tool result (limit {}). Narrow `path`, `pattern` or `content`, or read the file in `start`/`end` ranges.",
+			format_megabytes(result.len()),
+			format_megabytes(MAX_RESULT_BYTES)
+		);
+	}
+	Ok(result)
+}
+
+async fn render_view(call: &McpToolCall) -> Result<String> {
 	// Single path (the common case). An array is rejected with a pointer to parallel calls.
 	let path = match call.parameters.get("path") {
 		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),

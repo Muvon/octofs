@@ -25,6 +25,18 @@ pub fn estimate_tokens(bytes: usize) -> usize {
 	(bytes as f64 / CHARS_PER_TOKEN).ceil() as usize
 }
 
+/// Largest tool result octofs sends. Claude Code's stdio transport closes the whole
+/// connection on a bigger message, taking every tool with it rather than failing one
+/// call (measured on 2.1.284: 15.7 MB delivered, 16.8 MB closed it). Half that leaves
+/// room for JSON escaping, which inflates quote-heavy text such as JSONL. Below this,
+/// results are never trimmed: clients already persist or cut oversized output.
+pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
+
+/// A byte size as the model reads it in an oversized-result error, e.g. "85.2 MB".
+pub fn format_megabytes(bytes: usize) -> String {
+	format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
 /// Render one line as "N:hh|content" — the single line-id format all tools share.
 fn render_line(line_1idx: usize, content: &str) -> String {
 	format!("{}|{}", line_id(line_1idx, content), content)

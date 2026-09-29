@@ -6010,6 +6010,42 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_view_refuses_a_result_too_large_to_deliver() {
+		use std::fs as stdfs;
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		let line = format!("needle {}\n", "x".repeat(1024 * 1024 - 8));
+		let write_files = |range: std::ops::Range<usize>| {
+			for i in range {
+				stdfs::write(dir.path().join(format!("f{i}.txt")), &line).unwrap();
+			}
+		};
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": dir.path().to_str().unwrap(), "content": "needle" }),
+		};
+
+		// Under the limit the result comes back whole, long lines included.
+		write_files(0..7);
+		let out = execute_view(&call).await.unwrap();
+		assert_eq!(out.matches("needle").count(), 7);
+		assert!(out.len() > 7 * 1024 * 1024);
+
+		// Past it the call fails with the size, instead of a message the client's
+		// transport would drop along with the whole connection.
+		write_files(7..9);
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.starts_with("Result is 9.0 MB, too large"), "err: {err}");
+		assert!(
+			err.contains("Narrow `path`, `pattern` or `content`"),
+			"err: {err}"
+		);
+	}
+
+	#[tokio::test]
 	async fn test_view_content_search_accepts_pipe_separated_literal_roots() {
 		use std::fs as stdfs;
 		use tempfile::TempDir;

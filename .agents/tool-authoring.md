@@ -27,9 +27,10 @@ Read this first. Reference example: the `view` tool — `#[tool]` block in `src/
   explicit registries (file locks, history, view cache, SFTP pool).
 - **Paths** — always `resolve_path_source` / `core::resolve_path`, never `PathBuf::from(raw_param)`; remote
   URLs and workdir-relative resolution must keep working.
-- **Response size** — route large outputs through `utils/truncation.rs` (`truncate_mcp_response_global`) or an
-  explicit tail cap (see `MAX_TAIL_BYTES` in `background.rs`). The product's core promise is model-context
-  economy; an unbounded response is a bug.
+- **Response size** — a result must never exceed `MAX_RESULT_BYTES` (`utils/truncation.rs`): past it the
+  client's transport drops the whole connection, not just the call. `view` and `shell` fail with the size and
+  how to narrow; job output is tail-capped (`MAX_TAIL_BYTES` in `background.rs`). An unbounded response is a
+  bug.
 - **Hints vs errors** — non-fatal guidance goes through `request_ctx::push_hint` (drained into the response);
   hard misuse and invalid input `bail!` so the call fails.
 - **Writes** — acquire the file lock (`text_editing`), snapshot via `save_file_history` (undo), keep the delta

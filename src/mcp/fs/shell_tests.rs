@@ -147,6 +147,30 @@ async fn test_rejects_remote_workdir() {
 	assert!(err.to_string().contains("local machine"), "err: {err}");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn output_too_large_to_deliver_fails_with_the_exit_code() {
+	// ~11 MB of distinct lines, so terminal-noise collapsing can't shrink it.
+	let temp = tempfile::tempdir().expect("temp workdir");
+	let mut call = crate::mcp::McpToolCall::test_call(
+		"shell",
+		serde_json::json!({ "command": "seq 1 1500000" }),
+	);
+	call.workdir = temp.path().to_path_buf();
+	let err = execute_with_timeout(&call, Duration::from_secs(30), None)
+		.await
+		.expect_err("oversized output must not be returned");
+	let err = err.to_string();
+	assert!(
+		err.starts_with("Command exited with code 0, but its output is"),
+		"err: {err}"
+	);
+	assert!(
+		err.contains("too large to return in one tool result (limit 8.0 MB)"),
+		"err: {err}"
+	);
+}
+
 #[test]
 fn test_clean_terminal_noise() {
 	// ANSI colors and cursor codes stripped

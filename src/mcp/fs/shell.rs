@@ -15,6 +15,7 @@
 // Shell execution functionality for the Filesystem MCP provider
 
 use super::super::McpToolCall;
+use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -799,6 +800,15 @@ async fn execute_with_timeout(
 			// Add detailed execution results including status code
 			let status_code = status.code().unwrap_or(-1);
 			let success = status.success();
+
+			// The command already ran, so its exit code is the one fact worth keeping.
+			if final_output.len() > MAX_RESULT_BYTES {
+				bail!(
+					"Command exited with code {status_code}, but its output is {}, too large to return in one tool result (limit {}). Redirect it to a file (`cmd > out.log`) and `view` the parts you need, or filter it in the pipeline (`cmd 2>&1 | tail -n 200`).",
+					format_megabytes(final_output.len()),
+					format_megabytes(MAX_RESULT_BYTES)
+				);
+			}
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones
 			if success {
