@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.1] - 2026-09-30
+
+### 📋 Release Summary
+
+Shell children are now isolated from controlling terminals. Filesystem tools reject oversized results and no longer insert separators between search result blocks.
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: isolate shell children from controlling terminals `634fb7b2`
+- **fs**: reject oversized filesystem tool results `3e9092cf`
+- **fs**: remove separators between search result blocks `0e9eb59c`
+
 ## [0.16.0] - 2026-09-27
 
 ### 📋 Release Summary
