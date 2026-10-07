@@ -121,8 +121,8 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 		}) {
 		return Err(anyhow!(
 			"`{}` is already running as background job {}. Wait for its completion \
-			 notification instead of starting a duplicate; different commands may run \
-			 concurrently.",
+			 notification instead of starting it again or a variant of it; unrelated commands \
+			 may run concurrently.",
 			running.command,
 			resource_uri(&running.id)
 		));

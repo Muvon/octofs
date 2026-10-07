@@ -119,7 +119,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["sleep"],
-		"Bare `sleep` is blocked — it wastes the call. Poll a condition instead: until <check>; do sleep 2; done. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
+		"Bare `sleep` is blocked — it wastes the call. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
 	),
 	(
 		&["watch", "top", "htop"],
@@ -774,9 +774,9 @@ async fn execute_with_timeout(
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
 					 (PID {}). Output keeps streaming to the linked resource; you will be \
-					 notified on exit with the exit code and output tail. Do not poll, wait \
-					 or run filler commands for it — take the next independent step or end \
-					 your turn; the notification reaches you either way.{} Stop early: \
+					 notified on exit with the exit code and output tail. Do not poll, wait, re-run \
+					 it or start a variant of it — do only work that doesn't need its result; \
+					 otherwise end your turn and you are resumed with the result.{} Stop early: \
 					 kill -- -{}",
 					job_id, job_pid, stash_note, job_pid
 				),
