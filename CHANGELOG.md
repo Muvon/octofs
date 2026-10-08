@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.2] - 2026-10-08
+
+### 📋 Release Summary
+
+Clarified guidance for handling asynchronous completion and waiting for background jobs.
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: clarify async completion handling `1b41f90f`
+- **mcp**: clarify background job waiting behavior `c79abfb8`
+- **mcp**: clarify background job handling guidance `d6a00999`
+
 ## [0.16.1] - 2026-09-30
 
 ### 📋 Release Summary
