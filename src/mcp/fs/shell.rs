@@ -776,8 +776,8 @@ async fn execute_with_timeout(
 					 (PID {}). Output keeps streaming to the linked resource; you will be \
 					 notified on exit with the exit code and output tail. Do not poll, sleep, re-run \
 					 it or start a variant of it — do only work that doesn't need its result; to wait \
-					 for it, reply with a brief status and no tool call and the result arrives as \
-					 your next message.{} Stop early: \
+					 for it, reply with a brief status and no tool call; resume dependent work when its \
+					 completion notification arrives.{} Stop early: \
 					 kill -- -{}",
 					job_id, job_pid, stash_note, job_pid
 				),
