@@ -451,9 +451,9 @@ impl OctofsServer {
 			the output. A command still running after ~10s moves to the background and returns a \
 			job resource; you are notified with the exit code and output tail when it exits. Do \
 			NOT poll, sleep, re-run or `ps` it, or start a variant of it (other flags or filters) — \
-			the result arrives on its own. Do only work that doesn't need it; otherwise end your \
-			turn and you are resumed with the result. Unrelated commands run concurrently; an \
-			identical command in the same directory is \
+			the result arrives on its own. Do only work that doesn't need it; to wait for it, reply \
+			with a brief status and no tool call and the result arrives as your next message. \
+			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]
 	async fn shell(
