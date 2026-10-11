@@ -14,6 +14,7 @@
 
 //! MCP server handlers, session state, and tool parameter schemas.
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use rmcp::{
@@ -37,7 +38,7 @@ use super::request_ctx;
 use super::McpToolCall;
 
 /// Per-session working directory state.
-/// Each server instance has its own workdir, isolated from other sessions.
+/// Each client session has its own workdir, isolated from other sessions.
 #[derive(Debug)]
 pub struct SessionWorkdir {
 	/// The session root directory (set at session creation, never changes).
@@ -75,6 +76,57 @@ impl SessionWorkdir {
 		if let Ok(mut guard) = self.current.write() {
 			*guard = None;
 		}
+	}
+}
+
+/// Most sessions one connection keeps state for. Octomind multiplexes every
+/// session of a long-lived daemon over one connection and MCP has no session-end
+/// signal, so the least recently used session is dropped beyond this.
+const MAX_TRACKED_SESSIONS: usize = 64;
+
+/// Workdir and delta-view cache of one client session.
+#[derive(Debug)]
+struct SessionState {
+	workdir: SessionWorkdir,
+	view_cache: Arc<fs::delta::ViewCache>,
+	last_used: std::sync::atomic::AtomicU64,
+}
+
+/// Sessions served over this connection, keyed by `experimental.session.session_id`;
+/// `None` is a client that sends no session context.
+#[derive(Debug, Default)]
+struct Sessions {
+	states: std::sync::Mutex<HashMap<Option<String>, Arc<SessionState>>>,
+	clock: std::sync::atomic::AtomicU64,
+}
+
+impl Sessions {
+	/// State for `id` anchored at `root`. A session whose anchor moved starts over
+	/// at the new root.
+	fn get(&self, id: Option<String>, root: PathBuf) -> Arc<SessionState> {
+		use std::sync::atomic::Ordering;
+		let now = self.clock.fetch_add(1, Ordering::Relaxed);
+		let mut states = self.states.lock().expect("sessions lock poisoned");
+		if let Some(state) = states.get(&id).filter(|state| state.workdir.root == root) {
+			state.last_used.store(now, Ordering::Relaxed);
+			return state.clone();
+		}
+		if !states.contains_key(&id) && states.len() >= MAX_TRACKED_SESSIONS {
+			let oldest = states
+				.iter()
+				.min_by_key(|(_, state)| state.last_used.load(Ordering::Relaxed))
+				.map(|(key, _)| key.clone());
+			if let Some(oldest) = oldest {
+				states.remove(&oldest);
+			}
+		}
+		let state = Arc::new(SessionState {
+			workdir: SessionWorkdir::new(root),
+			view_cache: Arc::new(fs::delta::ViewCache::default()),
+			last_used: std::sync::atomic::AtomicU64::new(now),
+		});
+		states.insert(id, state.clone());
+		state
 	}
 }
 
@@ -206,18 +258,13 @@ const SHELL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_
 /// MCP server with per-session working directory isolation.
 #[derive(Debug, Clone)]
 pub struct OctofsServer {
-	/// Per-session working directory state.
-	workdir: Arc<SessionWorkdir>,
-	/// Whether the session context (workdir) has been applied from client
-	/// capabilities. Applied once on the first tool call so a later `workdir`
-	/// tool change is not overwritten by subsequent requests.
-	session_applied: Arc<std::sync::atomic::AtomicBool>,
+	/// Root for sessions that send no usable `experimental.session.workdir`.
+	root: PathBuf,
+	/// Workdir and view cache per client session on this connection.
+	sessions: Arc<Sessions>,
 	/// Listen streams opened by this client, for contract-clean delivery of
 	/// background-job completion notifications.
 	subscriptions: Arc<SubscriptionRegistry>,
-	/// Last full content served per file, so repeat whole-file views can
-	/// return only what changed.
-	view_cache: Arc<fs::delta::ViewCache>,
 }
 
 impl OctofsServer {
@@ -231,47 +278,41 @@ impl OctofsServer {
 	/// per-cwd background-job guard from sibling tests.
 	pub fn with_root(root: PathBuf) -> Self {
 		Self {
-			workdir: Arc::new(SessionWorkdir::new(root)),
-			session_applied: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+			root,
+			sessions: Arc::new(Sessions::default()),
 			subscriptions: Arc::new(SubscriptionRegistry::default()),
-			view_cache: Arc::new(fs::delta::ViewCache::default()),
 		}
 	}
 
-	/// Apply the octomind session context from client capabilities
-	/// (`experimental.session.workdir`) on the first tool call.
+	/// The calling session's state, from the octomind session context in the
+	/// client capabilities (`experimental.session`: `session_id`, `workdir`).
 	///
-	/// Works for both protocol eras: modern clients (2026-07-28) carry
-	/// capabilities in every request's `_meta`, legacy clients set them during
-	/// the `initialize` handshake — `RequestContext::client_capabilities()`
-	/// resolves both.
-	fn ensure_session_workdir(&self, context: &RequestContext<RoleServer>) {
-		if self
-			.session_applied
-			.swap(true, std::sync::atomic::Ordering::SeqCst)
-		{
-			return;
-		}
-		let Some(capabilities) = context.client_capabilities() else {
-			return;
+	/// Resolved on every request: modern clients (2026-07-28) carry capabilities
+	/// in each request's `_meta`, and one connection can serve many sessions;
+	/// legacy clients set them once in the `initialize` handshake —
+	/// `RequestContext::client_capabilities()` resolves both.
+	fn session(&self, context: &RequestContext<RoleServer>) -> Arc<SessionState> {
+		let session = context
+			.client_capabilities()
+			.and_then(|capabilities| capabilities.experimental)
+			.and_then(|mut experimental| experimental.remove("session"));
+		let Some(session) = session else {
+			return self.sessions.get(None, self.root.clone());
 		};
-		let Some(experimental) = &capabilities.experimental else {
-			return;
-		};
-		if let Some(session_obj) = experimental.get("session") {
-			if let Some(workdir_str) = session_obj.get("workdir").and_then(|v| v.as_str()) {
-				let path = std::path::PathBuf::from(workdir_str);
-				if path.is_absolute() && path.is_dir() {
-					self.workdir.set_current(path.clone());
-					debug!("Session workdir set from capabilities: {}", path.display());
-				} else {
-					debug!(
-						"Session workdir '{}' is not an absolute directory path, ignoring",
-						workdir_str
-					);
-				}
+		let id = session
+			.get("session_id")
+			.and_then(|v| v.as_str())
+			.map(str::to_string);
+		let root = match session.get("workdir").and_then(|v| v.as_str()) {
+			Some(workdir) if Path::new(workdir).is_absolute() && Path::new(workdir).is_dir() => {
+				PathBuf::from(workdir)
 			}
-		}
+			workdir => {
+				debug!("Session workdir {workdir:?} is not an absolute directory path, using the server root");
+				self.root.clone()
+			}
+		};
+		self.sessions.get(id, root)
 	}
 }
 
@@ -281,7 +322,7 @@ impl Default for OctofsServer {
 	}
 }
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tool_router]
 impl OctofsServer {
@@ -307,15 +348,15 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ViewParams>,
 	) -> Result<String, String> {
-		self.ensure_session_workdir(&context);
-		let workdir = self.workdir.get_current();
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.view_cache.clone(), async move {
+		request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
 		})
@@ -342,15 +383,15 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<TextEditorParams>,
 	) -> Result<String, String> {
-		self.ensure_session_workdir(&context);
-		let workdir = self.workdir.get_current();
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "text_editor".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.view_cache.clone(), async move {
+		request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let result = fs::execute_text_editor(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -381,15 +422,15 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<BatchEditParams>,
 	) -> Result<String, String> {
-		self.ensure_session_workdir(&context);
-		let workdir = self.workdir.get_current();
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "batch_edit".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.view_cache.clone(), async move {
+		request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let result = fs::execute_batch_edit(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -415,15 +456,15 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ExtractLinesParams>,
 	) -> Result<String, String> {
-		self.ensure_session_workdir(&context);
-		let workdir = self.workdir.get_current();
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "extract_lines".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(self.view_cache.clone(), async move {
+		request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let result = fs::execute_extract_lines(&call)
 				.await
 				.map_err(|e| e.to_string())?;
@@ -462,8 +503,8 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ShellParams>,
 	) -> Result<CallToolResult, String> {
-		self.ensure_session_workdir(&context);
-		let workdir = self.workdir.get_current();
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "shell".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -503,7 +544,7 @@ impl OctofsServer {
 		// describe the job ("make reldebug … still running") without re-deriving
 		// it — e.g. when preserving pending jobs across a context compaction.
 		let job_label: String = params.command.trim().chars().take(80).collect();
-		let exec = request_ctx::with_request_context(self.view_cache.clone(), async move {
+		let exec = request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
 				.map_err(|e| e.to_string())?;
@@ -558,8 +599,8 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<WorkdirParams>,
 	) -> Result<String, String> {
-		self.ensure_session_workdir(&context);
-		let workdir = self.workdir.get_current();
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
 			tool_name: "workdir".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -573,10 +614,10 @@ impl OctofsServer {
 		// Update session workdir state based on the structured result
 		match &result {
 			fs::WorkdirResult::Set { current, .. } => {
-				self.workdir.set_current(current.clone());
+				session.workdir.set_current(current.clone());
 			}
 			fs::WorkdirResult::Reset => {
-				self.workdir.reset();
+				session.workdir.reset();
 			}
 			fs::WorkdirResult::Get { .. } => {}
 		}
@@ -870,7 +911,7 @@ impl ServerHandler for OctofsServer {
 	// The default `initialize` (legacy clients) and `discover` (2026-07-28
 	// clients) implementations handle version negotiation; the session
 	// workdir from client capabilities is applied per-request in
-	// `ensure_session_workdir`, which covers both eras.
+	// `OctofsServer::session`, which covers both eras.
 }
 
 #[cfg(test)]

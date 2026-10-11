@@ -35,7 +35,7 @@ use rmcp::{ClientHandler, RoleClient, ServiceExt};
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use super::OctofsServer;
+use super::{OctofsServer, Sessions, MAX_TRACKED_SESSIONS};
 
 /// Minimal client that records unsolicited `resources/updated` pushes and Claude
 /// Code channel messages.
@@ -555,4 +555,77 @@ async fn served_tool_schemas_carry_no_generator_noise() {
 	] {
 		assert!(properties.contains_key(name), "view keeps `{name}`");
 	}
+}
+
+fn session_context(
+	peer: &rmcp::Peer<rmcp::RoleServer>,
+	id: &str,
+	workdir: &std::path::Path,
+) -> rmcp::service::RequestContext<rmcp::RoleServer> {
+	let mut context =
+		rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
+	let capabilities: ClientCapabilities = serde_json::from_value(json!({
+		"experimental": {"session": {"session_id": id, "workdir": workdir}}
+	}))
+	.expect("session capabilities");
+	context.meta.set_client_capabilities(capabilities);
+	context
+}
+
+/// Octomind shares one connection between its sessions: each keeps its own
+/// anchor, `workdir` override and view cache.
+#[tokio::test]
+async fn sessions_sharing_a_connection_keep_their_own_workdir() {
+	let root = tempfile::tempdir().expect("server root");
+	let first = tempfile::tempdir().expect("first workdir");
+	let second = tempfile::tempdir().expect("second workdir");
+	let nested = first.path().join("nested");
+	std::fs::create_dir(&nested).expect("nested dir");
+	let server = OctofsServer::with_root(root.path().to_path_buf());
+	let (transport, _client) = tokio::io::duplex(4096);
+	let service = rmcp::service::serve_directly(server.clone(), transport, None);
+	let peer = service.peer();
+
+	let a = server.session(&session_context(peer, "a", first.path()));
+	let b = server.session(&session_context(peer, "b", second.path()));
+	assert_eq!(a.workdir.get_current(), first.path());
+	assert_eq!(b.workdir.get_current(), second.path());
+	assert!(!Arc::ptr_eq(&a.view_cache, &b.view_cache));
+
+	a.workdir.set_current(nested.clone());
+	let again = server.session(&session_context(peer, "a", first.path()));
+	assert_eq!(again.workdir.get_current(), nested);
+	let other = server.session(&session_context(peer, "b", second.path()));
+	assert_eq!(other.workdir.get_current(), second.path());
+
+	let moved = server.session(&session_context(peer, "a", second.path()));
+	assert_eq!(
+		moved.workdir.get_current(),
+		second.path(),
+		"a moved anchor starts over"
+	);
+
+	let anonymous = server.session(&rmcp::service::RequestContext::new(
+		rmcp::model::RequestId::Number(2),
+		peer.clone(),
+	));
+	assert_eq!(anonymous.workdir.get_current(), root.path());
+}
+
+#[test]
+fn least_recently_used_session_is_dropped_at_capacity() {
+	let sessions = Sessions::default();
+	let root = std::path::PathBuf::from("/");
+	let first = sessions.get(Some("0".to_string()), root.clone());
+	for index in 1..MAX_TRACKED_SESSIONS {
+		sessions.get(Some(index.to_string()), root.clone());
+	}
+	let touched = sessions.get(Some("0".to_string()), root.clone());
+	assert!(Arc::ptr_eq(&first, &touched));
+
+	sessions.get(Some("new".to_string()), root);
+	let states = sessions.states.lock().expect("sessions lock");
+	assert_eq!(states.len(), MAX_TRACKED_SESSIONS);
+	assert!(states.contains_key(&Some("0".to_string())));
+	assert!(!states.contains_key(&Some("1".to_string())));
 }

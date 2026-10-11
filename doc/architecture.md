@@ -54,16 +54,21 @@ never sees MCP types.
 
 ## State
 
-- **SessionWorkdir** — per `OctofsServer` instance (`RwLock<PathBuf>`); HTTP
-  mode creates a fresh server per session. `SESSION_ROOT` in `mcp/mod.rs` is
-  only the startup default.
+- **Sessions** (`server.rs`) — one `SessionWorkdir` (`RwLock<PathBuf>`) and
+  `ViewCache` per client session, resolved on every request from
+  `experimental.session` in the client capabilities: `session_id` keys the
+  state, `workdir` is its root (the `workdir` tool's reset target). One
+  connection can carry many sessions (octomind multiplexes its sessions over a
+  shared client); requests without session context share the server root.
+  Least recently used sessions beyond `MAX_TRACKED_SESSIONS` are dropped.
+  `SESSION_ROOT` in `mcp/mod.rs` is only the startup default.
 - **FILE_LOCKS** — per-file `tokio::sync::Mutex` inside a
   `std::sync::Mutex<HashMap>`; keys are canonicalized local paths or
   `PathSource::lock_key()` (host+path) for remote. The outer guard is never
   held across `.await`.
 - **FILE_HISTORY** — content snapshot before every write; powers `undo_edit`
   (max 10 levels per file, in-memory only).
-- **ViewCache** (`delta.rs`) — per session and file, the last content the
+- **ViewCache** (`delta.rs`) — per client session and file, the last content the
   model saw in full. Whole-file views return only hunks changed since; the
   server's own writes keep the cache in step via `note_write` (only if the
   cached "before" matched) / `note_create`. Ranged views and searches bypass it.
@@ -99,8 +104,8 @@ HTTP ctrl-c.
 - **stdio** (default): one `OctofsServer`; session root from `--path` or cwd;
   clean exit on stdin EOF or SIGTERM.
 - **HTTP** (`--bind`): axum + rmcp streamable HTTP; fresh
-  `OctofsServer::with_root()` per session; initial workdir settable via MCP
-  `initialize` params.
+  `OctofsServer::with_root()` per HTTP session; session workdirs come from the
+  client capabilities as in stdio mode.
 
 ## Error handling shape
 
