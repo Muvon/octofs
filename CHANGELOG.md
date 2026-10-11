@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.3] - 2026-10-11
+
+### 📋 Release Summary
+
+State is now isolated for each client session.
+
+### ✨ New Features & Enhancements
+
+- **mcp**: isolate state per client session `2c544416`
+
 ## [0.16.2] - 2026-10-08
 
 ### 📋 Release Summary
