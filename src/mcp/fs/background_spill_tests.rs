@@ -15,8 +15,7 @@
 //! Spill-file persistence and failure boundaries.
 
 use super::*;
-use crate::mcp::fs::digest::mod_tests::{Fixture, FIXTURES};
-use std::time::Duration;
+use crate::mcp::fs::digest::mod_tests::{Fixture, COMPLETION_TIMEOUT, FIXTURES};
 
 #[tokio::test]
 async fn foreground_spill_survives_capture_discard() {
@@ -100,7 +99,7 @@ async fn background_digest_is_cached_before_completion_notification() {
 			sender.send(resource_text(id).unwrap()).unwrap();
 		})
 		.await;
-		let notification = tokio::time::timeout(Duration::from_secs(30), receiver)
+		let notification = tokio::time::timeout(COMPLETION_TIMEOUT, receiver)
 			.await
 			.unwrap()
 			.unwrap();
@@ -145,7 +144,7 @@ async fn unrecognized_background_output_keeps_the_raw_tail() {
 			.unwrap();
 	})
 	.await;
-	let notification = tokio::time::timeout(Duration::from_secs(30), receiver)
+	let notification = tokio::time::timeout(COMPLETION_TIMEOUT, receiver)
 		.await
 		.unwrap()
 		.unwrap();

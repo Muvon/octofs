@@ -233,7 +233,7 @@ async fn cache_digest(job: &Job) -> Result<()> {
 		return Ok(());
 	}
 	let (output, path) = process_output(&stdout, &stderr, job).await;
-	if path.is_some() {
+	if path.is_some() && output.len() <= MAX_RESULT_BYTES {
 		job.digest
 			.set(output)
 			.map_err(|_| anyhow!("Output digest already set for job {}", job.id))?;
@@ -359,7 +359,7 @@ pub fn read(id: &str) -> Option<JobView> {
 	})
 }
 
-/// A job's resource text: status and output tail. One rendering for every way a
+/// A job's resource text: status and retained output. One rendering for every way a
 /// job is read — `resources/read`, `view` on its link, a completion push.
 pub fn resource_text(id: &str) -> Option<String> {
 	let view = read(id)?;

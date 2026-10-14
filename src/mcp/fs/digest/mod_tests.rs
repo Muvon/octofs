@@ -25,6 +25,7 @@ pub(crate) struct Fixture {
 }
 
 pub(crate) const SPILL_PATH: &str = "/tmp/octofs-digest/full-output.log";
+pub(crate) const COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub(crate) const FIXTURES: &[Fixture] = &[
 	Fixture {
@@ -109,19 +110,21 @@ impl Fixture {
 			// Native byte writes avoid PowerShell's object formatting and console encoding.
 			let quote = |path: &Path| path.to_str().unwrap().replace('\'', "''");
 			format!(
-				"powershell -NoProfile -NonInteractive -Command \"$stdout = [IO.File]::ReadAllBytes('{}'); [Console]::OpenStandardOutput().Write($stdout, 0, $stdout.Length); $stderr = [IO.File]::ReadAllBytes('{}'); [Console]::OpenStandardError().Write($stderr, 0, $stderr.Length); exit {}\"",
+				"powershell -NoProfile -NonInteractive -Command \"$stdout = [IO.File]::OpenRead('{}'); $stdout.CopyTo([Console]::OpenStandardOutput()); $stdout.Dispose(); $stderr = [IO.File]::OpenRead('{}'); $stderr.CopyTo([Console]::OpenStandardError()); $stderr.Dispose(); exit {}\"",
 				quote(&stdout), quote(&stderr), self.exit_code
 			)
 		} else {
-			let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+			let quote =
+				|path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
 			format!(
 				"awk '1' {}; awk '1' {} >&2; exit {}",
-				quote(&stdout), quote(&stderr), self.exit_code
+				quote(&stdout),
+				quote(&stderr),
+				self.exit_code
 			)
 		}
 	}
 }
-
 
 fn drop_everything(_: &[&str], _: &[&str]) -> Option<Selection> {
 	Some(Selection {

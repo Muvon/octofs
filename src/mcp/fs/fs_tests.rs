@@ -32,11 +32,11 @@ mod tests {
 
 	#[tokio::test]
 	async fn shell_digest_spills_full_real_output_on_success_and_failure() {
+		use crate::mcp::fs::digest::mod_tests::{COMPLETION_TIMEOUT, FIXTURES};
 		use crate::mcp::fs::{background, digest, execute_shell_command};
-		use std::time::Duration;
 
 		let root = tempfile::tempdir().unwrap();
-		for fixture in &digest::mod_tests::FIXTURES[..2] {
+		for fixture in &FIXTURES[..2] {
 			let command = fixture.replay(root.path()).await;
 			let mut call = McpToolCall::test_call("shell", json!({ "command": command }));
 			call.workdir = root.path().to_path_buf();
@@ -54,7 +54,7 @@ mod tests {
 				Ok(outcome) => {
 					if let Some(uri) = outcome.resource_uri {
 						// PowerShell startup can exceed the test foreground window.
-						let completed = tokio::time::timeout(Duration::from_secs(30), receiver)
+						let completed = tokio::time::timeout(COMPLETION_TIMEOUT, receiver)
 							.await
 							.unwrap()
 							.unwrap();
@@ -102,6 +102,7 @@ mod tests {
 			fs::remove_file(path).await.unwrap();
 		}
 	}
+
 	// Composite line id "N:hh" for line `n` (1-indexed) of `content` — what a view
 	// of that content would render as the id prefix.
 	fn lid(content: &str, n: usize) -> String {
