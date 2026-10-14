@@ -224,7 +224,7 @@ const CLAUDE_CHANNEL_CAPABILITY: &str = "claude/channel";
 const CLAUDE_CHANNEL_NOTIFICATION: &str = "notifications/claude/channel";
 
 /// Push a finished job to Claude Code as a channel message carrying what
-/// `resources/read` returns for it: the exit code and the output tail.
+/// `resources/read` returns for it: the exit code and a digest or output tail.
 async fn notify_claude_channel(peer: &Peer<RoleServer>, uri: &str) {
 	let Some(id) = fs::background::job_id_from_uri(uri) else {
 		return;
@@ -489,9 +489,9 @@ impl OctofsServer {
 			echo/cat writes into the workdir are rejected). Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
-			the output. Large recognized foreground test/build output is digested with its full output path appended. \
+			the output. Large recognized test/build output is digested with its full output path appended. \
 			A command still running after ~10s moves to the background and returns a \
-			job resource; you are notified with the exit code and output tail when it exits. Do \
+			job resource; you are notified with the exit code and output when it exits. Do \
 			NOT poll, sleep, re-run or `ps` it, or start a variant of it (other flags or filters) — \
 			the result arrives on its own. Do only work that doesn't need it; to wait for it, reply \
 			with a brief status and no tool call; resume dependent work when its completion \

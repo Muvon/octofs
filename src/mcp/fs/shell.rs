@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Shell execution functionality for the filesystem MCP provider.
+// Shell execution functionality for the Filesystem MCP provider
 
 use super::super::McpToolCall;
 use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
@@ -774,7 +774,7 @@ async fn execute_with_timeout(
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
 					 (PID {}). Output keeps streaming to the linked resource; you will be \
-					 notified on exit with the exit code and output tail. Do not poll, sleep, re-run \
+					 notified on exit with the exit code and output. Do not poll, sleep, re-run \
 					 it or start a variant of it — do only work that doesn't need its result; to wait \
 					 for it, reply with a brief status and no tool call; resume dependent work when its \
 					 completion notification arrives.{} Stop early: \
@@ -798,26 +798,12 @@ async fn execute_with_timeout(
 		Ok(status) => {
 			let stdout = stdout.map_err(|e| anyhow!("Failed to read command stdout: {}", e))?;
 			let stderr = stderr.map_err(|e| anyhow!("Failed to read command stderr: {}", e))?;
-			let stdout = clean_terminal_noise(&String::from_utf8_lossy(&stdout));
-			let stderr = clean_terminal_noise(&String::from_utf8_lossy(&stderr));
 			let status_code = status.code().unwrap_or(-1);
 
 			// Label stderr by stream, not verdict: warnings and progress land there
 			// on success too, and the exit code below is the only failure signal.
-			let full_output = super::digest::join_streams(&stdout, &stderr);
-			let spill = super::background::output_path(&job);
 			let (final_output, stored_output) =
-				match super::digest::digest(&stdout, &stderr, &spill) {
-					Some(output) => {
-						super::background::spill(&job, &full_output)
-							.await
-							.map_err(|error| {
-								anyhow!("Command exited with code {status_code}: {error:#}")
-							})?;
-						(output, Some(spill))
-					}
-					None => (full_output, None),
-				};
+				super::background::process_output(&stdout, &stderr, &job).await;
 
 			// Add detailed execution results including status code
 			let success = status.success();

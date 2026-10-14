@@ -1,0 +1,29 @@
+warning: unused variable: `unused_variable`
+  --> src/lib.rs:33:6
+   |
+33 |     let unused_variable = 1;
+   |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused_variable`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `unused_function` is never used
+  --> src/lib.rs:32:4
+   |
+32 | fn unused_function() {
+   |    ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: calls to `push` immediately after creation
+  --> src/lib.rs:38:2
+   |
+38 | /     let mut values = Vec::new();
+39 | |     values.push(1);
+40 | |     values.push(2);
+   | |___________________^ help: consider using the `vec![]` macro: `let values = vec![..];`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#vec_init_then_push
+   = note: `#[warn(clippy::vec_init_then_push)]` on by default
+
+warning: `digest_fixture` (lib) generated 3 warnings (run `cargo clippy --fix --lib -p digest_fixture -- ` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s

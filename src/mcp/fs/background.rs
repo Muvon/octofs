@@ -19,20 +19,22 @@
 //! returns a resource URI `octofs://jobs/<id>`. The server exposes each job as a
 //! readable resource and, when the process exits, emits
 //! `notifications/resources/updated` for that URI. A subscribed client reads the
-//! resource to get the exit code and output tail — event-driven, no polling.
+//! resource to get the exit code and a digest or output tail — event-driven, no polling.
 //! This module owns the registry and the log files; it knows nothing about the
 //! MCP client. The completion signal is delivered through an opaque callback
 //! the server layer supplies (it captures the rmcp peer there), so this file
 //! stays free of any protocol/transport types.
 
+use crate::utils::truncation::MAX_RESULT_BYTES;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::warn;
 
-/// The most output any single resource read returns. Build logs run long; the
+/// The most raw output any single resource read returns. Build logs run long; the
 /// tail is what carries the verdict (errors, the final test summary), so the
 /// head is dropped when the log is bigger than this.
 const MAX_TAIL_BYTES: usize = 30_000;
@@ -51,6 +53,7 @@ pub struct Job {
 	pub stderr_path: PathBuf,
 	pub working_dir: PathBuf,
 	pub status: Arc<Mutex<JobStatus>>,
+	digest: Arc<OnceLock<String>>,
 	pub pid: u32,
 	pub started_unix: u64,
 }
@@ -157,6 +160,7 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 			stderr_path,
 			working_dir: working_dir.to_path_buf(),
 			status: Arc::new(Mutex::new(JobStatus::Running)),
+			digest: Arc::new(OnceLock::new()),
 			pid: 0,
 			started_unix: now_unix(),
 		},
@@ -177,7 +181,7 @@ pub(super) fn output_path(job: &Job) -> PathBuf {
 		.with_file_name(format!("{}.output.log", job.id))
 }
 
-/// Cleaned foreground output survives capture-file removal until shutdown.
+/// Cleaned full output survives capture-file removal until shutdown.
 pub(super) async fn spill(job: &Job, output: &str) -> Result<()> {
 	let path = output_path(job);
 	tokio::fs::write(&path, output)
@@ -185,6 +189,55 @@ pub(super) async fn spill(job: &Job, output: &str) -> Result<()> {
 		.with_context(|| format!("Failed to persist full shell output: {}", path.display()))?;
 	// The model has only seen the digest; its first view of the new spill must be full.
 	super::delta::note_write(&super::remote::PathSource::from(path.as_path()), "", output);
+	Ok(())
+}
+
+pub(super) async fn process_output(
+	stdout: &[u8],
+	stderr: &[u8],
+	job: &Job,
+) -> (String, Option<PathBuf>) {
+	let stdout = super::shell::clean_terminal_noise(&String::from_utf8_lossy(stdout));
+	let stderr = super::shell::clean_terminal_noise(&String::from_utf8_lossy(stderr));
+	let full_output = super::digest::join_streams(&stdout, &stderr);
+	let path = output_path(job);
+	if let Some(output) = super::digest::digest(&stdout, &stderr, &path) {
+		match spill(job, &full_output).await {
+			Ok(()) => return (output, Some(path)),
+			Err(error) => warn!("Failed to spill shell output for job {}: {error:#}", job.id),
+		}
+	}
+	(full_output, None)
+}
+
+async fn cache_digest(job: &Job) -> Result<()> {
+	let stdout_size = tokio::fs::metadata(&job.stdout_path)
+		.await
+		.context("Failed to stat background stdout")?
+		.len();
+	let stderr_size = tokio::fs::metadata(&job.stderr_path)
+		.await
+		.context("Failed to stat background stderr")?
+		.len();
+	if stdout_size + stderr_size > MAX_RESULT_BYTES as u64 {
+		return Ok(());
+	}
+	let stdout = tokio::fs::read(&job.stdout_path)
+		.await
+		.context("Failed to read background stdout")?;
+	let stderr = tokio::fs::read(&job.stderr_path)
+		.await
+		.context("Failed to read background stderr")?;
+	// Descendants may still hold capture handles after the shell exits.
+	if stdout.len() + stderr.len() > MAX_RESULT_BYTES {
+		return Ok(());
+	}
+	let (output, path) = process_output(&stdout, &stderr, job).await;
+	if path.is_some() {
+		job.digest
+			.set(output)
+			.map_err(|_| anyhow!("Output digest already set for job {}", job.id))?;
+	}
 	Ok(())
 }
 
@@ -209,7 +262,7 @@ where
 	F: FnOnce(String) + Send + 'static,
 {
 	let id = job.id.clone();
-	let status = job.status.clone();
+	let completed_job = job.clone();
 	let pid = job.pid;
 	jobs()
 		.lock()
@@ -222,10 +275,13 @@ where
 			Ok(status) => status.code().unwrap_or(-1),
 			Err(_) => -1,
 		};
-		if let Ok(mut guard) = status.lock() {
+		super::shell::unregister_child(pid);
+		if let Err(error) = cache_digest(&completed_job).await {
+			warn!("Failed to digest output for background job {id}: {error:#}");
+		}
+		if let Ok(mut guard) = completed_job.status.lock() {
 			*guard = JobStatus::Exited(code);
 		}
-		super::shell::unregister_child(pid);
 		on_complete(uri);
 	});
 }
@@ -239,7 +295,7 @@ pub(crate) fn status(id: &str) -> Option<JobStatus> {
 		.map(Job::status)
 }
 
-/// A point-in-time read of a job: its status and the tail of its output.
+/// A point-in-time read of a job: its status and a digest or output tail.
 pub struct JobView {
 	pub command: String,
 	pub status: JobStatus,
@@ -265,13 +321,22 @@ fn read_tail(path: &Path) -> (Vec<u8>, bool) {
 	}
 }
 
-/// Read a job's current status and output tail. `None` if the id is unknown.
+/// Read a job's status and cached digest or raw output tail. `None` if the id is unknown.
 pub fn read(id: &str) -> Option<JobView> {
 	let job = jobs()
 		.lock()
 		.expect("jobs registry mutex poisoned")
 		.get(id)
 		.cloned()?;
+	let status = job.status();
+	if let (JobStatus::Exited(_), Some(output)) = (status, job.digest.get()) {
+		return Some(JobView {
+			command: job.command.clone(),
+			status,
+			output: output.clone(),
+			truncated: false,
+		});
+	}
 	// Read only the tails, not whole files: build/test logs can be hundreds of
 	// MB. Keeping stdout and stderr separate preserves the foreground response
 	// framing even after automatic promotion.
@@ -279,13 +344,7 @@ pub fn read(id: &str) -> Option<JobView> {
 	let (stderr, stderr_truncated) = read_tail(&job.stderr_path);
 	let stdout = String::from_utf8_lossy(&stdout);
 	let stderr = String::from_utf8_lossy(&stderr);
-	let output = if stderr.is_empty() {
-		stdout.into_owned()
-	} else if stdout.is_empty() {
-		stderr.into_owned()
-	} else {
-		format!("{stdout}\n\nstderr:\n{stderr}")
-	};
+	let output = super::digest::join_streams(&stdout, &stderr);
 	let output_truncated = output.len() > MAX_TAIL_BYTES;
 	let output = if output_truncated {
 		String::from_utf8_lossy(&output.as_bytes()[output.len() - MAX_TAIL_BYTES..]).into_owned()
@@ -294,7 +353,7 @@ pub fn read(id: &str) -> Option<JobView> {
 	};
 	Some(JobView {
 		command: job.command.clone(),
-		status: job.status(),
+		status,
 		output,
 		truncated: stdout_truncated || stderr_truncated || output_truncated,
 	})

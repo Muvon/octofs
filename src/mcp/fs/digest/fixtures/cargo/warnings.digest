@@ -1,0 +1,18 @@
+warning: unused variable: `unused_variable`
+  --> src/lib.rs:33:6
+   |
+33 |     let unused_variable = 1;
+   |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused_variable`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `unused_function` is never used
+  --> src/lib.rs:32:4
+   |
+32 | fn unused_function() {
+   |    ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `digest_fixture` (lib) generated 2 warnings (run `cargo fix --lib -p digest_fixture` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.41s

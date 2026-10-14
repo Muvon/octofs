@@ -30,55 +30,68 @@ mod tests {
 		temp_file
 	}
 
-	#[cfg(unix)]
 	#[tokio::test]
 	async fn shell_digest_spills_full_real_output_on_success_and_failure() {
-		use crate::mcp::fs::{digest, execute_shell_command};
+		use crate::mcp::fs::{background, digest, execute_shell_command};
+		use std::time::Duration;
 
-		let captures = digest::fixtures_tests::captures().await;
-		for capture in &captures.logs[..2] {
-			let quote = |path: &std::path::Path| {
-				format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
-			};
-			// Replay authentic, separately captured streams so the expected spill
-			// is byte-exact even when libtest's elapsed time varies across runs.
-			let command = format!(
-				"awk '1' {}; awk '1' {} >&2; exit {}",
-				quote(&capture.stdout_path),
-				quote(&capture.stderr_path),
-				capture.exit_code
-			);
+		let root = tempfile::tempdir().unwrap();
+		for fixture in &digest::mod_tests::FIXTURES[..2] {
+			let command = fixture.replay(root.path()).await;
 			let mut call = McpToolCall::test_call("shell", json!({ "command": command }));
-			call.workdir = captures.root.path().to_path_buf();
+			call.workdir = root.path().to_path_buf();
 			let cache = std::sync::Arc::new(crate::mcp::fs::delta::ViewCache::default());
+			let (sender, receiver) = tokio::sync::oneshot::channel();
+			let notify = Box::new(move |uri: String| {
+				sender.send(uri).unwrap();
+			});
 			let result = crate::mcp::request_ctx::with_request_context(
 				cache.clone(),
-				execute_shell_command(&call, None),
+				execute_shell_command(&call, Some(notify)),
 			)
 			.await;
-			let text = if capture.exit_code == 0 {
-				let outcome = result.expect("successful test command");
-				assert!(outcome.resource_uri.is_none());
-				outcome.text
-			} else {
-				let error = result.expect_err("failed test command").to_string();
-				assert!(error.starts_with(&format!(
-					"Command failed with exit code {}\n\n",
-					capture.exit_code
-				)));
-				error
+			let text = match result {
+				Ok(outcome) => {
+					if let Some(uri) = outcome.resource_uri {
+						// PowerShell startup can exceed the test foreground window.
+						let completed = tokio::time::timeout(Duration::from_secs(30), receiver)
+							.await
+							.unwrap()
+							.unwrap();
+						assert_eq!(completed, uri);
+						let view =
+							background::read(background::job_id_from_uri(&uri).unwrap()).unwrap();
+						assert_eq!(
+							view.status,
+							background::JobStatus::Exited(fixture.exit_code)
+						);
+						assert!(!view.truncated);
+						view.output
+					} else {
+						assert_eq!(fixture.exit_code, 0);
+						outcome.text
+					}
+				}
+				Err(error) => {
+					assert_ne!(fixture.exit_code, 0);
+					let text = error.to_string();
+					assert!(text.starts_with(&format!(
+						"Command failed with exit code {}\n\n",
+						fixture.exit_code
+					)));
+					text
+				}
 			};
 			assert!(text.contains("\n\nstderr:\n"), "stream label retained");
 			let (_, marker) = text.rsplit_once("\n[digest: ").expect("digest marker");
 			let (_, path) = marker.split_once(" — full output: ").unwrap();
 			let path = path.strip_suffix(']').unwrap();
+			let (stdout, stderr) = fixture.cleaned();
 			assert_eq!(
 				fs::read_to_string(path).await.unwrap(),
-				digest::join_streams(&capture.stdout, &capture.stderr)
+				digest::join_streams(&stdout, &stderr)
 			);
-			let expected =
-				digest::digest(&capture.stdout, &capture.stderr, std::path::Path::new(path))
-					.unwrap();
+			let expected = digest::digest(&stdout, &stderr, std::path::Path::new(path)).unwrap();
 			assert!(text.ends_with(&expected));
 			let view_call = McpToolCall::test_call("view", json!({ "path": path }));
 			let view =
@@ -89,7 +102,6 @@ mod tests {
 			fs::remove_file(path).await.unwrap();
 		}
 	}
-
 	// Composite line id "N:hh" for line `n` (1-indexed) of `content` — what a view
 	// of that content would render as the id prefix.
 	fn lid(content: &str, n: usize) -> String {

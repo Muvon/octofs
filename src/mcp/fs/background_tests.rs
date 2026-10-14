@@ -17,7 +17,7 @@ use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-async fn spawn_test_job<F>(command: &str, working_dir: &Path, on_complete: F) -> Job
+pub(super) async fn spawn_test_job<F>(command: &str, working_dir: &Path, on_complete: F) -> Job
 where
 	F: FnOnce(String) + Send + 'static,
 {

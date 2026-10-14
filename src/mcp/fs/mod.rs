@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Filesystem MCP provider modules.
+// File System MCP provider - modular structure
 
 pub mod background;
 pub mod core;

@@ -16,6 +16,113 @@
 
 use super::*;
 
+pub(crate) struct Fixture {
+	pub name: &'static str,
+	pub stdout: &'static str,
+	pub stderr: &'static str,
+	pub golden: &'static str,
+	pub exit_code: i32,
+}
+
+pub(crate) const SPILL_PATH: &str = "/tmp/octofs-digest/full-output.log";
+
+pub(crate) const FIXTURES: &[Fixture] = &[
+	Fixture {
+		name: "pass",
+		stdout: include_str!("fixtures/cargo/pass.stdout"),
+		stderr: include_str!("fixtures/cargo/pass.stderr"),
+		golden: include_str!("fixtures/cargo/pass.digest"),
+		exit_code: 0,
+	},
+	Fixture {
+		name: "fail",
+		stdout: include_str!("fixtures/cargo/fail.stdout"),
+		stderr: include_str!("fixtures/cargo/fail.stderr"),
+		golden: include_str!("fixtures/cargo/fail.digest"),
+		exit_code: 101,
+	},
+	Fixture {
+		name: "compile-error",
+		stdout: include_str!("fixtures/cargo/compile-error.stdout"),
+		stderr: include_str!("fixtures/cargo/compile-error.stderr"),
+		golden: include_str!("fixtures/cargo/compile-error.digest"),
+		exit_code: 101,
+	},
+	Fixture {
+		name: "warnings",
+		stdout: include_str!("fixtures/cargo/warnings.stdout"),
+		stderr: include_str!("fixtures/cargo/warnings.stderr"),
+		golden: include_str!("fixtures/cargo/warnings.digest"),
+		exit_code: 0,
+	},
+	Fixture {
+		name: "check",
+		stdout: include_str!("fixtures/cargo/check.stdout"),
+		stderr: include_str!("fixtures/cargo/check.stderr"),
+		golden: include_str!("fixtures/cargo/check.digest"),
+		exit_code: 0,
+	},
+	Fixture {
+		name: "clippy",
+		stdout: include_str!("fixtures/cargo/clippy.stdout"),
+		stderr: include_str!("fixtures/cargo/clippy.stderr"),
+		golden: include_str!("fixtures/cargo/clippy.digest"),
+		exit_code: 0,
+	},
+	Fixture {
+		name: "mixed",
+		stdout: include_str!("fixtures/cargo/mixed.stdout"),
+		stderr: include_str!("fixtures/cargo/mixed.stderr"),
+		golden: include_str!("fixtures/cargo/mixed.digest"),
+		exit_code: 101,
+	},
+	Fixture {
+		name: "octofs",
+		stdout: include_str!("fixtures/octofs/real-test.stdout"),
+		stderr: include_str!("fixtures/octofs/real-test.stderr"),
+		golden: include_str!("fixtures/octofs/real-test.digest"),
+		exit_code: 0,
+	},
+	Fixture {
+		name: "octofs-merged",
+		stdout: include_str!("fixtures/octofs/real-test-merged.out"),
+		stderr: "",
+		golden: include_str!("fixtures/octofs/real-test-merged.digest"),
+		exit_code: 0,
+	},
+];
+
+impl Fixture {
+	pub fn cleaned(&self) -> (String, String) {
+		(
+			crate::mcp::fs::shell::clean_terminal_noise(self.stdout),
+			crate::mcp::fs::shell::clean_terminal_noise(self.stderr),
+		)
+	}
+
+	pub async fn replay(&self, dir: &Path) -> String {
+		let stdout = dir.join(format!("{}.stdout", self.name));
+		let stderr = dir.join(format!("{}.stderr", self.name));
+		tokio::fs::write(&stdout, self.stdout).await.unwrap();
+		tokio::fs::write(&stderr, self.stderr).await.unwrap();
+		if cfg!(windows) {
+			// Native byte writes avoid PowerShell's object formatting and console encoding.
+			let quote = |path: &Path| path.to_str().unwrap().replace('\'', "''");
+			format!(
+				"powershell -NoProfile -NonInteractive -Command \"$stdout = [IO.File]::ReadAllBytes('{}'); [Console]::OpenStandardOutput().Write($stdout, 0, $stdout.Length); $stderr = [IO.File]::ReadAllBytes('{}'); [Console]::OpenStandardError().Write($stderr, 0, $stderr.Length); exit {}\"",
+				quote(&stdout), quote(&stderr), self.exit_code
+			)
+		} else {
+			let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+			format!(
+				"awk '1' {}; awk '1' {} >&2; exit {}",
+				quote(&stdout), quote(&stderr), self.exit_code
+			)
+		}
+	}
+}
+
+
 fn drop_everything(_: &[&str], _: &[&str]) -> Option<Selection> {
 	Some(Selection {
 		stdout: Vec::new(),
@@ -43,6 +150,7 @@ fn important_lines_and_whole_blocks_cannot_be_dropped() {
 	for input in [
 		"error[E0308]: mismatch\nordinary diagnostic details\n\nnoise",
 		"warning: unused item\n  --> src/lib.rs:10:1\nsource excerpt\n\nnoise",
+		"warning: context\n\nCaused by:\n  arbitrary cause details\n\nnoise",
 		"failures:\n\n---- example stdout ----\nfirst paragraph\n\nsecond paragraph\n\nfailures:\n    example\n\ntest result: FAILED",
 		"---- example stdout ----\narbitrary details\n\npanic details\ntest result: FAILED",
 		"thread 'example' panicked",

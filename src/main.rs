@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Binary startup, transports, and shutdown cleanup.
-
 use anyhow::Result;
 use clap::Parser;
 use tracing::Level;

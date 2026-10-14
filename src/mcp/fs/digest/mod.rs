@@ -123,6 +123,7 @@ fn important(line: &str) -> bool {
 		"stack backtrace",
 		"note:",
 		"help:",
+		"caused by:",
 	]
 	.iter()
 	.any(|pattern| lower.contains(pattern))
@@ -165,6 +166,21 @@ fn valid_selection(lines: &[&str], indices: &[usize]) -> bool {
 				.map_or(lines.len(), |offset| i + offset + 2);
 			required[i..end].fill(true);
 		}
+		if line == "Caused by:" {
+			let mut end = i + 1;
+			while end < lines.len() {
+				if lines[end].is_empty() {
+					end += 1;
+					break;
+				}
+				// Cargo cause bodies use two spaces; progress uses three.
+				if !lines[end].starts_with("  ") || lines[end].starts_with("   ") {
+					break;
+				}
+				end += 1;
+			}
+			required[i..end].fill(true);
+		}
 		if line.trim() == "failures:"
 			|| (line.starts_with("---- ") && line.ends_with(" stdout ----"))
 		{
@@ -183,8 +199,4 @@ fn valid_selection(lines: &[&str], indices: &[usize]) -> bool {
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
-mod mod_tests;
-
-#[cfg(test)]
-#[path = "fixtures_tests.rs"]
-pub(super) mod fixtures_tests;
+pub(super) mod mod_tests;

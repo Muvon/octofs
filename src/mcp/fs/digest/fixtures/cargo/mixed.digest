@@ -1,0 +1,23 @@
+test result: ok. 240 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 1 test
+test integration_assert_failure ... FAILED
+failures:
+
+---- integration_assert_failure stdout ----
+
+thread 'integration_assert_failure' (1903439) panicked at tests/integration.rs:20:5:
+assertion `left == right` failed: integration failure details
+  left: 2
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    integration_assert_failure
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+stderr:
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests/integration.rs (target-mixed/debug/deps/integration-b302841331408a7c)
+error: test failed, to rerun pass `--test integration`

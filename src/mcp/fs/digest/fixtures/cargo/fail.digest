@@ -1,0 +1,29 @@
+running 243 tests
+test assert_failure ... FAILED
+test panic_failure ... FAILED
+failures:
+
+---- assert_failure stdout ----
+
+thread 'assert_failure' (1896823) panicked at src/lib.rs:53:5:
+assertion `left == right` failed: assertion details must survive
+  left: 2
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- panic_failure stdout ----
+
+thread 'panic_failure' (1896824) panicked at src/lib.rs:59:5:
+panic details must survive
+
+
+failures:
+    assert_failure
+    panic_failure
+
+test result: FAILED. 240 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+stderr:
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
+     Running unittests src/lib.rs (target-fail/debug/deps/digest_fixture-76219b2bcb4bfad8)
+error: test failed, to rerun pass `--lib`

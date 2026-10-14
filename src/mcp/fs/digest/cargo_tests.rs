@@ -12,61 +12,46 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Cargo recognition and golden selections from real tool runs.
+//! Cargo recognition and verified selections from static real tool captures.
 
 use super::*;
-use crate::mcp::fs::digest::{fixtures_tests::captures, join_streams, lines, render};
+use crate::mcp::fs::digest::{
+	digest, join_streams, lines,
+	mod_tests::{FIXTURES, SPILL_PATH},
+	render,
+};
+use std::path::Path;
 
-#[tokio::test]
-async fn real_cargo_captures_match_goldens() {
-	let captures = captures().await;
-	for capture in &captures.logs {
-		let stdout = lines(&capture.stdout);
-		let stderr = lines(&capture.stderr);
-		let selection = select(&stdout, &stderr).unwrap_or_else(|| {
-			panic!(
-				"{} not recognized:\n{}\n{}",
-				capture.name, capture.stdout, capture.stderr
-			)
-		});
-		assert_eq!(
-			render(&stdout, &selection.stdout),
-			capture.expected_stdout,
-			"{}",
-			capture.name
+#[test]
+fn real_cargo_captures_match_goldens() {
+	for fixture in FIXTURES {
+		let (stdout, stderr) = fixture.cleaned();
+		let stdout_lines = lines(&stdout);
+		let stderr_lines = lines(&stderr);
+		let selection = select(&stdout_lines, &stderr_lines)
+			.unwrap_or_else(|| panic!("{} not recognized", fixture.name));
+		let body = join_streams(
+			&render(&stdout_lines, &selection.stdout),
+			&render(&stderr_lines, &selection.stderr),
 		);
+		assert_eq!(body, fixture.golden, "{}", fixture.name);
+		let digest = digest(&stdout, &stderr, Path::new(SPILL_PATH))
+			.unwrap_or_else(|| panic!("{} did not digest", fixture.name));
+		let omitted = stdout_lines.len() + stderr_lines.len()
+			- selection.stdout.len()
+			- selection.stderr.len();
 		assert_eq!(
-			render(&stderr, &selection.stderr),
-			capture.expected_stderr,
-			"{}",
-			capture.name
+			digest,
+			format!("{body}\n[digest: {omitted} lines omitted — full output: {SPILL_PATH}]")
 		);
-		let spill = captures.root.path().join("full-output.log");
-		let digest = crate::mcp::fs::digest::digest(&capture.stdout, &capture.stderr, &spill)
-			.unwrap_or_else(|| panic!("{} did not digest", capture.name));
-		let (body, marker) = digest.rsplit_once("\n[digest: ").unwrap();
-		assert_eq!(
-			body,
-			join_streams(&capture.expected_stdout, &capture.expected_stderr),
-			"{}",
-			capture.name
-		);
-		let omitted = stdout.len() + stderr.len() - selection.stdout.len() - selection.stderr.len();
-		assert_eq!(
-			marker,
-			format!(
-				"{omitted} lines omitted — full output: {}]",
-				spill.display()
-			)
-		);
-		let original = join_streams(&capture.stdout, &capture.stderr);
+		let original = join_streams(&stdout, &stderr);
 		println!(
 			"{}: {} -> {} bytes",
-			capture.name,
+			fixture.name,
 			original.len(),
 			digest.len()
 		);
-		if capture.name == "pass" {
+		if fixture.name == "pass" {
 			assert!(
 				digest.len() * 10 < original.len(),
 				"all-pass noise should drop by over 90%"
@@ -75,63 +60,75 @@ async fn real_cargo_captures_match_goldens() {
 	}
 }
 
-#[tokio::test]
-async fn truncated_and_mixed_real_captures_are_rejected() {
-	let captures = captures().await;
-	let pass = &captures.logs[0];
-	let fail = &captures.logs[1];
-	let spill = captures.root.path().join("full-output.log");
+#[test]
+fn truncated_and_mixed_real_captures_are_rejected() {
+	let (pass_stdout, pass_stderr) = FIXTURES[0].cleaned();
+	let (fail_stdout, fail_stderr) = FIXTURES[1].cleaned();
 	for (stdout, stderr) in [
 		(
-			pass.stdout[..pass.stdout.rfind("test result:").unwrap()].to_string(),
-			pass.stderr.clone(),
+			pass_stdout[..pass_stdout.rfind("test result:").unwrap()].to_string(),
+			pass_stderr.clone(),
 		),
 		(
-			fail.stdout[..fail.stdout.rfind("test result:").unwrap()].to_string(),
-			fail.stderr.clone(),
+			fail_stdout[..fail_stdout.rfind("test result:").unwrap()].to_string(),
+			fail_stderr.clone(),
 		),
 		(
-			pass.stdout.replace("240 passed", "239 passed"),
-			pass.stderr.clone(),
+			pass_stdout.replace("240 passed", "239 passed"),
+			pass_stderr.clone(),
 		),
 		(
-			format!("{}\napplication output unrelated to Cargo", pass.stdout),
-			pass.stderr.clone(),
+			format!("{pass_stdout}\napplication output unrelated to Cargo"),
+			pass_stderr.clone(),
 		),
 		(
-			pass.stdout.clone(),
-			format!("{}\n   Compiling unfinished v0.1.0", pass.stderr),
+			pass_stdout.clone(),
+			format!("{pass_stderr}\n   Compiling unfinished v0.1.0"),
 		),
 		(
-			pass.stdout.clone(),
-			format!(
-				"{}\nwarning: truncated diagnostic\n  incomplete details",
-				pass.stderr
-			),
+			pass_stdout.clone(),
+			format!("{pass_stderr}\nwarning: truncated diagnostic\n  incomplete details"),
 		),
 		(
-			fail.stdout
-				.replace("---- assert_failure stdout ----", "missing failure section"),
-			fail.stderr.clone(),
+			fail_stdout.replace("---- assert_failure stdout ----", "missing failure section"),
+			fail_stderr.clone(),
 		),
 	] {
-		assert!(crate::mcp::fs::digest::digest(&stdout, &stderr, &spill).is_none());
+		assert!(digest(&stdout, &stderr, Path::new(SPILL_PATH)).is_none());
+	}
+	let (merged, _) = FIXTURES[8].cleaned();
+	for corrupted in [
+		merged[..merged.rfind("test result:").unwrap()].to_string(),
+		merged.replace("358 passed", "357 passed"),
+		format!("{merged}\napplication output unrelated to Cargo"),
+		format!("{merged}\n   Compiling unfinished v0.1.0"),
+	] {
+		assert!(digest(&corrupted, "", Path::new(SPILL_PATH)).is_none());
 	}
 }
 
-#[tokio::test]
-async fn digest_is_deterministic_on_real_captures() {
-	let captures = captures().await;
-	let spill = captures.root.path().join("full-output.log");
-	for capture in &captures.logs {
-		let first = crate::mcp::fs::digest::digest(&capture.stdout, &capture.stderr, &spill);
+#[test]
+fn digest_is_deterministic_on_real_captures() {
+	for fixture in FIXTURES {
+		let (stdout, stderr) = fixture.cleaned();
+		let first = digest(&stdout, &stderr, Path::new(SPILL_PATH)).unwrap();
 		for _ in 0..10 {
 			assert_eq!(
-				first,
-				crate::mcp::fs::digest::digest(&capture.stdout, &capture.stderr, &spill)
+				Some(&first),
+				digest(&stdout, &stderr, Path::new(SPILL_PATH)).as_ref()
 			);
 		}
 	}
+}
+
+#[test]
+fn small_real_test_suite_is_untouched() {
+	let (stdout, _) = FIXTURES[0].cleaned();
+	let summary = stdout
+		.lines()
+		.find(|line| line.starts_with("test result:"))
+		.unwrap();
+	assert!(digest(summary, "", Path::new(SPILL_PATH)).is_none());
 }
 
 #[test]

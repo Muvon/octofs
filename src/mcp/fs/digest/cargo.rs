@@ -17,6 +17,13 @@
 use super::{diagnostic_start, important, Selection};
 
 pub(super) fn select(stdout: &[&str], stderr: &[&str]) -> Option<Selection> {
+	if stderr.is_empty() {
+		return merged(stdout);
+	}
+	select_streams(stdout, stderr)
+}
+
+fn select_streams(stdout: &[&str], stderr: &[&str]) -> Option<Selection> {
 	let tests = libtest(stdout)?;
 	let stderr = cargo(stderr, &tests.suites)?;
 	if tests.suites.is_empty() && !stderr.recognized {
@@ -25,6 +32,53 @@ pub(super) fn select(stdout: &[&str], stderr: &[&str]) -> Option<Selection> {
 	Some(Selection {
 		stdout: tests.kept,
 		stderr: stderr.kept,
+	})
+}
+
+fn merged(lines: &[&str]) -> Option<Selection> {
+	let mut test_lines = Vec::new();
+	let mut test_indices = Vec::new();
+	let mut cargo_lines = Vec::new();
+	let mut cargo_indices = Vec::new();
+	let mut in_failures = false;
+	let mut i = 0;
+	while i < lines.len() {
+		let line = lines[i];
+		if in_failures
+			|| line == "failures:"
+			|| running(line).is_some()
+			|| line.starts_with("test ")
+			|| line.starts_with("test result:")
+		{
+			if line == "failures:" {
+				in_failures = true;
+			} else if line.starts_with("test result:") {
+				in_failures = false;
+			}
+			test_lines.push(line);
+			test_indices.push(i);
+			i += 1;
+		} else {
+			let end = match classify(line)? {
+				CargoLine::Diagnostic => diagnostic_end(lines, i),
+				_ => i + 1,
+			};
+			cargo_lines.extend_from_slice(&lines[i..end]);
+			cargo_indices.extend(i..end);
+			i = end;
+		}
+	}
+	let selection = select_streams(&test_lines, &cargo_lines)?;
+	let mut kept: Vec<_> = selection
+		.stdout
+		.iter()
+		.map(|&i| test_indices[i])
+		.chain(selection.stderr.iter().map(|&i| cargo_indices[i]))
+		.collect();
+	kept.sort_unstable();
+	Some(Selection {
+		stdout: kept,
+		stderr: Vec::new(),
 	})
 }
 
@@ -179,56 +233,45 @@ fn cargo(lines: &[&str], suites: &[bool]) -> Option<Cargo> {
 	let mut headers = 0;
 	let mut i = 0;
 	while i < lines.len() {
-		let line = lines[i].trim_start();
-		if line.is_empty() {
-			i += 1;
-			continue;
-		}
-		if diagnostic_start(line) {
-			let start = i;
-			i += 1;
-			while i < lines.len() && !lines[i].is_empty() {
-				// Cargo's generated-warning summary can directly precede
-				// Finished/Running without a blank separator.
-				if finished(lines[i].trim_start()) || compile_failed(lines[i].trim_start()) {
-					terminal = true;
-					progress_pending = false;
+		match classify(lines[i])? {
+			CargoLine::Blank => {}
+			CargoLine::Diagnostic => {
+				let end = diagnostic_end(lines, i);
+				for line in &lines[i..end] {
+					let line = line.trim_start();
+					if progress(line) {
+						progress_pending = true;
+					}
+					if finished(line) || compile_failed(line) {
+						terminal = true;
+						progress_pending = false;
+					}
+					if test_header(line) {
+						headers += 1;
+					}
+					if test_failed(line) && !suites.contains(&true) {
+						return None;
+					}
 				}
-				if test_header(lines[i].trim_start()) {
-					headers += 1;
-				}
-				i += 1;
+				kept[i..end].fill(true);
+				i = end;
+				continue;
 			}
-			if compile_failed(line) {
+			CargoLine::Finished => {
 				terminal = true;
 				progress_pending = false;
+				kept[i] = true;
 			}
-			if test_failed(line) && !suites.contains(&true) {
-				return None;
+			CargoLine::Progress => {
+				progress_pending = true;
+				kept[i] = important(lines[i]);
 			}
-			if i < lines.len() {
-				i += 1;
+			CargoLine::TestHeader => {
+				let failed = *suites.get(headers)?;
+				headers += 1;
+				kept[i] = failed || important(lines[i]);
 			}
-			kept[start..i].fill(true);
-			continue;
-		}
-		if finished(line) {
-			terminal = true;
-			progress_pending = false;
-			kept[i] = true;
-		} else if progress(line) {
-			progress_pending = true;
-			kept[i] = important(lines[i]);
-		} else if test_header(line) {
-			let failed = *suites.get(headers)?;
-			headers += 1;
-			kept[i] = failed || important(lines[i]);
-		} else if line.starts_with("For more information about this error, try ")
-			|| line.starts_with("Some errors have detailed explanations:")
-		{
-			kept[i] = true;
-		} else {
-			return None;
+			CargoLine::Explanation => kept[i] = true,
 		}
 		i += 1;
 	}
@@ -248,6 +291,72 @@ fn cargo(lines: &[&str], suites: &[bool]) -> Option<Cargo> {
 		kept: indices(&kept),
 		recognized: terminal,
 	})
+}
+
+enum CargoLine {
+	Blank,
+	Diagnostic,
+	Finished,
+	Progress,
+	TestHeader,
+	Explanation,
+}
+
+fn classify(line: &str) -> Option<CargoLine> {
+	let line = line.trim_start();
+	if line.is_empty() {
+		Some(CargoLine::Blank)
+	} else if diagnostic_start(line) {
+		Some(CargoLine::Diagnostic)
+	} else if finished(line) {
+		Some(CargoLine::Finished)
+	} else if progress(line) {
+		Some(CargoLine::Progress)
+	} else if test_header(line) {
+		Some(CargoLine::TestHeader)
+	} else if line.starts_with("For more information about this error, try ")
+		|| line.starts_with("Some errors have detailed explanations:")
+	{
+		Some(CargoLine::Explanation)
+	} else {
+		None
+	}
+}
+
+fn diagnostic_end(lines: &[&str], start: usize) -> usize {
+	let mut end = start + 1;
+	while end < lines.len() && !lines[end].is_empty() {
+		end += 1;
+	}
+	if end < lines.len() {
+		end += 1;
+	}
+	// Cargo's anyhow cause chains can span paragraphs. Their context and
+	// indented causes belong to the diagnostic, while Cargo control lines do not.
+	loop {
+		let mut next = end;
+		while next < lines.len() && lines[next].is_empty() {
+			next += 1;
+		}
+		if next == lines.len()
+			|| !(lines[next].starts_with("Caused by:") || lines[next].starts_with("failed to "))
+		{
+			return end;
+		}
+		end = next + 1;
+		while end < lines.len() && !lines[end].is_empty() {
+			if matches!(
+				classify(lines[end]),
+				Some(CargoLine::Finished | CargoLine::Progress | CargoLine::TestHeader)
+			) {
+				return end;
+			}
+			end += 1;
+		}
+		if end < lines.len() {
+			end += 1;
+		}
+	}
 }
 
 fn finished(line: &str) -> bool {

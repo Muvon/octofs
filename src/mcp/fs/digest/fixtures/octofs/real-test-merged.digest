@@ -1,0 +1,38 @@
+warning: failed to auto-clean cache data
+
+failed to clean entries from the global cache
+
+Caused by:
+  failed to remove file `/home/box/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/octolib-0.36.1/doc/08-thinking.md`
+
+Caused by:
+  Permission denied (os error 13)
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.09s
+test mcp::fs::background::background_spill_tests::spill_write_failure_names_the_path ... ok
+test mcp::fs::digest::cargo::cargo_tests::invalid_suite_counts_and_unfinished_builds_are_rejected ... ok
+test mcp::fs::background::background_spill_tests::directory_cleanup_failure_is_propagated ... ok
+test mcp::fs::fs_tests::tests::test_batch_edit_content_null_gives_clear_error ... ok
+test mcp::fs::fs_tests::tests::test_batch_edit_error_does_not_modify_file ... ok
+test mcp::fs::fs_tests::tests::test_batch_edit_plain_line_number_error_names_the_id_and_content ... ok
+test mcp::fs::fs_tests::tests::test_batch_edit_swapped_id_range_error ... ok
+test mcp::fs::fs_tests::tests::test_extract_lines_append_line_id_empty_target_errors ... ok
+test mcp::fs::fs_tests::tests::test_extract_lines_error_invalid_range ... ok
+test mcp::fs::fs_tests::tests::test_extract_lines_error_invalid_append_position ... ok
+test mcp::fs::fs_tests::tests::test_extract_lines_error_missing_source_file ... ok
+test mcp::fs::fs_tests::tests::test_extract_lines_error_start_greater_than_end ... ok
+test mcp::fs::fs_tests::tests::test_extract_lines_negative_indexing_errors ... ok
+test mcp::fs::fs_tests::tests::test_replace_no_false_duplicate_warning ... ok
+test mcp::fs::fs_tests::tests::test_str_replace_error_no_match ... ok
+test mcp::fs::fs_tests::tests::test_str_replace_error_multiple_matches ... ok
+test mcp::fs::fs_tests::tests::test_str_replace_error_shows_closest_matches ... ok
+test mcp::fs::fs_tests::tests::test_text_editor_delete_directory_errors ... ok
+test mcp::fs::fs_tests::tests::test_text_editor_delete_missing_file_errors ... ok
+test mcp::fs::fs_tests::tests::test_view_missing_path_errors ... ok
+test mcp::fs::fs_tests::tests::test_view_regex_invalid_pattern_errors ... ok
+test mcp::fs::search::search_tests::test_regex_invalid_returns_error ... ok
+test mcp::fs::shell::shell_tests::a_promoted_stashing_command_warns_that_changes_are_off_disk ... ok
+test utils::line_hash::line_hash_tests::test_resolve_line_index_i64_min_does_not_panic ... ok
+test mcp::server::server_tests::finished_job_is_replayed_to_a_late_listen_stream ... ok
+test mcp::server::server_tests::finished_job_is_replayed_to_a_late_legacy_subscription ... ok
+test mcp::fs::fs_tests::tests::shell_digest_spills_full_real_output_on_success_and_failure ... ok
+test result: ok. 358 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 4.11s
