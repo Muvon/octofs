@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.17.0] - 2026-10-14
+
+### 📋 Release Summary
+
+Tool output digests can now be selected, and large foreground shell output is digested. Oversized output is no longer cached, and background output processing is now consistent.
+
+### ✨ New Features & Enhancements
+
+- **fs**: support tool output digest selection `f8c474d5`
+- **fs**: digest large foreground shell output `ea5deb51`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: avoid caching oversized output `3b3813e8`
+- **fs**: process background output consistently `b07bdb1d`
+
 ## [0.16.3] - 2026-10-11
 
 ### 📋 Release Summary
