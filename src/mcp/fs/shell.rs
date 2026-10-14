@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Shell execution functionality for the Filesystem MCP provider
+//! Shell execution functionality for the filesystem MCP provider.
 
 use super::super::McpToolCall;
 use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
@@ -182,7 +182,7 @@ fn ansi_re() -> &'static regex::Regex {
 //     loops) collapse to the line plus a repeat count — the count preserves the
 //     information, the repeats were pure token cost
 // Leading spaces on the first content line are kept — they may be table alignment.
-fn clean_terminal_noise(raw: &str) -> String {
+pub(super) fn clean_terminal_noise(raw: &str) -> String {
 	let stripped = ansi_re().replace_all(raw, "");
 	let mut lines: Vec<String> = Vec::new();
 	let mut repeats = 0usize;
@@ -800,23 +800,38 @@ async fn execute_with_timeout(
 			let stderr = stderr.map_err(|e| anyhow!("Failed to read command stderr: {}", e))?;
 			let stdout = clean_terminal_noise(&String::from_utf8_lossy(&stdout));
 			let stderr = clean_terminal_noise(&String::from_utf8_lossy(&stderr));
+			let status_code = status.code().unwrap_or(-1);
 
 			// Label stderr by stream, not verdict: warnings and progress land there
 			// on success too, and the exit code below is the only failure signal.
-			let final_output = if stderr.is_empty() {
-				stdout
-			} else if stdout.is_empty() {
-				stderr
-			} else {
-				format!("{stdout}\n\nstderr:\n{stderr}")
-			};
+			let full_output = super::digest::join_streams(&stdout, &stderr);
+			let spill = super::background::output_path(&job);
+			let (final_output, stored_output) =
+				match super::digest::digest(&stdout, &stderr, &spill) {
+					Some(output) => {
+						super::background::spill(&job, &full_output)
+							.await
+							.map_err(|error| {
+								anyhow!("Command exited with code {status_code}: {error:#}")
+							})?;
+						(output, Some(spill))
+					}
+					None => (full_output, None),
+				};
 
 			// Add detailed execution results including status code
-			let status_code = status.code().unwrap_or(-1);
 			let success = status.success();
 
 			// The command already ran, so its exit code is the one fact worth keeping.
 			if final_output.len() > MAX_RESULT_BYTES {
+				if let Some(path) = stored_output {
+					bail!(
+						"Command exited with code {status_code}, but its digest is {}, too large to return in one tool result (limit {}). Full output: {}. Use `view` to read the parts you need.",
+						format_megabytes(final_output.len()),
+						format_megabytes(MAX_RESULT_BYTES),
+						path.display()
+					);
+				}
 				bail!(
 					"Command exited with code {status_code}, but its output is {}, too large to return in one tool result (limit {}). Redirect it to a file (`cmd > out.log`) and `view` the parts you need, or filter it in the pipeline (`cmd 2>&1 | tail -n 200`).",
 					format_megabytes(final_output.len()),

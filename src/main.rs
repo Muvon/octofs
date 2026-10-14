@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Binary startup, transports, and shutdown cleanup.
+
 use anyhow::Result;
 use clap::Parser;
 use tracing::Level;
@@ -109,6 +111,7 @@ async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
 
 	// Kill all in-flight shell children's process groups so nothing survives as an orphan.
 	mcp::fs::shell::kill_all_shell_children();
+	mcp::fs::background::cleanup().await?;
 
 	Ok(())
 }
@@ -149,6 +152,7 @@ async fn run_http_server(bind_addr: &str) -> Result<()> {
 
 	// Same orphan cleanup as STDIO shutdown — in-flight shell children must not survive.
 	mcp::fs::shell::kill_all_shell_children();
+	mcp::fs::background::cleanup().await?;
 
 	Ok(())
 }

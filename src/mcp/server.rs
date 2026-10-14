@@ -489,7 +489,8 @@ impl OctofsServer {
 			echo/cat writes into the workdir are rejected). Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
-			the output. A command still running after ~10s moves to the background and returns a \
+			the output. Large recognized foreground test/build output is digested with its full output path appended. \
+			A command still running after ~10s moves to the background and returns a \
 			job resource; you are notified with the exit code and output tail when it exits. Do \
 			NOT poll, sleep, re-run or `ps` it, or start a variant of it (other flags or filters) — \
 			the result arrives on its own. Do only work that doesn't need it; to wait for it, reply \

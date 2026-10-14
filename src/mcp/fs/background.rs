@@ -25,7 +25,7 @@
 //! the server layer supplies (it captures the rmcp peer there), so this file
 //! stays free of any protocol/transport types.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -172,6 +172,36 @@ pub(super) async fn discard(job: &Job) {
 	let _ = tokio::fs::remove_file(&job.stderr_path).await;
 }
 
+pub(super) fn output_path(job: &Job) -> PathBuf {
+	job.stdout_path
+		.with_file_name(format!("{}.output.log", job.id))
+}
+
+/// Cleaned foreground output survives capture-file removal until shutdown.
+pub(super) async fn spill(job: &Job, output: &str) -> Result<()> {
+	let path = output_path(job);
+	tokio::fs::write(&path, output)
+		.await
+		.with_context(|| format!("Failed to persist full shell output: {}", path.display()))?;
+	// The model has only seen the digest; its first view of the new spill must be full.
+	super::delta::note_write(&super::remote::PathSource::from(path.as_path()), "", output);
+	Ok(())
+}
+
+/// The directory may be absent when no shell command ran in this process.
+pub async fn cleanup() -> Result<()> {
+	remove_jobs_dir(&jobs_dir()).await
+}
+
+async fn remove_jobs_dir(dir: &Path) -> Result<()> {
+	match tokio::fs::remove_dir_all(dir).await {
+		Ok(()) => Ok(()),
+		Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+		Err(error) => Err(error)
+			.with_context(|| format!("Failed to remove shell job directory: {}", dir.display())),
+	}
+}
+
 /// Register an already-running child as a background job and keep waiting for
 /// it. `on_complete` is invoked exactly once after exit, with the resource URI.
 pub(super) fn promote<F>(job: Job, mut child: tokio::process::Child, on_complete: F)
@@ -302,3 +332,7 @@ pub fn list() -> Vec<Job> {
 #[cfg(test)]
 #[path = "background_tests.rs"]
 mod background_tests;
+
+#[cfg(test)]
+#[path = "background_spill_tests.rs"]
+mod background_spill_tests;

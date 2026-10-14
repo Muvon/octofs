@@ -30,6 +30,66 @@ mod tests {
 		temp_file
 	}
 
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn shell_digest_spills_full_real_output_on_success_and_failure() {
+		use crate::mcp::fs::{digest, execute_shell_command};
+
+		let captures = digest::fixtures_tests::captures().await;
+		for capture in &captures.logs[..2] {
+			let quote = |path: &std::path::Path| {
+				format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
+			};
+			// Replay authentic, separately captured streams so the expected spill
+			// is byte-exact even when libtest's elapsed time varies across runs.
+			let command = format!(
+				"awk '1' {}; awk '1' {} >&2; exit {}",
+				quote(&capture.stdout_path),
+				quote(&capture.stderr_path),
+				capture.exit_code
+			);
+			let mut call = McpToolCall::test_call("shell", json!({ "command": command }));
+			call.workdir = captures.root.path().to_path_buf();
+			let cache = std::sync::Arc::new(crate::mcp::fs::delta::ViewCache::default());
+			let result = crate::mcp::request_ctx::with_request_context(
+				cache.clone(),
+				execute_shell_command(&call, None),
+			)
+			.await;
+			let text = if capture.exit_code == 0 {
+				let outcome = result.expect("successful test command");
+				assert!(outcome.resource_uri.is_none());
+				outcome.text
+			} else {
+				let error = result.expect_err("failed test command").to_string();
+				assert!(error.starts_with(&format!(
+					"Command failed with exit code {}\n\n",
+					capture.exit_code
+				)));
+				error
+			};
+			assert!(text.contains("\n\nstderr:\n"), "stream label retained");
+			let (_, marker) = text.rsplit_once("\n[digest: ").expect("digest marker");
+			let (_, path) = marker.split_once(" — full output: ").unwrap();
+			let path = path.strip_suffix(']').unwrap();
+			assert_eq!(
+				fs::read_to_string(path).await.unwrap(),
+				digest::join_streams(&capture.stdout, &capture.stderr)
+			);
+			let expected =
+				digest::digest(&capture.stdout, &capture.stderr, std::path::Path::new(path))
+					.unwrap();
+			assert!(text.ends_with(&expected));
+			let view_call = McpToolCall::test_call("view", json!({ "path": path }));
+			let view =
+				crate::mcp::request_ctx::with_request_context(cache, execute_view(&view_call))
+					.await
+					.expect("view full spill");
+			assert!(view.contains("test passing_test_number_000 ... ok"));
+			fs::remove_file(path).await.unwrap();
+		}
+	}
+
 	// Composite line id "N:hh" for line `n` (1-indexed) of `content` — what a view
 	// of that content would render as the id prefix.
 	fn lid(content: &str, n: usize) -> String {

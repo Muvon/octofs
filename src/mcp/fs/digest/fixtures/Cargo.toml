@@ -1,0 +1,12 @@
+[package]
+name = "digest_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+failures = []
+integration_failure = []
+compile_error = []
+warnings = []
+
+[dependencies]

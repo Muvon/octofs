@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// File System MCP provider - modular structure
+//! Filesystem MCP provider modules.
 
 pub mod background;
 pub mod core;
 pub mod delta;
+mod digest;
 pub mod directory;
 pub mod file_ops;
 pub mod remote;
