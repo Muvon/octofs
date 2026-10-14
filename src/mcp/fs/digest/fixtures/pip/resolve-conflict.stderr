@@ -1,0 +1,5 @@
+ERROR: Cannot install -r requirements-conflict.txt (line 2) and werkzeug==2.0.3 because these package versions have conflicting dependencies.
+ERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts
+
+[notice] A new release of pip is available: 23.3.2 -> 26.2.1
+[notice] To update, run: python3 -m pip install --upgrade pip

@@ -1,0 +1,47 @@
+Using Python 3.12.12 environment at: /tmp/octofs-digest-cap-installs/venv-uvtarget
+Resolved 10 packages in 142ms
+Downloading pygments (1.2MiB)
+   Building psycopg2==2.9.10
+ Downloaded pygments
+error: Failed to build `psycopg2==2.9.10`
+  cause: The build backend returned an error
+  cause: Call to `setuptools.build_meta:__legacy__.get_requires_for_build_wheel` failed (exit status: 1)
+
+         [stdout]
+         running egg_info
+         writing psycopg2.egg-info/PKG-INFO
+         writing dependency_links to psycopg2.egg-info/dependency_links.txt
+         writing top-level names to psycopg2.egg-info/top_level.txt
+
+         [stderr]
+         /tmp/octofs-digest-cap-installs/uvcache/builds-v0/.tmpyThA2S/lib64/python3.12/site-packages/setuptools/dist.py:765: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+         !!
+
+                 ********************************************************************************
+                 Please consider removing the following classifiers in favor of a SPDX license expression:
+
+                 License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)
+
+                 See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+                 ********************************************************************************
+
+         !!
+           self._finalize_license_expression()
+
+         Error: pg_config executable not found.
+
+         pg_config is required to build psycopg2 from source.  Please add the directory
+         containing pg_config to the $PATH or specify the full executable path with the
+         option:
+
+             python setup.py build_ext --pg-config /path/to/pg_config build ...
+
+         or with the pg_config option in 'setup.cfg'.
+
+         If you prefer to avoid building psycopg2 from source, please install the PyPI
+         'psycopg2-binary' package instead.
+
+         For further information please check the 'doc/src/install.rst' file (also at
+         <https://www.psycopg.org/docs/install.html>).
+
+hint: Build failures usually indicate a problem with the package or the build environment

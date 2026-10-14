@@ -1,0 +1,8 @@
+mkdir -p build
+cc -Wall -Wextra -O2 -g -Iinclude -c src/main.c -o build/main.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod0.c -o build/mod0.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod10.c -o build/mod10.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod11.c -o build/mod11.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod12.c -o build/mod12.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod13.c -o build/mod13.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod14.c -o build/mod14.o

@@ -1,0 +1,7 @@
+ok  	example.com/pass/api	0.012s
+ok  	example.com/pass/auth	0.007s
+ok  	example.com/pass/billing	0.005s
+ok  	example.com/pass/cache	0.006s
+?   	example.com/pass/cmd/tool	[no test files]
+ok  	example.com/pass/storage	0.008s
+ok  	example.com/pass/util	0.006s

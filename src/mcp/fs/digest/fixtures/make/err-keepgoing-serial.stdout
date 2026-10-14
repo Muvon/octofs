@@ -1,0 +1,32 @@
+mkdir -p build
+cc -Wall -Wextra -O2 -g -Iinclude -c src/main.c -o build/main.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod0.c -o build/mod0.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod10.c -o build/mod10.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod11.c -o build/mod11.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod12.c -o build/mod12.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod13.c -o build/mod13.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod14.c -o build/mod14.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod15.c -o build/mod15.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod16.c -o build/mod16.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod17.c -o build/mod17.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod18.c -o build/mod18.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod19.c -o build/mod19.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod1.c -o build/mod1.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod20.c -o build/mod20.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod21.c -o build/mod21.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod22.c -o build/mod22.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod23.c -o build/mod23.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod2.c -o build/mod2.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod3.c -o build/mod3.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod4.c -o build/mod4.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod5.c -o build/mod5.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod6.c -o build/mod6.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod7.c -o build/mod7.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod8.c -o build/mod8.o
+cc -Wall -Wextra -O2 -g -Iinclude -c src/mod9.c -o build/mod9.o
+g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx0.cpp -o build/cxx0.o
+g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx1.cpp -o build/cxx1.o
+g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx2.cpp -o build/cxx2.o
+g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx3.cpp -o build/cxx3.o
+g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx4.cpp -o build/cxx4.o
+g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx5.cpp -o build/cxx5.o

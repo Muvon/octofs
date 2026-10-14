@@ -1,0 +1,11 @@
+Collecting requests==2.32.3 (from -r requirements-buildfail.txt (line 1))
+  Downloading requests-2.32.3-py3-none-any.whl.metadata (4.6 kB)
+Collecting rich==13.9.4 (from -r requirements-buildfail.txt (line 2))
+  Downloading rich-13.9.4-py3-none-any.whl.metadata (18 kB)
+Collecting psycopg2==2.9.10 (from -r requirements-buildfail.txt (line 3))
+  Downloading psycopg2-2.9.10.tar.gz (385 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 385.7/385.7 kB 18.0 MB/s eta 0:00:00
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'error'

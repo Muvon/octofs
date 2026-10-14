@@ -110,11 +110,13 @@ async fn background_digest_is_cached_before_completion_notification() {
 		let path = output_path(&job);
 		let expected = super::super::digest::digest(&stdout, &stderr, &path).unwrap();
 		assert_eq!(view.output, expected);
+		assert!(view.output.contains("\n[digest: "));
 		assert_eq!(
 			tokio::fs::read_to_string(&path).await.unwrap(),
 			super::super::digest::join_streams(&stdout, &stderr)
 		);
 		assert!(notification.ends_with(&expected));
+		assert!(!notification.contains("[earlier output dropped"));
 		assert_eq!(notification, resource_text(&job.id).unwrap());
 		discard(&job).await;
 		assert_eq!(
@@ -127,12 +129,12 @@ async fn background_digest_is_cached_before_completion_notification() {
 }
 
 #[tokio::test]
-async fn unrecognized_background_output_keeps_the_raw_tail() {
+async fn unrecognized_finished_background_output_is_full_and_cleaned() {
 	let root = tempfile::tempdir().unwrap();
 	let fixture = Fixture {
 		name: "unknown",
 		stdout: FIXTURES[7].stdout,
-		stderr: "unrecognized tool output\n",
+		stderr: "\x1b[31munrecognized tool output\x1b[0m\nunrecognized tool output\n",
 		golden: "",
 		exit_code: 3,
 	};
@@ -150,18 +152,53 @@ async fn unrecognized_background_output_keeps_the_raw_tail() {
 		.unwrap();
 	let view = read(&job.id).unwrap();
 	assert_eq!(view.status, JobStatus::Exited(3));
+	assert!(!view.truncated);
+	let (stdout, stderr) = fixture.cleaned();
+	let full = super::super::digest::join_streams(&stdout, &stderr);
+	assert!(full.len() > MAX_TAIL_BYTES);
+	assert_eq!(view.output, full);
+	assert_eq!(job.finished_output.get(), Some(&full));
+	assert_eq!(notification, resource_text(&job.id).unwrap());
+	assert!(!notification.contains("[earlier output dropped"));
+	assert!(!tokio::fs::try_exists(output_path(&job)).await.unwrap());
+	discard(&job).await;
+	assert_eq!(read(&job.id).unwrap().output, full);
+}
+
+#[tokio::test]
+async fn running_background_output_keeps_the_raw_tail() {
+	let PreparedJob {
+		job,
+		stdout_file,
+		stderr_file,
+	} = prepare("running-tail-test", &std::env::temp_dir())
+		.await
+		.unwrap();
+	drop(stdout_file);
+	drop(stderr_file);
+	let stdout = FIXTURES[7].stdout;
+	let stderr = "unrecognized tool output\n";
+	tokio::fs::write(&job.stdout_path, stdout).await.unwrap();
+	tokio::fs::write(&job.stderr_path, stderr).await.unwrap();
+	jobs().lock().unwrap().insert(job.id.clone(), job.clone());
+
+	let view = read(&job.id).unwrap();
+	let full = super::super::digest::join_streams(stdout, stderr);
+	assert_eq!(view.status, JobStatus::Running);
 	assert!(view.truncated);
-	assert!(job.digest.get().is_none());
-	let full = super::super::digest::join_streams(fixture.stdout, fixture.stderr);
 	assert!(full.len() > MAX_TAIL_BYTES);
 	assert_eq!(view.output, &full[full.len() - MAX_TAIL_BYTES..]);
-	assert_eq!(notification, resource_text(&job.id).unwrap());
-	assert!(!tokio::fs::try_exists(output_path(&job)).await.unwrap());
+	assert!(resource_text(&job.id)
+		.unwrap()
+		.contains("[earlier output dropped"));
+	assert!(job.finished_output.get().is_none());
+
+	jobs().lock().unwrap().remove(&job.id);
 	discard(&job).await;
 }
 
 #[tokio::test]
-async fn background_output_over_the_limit_is_not_digested() {
+async fn finished_background_output_over_the_limit_returns_the_shared_message() {
 	let PreparedJob {
 		job,
 		stdout_file,
@@ -174,8 +211,25 @@ async fn background_output_over_the_limit_is_not_digested() {
 	let file = tokio::fs::File::create(&job.stdout_path).await.unwrap();
 	file.set_len(MAX_RESULT_BYTES as u64 + 1).await.unwrap();
 	drop(file);
-	cache_digest(&job).await.unwrap();
-	assert!(job.digest.get().is_none());
+	assert_eq!(read_finished_output(&job, 3).await.unwrap(), "");
+	let output = "x".repeat(MAX_RESULT_BYTES + 1);
+	tokio::fs::write(&job.stdout_path, &output).await.unwrap();
+	let expected = super::super::shell::oversized_output_message(3, output.len(), None);
+	job.finished_output
+		.set(read_finished_output(&job, 3).await.unwrap())
+		.unwrap();
+	*job.status.lock().unwrap() = JobStatus::Exited(3);
+	jobs().lock().unwrap().insert(job.id.clone(), job.clone());
+
+	let view = read(&job.id).unwrap();
+	assert_eq!(view.status, JobStatus::Exited(3));
+	assert_eq!(view.output, expected);
+	assert!(!view.truncated);
+	let text = resource_text(&job.id).unwrap();
+	assert!(text.contains("status: exited with code 3"));
+	assert!(text.ends_with(&expected));
+	assert!(!text.contains("[earlier output dropped"));
 	assert!(!tokio::fs::try_exists(output_path(&job)).await.unwrap());
+	jobs().lock().unwrap().remove(&job.id);
 	discard(&job).await;
 }

@@ -1,0 +1,276 @@
+PHP Warning:  PHP Startup: base91: Unable to initialize module
+Module compiled with module API=20210902
+PHP    compiled with module API=20240924
+These options need to match
+ in Unknown on line 0
+PHP Warning:  Module "yaml" is already loaded in Unknown on line 0
+PHPUnit 12.5.39 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.4.21
+
+FFEEDWstarting checkout flow
+FSIR.F.progress MathTest 0
+...............progress MathTest 15
+...............progress MathTest 30
+....................  63 / 173 ( 36%)
+............................................................... 126 / 173 ( 72%)
+...............................................                 173 / 173 (100%)
+
+Time: 00:00.204, Memory: 18.05 MB
+
+Broken
+ ✘ Array diff
+   │
+   │ Failed asserting that two arrays are equal.
+   │ --- Expected
+   │ +++ Actual
+   │ @@ @@
+   │  Array (
+   │      'name' => 'alice'
+   │ -    'age' => 30
+   │ +    'age' => 31
+   │      'roles' => Array (
+   │          0 => 'admin'
+   │ -        1 => 'dev'
+   │      )
+   │ +    'extra' => null
+   │  )
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:21
+   │
+ ✘ Multiline string
+   │
+   │ Failed asserting that two strings are identical.
+   │ --- Expected
+   │ +++ Actual
+   │ @@ @@
+   │  'header
+   │  
+   │  body line one
+   │ -body line 2
+   │ +body line two
+   │  
+   │ -footer v2
+   │ +footer v1
+   │  '
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:29
+   │
+ ✘ Exception
+   │
+   │ RuntimeException: insufficient funds: balance=5 amount=50
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:11
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:36
+   │
+ ✘ Php error
+   │
+   │ Error: Call to a member function port() on null
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:42
+   │
+ ⚠ Deprecation
+ ⚠ Warning
+ ✘ Echoes then fails
+   │
+   │ total mismatch
+   │
+   │ expected 8 after discount
+   │ Failed asserting that 7 is identical to 8.
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:62
+   │
+ ↩ Skipped
+ ∅ Incomplete
+   │
+   │ refund flow not implemented
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:72
+   │
+ ⚠ Risky
+ ✔ Provider with data set "one"
+ ✘ Provider with data set "two"
+   │
+   │ Failed asserting that 4 is identical to 5.
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:87
+   │
+ ✔ Provider with data set "three"
+
+Math
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Models
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Strings
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Views
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+There was 1 risky test:
+
+1) BrokenTest::testRisky
+This test did not perform any assertions
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:75
+
+ERRORS!
+Tests: 173, Assertions: 168, Errors: 2, Failures: 4, Warnings: 1, Deprecations: 1, Skipped: 1, Incomplete: 1, Risky: 1.

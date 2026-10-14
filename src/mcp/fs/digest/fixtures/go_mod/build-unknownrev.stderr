@@ -1,0 +1,20 @@
+main.go:7:2: missing go.sum entry for module providing package github.com/gin-gonic/gin (imported by example.com/octofsdigest); to add:
+	go get example.com/octofsdigest
+main.go:8:2: missing go.sum entry for module providing package github.com/google/uuid (imported by example.com/octofsdigest); to add:
+	go get example.com/octofsdigest
+main.go:9:2: github.com/gin-gonic/gin@v1.10.0: missing go.sum entry for go.mod file; to add it:
+	go mod download github.com/gin-gonic/gin
+main.go:10:2: github.com/gin-gonic/gin@v1.10.0: missing go.sum entry for go.mod file; to add it:
+	go mod download github.com/gin-gonic/gin
+main.go:11:2: missing go.sum entry for module providing package github.com/sirupsen/logrus (imported by example.com/octofsdigest); to add:
+	go get example.com/octofsdigest
+main.go:12:2: missing go.sum entry for module providing package github.com/spf13/cobra (imported by example.com/octofsdigest); to add:
+	go get example.com/octofsdigest
+main.go:13:2: missing go.sum entry for module providing package go.uber.org/zap (imported by example.com/octofsdigest); to add:
+	go get example.com/octofsdigest
+main.go:14:2: missing go.sum entry for module providing package golang.org/x/sync/errgroup (imported by example.com/octofsdigest); to add:
+	go get example.com/octofsdigest
+main.go:15:2: github.com/gin-gonic/gin@v1.10.0: missing go.sum entry for go.mod file; to add it:
+	go mod download github.com/gin-gonic/gin
+main.go:16:2: github.com/gin-gonic/gin@v1.10.0: missing go.sum entry for go.mod file; to add it:
+	go mod download github.com/gin-gonic/gin

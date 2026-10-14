@@ -1,0 +1,74 @@
+FAIL	example.com/build/broken [build failed]
+=== RUN   TestGood0
+--- PASS: TestGood0 (0.00s)
+=== RUN   TestGood1
+--- PASS: TestGood1 (0.00s)
+=== RUN   TestGood2
+--- PASS: TestGood2 (0.00s)
+=== RUN   TestGood3
+--- PASS: TestGood3 (0.00s)
+=== RUN   TestGood4
+--- PASS: TestGood4 (0.00s)
+=== RUN   TestGood5
+--- PASS: TestGood5 (0.00s)
+=== RUN   TestGood6
+--- PASS: TestGood6 (0.00s)
+=== RUN   TestGood7
+--- PASS: TestGood7 (0.00s)
+=== RUN   TestGood8
+--- PASS: TestGood8 (0.00s)
+=== RUN   TestGood9
+--- PASS: TestGood9 (0.00s)
+=== RUN   TestGood10
+--- PASS: TestGood10 (0.00s)
+=== RUN   TestGood11
+--- PASS: TestGood11 (0.00s)
+=== RUN   TestGood12
+--- PASS: TestGood12 (0.00s)
+=== RUN   TestGood13
+--- PASS: TestGood13 (0.00s)
+=== RUN   TestGood14
+--- PASS: TestGood14 (0.00s)
+=== RUN   TestGood15
+--- PASS: TestGood15 (0.00s)
+=== RUN   TestGood16
+--- PASS: TestGood16 (0.00s)
+=== RUN   TestGood17
+--- PASS: TestGood17 (0.00s)
+=== RUN   TestGood18
+--- PASS: TestGood18 (0.00s)
+=== RUN   TestGood19
+--- PASS: TestGood19 (0.00s)
+=== RUN   TestGood20
+--- PASS: TestGood20 (0.00s)
+=== RUN   TestGood21
+--- PASS: TestGood21 (0.00s)
+=== RUN   TestGood22
+--- PASS: TestGood22 (0.00s)
+=== RUN   TestGood23
+--- PASS: TestGood23 (0.00s)
+=== RUN   TestGood24
+--- PASS: TestGood24 (0.00s)
+=== RUN   TestGood25
+--- PASS: TestGood25 (0.00s)
+=== RUN   TestGood26
+--- PASS: TestGood26 (0.00s)
+=== RUN   TestGood27
+--- PASS: TestGood27 (0.00s)
+=== RUN   TestGood28
+--- PASS: TestGood28 (0.00s)
+=== RUN   TestGood29
+--- PASS: TestGood29 (0.00s)
+=== RUN   TestGoodTable
+=== RUN   TestGoodTable/#00
+=== RUN   TestGoodTable/#01
+=== RUN   TestGoodTable/#02
+--- PASS: TestGoodTable (0.00s)
+    --- PASS: TestGoodTable/#00 (0.00s)
+    --- PASS: TestGoodTable/#01 (0.00s)
+    --- PASS: TestGoodTable/#02 (0.00s)
+PASS
+ok  	example.com/build/good	0.012s
+FAIL	example.com/build/testonly [build failed]
+FAIL	example.com/build/vetfail [build failed]
+FAIL

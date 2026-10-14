@@ -1,0 +1,35 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.12, pytest-9.1.1, pluggy-1.6.0
+rootdir: /tmp/octofs-digest-cap-tests/py/pass
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.12.1, asyncio-1.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 270 items
+
+tests/test_math.py .............................................         [ 16%]
+tests/test_models.py .............................................       [ 33%]
+tests/test_parsers.py .............................................      [ 50%]
+tests/test_strings.py .............................................      [ 66%]
+tests/test_utils.py .............................................        [ 83%]
+tests/test_views.py .............................................        [100%]
+
+=============================== warnings summary ===============================
+tests/test_math.py::test_math_0
+  /tmp/octofs-digest-cap-tests/py/pass/tests/test_math.py:5: DeprecationWarning: old_api() is deprecated, use new_api() (math 0)
+    warnings.warn('old_api() is deprecated, use new_api() (math 0)', DeprecationWarning)
+
+tests/test_math.py::test_math_25
+  /tmp/octofs-digest-cap-tests/py/pass/tests/test_math.py:83: DeprecationWarning: old_api() is deprecated, use new_api() (math 25)
+    warnings.warn('old_api() is deprecated, use new_api() (math 25)', DeprecationWarning)
+
+tests/test_strings.py::test_strings_0
+  /tmp/octofs-digest-cap-tests/py/pass/tests/test_strings.py:5: DeprecationWarning: old_api() is deprecated, use new_api() (strings 0)
+    warnings.warn('old_api() is deprecated, use new_api() (strings 0)', DeprecationWarning)
+
+tests/test_strings.py::test_strings_25
+  /tmp/octofs-digest-cap-tests/py/pass/tests/test_strings.py:83: DeprecationWarning: old_api() is deprecated, use new_api() (strings 25)
+    warnings.warn('old_api() is deprecated, use new_api() (strings 25)', DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 270 passed, 4 warnings in 0.10s ========================

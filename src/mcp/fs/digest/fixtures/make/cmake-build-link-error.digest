@@ -1,0 +1,10 @@
+[ 93%] Built target core
+
+stderr:
+/usr/bin/ld: CMakeFiles/app.dir/src/main.c.o: in function `main':
+main.c:(.text+0x19b): undefined reference to `mod_never_defined'
+/usr/bin/ld: main.c:(.text+0x1a3): undefined reference to `another_missing_symbol'
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/app.dir/build.make:98: app] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:111: CMakeFiles/app.dir/all] Error 2
+gmake: *** [Makefile:91: all] Error 2

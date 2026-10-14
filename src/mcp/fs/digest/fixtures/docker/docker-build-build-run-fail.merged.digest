@@ -1,0 +1,207 @@
+#10 [6/6] RUN make -k -j4
+#10 0.137 mkdir -p build
+#10 0.140 cc -Wall -Wextra -O2 -g -Iinclude -c src/main.c -o build/main.o
+#10 0.141 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod0.c -o build/mod0.o
+#10 0.142 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod1.c -o build/mod1.o
+#10 0.142 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod10.c -o build/mod10.o
+#10 0.172 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod11.c -o build/mod11.o
+#10 0.175 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod12.c -o build/mod12.o
+#10 0.176 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod13.c -o build/mod13.o
+#10 0.178 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod14.c -o build/mod14.o
+#10 0.192 src/mod14.c: In function 'mod14_compute':
+#10 0.192 src/mod14.c:9:18: warning: initialization of 'int *' from incompatible pointer type 'struct point *' [-Wincompatible-pointer-types]
+#10 0.192     9 |         int *q = &p;
+#10 0.192       |                  ^
+#10 0.192 src/mod14.c:10:17: error: 'struct point' has no member named 'z'
+#10 0.192    10 |         return p.z + x + *q
+#10 0.192       |                 ^
+#10 0.192 src/mod14.c:10:28: error: expected ';' before '}' token
+#10 0.192    10 |         return p.z + x + *q
+#10 0.192       |                            ^
+#10 0.192       |                            ;
+#10 0.192    11 | }
+#10 0.192       | ~
+#10 0.193 src/mod14.c:11:1: warning: control reaches end of non-void function [-Wreturn-type]
+#10 0.193    11 | }
+#10 0.193       | ^
+#10 0.194 make: *** [Makefile:15: build/mod14.o] Error 1
+#10 0.194 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod15.c -o build/mod15.o
+#10 0.206 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod16.c -o build/mod16.o
+#10 0.208 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod17.c -o build/mod17.o
+#10 0.222 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod18.c -o build/mod18.o
+#10 0.226 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod19.c -o build/mod19.o
+#10 0.226 src/mod17.c: In function 'mod17_describe':
+#10 0.226 src/mod17.c:16:16: warning: 'return' with a value, in function returning void [-Wreturn-type]
+#10 0.226    16 |         return 0;
+#10 0.226       |                ^
+#10 0.226 src/mod17.c:12:6: note: declared here
+#10 0.226    12 | void mod17_describe(char *buf, size_t n)
+#10 0.226       |      ^~~~~~~~~~~~~~
+#10 0.231 src/mod17.c: In function 'mod17_compute':
+#10 0.231 src/mod17.c:8:31: warning: '%d' directive writing between 1 and 11 bytes into a region of size 0 [-Wformat-overflow=]
+#10 0.231     8 |         sprintf(small, "%d-%d-%d", x, x, x);
+#10 0.231       |                               ^~
+#10 0.231 src/mod17.c:8:9: note: 'sprintf' output between 6 and 36 bytes into a destination of size 4
+#10 0.231     8 |         sprintf(small, "%d-%d-%d", x, x, x);
+#10 0.231       |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#10 0.239 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod2.c -o build/mod2.o
+#10 0.248 src/mod2.c: In function 'mod2_compute':
+#10 0.248 src/mod2.c:8:15: warning: comparison of integer expressions of different signedness: 'int' and 'unsigned int' [-Wsign-compare]
+#10 0.248     8 |         if (x < u)
+#10 0.248       |               ^
+#10 0.248 src/mod2.c:6:13: warning: unused variable 'unused_local' [-Wunused-variable]
+#10 0.248     6 |         int unused_local = 7;
+#10 0.248       |             ^~~~~~~~~~~~
+#10 0.248 src/mod2.c: In function 'mod2_describe':
+#10 0.248 src/mod2.c:24:35: warning: format '%s' expects argument of type 'char *', but argument 4 has type 'int' [-Wformat=]
+#10 0.248    24 |         snprintf(buf, n, "module %s", 2);
+#10 0.248       |                                  ~^   ~
+#10 0.248       |                                   |   |
+#10 0.248       |                                   |   int
+#10 0.248       |                                   char *
+#10 0.248       |                                  %d
+#10 0.248 src/mod2.c: In function 'mod2_compute':
+#10 0.248 src/mod2.c:12:19: warning: this statement may fall through [-Wimplicit-fallthrough=]
+#10 0.248    12 |                 x += 1;
+#10 0.248       |                 ~~^~~~
+#10 0.248 src/mod2.c:13:9: note: here
+#10 0.248    13 |         case 2:
+#10 0.248       |         ^~~~
+#10 0.258 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod20.c -o build/mod20.o
+#10 0.261 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod21.c -o build/mod21.o
+#10 0.282 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod22.c -o build/mod22.o
+#10 0.285 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod23.c -o build/mod23.o
+#10 0.289 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod3.c -o build/mod3.o
+#10 0.304 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod4.c -o build/mod4.o
+#10 0.314 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod5.c -o build/mod5.o
+#10 0.319 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod6.c -o build/mod6.o
+#10 0.326 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod7.c -o build/mod7.o
+#10 0.327 src/mod5.c: In function 'helper':
+#10 0.327 src/mod5.c:4:30: warning: unused parameter 'b' [-Wunused-parameter]
+#10 0.327     4 | static int helper(int a, int b)
+#10 0.327       |                          ~~~~^
+#10 0.328 src/mod5.c: In function 'mod5_compute':
+#10 0.328 src/mod5.c:12:31: error: 'undeclared_counter' undeclared (first use in this function)
+#10 0.328    12 |         return helper(x, y) + undeclared_counter;
+#10 0.328       |                               ^~~~~~~~~~~~~~~~~~
+#10 0.328 src/mod5.c:12:31: note: each undeclared identifier is reported only once for each function it appears in
+#10 0.328 src/mod5.c: In function 'mod5_describe':
+#10 0.328 src/mod5.c:17:19: warning: initialization of 'char *' from 'int' makes pointer from integer without a cast [-Wint-conversion]
+#10 0.328    17 |         char *p = 42;
+#10 0.328       |                   ^~
+#10 0.328 src/mod5.c:18:37: warning: format '%d' expects argument of type 'int', but argument 4 has type 'char *' [-Wformat=]
+#10 0.328    18 |         snprintf(buf, n, "module 5 %d", p);
+#10 0.328       |                                    ~^   ~
+#10 0.328       |                                     |   |
+#10 0.328       |                                     int char *
+#10 0.328       |                                    %s
+#10 0.328 src/mod5.c: In function 'mod5_compute':
+#10 0.328 src/mod5.c:13:1: warning: control reaches end of non-void function [-Wreturn-type]
+#10 0.328    13 | }
+#10 0.328       | ^
+#10 0.329 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod8.c -o build/mod8.o
+#10 0.329 make: *** [Makefile:15: build/mod5.o] Error 1
+#10 0.339 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod9.c -o build/mod9.o
+#10 0.352 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx0.cpp -o build/cxx0.o
+#10 0.353 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx1.cpp -o build/cxx1.o
+#10 0.360 src/mod9.c:2:10: fatal error: missing_config.h: No such file or directory
+#10 0.360     2 | #include "missing_config.h"
+#10 0.360       |          ^~~~~~~~~~~~~~~~~~
+#10 0.360 compilation terminated.
+#10 0.361 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx2.cpp -o build/cxx2.o
+#10 0.366 make: *** [Makefile:15: build/mod9.o] Error 1
+#10 0.366 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx3.cpp -o build/cxx3.o
+#10 0.585 src/cxx1.cpp: In function 'T cap::sum(const std::vector<T>&)':
+#10 0.585 src/cxx1.cpp:13:21: error: 'accumulate_like' is not a member of 'std'
+#10 0.585    13 |         return std::accumulate_like(xs);
+#10 0.585       |                     ^~~~~~~~~~~~~~~
+#10 0.652 make: *** [Makefile:18: build/cxx1.o] Error 1
+#10 0.652 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx4.cpp -o build/cxx4.o
+#10 0.709 src/cxx3.cpp: In function 'int cxx3_score(int)':
+#10 0.709 src/cxx3.cpp:18:18: error: use of deleted function 'std::unique_ptr<_Tp, _Dp>& std::unique_ptr<_Tp, _Dp>::operator=(const std::unique_ptr<_Tp, _Dp>&) [with _Tp = Widget; _Dp = std::default_delete<Widget>]'
+#10 0.709    18 |         m["a"] = w;
+#10 0.709       |                  ^
+#10 0.709 In file included from /usr/include/c++/13.2.1/memory:78,
+#10 0.709                  from src/cxx3.cpp:4:
+#10 0.709 /usr/include/c++/13.2.1/bits/unique_ptr.h:523:19: note: declared here
+#10 0.709   523 |       unique_ptr& operator=(const unique_ptr&) = delete;
+#10 0.709       |                   ^~~~~~~~
+#10 0.711 src/cxx3.cpp:20:21: error: no matching function for call to 'push_back(const char [13])'
+#10 0.711    20 |         ws.push_back("not a widget");
+#10 0.711       |         ~~~~~~~~~~~~^~~~~~~~~~~~~~~~
+#10 0.712 In file included from /usr/include/c++/13.2.1/vector:66,
+#10 0.712                  from src/cxx3.cpp:1:
+#10 0.712 /usr/include/c++/13.2.1/bits/stl_vector.h:1278:7: note: candidate: 'void std::vector<_Tp, _Alloc>::push_back(const value_type&) [with _Tp = Widget; _Alloc = std::allocator<Widget>; value_type = Widget]' (near match)
+#10 0.712  1278 |       push_back(const value_type& __x)
+#10 0.712       |       ^~~~~~~~~
+#10 0.712 /usr/include/c++/13.2.1/bits/stl_vector.h:1278:7: note:   conversion of argument 1 would be ill-formed:
+#10 0.712 src/cxx3.cpp:20:22: error: invalid user-defined conversion from 'const char [13]' to 'const std::vector<Widget>::value_type&' {aka 'const Widget&'} [-fpermissive]
+#10 0.712    20 |         ws.push_back("not a widget");
+#10 0.712       |                      ^~~~~~~~~~~~~~
+#10 0.712 src/cxx3.cpp:10:9: note: candidate is: 'Widget::Widget(int)' (near match)
+#10 0.712    10 |         Widget(int v) : v(v) {}
+#10 0.712       |         ^~~~~~
+#10 0.712 src/cxx3.cpp:10:9: note:   conversion of argument 1 would be ill-formed:
+#10 0.712 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.712    20 |         ws.push_back("not a widget");
+#10 0.712       |                      ^~~~~~~~~~~~~~
+#10 0.712       |                      |
+#10 0.712       |                      const char*
+#10 0.712 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.712    20 |         ws.push_back("not a widget");
+#10 0.712       |                      ^~~~~~~~~~~~~~
+#10 0.712       |                      |
+#10 0.712       |                      const char*
+#10 0.712 src/cxx3.cpp:10:20: note:   initializing argument 1 of 'Widget::Widget(int)'
+#10 0.712    10 |         Widget(int v) : v(v) {}
+#10 0.712       |                ~~~~^
+#10 0.712 /usr/include/c++/13.2.1/bits/stl_vector.h:1295:7: note: candidate: 'void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = Widget; _Alloc = std::allocator<Widget>; value_type = Widget]' (near match)
+#10 0.712  1295 |       push_back(value_type&& __x)
+#10 0.712       |       ^~~~~~~~~
+#10 0.712 /usr/include/c++/13.2.1/bits/stl_vector.h:1295:7: note:   conversion of argument 1 would be ill-formed:
+#10 0.712 src/cxx3.cpp:20:22: error: invalid user-defined conversion from 'const char [13]' to 'std::vector<Widget>::value_type&&' {aka 'Widget&&'} [-fpermissive]
+#10 0.712    20 |         ws.push_back("not a widget");
+#10 0.712       |                      ^~~~~~~~~~~~~~
+#10 0.712 src/cxx3.cpp:10:9: note: candidate is: 'Widget::Widget(int)' (near match)
+#10 0.712    10 |         Widget(int v) : v(v) {}
+#10 0.712       |         ^~~~~~
+#10 0.712 src/cxx3.cpp:10:9: note:   conversion of argument 1 would be ill-formed:
+#10 0.712 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.712    20 |         ws.push_back("not a widget");
+#10 0.712       |                      ^~~~~~~~~~~~~~
+#10 0.712       |                      |
+#10 0.712       |                      const char*
+#10 0.712 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.712    20 |         ws.push_back("not a widget");
+#10 0.712       |                      ^~~~~~~~~~~~~~
+#10 0.712       |                      |
+#10 0.712       |                      const char*
+#10 0.712 src/cxx3.cpp:10:20: note:   initializing argument 1 of 'Widget::Widget(int)'
+#10 0.712    10 |         Widget(int v) : v(v) {}
+#10 0.712       |                ~~~~^
+#10 0.792 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx5.cpp -o build/cxx5.o
+#10 0.792 make: *** [Makefile:18: build/cxx3.o] Error 1
+#10 1.516 make: Target 'all' not remade because of errors.
+#10 ERROR: process "/bin/sh -c make -k -j4" did not complete successfully: exit code: 2
+------
+ > [6/6] RUN make -k -j4:
+0.712    20 |         ws.push_back("not a widget");
+0.712       |                      ^~~~~~~~~~~~~~
+0.712       |                      |
+0.712       |                      const char*
+0.712 src/cxx3.cpp:10:20: note:   initializing argument 1 of 'Widget::Widget(int)'
+0.712    10 |         Widget(int v) : v(v) {}
+0.712       |                ~~~~^
+0.792 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx5.cpp -o build/cxx5.o
+0.792 make: *** [Makefile:18: build/cxx3.o] Error 1
+1.516 make: Target 'all' not remade because of errors.
+------
+Dockerfile.run-fail:6
+--------------------
+   4 |     COPY err/ /src/
+   5 |     RUN for i in $(seq 1 60); do echo "preparing $i"; done
+   6 | >>> RUN make -k -j4
+   7 |     CMD ["/src/build/app"]
+   8 |
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c make -k -j4" did not complete successfully: exit code: 2

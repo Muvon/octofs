@@ -1,0 +1,16 @@
+
+
+An error occurred inside PHPUnit.
+
+Message:  syntax error, unexpected token "}"
+Location: /tmp/octofs-digest-cap-tests/php/tests/error/SyntaxTest.php:4
+
+#0 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/Runner/TestSuiteLoader.php(48): PHPUnit\Runner\TestSuiteLoader->loadSuiteClassFile()
+#1 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/Framework/TestSuite.php(194): PHPUnit\Runner\TestSuiteLoader->load()
+#2 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/Framework/TestSuite.php(210): PHPUnit\Framework\TestSuite->addTestFile()
+#3 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/TextUI/Configuration/TestSuiteBuilder.php(88): PHPUnit\Framework\TestSuite->addTestFiles()
+#4 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/TextUI/Configuration/TestSuiteBuilder.php(55): PHPUnit\TextUI\Configuration\TestSuiteBuilder->testSuiteFromPath()
+#5 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/TextUI/Application.php(266): PHPUnit\TextUI\Configuration\TestSuiteBuilder->build()
+#6 phar:///tmp/octofs-digest-cap-tests/php/phpunit.phar/phpunit/TextUI/Application.php(157): PHPUnit\TextUI\Application->buildTestSuite()
+#7 /tmp/octofs-digest-cap-tests/php/phpunit.phar(3312): PHPUnit\TextUI\Application->run()
+#8 {main}

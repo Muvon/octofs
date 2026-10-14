@@ -1,0 +1,218 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.ok
+#1 transferring dockerfile: 370B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/alpine:3.20
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/7] FROM docker.io/library/alpine:3.20
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 15.90kB 0.1s done
+#5 DONE 0.1s
+
+#6 [2/7] RUN apk add --no-cache gcc g++ musl-dev make
+#6 0.181 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+#6 0.307 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+#6 0.664 (1/16) Installing libgcc (13.2.1_git20240309-r1)
+#6 0.706 (2/16) Installing libstdc++ (13.2.1_git20240309-r1)
+#6 0.738 (3/16) Installing libstdc++-dev (13.2.1_git20240309-r1)
+#6 0.925 (4/16) Installing jansson (2.14-r4)
+#6 0.934 (5/16) Installing zstd-libs (1.5.6-r0)
+#6 0.950 (6/16) Installing binutils (2.42-r1)
+#6 1.057 (7/16) Installing libgomp (13.2.1_git20240309-r1)
+#6 1.087 (8/16) Installing libatomic (13.2.1_git20240309-r1)
+#6 1.087 (9/16) Installing gmp (6.3.0-r1)
+#6 1.088 (10/16) Installing isl26 (0.26-r1)
+#6 1.118 (11/16) Installing mpfr4 (4.2.1-r0)
+#6 1.133 (12/16) Installing mpc1 (1.3.1-r1)
+#6 1.144 (13/16) Installing gcc (13.2.1_git20240309-r1)
+#6 2.097 (14/16) Installing musl-dev (1.2.5-r3)
+#6 2.354 (15/16) Installing g++ (13.2.1_git20240309-r1)
+#6 2.705 (16/16) Installing make (4.4.1-r2)
+#6 2.715 Executing busybox-1.36.1-r31.trigger
+#6 2.801 OK: 215 MiB in 30 packages
+#6 DONE 3.0s
+
+#7 [3/7] WORKDIR /src
+#7 DONE 0.0s
+
+#8 [4/7] COPY ok/ /src/
+#8 DONE 0.0s
+
+#9 [5/7] RUN make -j4
+#9 0.567 mkdir -p build
+#9 0.571 cc -Wall -Wextra -O2 -g -Iinclude -c src/main.c -o build/main.o
+#9 0.573 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod0.c -o build/mod0.o
+#9 0.573 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod1.c -o build/mod1.o
+#9 0.575 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod10.c -o build/mod10.o
+#9 0.611 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod11.c -o build/mod11.o
+#9 0.617 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod12.c -o build/mod12.o
+#9 0.645 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod13.c -o build/mod13.o
+#9 0.645 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod14.c -o build/mod14.o
+#9 0.650 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod15.c -o build/mod15.o
+#9 0.653 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod16.c -o build/mod16.o
+#9 0.762 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod17.c -o build/mod17.o
+#9 0.810 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod18.c -o build/mod18.o
+#9 0.818 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod19.c -o build/mod19.o
+#9 0.856 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod2.c -o build/mod2.o
+#9 0.865 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod20.c -o build/mod20.o
+#9 0.915 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod21.c -o build/mod21.o
+#9 0.940 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod22.c -o build/mod22.o
+#9 0.951 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod23.c -o build/mod23.o
+#9 0.957 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod3.c -o build/mod3.o
+#9 0.975 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod4.c -o build/mod4.o
+#9 0.983 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod5.c -o build/mod5.o
+#9 1.022 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod6.c -o build/mod6.o
+#9 1.037 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod7.c -o build/mod7.o
+#9 1.078 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod8.c -o build/mod8.o
+#9 1.128 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod9.c -o build/mod9.o
+#9 1.157 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx0.cpp -o build/cxx0.o
+#9 1.161 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx1.cpp -o build/cxx1.o
+#9 1.173 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx2.cpp -o build/cxx2.o
+#9 1.178 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx3.cpp -o build/cxx3.o
+#9 1.983 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx4.cpp -o build/cxx4.o
+#9 2.520 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx5.cpp -o build/cxx5.o
+#9 3.360 g++ -o build/app build/main.o build/mod0.o build/mod1.o build/mod10.o build/mod11.o build/mod12.o build/mod13.o build/mod14.o build/mod15.o build/mod16.o build/mod17.o build/mod18.o build/mod19.o build/mod2.o build/mod20.o build/mod21.o build/mod22.o build/mod23.o build/mod3.o build/mod4.o build/mod5.o build/mod6.o build/mod7.o build/mod8.o build/mod9.o build/cxx0.o build/cxx1.o build/cxx2.o build/cxx3.o build/cxx4.o build/cxx5.o -lm
+#9 DONE 3.6s
+
+#10 [6/7] RUN for i in $(seq 1 120); do echo "generating asset $i of 120"; done
+#10 0.310 generating asset 1 of 120
+#10 0.310 generating asset 2 of 120
+#10 0.310 generating asset 3 of 120
+#10 0.310 generating asset 4 of 120
+#10 0.310 generating asset 5 of 120
+#10 0.310 generating asset 6 of 120
+#10 0.310 generating asset 7 of 120
+#10 0.310 generating asset 8 of 120
+#10 0.310 generating asset 9 of 120
+#10 0.310 generating asset 10 of 120
+#10 0.310 generating asset 11 of 120
+#10 0.310 generating asset 12 of 120
+#10 0.310 generating asset 13 of 120
+#10 0.310 generating asset 14 of 120
+#10 0.310 generating asset 15 of 120
+#10 0.310 generating asset 16 of 120
+#10 0.310 generating asset 17 of 120
+#10 0.310 generating asset 18 of 120
+#10 0.310 generating asset 19 of 120
+#10 0.310 generating asset 20 of 120
+#10 0.310 generating asset 21 of 120
+#10 0.310 generating asset 22 of 120
+#10 0.310 generating asset 23 of 120
+#10 0.310 generating asset 24 of 120
+#10 0.310 generating asset 25 of 120
+#10 0.310 generating asset 26 of 120
+#10 0.310 generating asset 27 of 120
+#10 0.310 generating asset 28 of 120
+#10 0.310 generating asset 29 of 120
+#10 0.310 generating asset 30 of 120
+#10 0.310 generating asset 31 of 120
+#10 0.310 generating asset 32 of 120
+#10 0.310 generating asset 33 of 120
+#10 0.310 generating asset 34 of 120
+#10 0.310 generating asset 35 of 120
+#10 0.310 generating asset 36 of 120
+#10 0.310 generating asset 37 of 120
+#10 0.310 generating asset 38 of 120
+#10 0.310 generating asset 39 of 120
+#10 0.310 generating asset 40 of 120
+#10 0.310 generating asset 41 of 120
+#10 0.310 generating asset 42 of 120
+#10 0.310 generating asset 43 of 120
+#10 0.310 generating asset 44 of 120
+#10 0.310 generating asset 45 of 120
+#10 0.310 generating asset 46 of 120
+#10 0.310 generating asset 47 of 120
+#10 0.310 generating asset 48 of 120
+#10 0.310 generating asset 49 of 120
+#10 0.310 generating asset 50 of 120
+#10 0.310 generating asset 51 of 120
+#10 0.310 generating asset 52 of 120
+#10 0.310 generating asset 53 of 120
+#10 0.310 generating asset 54 of 120
+#10 0.310 generating asset 55 of 120
+#10 0.310 generating asset 56 of 120
+#10 0.310 generating asset 57 of 120
+#10 0.310 generating asset 58 of 120
+#10 0.310 generating asset 59 of 120
+#10 0.310 generating asset 60 of 120
+#10 0.310 generating asset 61 of 120
+#10 0.310 generating asset 62 of 120
+#10 0.310 generating asset 63 of 120
+#10 0.310 generating asset 64 of 120
+#10 0.310 generating asset 65 of 120
+#10 0.310 generating asset 66 of 120
+#10 0.310 generating asset 67 of 120
+#10 0.310 generating asset 68 of 120
+#10 0.310 generating asset 69 of 120
+#10 0.310 generating asset 70 of 120
+#10 0.310 generating asset 71 of 120
+#10 0.310 generating asset 72 of 120
+#10 0.310 generating asset 73 of 120
+#10 0.310 generating asset 74 of 120
+#10 0.310 generating asset 75 of 120
+#10 0.310 generating asset 76 of 120
+#10 0.310 generating asset 77 of 120
+#10 0.310 generating asset 78 of 120
+#10 0.310 generating asset 79 of 120
+#10 0.310 generating asset 80 of 120
+#10 0.310 generating asset 81 of 120
+#10 0.310 generating asset 82 of 120
+#10 0.310 generating asset 83 of 120
+#10 0.310 generating asset 84 of 120
+#10 0.310 generating asset 85 of 120
+#10 0.310 generating asset 86 of 120
+#10 0.310 generating asset 87 of 120
+#10 0.310 generating asset 88 of 120
+#10 0.310 generating asset 89 of 120
+#10 0.310 generating asset 90 of 120
+#10 0.310 generating asset 91 of 120
+#10 0.310 generating asset 92 of 120
+#10 0.310 generating asset 93 of 120
+#10 0.310 generating asset 94 of 120
+#10 0.310 generating asset 95 of 120
+#10 0.310 generating asset 96 of 120
+#10 0.310 generating asset 97 of 120
+#10 0.310 generating asset 98 of 120
+#10 0.310 generating asset 99 of 120
+#10 0.310 generating asset 100 of 120
+#10 0.310 generating asset 101 of 120
+#10 0.310 generating asset 102 of 120
+#10 0.310 generating asset 103 of 120
+#10 0.310 generating asset 104 of 120
+#10 0.310 generating asset 105 of 120
+#10 0.310 generating asset 106 of 120
+#10 0.310 generating asset 107 of 120
+#10 0.310 generating asset 108 of 120
+#10 0.310 generating asset 109 of 120
+#10 0.310 generating asset 110 of 120
+#10 0.310 generating asset 111 of 120
+#10 0.310 generating asset 112 of 120
+#10 0.310 generating asset 113 of 120
+#10 0.310 generating asset 114 of 120
+#10 0.310 generating asset 115 of 120
+#10 0.310 generating asset 116 of 120
+#10 0.310 generating asset 117 of 120
+#10 0.310 generating asset 118 of 120
+#10 0.310 generating asset 119 of 120
+#10 0.310 generating asset 120 of 120
+#10 DONE 0.5s
+
+#11 [7/7] RUN echo "deprecated: config key 'legacy_mode' will be removed in v3" >&2
+#11 0.309 deprecated: config key 'legacy_mode' will be removed in v3
+#11 DONE 0.4s
+
+#12 exporting to image
+#12 exporting layers
+#12 exporting layers 0.8s done
+#12 writing image sha256:86ab5f149965f816a5452791629c298f268dcafa8b8d29cb54a50b9e9476c0b0 done
+#12 naming to docker.io/library/octofs-digest-cap-builds:ok done
+#12 DONE 0.8s

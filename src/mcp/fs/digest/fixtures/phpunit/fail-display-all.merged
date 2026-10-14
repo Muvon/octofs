@@ -1,0 +1,126 @@
+PHP Warning:  PHP Startup: base91: Unable to initialize module
+Module compiled with module API=20210902
+PHP    compiled with module API=20240924
+These options need to match
+ in Unknown on line 0
+PHP Warning:  Module "yaml" is already loaded in Unknown on line 0
+PHPUnit 12.5.39 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.4.21
+
+FFEEDWstarting checkout flow
+FSIR.F.progress MathTest 0
+...............progress MathTest 15
+...............progress MathTest 30
+....................  63 / 173 ( 36%)
+............................................................... 126 / 173 ( 72%)
+...............................................                 173 / 173 (100%)
+
+Time: 00:00.085, Memory: 18.05 MB
+
+There were 2 errors:
+
+1) BrokenTest::testException
+RuntimeException: insufficient funds: balance=5 amount=50
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:11
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:36
+
+2) BrokenTest::testPhpError
+Error: Call to a member function port() on null
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:42
+
+--
+
+There were 4 failures:
+
+1) BrokenTest::testArrayDiff
+Failed asserting that two arrays are equal.
+--- Expected
++++ Actual
+@@ @@
+ Array (
+     'name' => 'alice'
+-    'age' => 30
++    'age' => 31
+     'roles' => Array (
+         0 => 'admin'
+-        1 => 'dev'
+     )
++    'extra' => null
+ )
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:21
+
+2) BrokenTest::testMultilineString
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+ 'header
+ 
+ body line one
+-body line 2
++body line two
+ 
+-footer v2
++footer v1
+ '
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:29
+
+3) BrokenTest::testEchoesThenFails
+total mismatch
+
+expected 8 after discount
+Failed asserting that 7 is identical to 8.
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:62
+
+4) BrokenTest::testProvider@two with data (2, 2, 5)
+Failed asserting that 4 is identical to 5.
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:87
+
+--
+
+There was 1 risky test:
+
+1) BrokenTest::testRisky
+This test did not perform any assertions
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:75
+
+--
+
+There was 1 incomplete test:
+
+1) BrokenTest::testIncomplete
+refund flow not implemented
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:72
+
+--
+
+There was 1 skipped test:
+
+1) BrokenTest::testSkipped
+requires redis
+
+--
+
+1 test triggered 1 warning:
+
+1) /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:55
+cache directory not writable
+
+--
+
+1 test triggered 1 deprecation:
+
+1) /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:47
+legacyApi() is deprecated, use newApi()
+
+ERRORS!
+Tests: 173, Assertions: 168, Errors: 2, Failures: 4, Warnings: 1, Deprecations: 1, Skipped: 1, Incomplete: 1, Risky: 1.

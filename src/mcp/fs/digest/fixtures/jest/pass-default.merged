@@ -1,0 +1,46 @@
+PASS tests/pass/math.test.js
+  ● Console
+
+    console.log
+      progress math 0
+
+      at Object.log (tests/pass/math.test.js:4:13)
+
+    console.log
+      progress math 15
+
+      at Object.log (tests/pass/math.test.js:50:13)
+
+    console.log
+      progress math 30
+
+      at Object.log (tests/pass/math.test.js:96:13)
+
+PASS tests/pass/views.test.js
+PASS tests/pass/strings.test.js
+  ● Console
+
+    console.log
+      progress strings 0
+
+      at Object.log (tests/pass/strings.test.js:4:13)
+
+    console.log
+      progress strings 15
+
+      at Object.log (tests/pass/strings.test.js:50:13)
+
+    console.log
+      progress strings 30
+
+      at Object.log (tests/pass/strings.test.js:96:13)
+
+PASS tests/pass/parsers.test.js
+PASS tests/pass/utils.test.js
+PASS tests/pass/models.test.js
+
+Test Suites: 6 passed, 6 total
+Tests:       240 passed, 240 total
+Snapshots:   0 total
+Time:        1.065 s
+Ran all test suites matching tests/pass.

@@ -1,0 +1,22 @@
+stdout | tests/pass/strings.test.mjs > strings > adds 0 + 1
+progress strings 0
+
+stdout | tests/pass/strings.test.mjs > strings > adds 15 + 1
+progress strings 15
+
+stdout | tests/pass/strings.test.mjs > strings > adds 30 + 1
+progress strings 30
+
+stdout | tests/pass/math.test.mjs > math > adds 0 + 1
+progress math 0
+
+stdout | tests/pass/math.test.mjs > math > adds 15 + 1
+progress math 15
+
+stdout | tests/pass/math.test.mjs > math > adds 30 + 1
+progress math 30
+
+ Test Files  6 passed (6)
+      Tests  240 passed (240)
+   Start at  11:01:31
+   Duration  908ms (transform 48%, import 26%, tests 20%, worker 6%)

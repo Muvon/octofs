@@ -1,0 +1,85 @@
+go: finding module for package gorm.io/gorm
+go: finding module for package github.com/gin-gonic/gin
+go: finding module for package github.com/google/uuid
+go: finding module for package github.com/prometheus/client_golang/prometheus
+go: finding module for package github.com/redis/go-redis/v9
+go: finding module for package github.com/sirupsen/logrus
+go: finding module for package github.com/spf13/cobra
+go: finding module for package go.uber.org/zap
+go: finding module for package golang.org/x/sync/errgroup
+go: finding module for package gorm.io/driver/sqlite
+go: downloading golang.org/x/sync v0.24.0
+go: downloading github.com/redis/go-redis/v9 v9.23.0
+go: downloading github.com/google/uuid v1.6.0
+go: downloading gorm.io/gorm v1.31.2
+go: downloading github.com/prometheus/client_golang v1.25.0
+go: downloading go.uber.org/zap v1.28.0
+go: downloading github.com/spf13/cobra v1.10.2
+go: downloading github.com/sirupsen/logrus v1.10.2
+go: downloading github.com/gin-gonic/gin v1.12.0
+go: downloading gorm.io/driver/sqlite v1.6.0
+go: downloading github.com/redis/go-redis v6.15.9+incompatible
+go: found github.com/gin-gonic/gin in github.com/gin-gonic/gin v1.12.0
+go: found github.com/google/uuid in github.com/google/uuid v1.6.0
+go: found github.com/prometheus/client_golang/prometheus in github.com/prometheus/client_golang v1.25.0
+go: found github.com/redis/go-redis/v9 in github.com/redis/go-redis/v9 v9.23.0
+go: found github.com/sirupsen/logrus in github.com/sirupsen/logrus v1.10.2
+go: found github.com/spf13/cobra in github.com/spf13/cobra v1.10.2
+go: found go.uber.org/zap in go.uber.org/zap v1.28.0
+go: found golang.org/x/sync/errgroup in golang.org/x/sync v0.24.0
+go: found gorm.io/driver/sqlite in gorm.io/driver/sqlite v1.6.0
+go: found gorm.io/gorm in gorm.io/gorm v1.31.2
+go: downloading github.com/jinzhu/now v1.1.5
+go: downloading github.com/jinzhu/inflection v1.0.0
+go: downloading golang.org/x/text v0.42.0
+go: downloading golang.org/x/sys v0.48.0
+go: downloading github.com/bsm/ginkgo/v2 v2.12.0
+go: downloading github.com/bsm/gomega v1.27.10
+go: downloading go.uber.org/atomic v1.12.0
+go: downloading github.com/inconshreveable/mousetrap v1.1.0
+go: downloading github.com/spf13/pflag v1.0.9
+go: downloading github.com/stretchr/testify v1.12.1
+go: downloading go.uber.org/multierr v1.10.0
+go: downloading go.uber.org/goleak v1.3.0
+go: downloading github.com/mattn/go-sqlite3 v1.14.22
+go: downloading github.com/cespare/xxhash/v2 v2.3.0
+go: downloading github.com/gin-contrib/sse v1.1.0
+go: downloading github.com/mattn/go-isatty v0.0.20
+go: downloading github.com/quic-go/quic-go v0.59.0
+go: downloading golang.org/x/net v0.59.0
+go: downloading go.mongodb.org/mongo-driver/v2 v2.5.0
+go: downloading google.golang.org/protobuf v1.36.12
+go: downloading github.com/beorn7/perks v1.0.1
+go: downloading github.com/prometheus/client_model v0.6.3
+go: downloading github.com/prometheus/common v0.72.0
+go: downloading github.com/prometheus/procfs v0.22.0
+go: downloading github.com/zeebo/xxh3 v1.1.0
+go: downloading go.yaml.in/yaml/v3 v3.0.5
+go: downloading github.com/go-playground/validator/v10 v10.30.1
+go: downloading github.com/goccy/go-yaml v1.19.2
+go: downloading github.com/pelletier/go-toml/v2 v2.2.4
+go: downloading github.com/ugorji/go/codec v1.3.1
+go: downloading github.com/json-iterator/go v1.1.12
+go: downloading github.com/modern-go/reflect2 v1.0.2
+go: downloading github.com/bytedance/sonic v1.15.0
+go: downloading github.com/goccy/go-json v0.10.5
+go: downloading github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
+go: downloading github.com/google/go-cmp v0.7.0
+go: downloading go.yaml.in/yaml/v2 v2.4.4
+go: downloading github.com/quic-go/qpack v0.6.0
+go: downloading go.uber.org/mock v0.6.0
+go: downloading github.com/klauspost/cpuid/v2 v2.4.0
+go: downloading github.com/gabriel-vasile/mimetype v1.4.12
+go: downloading github.com/go-playground/universal-translator v0.18.1
+go: downloading github.com/leodido/go-urn v1.4.0
+go: downloading golang.org/x/crypto v0.48.0
+go: downloading github.com/go-playground/locales v0.14.1
+go: downloading github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd
+go: downloading github.com/davecgh/go-spew v1.1.1
+go: downloading github.com/cloudwego/base64x v0.1.6
+go: downloading golang.org/x/arch v0.22.0
+go: downloading github.com/bytedance/gopkg v0.1.3
+go: downloading github.com/bytedance/sonic/loader v0.5.0
+go: downloading github.com/twitchyliquid64/golang-asm v0.15.1
+go: downloading golang.org/x/crypto v0.57.0
+go: downloading github.com/go-playground/assert/v2 v2.2.0

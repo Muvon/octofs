@@ -1,0 +1,7 @@
+/usr/bin/ld: build/mod4.o: in function `mod4_compute':
+/tmp/octofs-digest-cap-builds/c/link/src/mod4.c:8: multiple definition of `mod4_compute'; build/mod3.o:/tmp/octofs-digest-cap-builds/c/link/src/mod3.c:19: first defined here
+/usr/bin/ld: build/main.o: in function `main':
+/tmp/octofs-digest-cap-builds/c/link/src/main.c:40:(.text.startup+0x174): undefined reference to `mod_never_defined'
+/usr/bin/ld: /tmp/octofs-digest-cap-builds/c/link/src/main.c:41:(.text.startup+0x17b): undefined reference to `another_missing_symbol'
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:12: build/app] Error 1

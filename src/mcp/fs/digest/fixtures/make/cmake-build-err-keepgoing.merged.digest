@@ -1,0 +1,152 @@
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c: In function ‘mod14_compute’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:9:18: error: initialization of ‘int *’ from incompatible pointer type ‘struct point *’ [-Wincompatible-pointer-types]
+    9 |         int *q = &p;
+      |                  ^
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:10:17: error: ‘struct point’ has no member named ‘z’
+   10 |         return p.z + x + *q
+      |                 ^
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:10:28: error: expected ‘;’ before ‘}’ token
+   10 |         return p.z + x + *q
+      |                            ^
+      |                            ;
+   11 | }
+      | ~
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:11:1: warning: control reaches end of non-void function [-Wreturn-type]
+   11 | }
+      | ^
+gmake[2]: *** [CMakeFiles/core.dir/build.make:160: CMakeFiles/core.dir/src/mod14.c.o] Error 1
+/tmp/octofs-digest-cap-builds/c/err/src/mod17.c: In function ‘mod17_describe’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod17.c:16:16: error: ‘return’ with a value, in function returning void [-Wreturn-mismatch]
+   16 |         return 0;
+      |                ^
+/tmp/octofs-digest-cap-builds/c/err/src/mod17.c:12:6: note: declared here
+   12 | void mod17_describe(char *buf, size_t n)
+      |      ^~~~~~~~~~~~~~
+gmake[2]: *** [CMakeFiles/core.dir/build.make:202: CMakeFiles/core.dir/src/mod17.c.o] Error 1
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c: In function ‘mod2_compute’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c:8:15: warning: comparison of integer expressions of different signedness: ‘int’ and ‘unsigned int’ [-Wsign-compare]
+    8 |         if (x < u)
+      |               ^
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c:6:13: warning: unused variable ‘unused_local’ [-Wunused-variable]
+    6 |         int unused_local = 7;
+      |             ^~~~~~~~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c: In function ‘mod2_describe’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c:24:35: warning: format ‘%s’ expects argument of type ‘char *’, but argument 4 has type ‘int’ [-Wformat=]
+   24 |         snprintf(buf, n, "module %s", 2);
+      |                                  ~^   ~
+      |                                   |   |
+      |                                   |   int
+      |                                   char *
+      |                                  %d
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c: In function ‘mod2_compute’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c:12:19: warning: this statement may fall through [-Wimplicit-fallthrough=]
+   12 |                 x += 1;
+      |                 ~~^~~~
+/tmp/octofs-digest-cap-builds/c/err/src/mod2.c:13:9: note: here
+   13 |         case 2:
+      |         ^~~~
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c: In function ‘helper’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c:4:30: warning: unused parameter ‘b’ [-Wunused-parameter]
+    4 | static int helper(int a, int b)
+      |                          ~~~~^
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c: In function ‘mod5_compute’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c:12:31: error: ‘undeclared_counter’ undeclared (first use in this function)
+   12 |         return helper(x, y) + undeclared_counter;
+      |                               ^~~~~~~~~~~~~~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c:12:31: note: each undeclared identifier is reported only once for each function it appears in
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c: In function ‘mod5_describe’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c:17:19: error: initialization of ‘char *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   17 |         char *p = 42;
+      |                   ^~
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c:18:37: warning: format ‘%d’ expects argument of type ‘int’, but argument 4 has type ‘char *’ [-Wformat=]
+   18 |         snprintf(buf, n, "module 5 %d", p);
+      |                                    ~^   ~
+      |                                     |   |
+      |                                     int char *
+      |                                    %s
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c: In function ‘mod5_compute’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod5.c:13:1: warning: control reaches end of non-void function [-Wreturn-type]
+   13 | }
+      | ^
+gmake[2]: *** [CMakeFiles/core.dir/build.make:342: CMakeFiles/core.dir/src/mod5.c.o] Error 1
+/tmp/octofs-digest-cap-builds/c/err/src/mod9.c:2:10: fatal error: missing_config.h: No such file or directory
+    2 | #include "missing_config.h"
+      |          ^~~~~~~~~~~~~~~~~~
+compilation terminated.
+gmake[2]: *** [CMakeFiles/core.dir/build.make:398: CMakeFiles/core.dir/src/mod9.c.o] Error 1
+/tmp/octofs-digest-cap-builds/c/err/src/cxx1.cpp: In function ‘T cap::sum(const std::vector<T>&)’:
+/tmp/octofs-digest-cap-builds/c/err/src/cxx1.cpp:13:21: error: ‘accumulate_like’ is not a member of ‘std’
+   13 |         return std::accumulate_like(xs);
+      |                     ^~~~~~~~~~~~~~~
+gmake[2]: *** [CMakeFiles/core.dir/build.make:426: CMakeFiles/core.dir/src/cxx1.cpp.o] Error 1
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp: In function ‘int cxx3_score(int)’:
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:18:18: error: use of deleted function ‘std::unique_ptr<_Tp, _Dp>& std::unique_ptr<_Tp, _Dp>::operator=(const std::unique_ptr<_Tp, _Dp>&) [with _Tp = Widget; _Dp = std::default_delete<Widget>]’
+   18 |         m["a"] = w;
+      |                  ^
+In file included from /usr/include/c++/14/memory:78,
+                 from /tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:4:
+/usr/include/c++/14/bits/unique_ptr.h:518:19: note: declared here
+  518 |       unique_ptr& operator=(const unique_ptr&) = delete;
+      |                   ^~~~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:18:18: note: use ‘-fdiagnostics-all-candidates’ to display considered candidates
+   18 |         m["a"] = w;
+      |                  ^
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:21: error: no matching function for call to ‘push_back(const char [13])’
+   20 |         ws.push_back("not a widget");
+      |         ~~~~~~~~~~~~^~~~~~~~~~~~~~~~
+In file included from /usr/include/c++/14/vector:66,
+                 from /tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:1:
+/usr/include/c++/14/bits/stl_vector.h:1296:7: note: candidate: ‘void std::vector<_Tp, _Alloc>::push_back(const value_type&) [with _Tp = Widget; _Alloc = std::allocator<Widget>; value_type = Widget]’ (near match)
+ 1296 |       push_back(const value_type& __x)
+      |       ^~~~~~~~~
+/usr/include/c++/14/bits/stl_vector.h:1296:7: note:   conversion of argument 1 would be ill-formed:
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:22: error: invalid user-defined conversion from ‘const char [13]’ to ‘const std::vector<Widget>::value_type&’ {aka ‘const Widget&’} [-fpermissive]
+   20 |         ws.push_back("not a widget");
+      |                      ^~~~~~~~~~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:10:9: note: candidate is: ‘Widget::Widget(int)’ (near match)
+   10 |         Widget(int v) : v(v) {}
+      |         ^~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:10:9: note:   conversion of argument 1 would be ill-formed:
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:22: error: invalid conversion from ‘const char*’ to ‘int’ [-fpermissive]
+   20 |         ws.push_back("not a widget");
+      |                      ^~~~~~~~~~~~~~
+      |                      |
+      |                      const char*
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:22: error: invalid conversion from ‘const char*’ to ‘int’ [-fpermissive]
+   20 |         ws.push_back("not a widget");
+      |                      ^~~~~~~~~~~~~~
+      |                      |
+      |                      const char*
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:10:20: note:   initializing argument 1 of ‘Widget::Widget(int)’
+   10 |         Widget(int v) : v(v) {}
+      |                ~~~~^
+/usr/include/c++/14/bits/stl_vector.h:1313:7: note: candidate: ‘void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = Widget; _Alloc = std::allocator<Widget>; value_type = Widget]’ (near match)
+ 1313 |       push_back(value_type&& __x)
+      |       ^~~~~~~~~
+/usr/include/c++/14/bits/stl_vector.h:1313:7: note:   conversion of argument 1 would be ill-formed:
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:22: error: invalid user-defined conversion from ‘const char [13]’ to ‘std::vector<Widget>::value_type&&’ {aka ‘Widget&&’} [-fpermissive]
+   20 |         ws.push_back("not a widget");
+      |                      ^~~~~~~~~~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:10:9: note: candidate is: ‘Widget::Widget(int)’ (near match)
+   10 |         Widget(int v) : v(v) {}
+      |         ^~~~~~
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:10:9: note:   conversion of argument 1 would be ill-formed:
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:22: error: invalid conversion from ‘const char*’ to ‘int’ [-fpermissive]
+   20 |         ws.push_back("not a widget");
+      |                      ^~~~~~~~~~~~~~
+      |                      |
+      |                      const char*
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:20:22: error: invalid conversion from ‘const char*’ to ‘int’ [-fpermissive]
+   20 |         ws.push_back("not a widget");
+      |                      ^~~~~~~~~~~~~~
+      |                      |
+      |                      const char*
+/tmp/octofs-digest-cap-builds/c/err/src/cxx3.cpp:10:20: note:   initializing argument 1 of ‘Widget::Widget(int)’
+   10 |         Widget(int v) : v(v) {}
+      |                ~~~~^
+gmake[2]: *** [CMakeFiles/core.dir/build.make:454: CMakeFiles/core.dir/src/cxx3.cpp.o] Error 1
+gmake[2]: Target 'CMakeFiles/core.dir/build' not remade because of errors.
+gmake[1]: *** [CMakeFiles/Makefile2:85: CMakeFiles/core.dir/all] Error 2
+gmake[1]: Target 'all' not remade because of errors.
+gmake: *** [Makefile:91: all] Error 2
+gmake: Target 'default_target' not remade because of errors.

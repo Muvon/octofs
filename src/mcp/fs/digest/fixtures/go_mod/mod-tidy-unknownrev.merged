@@ -1,0 +1,163 @@
+go: downloading github.com/google/uuid v1.6.0
+go: downloading github.com/sirupsen/logrus v1.99.0
+go: downloading golang.org/x/sync v0.10.0
+go: downloading github.com/gin-gonic/gin v1.10.0
+go: downloading github.com/spf13/cobra v1.8.1
+go: downloading go.uber.org/zap v1.27.0
+go: example.com/octofsdigest imports
+	github.com/prometheus/client_golang/prometheus: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/redis/go-redis/v9: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/sirupsen/logrus: reading github.com/sirupsen/logrus/go.mod at revision v1.99.0: unknown revision v1.99.0
+go: example.com/octofsdigest imports
+	gorm.io/driver/sqlite: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	gorm.io/gorm: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-contrib/sse: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/mattn/go-isatty: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	golang.org/x/net/http2: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	golang.org/x/net/http2/h2c: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/spf13/cobra imports
+	github.com/inconshreveable/mousetrap: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/spf13/cobra imports
+	github.com/spf13/pflag: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	go.uber.org/zap imports
+	go.uber.org/multierr: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/binding imports
+	github.com/go-playground/validator/v10: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/binding imports
+	github.com/pelletier/go-toml/v2: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/binding imports
+	github.com/ugorji/go/codec: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/binding imports
+	google.golang.org/protobuf/proto: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/binding imports
+	gopkg.in/yaml.v3: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/internal/json imports
+	github.com/bytedance/sonic: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/internal/json imports
+	github.com/goccy/go-json: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin imports
+	github.com/gin-gonic/gin/internal/json imports
+	github.com/json-iterator/go: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin tested by
+	github.com/gin-gonic/gin.test imports
+	github.com/stretchr/testify/assert: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	go.uber.org/zap tested by
+	go.uber.org/zap.test imports
+	github.com/stretchr/testify/require: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	go.uber.org/zap tested by
+	go.uber.org/zap.test imports
+	go.uber.org/goleak: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin tested by
+	github.com/gin-gonic/gin.test imports
+	github.com/gin-gonic/gin/testdata/protoexample imports
+	google.golang.org/protobuf/reflect/protoreflect: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.
+go: example.com/octofsdigest imports
+	github.com/gin-gonic/gin tested by
+	github.com/gin-gonic/gin.test imports
+	github.com/gin-gonic/gin/testdata/protoexample imports
+	google.golang.org/protobuf/runtime/protoimpl: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.

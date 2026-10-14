@@ -1,0 +1,4 @@
+Collecting requests==2.32.3 (from -r requirements-noversion.txt (line 1))
+  Downloading requests-2.32.3-py3-none-any.whl.metadata (4.6 kB)
+Collecting click==8.1.7 (from -r requirements-noversion.txt (line 2))
+  Downloading click-8.1.7-py3-none-any.whl.metadata (3.0 kB)

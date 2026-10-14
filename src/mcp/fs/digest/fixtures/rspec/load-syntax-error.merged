@@ -1,0 +1,47 @@
+
+An error occurred while loading ./spec/error/load_spec.rb. - Did you mean?
+                    rspec ./spec/error/math_spec.rb
+                    rspec ./spec/error/syntax_spec.rb
+
+Failure/Error: require 'nonexistent_lib_xyz'
+
+LoadError:
+  cannot load such file -- nonexistent_lib_xyz
+# ./spec/error/load_spec.rb:1:in `<top (required)>'
+
+While loading ./spec/error/syntax_spec.rb a `raise SyntaxError` occurred, RSpec will now quit.
+Failure/Error: __send__(method, file)
+
+SyntaxError:
+  --> /tmp/octofs-digest-cap-tests/rb/spec/error/syntax_spec.rb
+  Unmatched `(', missing `)' ?
+    1  RSpec.describe 'bad' do
+  [0m  2    it 'x' do
+  [0m> 3  [1;3m    expect(1).to eq(1
+  [0m  4    end
+  [0m  5  end
+  [0m
+  [1m/tmp/octofs-digest-cap-tests/rb/spec/error/syntax_spec.rb:4: syntax error, unexpected `end', expecting ')' ([1;4mSyntaxError[m[1m)[m
+  [1m  end[m
+  [1m  ^~~[m
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:2144:in `load'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:2144:in `load_file_handling_errors'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1643:in `block in load_spec_files'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1641:in `each'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/configuration.rb:1641:in `load_spec_files'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:102:in `setup'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:86:in `run'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:71:in `run'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/lib/rspec/core/runner.rb:45:in `invoke'
+# /tmp/octofs-digest-cap-tests/rb/gems/gems/rspec-core-3.13.6/exe/rspec:4:in `<top (required)>'
+# /tmp/octofs-digest-cap-tests/rb/gems/bin/rspec:25:in `load'
+# /tmp/octofs-digest-cap-tests/rb/gems/bin/rspec:25:in `<main>'
+# 
+#   Showing full backtrace because every line was filtered out.
+#   See docs for RSpec::Configuration#backtrace_exclusion_patterns and
+#   RSpec::Configuration#backtrace_inclusion_patterns for more information.
+
+
+Finished in 0.00007 seconds (files took 1.7 seconds to load)
+0 examples, 0 failures, 2 errors occurred outside of examples
+

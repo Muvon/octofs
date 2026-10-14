@@ -1,0 +1,206 @@
+
+ RUN  v5.0.2 /tmp/octofs-digest-cap-tests/js-vitest
+
+ ✓ tests/fail/views.test.mjs > views > adds 0 + 1 2ms
+ ✓ tests/fail/views.test.mjs > views > adds 1 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 2 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 3 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 4 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 5 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 6 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 7 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 8 + 1 1ms
+ ✓ tests/fail/views.test.mjs > views > adds 9 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 10 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 11 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 12 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 13 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 14 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 15 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 16 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 17 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 18 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 19 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 20 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 21 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 22 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 23 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 24 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 25 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 26 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 27 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 28 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 29 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 30 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 31 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 32 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 33 + 1 3ms
+ ✓ tests/fail/views.test.mjs > views > adds 34 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 35 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 36 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 37 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 38 + 1 0ms
+ ✓ tests/fail/views.test.mjs > views > adds 39 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 0 + 1 30ms
+ ✓ tests/fail/models.test.mjs > models > adds 1 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 2 + 1 19ms
+ ✓ tests/fail/models.test.mjs > models > adds 3 + 1 2ms
+ ✓ tests/fail/models.test.mjs > models > adds 4 + 1 8ms
+ ✓ tests/fail/models.test.mjs > models > adds 5 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 6 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 7 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 8 + 1 5ms
+ ✓ tests/fail/models.test.mjs > models > adds 9 + 1 8ms
+ ✓ tests/fail/models.test.mjs > models > adds 10 + 1 4ms
+ ✓ tests/fail/models.test.mjs > models > adds 11 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 12 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 13 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 14 + 1 22ms
+ ✓ tests/fail/models.test.mjs > models > adds 15 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 16 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 17 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 18 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 19 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 20 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 21 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 22 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 23 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 24 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 25 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 26 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 27 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 28 + 1 10ms
+ ✓ tests/fail/models.test.mjs > models > adds 29 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 30 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 31 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 32 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 33 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 34 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 35 + 1 6ms
+ ✓ tests/fail/models.test.mjs > models > adds 36 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 37 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 38 + 1 0ms
+ ✓ tests/fail/models.test.mjs > models > adds 39 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 0 + 1 30ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 1 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 2 + 1 10ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 3 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 4 + 1 9ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 5 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 6 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 7 + 1 5ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 8 + 1 11ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 9 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 10 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 11 + 1 3ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 12 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 13 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 14 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 15 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 16 + 1 8ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 17 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 18 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 19 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 20 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 21 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 22 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 23 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 24 + 1 2ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 25 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 26 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 27 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 28 + 1 4ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 29 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 30 + 1 1ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 31 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 32 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 33 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 34 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 35 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 36 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 37 + 1 0ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 38 + 1 4ms
+ ✓ tests/fail/strings.test.mjs > strings > adds 39 + 1 0ms
+stdout | tests/fail/broken.test.mjs > broken > logs then fails
+starting checkout flow
+
+ × tests/fail/broken.test.mjs > broken > object diff 154ms
+   → expected { name: 'alice', age: 31, …(3) } to deeply equal { name: 'alice', age: 30, …(2) }
+ × tests/fail/broken.test.mjs > broken > array diff 17ms
+   → expected [ 1, 2, 3, 4, 5 ] to deeply equal [ 1, 2, 30, 4, 5, 6 ]
+ × tests/fail/broken.test.mjs > broken > multiline string with blank lines 8ms
+   → expected 'header\n\nbody line one\nbody line tw…' to be 'header\n\nbody line one\nbody line 2\…' // Object.is equality
+ × tests/fail/broken.test.mjs > broken > throws from nested call 10ms
+   → insufficient funds: balance=5 amount=50
+ × tests/fail/broken.test.mjs > broken > type error 5ms
+   → Cannot read properties of undefined (reading 'port')
+ × tests/fail/broken.test.mjs > broken > logs then fails 33ms
+   → expected 7 to be 8 // Object.is equality
+ × tests/fail/broken.test.mjs > broken > async rejection 12ms
+   → upstream returned 503
+
+retry budget exhausted
+ × tests/fail/broken.test.mjs > broken > times out 328ms
+   → Test timed out in 300ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ✓ tests/fail/broken.test.mjs > broken > add(1, 1) = 2 6ms
+ × tests/fail/broken.test.mjs > broken > add(2, 2) = 5 16ms
+   → expected 4 to be 5 // Object.is equality
+ ✓ tests/fail/broken.test.mjs > broken > add(3, 3) = 6 0ms
+ ↓ tests/fail/broken.test.mjs > broken > skipped test
+ □ tests/fail/broken.test.mjs > broken > write coverage for refunds
+stdout | tests/fail/math.test.mjs > math > adds 0 + 1
+progress math 0
+
+stdout | tests/fail/math.test.mjs > math > adds 15 + 1
+progress math 15
+
+ ✓ tests/fail/math.test.mjs > math > adds 0 + 1 60ms
+ ✓ tests/fail/math.test.mjs > math > adds 1 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 2 + 1 2ms
+ ✓ tests/fail/math.test.mjs > math > adds 3 + 1 2ms
+ ✓ tests/fail/math.test.mjs > math > adds 4 + 1 1ms
+ ✓ tests/fail/math.test.mjs > math > adds 5 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 6 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 7 + 1 4ms
+ ✓ tests/fail/math.test.mjs > math > adds 8 + 1 1ms
+ ✓ tests/fail/math.test.mjs > math > adds 9 + 1 3ms
+ ✓ tests/fail/math.test.mjs > math > adds 10 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 11 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 12 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 13 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 14 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 15 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 16 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 17 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 18 + 1 5ms
+stdout | tests/fail/math.test.mjs > math > adds 30 + 1
+progress math 30
+
+ ✓ tests/fail/math.test.mjs > math > adds 19 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 20 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 21 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 22 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 23 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 24 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 25 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 26 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 27 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 28 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 29 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 30 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 31 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 32 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 33 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 34 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 35 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 36 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 37 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 38 + 1 0ms
+ ✓ tests/fail/math.test.mjs > math > adds 39 + 1 0ms
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  9 failed | 162 passed | 1 skipped | 1 todo (173)
+   Start at  11:01:46
+   Duration  2.10s (tests 38%, transform 35%, import 25%, worker 2%)
+

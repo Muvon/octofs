@@ -1,0 +1,97 @@
+FFEEDWstarting checkout flow
+FSIR.F.progress MathTest 0
+...............progress MathTest 15
+...............progress MathTest 30
+Time: 00:00.039, Memory: 18.05 MB
+ ✘ Array diff
+   │
+   │ Failed asserting that two arrays are equal.
+   │ --- Expected
+   │ +++ Actual
+   │ @@ @@
+   │  Array (
+   │      'name' => 'alice'
+   │ -    'age' => 30
+   │ +    'age' => 31
+   │      'roles' => Array (
+   │          0 => 'admin'
+   │ -        1 => 'dev'
+   │      )
+   │ +    'extra' => null
+   │  )
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:21
+   │
+ ✘ Multiline string
+   │
+   │ Failed asserting that two strings are identical.
+   │ --- Expected
+   │ +++ Actual
+   │ @@ @@
+   │  'header
+   │
+   │  body line one
+   │ -body line 2
+   │ +body line two
+   │
+   │ -footer v2
+   │ +footer v1
+   │  '
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:29
+   │
+ ✘ Exception
+   │
+   │ RuntimeException: insufficient funds: balance=5 amount=50
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:11
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:36
+   │
+ ✘ Php error
+   │
+   │ Error: Call to a member function port() on null
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:42
+   │
+ ⚠ Deprecation
+ ⚠ Warning
+ ✘ Echoes then fails
+   │
+   │ total mismatch
+   │
+   │ expected 8 after discount
+   │ Failed asserting that 7 is identical to 8.
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:62
+   │
+ ↩ Skipped
+ ∅ Incomplete
+   │
+   │ refund flow not implemented
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:72
+   │
+ ⚠ Risky
+ ✘ Provider with data set "two"
+   │
+   │ Failed asserting that 4 is identical to 5.
+   │
+   │ /tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:87
+   │
+There was 1 risky test:
+
+1) BrokenTest::testRisky
+This test did not perform any assertions
+
+/tmp/octofs-digest-cap-tests/php/tests/fail/BrokenTest.php:75
+
+ERRORS!
+Tests: 173, Assertions: 168, Errors: 2, Failures: 4, Warnings: 1, Deprecations: 1, Skipped: 1, Incomplete: 1, Risky: 1.
+
+stderr:
+PHP Warning:  PHP Startup: base91: Unable to initialize module
+Module compiled with module API=20210902
+PHP    compiled with module API=20240924
+These options need to match
+ in Unknown on line 0
+PHP Warning:  Module "yaml" is already loaded in Unknown on line 0

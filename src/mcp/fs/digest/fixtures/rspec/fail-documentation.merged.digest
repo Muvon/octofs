@@ -1,0 +1,142 @@
+broken
+  hash diff (FAILED - 1)
+  multiline string with blank lines (FAILED - 2)
+  raises from nested call (FAILED - 3)
+  nil error (FAILED - 4)
+starting checkout flow
+inventory service slow
+  puts then fails (FAILED - 5)
+  aggregate failures (FAILED - 6)
+  is skipped (PENDING: requires redis)
+  is disabled (PENDING: Temporarily skipped with xit)
+  is pending and fails as expected (PENDING: known bug #42)
+  is pending but passes (FAILED - 7)
+DEPRECATION: old_api is deprecated, use new_api
+  warns deprecation
+math
+progress math 0
+progress math 15
+progress math 30
+models
+strings
+views
+Pending: (Failures listed here are expected and do not affect your suite's status)
+
+  1) broken is skipped
+     # requires redis
+     # ./spec/fail/broken_spec.rb:41
+
+  2) broken is disabled
+     # Temporarily skipped with xit
+     # ./spec/fail/broken_spec.rb:45
+
+  3) broken is pending and fails as expected
+     # known bug #42
+     Failure/Error: expect(1).to eq(2)
+
+       expected: 2
+            got: 1
+
+       (compared using ==)
+     # ./spec/fail/broken_spec.rb:51:in `block (2 levels) in <top (required)>'
+
+Failures:
+
+  1) broken hash diff
+     Failure/Error: expect({ name: 'alice', age: 31, roles: ['admin'], extra: nil }).to eq({ name: 'alice', age: 30, roles: %w[admin dev] })
+
+       expected: {:age=>30, :name=>"alice", :roles=>["admin", "dev"]}
+            got: {:age=>31, :extra=>nil, :name=>"alice", :roles=>["admin"]}
+
+       (compared using ==)
+
+       Diff:
+
+       @@ -1,3 +1,4 @@
+       -:age => 30,
+       +:age => 31,
+       +:extra => nil,
+        :name => "alice",
+       -:roles => ["admin", "dev"],
+       +:roles => ["admin"],
+     # ./spec/fail/broken_spec.rb:12:in `block (2 levels) in <top (required)>'
+
+  2) broken multiline string with blank lines
+     Failure/Error: expect("header\n\nbody line one\nbody line two\n\nfooter v1\n").to eq("header\n\nbody line one\nbody line 2\n\nfooter v2\n")
+
+       expected: "header\n\nbody line one\nbody line 2\n\nfooter v2\n"
+            got: "header\n\nbody line one\nbody line two\n\nfooter v1\n"
+
+       (compared using ==)
+
+       Diff:
+
+       @@ -1,6 +1,6 @@
+        header
+
+        body line one
+       -body line 2
+       +body line two
+
+       -footer v2
+       +footer v1
+     # ./spec/fail/broken_spec.rb:16:in `block (2 levels) in <top (required)>'
+
+  3) broken raises from nested call
+     Failure/Error: raise ArgumentError, "insufficient funds: balance=#{@balance} amount=#{amount}" if amount > @balance
+
+     ArgumentError:
+       insufficient funds: balance=5 amount=50
+     # ./spec/fail/broken_spec.rb:5:in `withdraw'
+     # ./spec/fail/broken_spec.rb:22:in `block (2 levels) in <top (required)>'
+
+  4) broken nil error
+     Failure/Error: expect(cfg.port).to eq(8080)
+
+     NoMethodError:
+       undefined method `port' for nil
+     # ./spec/fail/broken_spec.rb:27:in `block (2 levels) in <top (required)>'
+
+  5) broken puts then fails
+     Failure/Error: expect(7).to eq(8), "total mismatch\n\nexpected 8 after discount"
+
+       total mismatch
+
+       expected 8 after discount
+     # ./spec/fail/broken_spec.rb:33:in `block (2 levels) in <top (required)>'
+
+  6) broken aggregate failures
+     Got 2 failures:
+
+     6.1) Failure/Error: expect(1).to eq(2)
+
+            expected: 2
+                 got: 1
+
+            (compared using ==)
+          # ./spec/fail/broken_spec.rb:37:in `block (2 levels) in <top (required)>'
+
+     6.2) Failure/Error: expect('a').to eq('b')
+
+            expected: "b"
+                 got: "a"
+
+            (compared using ==)
+          # ./spec/fail/broken_spec.rb:38:in `block (2 levels) in <top (required)>'
+
+  7) broken is pending but passes FIXED
+     Expected pending 'flaky upstream' to fail. No error was raised.
+     # ./spec/fail/broken_spec.rb:54
+
+Finished in 0.08233 seconds (files took 0.23447 seconds to load)
+171 examples, 7 failures, 3 pending
+
+Failed examples:
+
+rspec ./spec/fail/broken_spec.rb:11 # broken hash diff
+rspec ./spec/fail/broken_spec.rb:15 # broken multiline string with blank lines
+rspec ./spec/fail/broken_spec.rb:19 # broken raises from nested call
+rspec ./spec/fail/broken_spec.rb:25 # broken nil error
+rspec ./spec/fail/broken_spec.rb:30 # broken puts then fails
+rspec ./spec/fail/broken_spec.rb:36 # broken aggregate failures
+rspec ./spec/fail/broken_spec.rb:54 # broken is pending but passes

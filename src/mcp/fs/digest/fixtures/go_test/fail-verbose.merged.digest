@@ -1,0 +1,72 @@
+    auth_test.go:6: checking 0 + 1
+    auth_test.go:67: checking 10 + 1
+    auth_test.go:128: checking 20 + 1
+    auth_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/fail/auth	0.003s
+    billing_test.go:6: checking 0 + 1
+    billing_test.go:67: checking 10 + 1
+    billing_test.go:128: checking 20 + 1
+    billing_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/fail/billing	0.004s
+    cache_test.go:6: checking 0 + 1
+    cache_test.go:25: requires network
+--- SKIP: TestCache3 (0.00s)
+    cache_test.go:68: checking 10 + 1
+    cache_test.go:129: checking 20 + 1
+    cache_test.go:190: checking 30 + 1
+PASS
+ok  	example.com/fail/cache	0.004s
+    inventory_test.go:8: Stock(0) = -1, want 0
+    inventory_test.go:8: Stock(1) = 0, want 1
+    inventory_test.go:8: Stock(2) = 1, want 2
+    inventory_test.go:8: Stock(3) = 2, want 3
+    inventory_test.go:8: Stock(4) = 3, want 4
+--- FAIL: TestStock (0.00s)
+FAIL
+FAIL	example.com/fail/inventory	0.003s
+?   	example.com/fail/notests	[no test files]
+    orders_test.go:16: computing total for cart #17
+    orders_test.go:17: prices=[10 20 30]
+    orders_test.go:20: Total() = 60, want 70
+    orders_test.go:22: continuing after error
+--- FAIL: TestTotalWrong (0.00s)
+    orders_test.go:29: mismatch:
+        --- want
+        line one
+
+        line three
+
+        --- got
+        line one
+        line two
+        line three
+--- FAIL: TestMultilineMessage (0.00s)
+stdout from TestFatalStops before fatal
+    orders_test.go:35: cannot open fixture "testdata/orders.json": no such file or directory
+--- FAIL: TestFatalStops (0.00s)
+    orders_test.go:44: case empty
+    orders_test.go:44: case single
+    orders_test.go:44: case negative
+    orders_test.go:46: Total([-1 -2]) = -3, want -4
+    orders_test.go:44: case big
+--- FAIL: TestSubtests (0.00s)
+    --- FAIL: TestSubtests/negative (0.00s)
+    orders_test.go:53: skipping: needs DATABASE_URL
+--- SKIP: TestSkipped (0.00s)
+    orders_test.go:57: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+        second log line
+
+        after blank
+    orders_test.go:58: failed with long log
+--- FAIL: TestLongLog (0.00s)
+FAIL
+FAIL	example.com/fail/orders	0.003s
+    storage_test.go:6: checking 0 + 1
+    storage_test.go:67: checking 10 + 1
+    storage_test.go:128: checking 20 + 1
+    storage_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/fail/storage	0.003s
+FAIL

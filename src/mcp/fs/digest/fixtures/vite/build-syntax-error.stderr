@@ -1,0 +1,9 @@
+x Build failed in 51ms
+error during build:
+[vite:build-import-analysis] [plugin vite:build-import-analysis] app-syntax/pages/page19.js: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+file: /tmp/octofs-digest-cap-builds/web/app-syntax/pages/page19.js
+    at getRollupError (file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/parseAst.js:319:41)
+    at error (file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/parseAst.js:315:42)
+    at Object.error (file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/node-entry.js:23287:20)
+    at Object.error (file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/node-entry.js:22330:42)
+    at Object.transform (file:///tmp/octofs-digest-cap-builds/web/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64913:14)

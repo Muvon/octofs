@@ -1,0 +1,69 @@
+Progress: resolved 1, reused 0, downloaded 0, added 0
+ WARN  deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+ WARN  deprecated request@2.88.2: request has been deprecated, see https://github.com/request/request/issues/3142
+ WARN  deprecated uuid@3.4.0: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+ WARN  deprecated core-js@2.6.12: core-js@<3.23.3 is no longer maintained and not recommended for usage due to the number of issues. Because of the V8 engine whims, feature detection in old core-js versions could cause a slowdown up to 100x even if nothing is polyfilled. Some versions have web compatibility issues. Please, upgrade your dependencies to the actual version of core-js.
+ WARN  deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
+   ╭───────────────────────────────────────────────────────────────────╮
+   │                                                                   │
+   │                Update available! 8.15.9 → 12.11.2.                │
+   │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.11.2   │
+   │                 Run "pnpm add -g pnpm" to update.                 │
+   │                                                                   │
+   │      Follow @pnpmjs for updates: https://twitter.com/pnpmjs       │
+   │                                                                   │
+   ╰───────────────────────────────────────────────────────────────────╯
+
+Progress: resolved 141, reused 0, downloaded 124, added 0
+Progress: resolved 473, reused 0, downloaded 434, added 0
+Progress: resolved 679, reused 0, downloaded 666, added 0
+ WARN  13 deprecated subdependencies found: @humanwhocodes/config-array@0.13.0, @humanwhocodes/object-schema@2.0.3, @npmcli/move-file@1.1.2, are-we-there-yet@2.0.0, are-we-there-yet@3.0.1, gauge@3.0.2, gauge@4.0.4, glob@7.2.3, har-validator@5.1.5, inflight@1.0.6, npmlog@5.0.1, npmlog@6.0.2, tar@6.2.1
+Packages: +705
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 706, reused 0, downloaded 705, added 705, done
+.../core-js@2.6.12/node_modules/core-js postinstall$ node -e "try{require('./postinstall')}catch(e){}"
+.../core-js@2.6.12/node_modules/core-js postinstall: Done
+.../sqlite3@5.1.6/node_modules/sqlite3 install$ node-pre-gyp install --fallback-to-build
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info it worked if it ends with ok
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info using node-pre-gyp@1.0.11
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info using node@18.12.1 | linux | x64
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info check checked for "/tmp/octofs-digest-cap-installs/pnpm/node_modules/.pnpm/sqlite3@5.1.6/node_modules/sqlite3/lib/binding/napi-v6-linux-glibc-x64/node_sqlite3.node" (not found)
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp http GET https://github.com/TryGhost/node-sqlite3/releases/download/v5.1.6/napi-v6-linux-glibc-x64.tar.gz
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info install unpacking napi-v6-linux-glibc-x64/node_sqlite3.node
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info extracted file count: 1 
+.../sqlite3@5.1.6/node_modules/sqlite3 install: node-pre-gyp info ok 
+.../sqlite3@5.1.6/node_modules/sqlite3 install: [sqlite3] Success: "/tmp/octofs-digest-cap-installs/pnpm/node_modules/.pnpm/sqlite3@5.1.6/node_modules/sqlite3/lib/binding/napi-v6-linux-glibc-x64/node_sqlite3.node" is installed via remote
+.../sqlite3@5.1.6/node_modules/sqlite3 install: Done
+
+dependencies:
++ axios 1.20.0
++ chalk 4.1.2 (6.0.1 is available)
++ commander 11.1.0 (15.0.0 is available)
++ core-js 2.6.12 (3.50.0 is available) deprecated
++ debug 4.4.3
++ dotenv 16.6.1 (18.0.7 is available)
++ express 4.22.3 (5.3.0 is available)
++ lodash 4.18.1
++ moment 2.31.0
++ node-fetch 2.7.0 (3.3.2 is available)
++ react 18.3.1 (19.3.0 is available)
++ react-dom 18.3.1 (19.3.0 is available)
++ request 2.88.2 deprecated
++ sqlite3 5.1.6 (6.0.1 is available)
++ uuid 3.4.0 (14.0.3 is available) deprecated
++ yargs 17.7.3 (18.2.0 is available)
+
+devDependencies:
++ @babel/core 7.29.7 (8.0.7 is available)
++ babel-loader 9.2.1 (10.1.1 is available)
++ eslint 8.57.1 (10.12.0 is available) deprecated
++ eslint-config-airbnb 19.0.4
++ jest 29.7.0 (30.5.2 is available)
++ react-test-renderer 18.3.1 (19.3.0 is available)
++ rimraf 3.0.2 (6.1.3 is available) deprecated
++ ts-node 10.9.2
++ typescript 5.9.3 (7.0.2 is available)
++ webpack 5.111.1
+
+Done in 4.7s

@@ -1,0 +1,33 @@
+
+ RUN  v5.0.2 /tmp/octofs-digest-cap-tests/js-vitest
+
+stdout | tests/pass/math.test.mjs > math > adds 0 + 1
+progress math 0
+
+stdout | tests/pass/math.test.mjs > math > adds 15 + 1
+progress math 15
+
+stdout | tests/pass/math.test.mjs > math > adds 30 + 1
+progress math 30
+
+ ✓ tests/pass/math.test.mjs (40 tests) 23ms
+ ✓ tests/pass/views.test.mjs (40 tests) 24ms
+ ✓ tests/pass/models.test.mjs (40 tests) 23ms
+stdout | tests/pass/strings.test.mjs > strings > adds 0 + 1
+progress strings 0
+
+ ✓ tests/pass/parsers.test.mjs (40 tests) 53ms
+ ✓ tests/pass/utils.test.mjs (40 tests) 19ms
+stdout | tests/pass/strings.test.mjs > strings > adds 15 + 1
+progress strings 15
+
+stdout | tests/pass/strings.test.mjs > strings > adds 30 + 1
+progress strings 30
+
+ ✓ tests/pass/strings.test.mjs (40 tests) 120ms
+
+ Test Files  6 passed (6)
+      Tests  240 passed (240)
+   Start at  11:01:23
+   Duration  1.07s (import 44%, transform 28%, tests 21%, worker 7%)
+

@@ -1,0 +1,12 @@
+
+The conflict is caused by:
+    The user requested werkzeug==2.0.3
+    flask 3.0.3 depends on Werkzeug>=3.0.0
+
+To fix this you could try to:
+1. loosen the range of package versions you've specified
+2. remove package versions to allow pip attempt to solve the dependency conflict
+
+stderr:
+ERROR: Cannot install -r requirements-conflict.txt (line 2) and werkzeug==2.0.3 because these package versions have conflicting dependencies.
+ERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts

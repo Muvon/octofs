@@ -1,0 +1,39 @@
+    api_test.go:6: checking 0 + 1
+    api_test.go:67: checking 10 + 1
+    api_test.go:128: checking 20 + 1
+    api_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/pass/api	0.033s
+    auth_test.go:6: checking 0 + 1
+    auth_test.go:67: checking 10 + 1
+    auth_test.go:128: checking 20 + 1
+    auth_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/pass/auth	0.039s
+    billing_test.go:6: checking 0 + 1
+    billing_test.go:67: checking 10 + 1
+    billing_test.go:128: checking 20 + 1
+    billing_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/pass/billing	0.009s
+    cache_test.go:6: checking 0 + 1
+    cache_test.go:25: requires network
+--- SKIP: TestCache3 (0.00s)
+    cache_test.go:68: checking 10 + 1
+    cache_test.go:129: checking 20 + 1
+    cache_test.go:190: checking 30 + 1
+PASS
+ok  	example.com/pass/cache	0.006s
+?   	example.com/pass/cmd/tool	[no test files]
+    storage_test.go:6: checking 0 + 1
+    storage_test.go:67: checking 10 + 1
+    storage_test.go:128: checking 20 + 1
+    storage_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/pass/storage	0.008s
+    util_test.go:6: checking 0 + 1
+    util_test.go:67: checking 10 + 1
+    util_test.go:128: checking 20 + 1
+    util_test.go:189: checking 30 + 1
+PASS
+ok  	example.com/pass/util	0.004s

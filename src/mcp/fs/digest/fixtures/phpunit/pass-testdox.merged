@@ -1,0 +1,270 @@
+PHP Warning:  PHP Startup: base91: Unable to initialize module
+Module compiled with module API=20210902
+PHP    compiled with module API=20240924
+These options need to match
+ in Unknown on line 0
+PHP Warning:  Module "yaml" is already loaded in Unknown on line 0
+PHPUnit 12.5.39 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.4.21
+
+...............................................................  63 / 240 ( 26%)
+............................................................... 126 / 240 ( 52%)
+............................................................... 189 / 240 ( 78%)
+...................................................             240 / 240 (100%)
+
+Time: 00:00.387, Memory: 18.05 MB
+
+Math
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Models
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Parsers
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Strings
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Utils
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+Views
+ ✔ Adds 0
+ ✔ Adds 1
+ ✔ Adds 2
+ ✔ Adds 3
+ ✔ Adds 4
+ ✔ Adds 5
+ ✔ Adds 6
+ ✔ Adds 7
+ ✔ Adds 8
+ ✔ Adds 9
+ ✔ Adds 10
+ ✔ Adds 11
+ ✔ Adds 12
+ ✔ Adds 13
+ ✔ Adds 14
+ ✔ Adds 15
+ ✔ Adds 16
+ ✔ Adds 17
+ ✔ Adds 18
+ ✔ Adds 19
+ ✔ Adds 20
+ ✔ Adds 21
+ ✔ Adds 22
+ ✔ Adds 23
+ ✔ Adds 24
+ ✔ Adds 25
+ ✔ Adds 26
+ ✔ Adds 27
+ ✔ Adds 28
+ ✔ Adds 29
+ ✔ Adds 30
+ ✔ Adds 31
+ ✔ Adds 32
+ ✔ Adds 33
+ ✔ Adds 34
+ ✔ Adds 35
+ ✔ Adds 36
+ ✔ Adds 37
+ ✔ Adds 38
+ ✔ Adds 39
+
+OK (240 tests, 240 assertions)

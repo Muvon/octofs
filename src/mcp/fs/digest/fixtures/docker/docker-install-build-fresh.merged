@@ -1,0 +1,335 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 435B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.12-slim
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/7] FROM docker.io/library/python:3.12-slim
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 179B done
+#5 DONE 0.0s
+
+#6 [2/7] RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/*
+#6 0.336 Hit:1 http://deb.debian.org/debian trixie InRelease
+#6 0.336 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#6 0.337 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#6 0.362 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]
+#6 0.535 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]
+#6 0.535 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [267 kB]
+#6 1.277 Fetched 10.0 MB in 1s (10.3 MB/s)
+#6 1.277 Reading package lists...
+#6 2.015 Reading package lists...
+#6 2.777 Building dependency tree...
+#6 3.038 Reading state information...
+#6 3.312 The following additional packages will be installed:
+#6 3.312   git-man libbrotli1 libcom-err2 libcurl3t64-gnutls libcurl4t64 liberror-perl
+#6 3.312   libexpat1 libgdbm-compat4t64 libgnutls30t64 libgssapi-krb5-2 libidn2-0
+#6 3.312   libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libldap2 libnghttp2-14
+#6 3.312   libnghttp3-9 libngtcp2-16 libngtcp2-crypto-gnutls8 libp11-kit0 libperl5.40
+#6 3.312   libpsl5t64 librtmp1 libsasl2-2 libsasl2-modules-db libssh2-1t64 libtasn1-6
+#6 3.312   libunistring5 perl perl-modules-5.40
+#6 3.312 Suggested packages:
+#6 3.312   gettext-base git-doc git-email git-gui gitk gitweb git-cvs git-mediawiki
+#6 3.312   git-svn gnutls-bin krb5-doc krb5-user sensible-utils perl-doc
+#6 3.312   libterm-readline-gnu-perl | libterm-readline-perl-perl make
+#6 3.312   libtap-harness-archive-perl
+#6 3.312 Recommended packages:
+#6 3.312   bash-completion patch less ssh-client krb5-locales libldap-common
+#6 3.312   publicsuffix libsasl2-modules
+#6 3.533 The following NEW packages will be installed:
+#6 3.533   curl git git-man libbrotli1 libcom-err2 libcurl3t64-gnutls libcurl4t64
+#6 3.534   liberror-perl libexpat1 libgdbm-compat4t64 libgnutls30t64 libgssapi-krb5-2
+#6 3.534   libidn2-0 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libldap2
+#6 3.534   libnghttp2-14 libnghttp3-9 libngtcp2-16 libngtcp2-crypto-gnutls8 libp11-kit0
+#6 3.534   libperl5.40 libpsl5t64 librtmp1 libsasl2-2 libsasl2-modules-db libssh2-1t64
+#6 3.535   libtasn1-6 libunistring5 perl perl-modules-5.40
+#6 3.599 0 upgraded, 33 newly installed, 0 to remove and 1 not upgraded.
+#6 3.599 Need to get 24.3 MB of archives.
+#6 3.599 After this operation, 121 MB of additional disk space will be used.
+#6 3.599 Get:1 http://deb.debian.org/debian trixie/main amd64 libexpat1 amd64 2.8.3-1~deb13u1 [123 kB]
+#6 3.616 Get:2 http://deb.debian.org/debian trixie/main amd64 perl-modules-5.40 all 5.40.1-6+deb13u1 [3014 kB]
+#6 3.671 Get:3 http://deb.debian.org/debian trixie/main amd64 libgdbm-compat4t64 amd64 1.24-2 [50.3 kB]
+#6 3.671 Get:4 http://deb.debian.org/debian trixie/main amd64 libperl5.40 amd64 5.40.1-6+deb13u1 [4326 kB]
+#6 3.691 Get:5 http://deb.debian.org/debian trixie/main amd64 perl amd64 5.40.1-6+deb13u1 [268 kB]
+#6 3.702 Get:6 http://deb.debian.org/debian trixie/main amd64 libbrotli1 amd64 1.1.0-2+b7 [307 kB]
+#6 3.704 Get:7 http://deb.debian.org/debian trixie/main amd64 libkrb5support0 amd64 1.21.3-5+deb13u1 [33.1 kB]
+#6 3.705 Get:8 http://deb.debian.org/debian trixie/main amd64 libcom-err2 amd64 1.47.2-3+b12 [25.0 kB]
+#6 3.706 Get:9 http://deb.debian.org/debian trixie/main amd64 libk5crypto3 amd64 1.21.3-5+deb13u1 [81.2 kB]
+#6 3.706 Get:10 http://deb.debian.org/debian trixie/main amd64 libkeyutils1 amd64 1.6.3-6 [9456 B]
+#6 3.706 Get:11 http://deb.debian.org/debian trixie/main amd64 libkrb5-3 amd64 1.21.3-5+deb13u1 [326 kB]
+#6 3.708 Get:12 http://deb.debian.org/debian trixie/main amd64 libgssapi-krb5-2 amd64 1.21.3-5+deb13u1 [138 kB]
+#6 3.708 Get:13 http://deb.debian.org/debian trixie/main amd64 libunistring5 amd64 1.3-2 [477 kB]
+#6 3.710 Get:14 http://deb.debian.org/debian trixie/main amd64 libidn2-0 amd64 2.3.8-2 [109 kB]
+#6 3.711 Get:15 http://deb.debian.org/debian trixie/main amd64 libsasl2-modules-db amd64 2.1.28+dfsg1-9 [19.8 kB]
+#6 3.716 Get:16 http://deb.debian.org/debian trixie/main amd64 libsasl2-2 amd64 2.1.28+dfsg1-9 [57.5 kB]
+#6 3.717 Get:17 http://deb.debian.org/debian trixie/main amd64 libldap2 amd64 2.6.10+dfsg-1 [194 kB]
+#6 3.719 Get:18 http://deb.debian.org/debian trixie/main amd64 libnghttp2-14 amd64 1.64.0-1.1+deb13u1 [76.2 kB]
+#6 3.719 Get:19 http://deb.debian.org/debian trixie/main amd64 libnghttp3-9 amd64 1.8.0-1 [67.7 kB]
+#6 3.721 Get:20 http://deb.debian.org/debian trixie/main amd64 libpsl5t64 amd64 0.21.2-1.1+b1 [57.2 kB]
+#6 3.721 Get:21 http://deb.debian.org/debian trixie/main amd64 libp11-kit0 amd64 0.25.5-3 [425 kB]
+#6 3.724 Get:22 http://deb.debian.org/debian trixie/main amd64 libtasn1-6 amd64 4.20.0-2+deb13u1 [50.1 kB]
+#6 3.725 Get:23 http://deb.debian.org/debian trixie/main amd64 libgnutls30t64 amd64 3.8.9-3+deb13u4 [1469 kB]
+#6 3.737 Get:24 http://deb.debian.org/debian trixie/main amd64 librtmp1 amd64 2.4+20151223.gitfa8646d.1-2+b5 [58.8 kB]
+#6 3.737 Get:25 http://deb.debian.org/debian trixie/main amd64 libssh2-1t64 amd64 1.11.1-1+deb13u2 [245 kB]
+#6 3.739 Get:26 http://deb.debian.org/debian-security trixie-security/main amd64 libcurl4t64 amd64 8.14.1-2+deb13u7 [392 kB]
+#6 3.742 Get:27 http://deb.debian.org/debian-security trixie-security/main amd64 curl amd64 8.14.1-2+deb13u7 [270 kB]
+#6 3.744 Get:28 http://deb.debian.org/debian trixie/main amd64 libngtcp2-16 amd64 1.11.0-1+deb13u1 [132 kB]
+#6 3.746 Get:29 http://deb.debian.org/debian trixie/main amd64 libngtcp2-crypto-gnutls8 amd64 1.11.0-1+deb13u1 [29.5 kB]
+#6 3.746 Get:30 http://deb.debian.org/debian-security trixie-security/main amd64 libcurl3t64-gnutls amd64 8.14.1-2+deb13u7 [385 kB]
+#6 3.749 Get:31 http://deb.debian.org/debian trixie/main amd64 liberror-perl all 0.17030-1 [26.9 kB]
+#6 3.751 Get:32 http://deb.debian.org/debian trixie/main amd64 git-man all 1:2.47.3-0+deb13u1 [2205 kB]
+#6 3.769 Get:33 http://deb.debian.org/debian trixie/main amd64 git amd64 1:2.47.3-0+deb13u1 [8862 kB]
+#6 4.006 debconf: unable to initialize frontend: Dialog
+#6 4.007 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#6 4.007 debconf: falling back to frontend: Readline
+#6 4.007 debconf: unable to initialize frontend: Readline
+#6 4.007 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 33.)
+#6 4.007 debconf: falling back to frontend: Teletype
+#6 4.017 debconf: unable to initialize frontend: Teletype
+#6 4.029 debconf: (This frontend requires a controlling tty.)
+#6 4.029 debconf: falling back to frontend: Noninteractive
+#6 5.632 Fetched 24.3 MB in 0s (87.7 MB/s)
+#6 5.728 Selecting previously unselected package libexpat1:amd64.
+#6 5.728 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5660 files and directories currently installed.)
+#6 5.737 Preparing to unpack .../00-libexpat1_2.8.3-1~deb13u1_amd64.deb ...
+#6 5.743 Unpacking libexpat1:amd64 (2.8.3-1~deb13u1) ...
+#6 5.766 Selecting previously unselected package perl-modules-5.40.
+#6 5.766 Preparing to unpack .../01-perl-modules-5.40_5.40.1-6+deb13u1_all.deb ...
+#6 5.767 Unpacking perl-modules-5.40 (5.40.1-6+deb13u1) ...
+#6 6.130 Selecting previously unselected package libgdbm-compat4t64:amd64.
+#6 6.132 Preparing to unpack .../02-libgdbm-compat4t64_1.24-2_amd64.deb ...
+#6 6.134 Unpacking libgdbm-compat4t64:amd64 (1.24-2) ...
+#6 6.229 Selecting previously unselected package libperl5.40:amd64.
+#6 6.229 Preparing to unpack .../03-libperl5.40_5.40.1-6+deb13u1_amd64.deb ...
+#6 6.229 Unpacking libperl5.40:amd64 (5.40.1-6+deb13u1) ...
+#6 6.527 Selecting previously unselected package perl.
+#6 6.528 Preparing to unpack .../04-perl_5.40.1-6+deb13u1_amd64.deb ...
+#6 6.529 Unpacking perl (5.40.1-6+deb13u1) ...
+#6 6.636 Selecting previously unselected package libbrotli1:amd64.
+#6 6.636 Preparing to unpack .../05-libbrotli1_1.1.0-2+b7_amd64.deb ...
+#6 6.651 Unpacking libbrotli1:amd64 (1.1.0-2+b7) ...
+#6 6.748 Selecting previously unselected package libkrb5support0:amd64.
+#6 6.748 Preparing to unpack .../06-libkrb5support0_1.21.3-5+deb13u1_amd64.deb ...
+#6 6.749 Unpacking libkrb5support0:amd64 (1.21.3-5+deb13u1) ...
+#6 6.807 Selecting previously unselected package libcom-err2:amd64.
+#6 6.807 Preparing to unpack .../07-libcom-err2_1.47.2-3+b12_amd64.deb ...
+#6 6.833 Unpacking libcom-err2:amd64 (1.47.2-3+b12) ...
+#6 6.862 Selecting previously unselected package libk5crypto3:amd64.
+#6 6.862 Preparing to unpack .../08-libk5crypto3_1.21.3-5+deb13u1_amd64.deb ...
+#6 6.862 Unpacking libk5crypto3:amd64 (1.21.3-5+deb13u1) ...
+#6 6.877 Selecting previously unselected package libkeyutils1:amd64.
+#6 6.879 Preparing to unpack .../09-libkeyutils1_1.6.3-6_amd64.deb ...
+#6 6.879 Unpacking libkeyutils1:amd64 (1.6.3-6) ...
+#6 6.891 Selecting previously unselected package libkrb5-3:amd64.
+#6 6.892 Preparing to unpack .../10-libkrb5-3_1.21.3-5+deb13u1_amd64.deb ...
+#6 6.893 Unpacking libkrb5-3:amd64 (1.21.3-5+deb13u1) ...
+#6 6.923 Selecting previously unselected package libgssapi-krb5-2:amd64.
+#6 6.924 Preparing to unpack .../11-libgssapi-krb5-2_1.21.3-5+deb13u1_amd64.deb ...
+#6 6.925 Unpacking libgssapi-krb5-2:amd64 (1.21.3-5+deb13u1) ...
+#6 6.956 Selecting previously unselected package libunistring5:amd64.
+#6 6.958 Preparing to unpack .../12-libunistring5_1.3-2_amd64.deb ...
+#6 6.958 Unpacking libunistring5:amd64 (1.3-2) ...
+#6 7.043 Selecting previously unselected package libidn2-0:amd64.
+#6 7.046 Preparing to unpack .../13-libidn2-0_2.3.8-2_amd64.deb ...
+#6 7.047 Unpacking libidn2-0:amd64 (2.3.8-2) ...
+#6 7.084 Selecting previously unselected package libsasl2-modules-db:amd64.
+#6 7.084 Preparing to unpack .../14-libsasl2-modules-db_2.1.28+dfsg1-9_amd64.deb ...
+#6 7.084 Unpacking libsasl2-modules-db:amd64 (2.1.28+dfsg1-9) ...
+#6 7.106 Selecting previously unselected package libsasl2-2:amd64.
+#6 7.107 Preparing to unpack .../15-libsasl2-2_2.1.28+dfsg1-9_amd64.deb ...
+#6 7.107 Unpacking libsasl2-2:amd64 (2.1.28+dfsg1-9) ...
+#6 7.146 Selecting previously unselected package libldap2:amd64.
+#6 7.147 Preparing to unpack .../16-libldap2_2.6.10+dfsg-1_amd64.deb ...
+#6 7.147 Unpacking libldap2:amd64 (2.6.10+dfsg-1) ...
+#6 7.173 Selecting previously unselected package libnghttp2-14:amd64.
+#6 7.173 Preparing to unpack .../17-libnghttp2-14_1.64.0-1.1+deb13u1_amd64.deb ...
+#6 7.173 Unpacking libnghttp2-14:amd64 (1.64.0-1.1+deb13u1) ...
+#6 7.213 Selecting previously unselected package libnghttp3-9:amd64.
+#6 7.213 Preparing to unpack .../18-libnghttp3-9_1.8.0-1_amd64.deb ...
+#6 7.213 Unpacking libnghttp3-9:amd64 (1.8.0-1) ...
+#6 7.269 Selecting previously unselected package libpsl5t64:amd64.
+#6 7.269 Preparing to unpack .../19-libpsl5t64_0.21.2-1.1+b1_amd64.deb ...
+#6 7.269 Unpacking libpsl5t64:amd64 (0.21.2-1.1+b1) ...
+#6 7.301 Selecting previously unselected package libp11-kit0:amd64.
+#6 7.301 Preparing to unpack .../20-libp11-kit0_0.25.5-3_amd64.deb ...
+#6 7.301 Unpacking libp11-kit0:amd64 (0.25.5-3) ...
+#6 7.365 Selecting previously unselected package libtasn1-6:amd64.
+#6 7.365 Preparing to unpack .../21-libtasn1-6_4.20.0-2+deb13u1_amd64.deb ...
+#6 7.365 Unpacking libtasn1-6:amd64 (4.20.0-2+deb13u1) ...
+#6 7.431 Selecting previously unselected package libgnutls30t64:amd64.
+#6 7.432 Preparing to unpack .../22-libgnutls30t64_3.8.9-3+deb13u4_amd64.deb ...
+#6 7.434 Unpacking libgnutls30t64:amd64 (3.8.9-3+deb13u4) ...
+#6 7.525 Selecting previously unselected package librtmp1:amd64.
+#6 7.525 Preparing to unpack .../23-librtmp1_2.4+20151223.gitfa8646d.1-2+b5_amd64.deb ...
+#6 7.526 Unpacking librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2+b5) ...
+#6 7.561 Selecting previously unselected package libssh2-1t64:amd64.
+#6 7.561 Preparing to unpack .../24-libssh2-1t64_1.11.1-1+deb13u2_amd64.deb ...
+#6 7.562 Unpacking libssh2-1t64:amd64 (1.11.1-1+deb13u2) ...
+#6 7.591 Selecting previously unselected package libcurl4t64:amd64.
+#6 7.592 Preparing to unpack .../25-libcurl4t64_8.14.1-2+deb13u7_amd64.deb ...
+#6 7.593 Unpacking libcurl4t64:amd64 (8.14.1-2+deb13u7) ...
+#6 7.625 Selecting previously unselected package curl.
+#6 7.627 Preparing to unpack .../26-curl_8.14.1-2+deb13u7_amd64.deb ...
+#6 7.630 Unpacking curl (8.14.1-2+deb13u7) ...
+#6 7.657 Selecting previously unselected package libngtcp2-16:amd64.
+#6 7.657 Preparing to unpack .../27-libngtcp2-16_1.11.0-1+deb13u1_amd64.deb ...
+#6 7.657 Unpacking libngtcp2-16:amd64 (1.11.0-1+deb13u1) ...
+#6 7.684 Selecting previously unselected package libngtcp2-crypto-gnutls8:amd64.
+#6 7.684 Preparing to unpack .../28-libngtcp2-crypto-gnutls8_1.11.0-1+deb13u1_amd64.deb ...
+#6 7.685 Unpacking libngtcp2-crypto-gnutls8:amd64 (1.11.0-1+deb13u1) ...
+#6 7.706 Selecting previously unselected package libcurl3t64-gnutls:amd64.
+#6 7.706 Preparing to unpack .../29-libcurl3t64-gnutls_8.14.1-2+deb13u7_amd64.deb ...
+#6 7.708 Unpacking libcurl3t64-gnutls:amd64 (8.14.1-2+deb13u7) ...
+#6 7.762 Selecting previously unselected package liberror-perl.
+#6 7.763 Preparing to unpack .../30-liberror-perl_0.17030-1_all.deb ...
+#6 7.764 Unpacking liberror-perl (0.17030-1) ...
+#6 7.795 Selecting previously unselected package git-man.
+#6 7.795 Preparing to unpack .../31-git-man_1%3a2.47.3-0+deb13u1_all.deb ...
+#6 7.797 Unpacking git-man (1:2.47.3-0+deb13u1) ...
+#6 7.882 Selecting previously unselected package git.
+#6 7.882 Preparing to unpack .../32-git_1%3a2.47.3-0+deb13u1_amd64.deb ...
+#6 7.890 Unpacking git (1:2.47.3-0+deb13u1) ...
+#6 8.226 Setting up libexpat1:amd64 (2.8.3-1~deb13u1) ...
+#6 8.230 Setting up libkeyutils1:amd64 (1.6.3-6) ...
+#6 8.230 Setting up libgdbm-compat4t64:amd64 (1.24-2) ...
+#6 8.231 Setting up libbrotli1:amd64 (1.1.0-2+b7) ...
+#6 8.232 Setting up libnghttp2-14:amd64 (1.64.0-1.1+deb13u1) ...
+#6 8.233 Setting up libcom-err2:amd64 (1.47.2-3+b12) ...
+#6 8.235 Setting up libkrb5support0:amd64 (1.21.3-5+deb13u1) ...
+#6 8.236 Setting up libsasl2-modules-db:amd64 (2.1.28+dfsg1-9) ...
+#6 8.237 Setting up libp11-kit0:amd64 (0.25.5-3) ...
+#6 8.238 Setting up libunistring5:amd64 (1.3-2) ...
+#6 8.238 Setting up libk5crypto3:amd64 (1.21.3-5+deb13u1) ...
+#6 8.239 Setting up libsasl2-2:amd64 (2.1.28+dfsg1-9) ...
+#6 8.240 Setting up libnghttp3-9:amd64 (1.8.0-1) ...
+#6 8.241 Setting up perl-modules-5.40 (5.40.1-6+deb13u1) ...
+#6 8.244 Setting up libtasn1-6:amd64 (4.20.0-2+deb13u1) ...
+#6 8.246 Setting up git-man (1:2.47.3-0+deb13u1) ...
+#6 8.247 Setting up libngtcp2-16:amd64 (1.11.0-1+deb13u1) ...
+#6 8.248 Setting up libkrb5-3:amd64 (1.21.3-5+deb13u1) ...
+#6 8.248 Setting up libssh2-1t64:amd64 (1.11.1-1+deb13u2) ...
+#6 8.249 Setting up libldap2:amd64 (2.6.10+dfsg-1) ...
+#6 8.250 Setting up libidn2-0:amd64 (2.3.8-2) ...
+#6 8.251 Setting up libperl5.40:amd64 (5.40.1-6+deb13u1) ...
+#6 8.253 Setting up perl (5.40.1-6+deb13u1) ...
+#6 8.279 Setting up libgssapi-krb5-2:amd64 (1.21.3-5+deb13u1) ...
+#6 8.282 Setting up libgnutls30t64:amd64 (3.8.9-3+deb13u4) ...
+#6 8.284 Setting up libpsl5t64:amd64 (0.21.2-1.1+b1) ...
+#6 8.290 Setting up liberror-perl (0.17030-1) ...
+#6 8.290 Setting up librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2+b5) ...
+#6 8.290 Setting up libngtcp2-crypto-gnutls8:amd64 (1.11.0-1+deb13u1) ...
+#6 8.292 Setting up libcurl4t64:amd64 (8.14.1-2+deb13u7) ...
+#6 8.292 Setting up libcurl3t64-gnutls:amd64 (8.14.1-2+deb13u7) ...
+#6 8.294 Setting up git (1:2.47.3-0+deb13u1) ...
+#6 8.300 Setting up curl (8.14.1-2+deb13u7) ...
+#6 8.301 Processing triggers for libc-bin (2.41-12+deb13u4) ...
+#6 DONE 8.4s
+
+#7 [3/7] WORKDIR /app
+#7 DONE 0.0s
+
+#8 [4/7] COPY requirements.txt .
+#8 DONE 0.0s
+
+#9 [5/7] RUN pip install -r requirements.txt
+#9 2.045 Collecting requests==2.32.3 (from -r requirements.txt (line 1))
+#9 2.094   Downloading requests-2.32.3-py3-none-any.whl.metadata (4.6 kB)
+#9 2.120 Collecting flask==3.0.3 (from -r requirements.txt (line 2))
+#9 2.129   Downloading flask-3.0.3-py3-none-any.whl.metadata (3.2 kB)
+#9 2.175 Collecting rich==13.9.4 (from -r requirements.txt (line 3))
+#9 2.184   Downloading rich-13.9.4-py3-none-any.whl.metadata (18 kB)
+#9 2.304 Collecting pydantic==2.9.2 (from -r requirements.txt (line 4))
+#9 2.314   Downloading pydantic-2.9.2-py3-none-any.whl.metadata (149 kB)
+#9 2.637 Collecting sqlalchemy==2.0.36 (from -r requirements.txt (line 5))
+#9 2.650   Downloading SQLAlchemy-2.0.36-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (9.7 kB)
+#9 2.699 Collecting pyyaml==6.0.2 (from -r requirements.txt (line 6))
+#9 2.712   Downloading PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.1 kB)
+#9 2.825 Collecting charset-normalizer<4,>=2 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 2.834   Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+#9 2.859 Collecting idna<4,>=2.5 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 2.867   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+#9 2.900 Collecting urllib3<3,>=1.21.1 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 2.908   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+#9 2.934 Collecting certifi>=2017.4.17 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 2.943   Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+#9 2.972 Collecting Werkzeug>=3.0.0 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 2.980   Downloading werkzeug-3.1.9-py3-none-any.whl.metadata (4.1 kB)
+#9 2.998 Collecting Jinja2>=3.1.2 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 3.009   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+#9 3.025 Collecting itsdangerous>=2.1.2 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 3.033   Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+#9 3.055 Collecting click>=8.1.3 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 3.064   Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+#9 3.082 Collecting blinker>=1.6.2 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 3.094   Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+#9 3.119 Collecting markdown-it-py>=2.2.0 (from rich==13.9.4->-r requirements.txt (line 3))
+#9 3.128   Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+#9 3.166 Collecting pygments<3.0.0,>=2.13.0 (from rich==13.9.4->-r requirements.txt (line 3))
+#9 3.175   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+#9 3.194 Collecting annotated-types>=0.6.0 (from pydantic==2.9.2->-r requirements.txt (line 4))
+#9 3.202   Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+#9 3.921 Collecting pydantic-core==2.23.4 (from pydantic==2.9.2->-r requirements.txt (line 4))
+#9 3.931   Downloading pydantic_core-2.23.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+#9 3.962 Collecting typing-extensions>=4.6.1 (from pydantic==2.9.2->-r requirements.txt (line 4))
+#9 3.971   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+#9 4.142 Collecting greenlet!=0.4.17 (from sqlalchemy==2.0.36->-r requirements.txt (line 5))
+#9 4.151   Downloading greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (3.8 kB)
+#9 4.265 Collecting MarkupSafe>=2.0 (from Jinja2>=3.1.2->flask==3.0.3->-r requirements.txt (line 2))
+#9 4.275   Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+#9 4.294 Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich==13.9.4->-r requirements.txt (line 3))
+#9 4.303   Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+#9 4.338 Downloading requests-2.32.3-py3-none-any.whl (64 kB)
+#9 4.350 Downloading flask-3.0.3-py3-none-any.whl (101 kB)
+#9 4.365 Downloading rich-13.9.4-py3-none-any.whl (242 kB)
+#9 4.381 Downloading pydantic-2.9.2-py3-none-any.whl (434 kB)
+#9 4.407 Downloading SQLAlchemy-2.0.36-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.2 MB)
+#9 4.452    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.2/3.2 MB 74.7 MB/s eta 0:00:00
+#9 4.462 Downloading PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (767 kB)
+#9 4.480    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 767.5/767.5 kB 33.3 MB/s eta 0:00:00
+#9 4.492 Downloading pydantic_core-2.23.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+#9 4.520    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 73.0 MB/s eta 0:00:00
+#9 4.529 Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+#9 4.541 Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+#9 4.563 Downloading certifi-2026.7.22-py3-none-any.whl (136 kB)
+#9 4.588 Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (257 kB)
+#9 4.601 Downloading click-8.5.0-py3-none-any.whl (125 kB)
+#9 4.614 Downloading greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (621 kB)
+#9 4.626    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 621.4/621.4 kB 42.4 MB/s eta 0:00:00
+#9 4.635 Downloading idna-3.20-py3-none-any.whl (69 kB)
+#9 4.647 Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+#9 4.658 Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+#9 4.670 Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+#9 4.683 Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+#9 4.703    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 59.9 MB/s eta 0:00:00
+#9 4.712 Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+#9 4.723 Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+#9 4.736 Downloading werkzeug-3.1.9-py3-none-any.whl (228 kB)
+#9 4.748 Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+#9 4.760 Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+#9 4.846 Installing collected packages: urllib3, typing-extensions, pyyaml, pygments, mdurl, MarkupSafe, itsdangerous, idna, greenlet, click, charset-normalizer, certifi, blinker, annotated-types, Werkzeug, sqlalchemy, requests, pydantic-core, markdown-it-py, Jinja2, rich, pydantic, flask
+#9 8.990 Successfully installed Jinja2-3.1.6 MarkupSafe-3.0.4 Werkzeug-3.1.9 annotated-types-0.8.0 blinker-1.9.0 certifi-2026.7.22 charset-normalizer-3.5.2 click-8.5.0 flask-3.0.3 greenlet-3.5.6 idna-3.20 itsdangerous-2.2.0 markdown-it-py-4.2.0 mdurl-0.1.2 pydantic-2.9.2 pydantic-core-2.23.4 pygments-2.21.0 pyyaml-6.0.2 requests-2.32.3 rich-13.9.4 sqlalchemy-2.0.36 typing-extensions-4.16.0 urllib3-2.8.0
+#9 8.991 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#9 DONE 9.4s
+
+#10 [6/7] COPY app.py .
+#10 DONE 0.0s
+
+#11 [7/7] RUN python -c "import flask, requests, rich; print('deps ok')"
+#11 0.436 deps ok
+#11 DONE 0.5s
+
+#12 exporting to image
+#12 exporting layers
+#12 exporting layers 0.5s done
+#12 writing image sha256:fbfe93e4b0fe7f1413ca1a932ec38d82da5d0af040a0d65055f86f86be4744db done
+#12 naming to docker.io/library/octofs-digest-cap:ok done
+#12 DONE 0.5s

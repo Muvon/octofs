@@ -1,0 +1,18 @@
+PHP Warning:  PHP Startup: base91: Unable to initialize module
+Module compiled with module API=20210902
+PHP    compiled with module API=20240924
+These options need to match
+ in Unknown on line 0
+PHP Warning:  Module "yaml" is already loaded in Unknown on line 0
+PHPUnit 12.5.39 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.4.21
+
+...............................................................  63 / 240 ( 26%)
+............................................................... 126 / 240 ( 52%)
+............................................................... 189 / 240 ( 78%)
+...................................................             240 / 240 (100%)
+
+Time: 00:00.467, Memory: 18.05 MB
+
+OK (240 tests, 240 assertions)

@@ -1,0 +1,293 @@
+  console.log
+    progress math 0
+
+      at Object.log (tests/pass/math.test.js:4:13)
+
+  console.log
+    progress math 15
+
+      at Object.log (tests/pass/math.test.js:50:13)
+
+  console.log
+    progress math 30
+
+      at Object.log (tests/pass/math.test.js:96:13)
+
+PASS tests/pass/math.test.js
+  math
+    ✓ adds 0 + 1 (27 ms)
+    ✓ adds 1 + 1 (1 ms)
+    ✓ adds 2 + 1 (1 ms)
+    ✓ adds 3 + 1 (1 ms)
+    ✓ adds 4 + 1 (1 ms)
+    ✓ adds 5 + 1 (1 ms)
+    ✓ adds 6 + 1
+    ✓ adds 7 + 1
+    ✓ adds 8 + 1
+    ✓ adds 9 + 1
+    ✓ adds 10 + 1 (1 ms)
+    ✓ adds 11 + 1 (1 ms)
+    ✓ adds 12 + 1
+    ✓ adds 13 + 1 (1 ms)
+    ✓ adds 14 + 1 (3 ms)
+    ✓ adds 15 + 1 (3 ms)
+    ✓ adds 16 + 1
+    ✓ adds 17 + 1
+    ✓ adds 18 + 1
+    ✓ adds 19 + 1
+    ✓ adds 20 + 1
+    ✓ adds 21 + 1
+    ✓ adds 22 + 1
+    ✓ adds 23 + 1
+    ✓ adds 24 + 1
+    ✓ adds 25 + 1
+    ✓ adds 26 + 1
+    ✓ adds 27 + 1 (1 ms)
+    ✓ adds 28 + 1
+    ✓ adds 29 + 1 (1 ms)
+    ✓ adds 30 + 1 (2 ms)
+    ✓ adds 31 + 1
+    ✓ adds 32 + 1
+    ✓ adds 33 + 1
+    ✓ adds 34 + 1
+    ✓ adds 35 + 1
+    ✓ adds 36 + 1
+    ✓ adds 37 + 1
+    ✓ adds 38 + 1 (1 ms)
+    ✓ adds 39 + 1
+
+PASS tests/pass/parsers.test.js
+  parsers
+    ✓ adds 0 + 1 (1 ms)
+    ✓ adds 1 + 1 (1 ms)
+    ✓ adds 2 + 1
+    ✓ adds 3 + 1 (1 ms)
+    ✓ adds 4 + 1
+    ✓ adds 5 + 1
+    ✓ adds 6 + 1 (1 ms)
+    ✓ adds 7 + 1
+    ✓ adds 8 + 1 (1 ms)
+    ✓ adds 9 + 1
+    ✓ adds 10 + 1 (1 ms)
+    ✓ adds 11 + 1
+    ✓ adds 12 + 1 (1 ms)
+    ✓ adds 13 + 1
+    ✓ adds 14 + 1 (4 ms)
+    ✓ adds 15 + 1
+    ✓ adds 16 + 1 (1 ms)
+    ✓ adds 17 + 1 (4 ms)
+    ✓ adds 18 + 1 (1 ms)
+    ✓ adds 19 + 1 (1 ms)
+    ✓ adds 20 + 1
+    ✓ adds 21 + 1
+    ✓ adds 22 + 1 (1 ms)
+    ✓ adds 23 + 1
+    ✓ adds 24 + 1
+    ✓ adds 25 + 1 (1 ms)
+    ✓ adds 26 + 1
+    ✓ adds 27 + 1
+    ✓ adds 28 + 1 (1 ms)
+    ✓ adds 29 + 1
+    ✓ adds 30 + 1 (20 ms)
+    ✓ adds 31 + 1
+    ✓ adds 32 + 1
+    ✓ adds 33 + 1
+    ✓ adds 34 + 1
+    ✓ adds 35 + 1 (1 ms)
+    ✓ adds 36 + 1
+    ✓ adds 37 + 1
+    ✓ adds 38 + 1 (1 ms)
+    ✓ adds 39 + 1 (10 ms)
+
+PASS tests/pass/views.test.js
+  views
+    ✓ adds 0 + 1 (1 ms)
+    ✓ adds 1 + 1 (1 ms)
+    ✓ adds 2 + 1
+    ✓ adds 3 + 1 (1 ms)
+    ✓ adds 4 + 1 (1 ms)
+    ✓ adds 5 + 1
+    ✓ adds 6 + 1
+    ✓ adds 7 + 1
+    ✓ adds 8 + 1
+    ✓ adds 9 + 1
+    ✓ adds 10 + 1
+    ✓ adds 11 + 1 (3 ms)
+    ✓ adds 12 + 1 (2 ms)
+    ✓ adds 13 + 1
+    ✓ adds 14 + 1
+    ✓ adds 15 + 1
+    ✓ adds 16 + 1
+    ✓ adds 17 + 1 (3 ms)
+    ✓ adds 18 + 1
+    ✓ adds 19 + 1 (1 ms)
+    ✓ adds 20 + 1
+    ✓ adds 21 + 1 (1 ms)
+    ✓ adds 22 + 1
+    ✓ adds 23 + 1 (3 ms)
+    ✓ adds 24 + 1
+    ✓ adds 25 + 1
+    ✓ adds 26 + 1 (1 ms)
+    ✓ adds 27 + 1
+    ✓ adds 28 + 1
+    ✓ adds 29 + 1 (1 ms)
+    ✓ adds 30 + 1
+    ✓ adds 31 + 1
+    ✓ adds 32 + 1 (1 ms)
+    ✓ adds 33 + 1
+    ✓ adds 34 + 1
+    ✓ adds 35 + 1 (1 ms)
+    ✓ adds 36 + 1
+    ✓ adds 37 + 1
+    ✓ adds 38 + 1 (1 ms)
+    ✓ adds 39 + 1
+
+  console.log
+    progress strings 0
+
+      at Object.log (tests/pass/strings.test.js:4:13)
+
+  console.log
+    progress strings 15
+
+      at Object.log (tests/pass/strings.test.js:50:13)
+
+  console.log
+    progress strings 30
+
+      at Object.log (tests/pass/strings.test.js:96:13)
+
+PASS tests/pass/strings.test.js
+  strings
+    ✓ adds 0 + 1 (4 ms)
+    ✓ adds 1 + 1
+    ✓ adds 2 + 1 (1 ms)
+    ✓ adds 3 + 1
+    ✓ adds 4 + 1 (1 ms)
+    ✓ adds 5 + 1
+    ✓ adds 6 + 1
+    ✓ adds 7 + 1
+    ✓ adds 8 + 1
+    ✓ adds 9 + 1 (1 ms)
+    ✓ adds 10 + 1
+    ✓ adds 11 + 1
+    ✓ adds 12 + 1
+    ✓ adds 13 + 1 (2 ms)
+    ✓ adds 14 + 1
+    ✓ adds 15 + 1 (4 ms)
+    ✓ adds 16 + 1 (2 ms)
+    ✓ adds 17 + 1 (1 ms)
+    ✓ adds 18 + 1 (2 ms)
+    ✓ adds 19 + 1 (1 ms)
+    ✓ adds 20 + 1 (1 ms)
+    ✓ adds 21 + 1
+    ✓ adds 22 + 1
+    ✓ adds 23 + 1 (1 ms)
+    ✓ adds 24 + 1 (3 ms)
+    ✓ adds 25 + 1 (1 ms)
+    ✓ adds 26 + 1 (2 ms)
+    ✓ adds 27 + 1 (1 ms)
+    ✓ adds 28 + 1
+    ✓ adds 29 + 1
+    ✓ adds 30 + 1 (2 ms)
+    ✓ adds 31 + 1 (1 ms)
+    ✓ adds 32 + 1
+    ✓ adds 33 + 1
+    ✓ adds 34 + 1
+    ✓ adds 35 + 1 (1 ms)
+    ✓ adds 36 + 1
+    ✓ adds 37 + 1 (1 ms)
+    ✓ adds 38 + 1
+    ✓ adds 39 + 1
+
+PASS tests/pass/utils.test.js
+  utils
+    ✓ adds 0 + 1 (1 ms)
+    ✓ adds 1 + 1 (1 ms)
+    ✓ adds 2 + 1
+    ✓ adds 3 + 1
+    ✓ adds 4 + 1
+    ✓ adds 5 + 1
+    ✓ adds 6 + 1
+    ✓ adds 7 + 1 (1 ms)
+    ✓ adds 8 + 1
+    ✓ adds 9 + 1 (2 ms)
+    ✓ adds 10 + 1
+    ✓ adds 11 + 1 (1 ms)
+    ✓ adds 12 + 1
+    ✓ adds 13 + 1
+    ✓ adds 14 + 1
+    ✓ adds 15 + 1 (1 ms)
+    ✓ adds 16 + 1
+    ✓ adds 17 + 1
+    ✓ adds 18 + 1 (1 ms)
+    ✓ adds 19 + 1
+    ✓ adds 20 + 1
+    ✓ adds 21 + 1
+    ✓ adds 22 + 1
+    ✓ adds 23 + 1
+    ✓ adds 24 + 1
+    ✓ adds 25 + 1
+    ✓ adds 26 + 1
+    ✓ adds 27 + 1 (1 ms)
+    ✓ adds 28 + 1
+    ✓ adds 29 + 1 (1 ms)
+    ✓ adds 30 + 1
+    ✓ adds 31 + 1
+    ✓ adds 32 + 1 (1 ms)
+    ✓ adds 33 + 1
+    ✓ adds 34 + 1
+    ✓ adds 35 + 1
+    ✓ adds 36 + 1
+    ✓ adds 37 + 1
+    ✓ adds 38 + 1
+    ✓ adds 39 + 1 (1 ms)
+
+PASS tests/pass/models.test.js
+  models
+    ✓ adds 0 + 1
+    ✓ adds 1 + 1
+    ✓ adds 2 + 1
+    ✓ adds 3 + 1 (1 ms)
+    ✓ adds 4 + 1
+    ✓ adds 5 + 1
+    ✓ adds 6 + 1
+    ✓ adds 7 + 1
+    ✓ adds 8 + 1 (1 ms)
+    ✓ adds 9 + 1
+    ✓ adds 10 + 1
+    ✓ adds 11 + 1 (1 ms)
+    ✓ adds 12 + 1
+    ✓ adds 13 + 1
+    ✓ adds 14 + 1 (5 ms)
+    ✓ adds 15 + 1 (1 ms)
+    ✓ adds 16 + 1
+    ✓ adds 17 + 1
+    ✓ adds 18 + 1 (1 ms)
+    ✓ adds 19 + 1
+    ✓ adds 20 + 1
+    ✓ adds 21 + 1
+    ✓ adds 22 + 1
+    ✓ adds 23 + 1
+    ✓ adds 24 + 1
+    ✓ adds 25 + 1 (1 ms)
+    ✓ adds 26 + 1
+    ✓ adds 27 + 1
+    ✓ adds 28 + 1
+    ✓ adds 29 + 1
+    ✓ adds 30 + 1
+    ✓ adds 31 + 1
+    ✓ adds 32 + 1 (1 ms)
+    ✓ adds 33 + 1
+    ✓ adds 34 + 1
+    ✓ adds 35 + 1
+    ✓ adds 36 + 1 (1 ms)
+    ✓ adds 37 + 1
+    ✓ adds 38 + 1
+    ✓ adds 39 + 1
+
+Test Suites: 6 passed, 6 total
+Tests:       240 passed, 240 total
+Snapshots:   0 total
+Time:        0.772 s, estimated 1 s
+Ran all test suites matching tests/pass.

@@ -1,0 +1,319 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.run-fail
+#1 transferring dockerfile: 291B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/alpine:3.20
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/6] FROM docker.io/library/alpine:3.20
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 15.89kB 0.0s done
+#5 DONE 0.0s
+
+#6 [2/6] RUN apk add --no-cache gcc g++ musl-dev make
+#6 0.348 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+#6 0.461 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+#6 0.805 (1/16) Installing libgcc (13.2.1_git20240309-r1)
+#6 0.815 (2/16) Installing libstdc++ (13.2.1_git20240309-r1)
+#6 0.842 (3/16) Installing libstdc++-dev (13.2.1_git20240309-r1)
+#6 1.016 (4/16) Installing jansson (2.14-r4)
+#6 1.024 (5/16) Installing zstd-libs (1.5.6-r0)
+#6 1.044 (6/16) Installing binutils (2.42-r1)
+#6 1.121 (7/16) Installing libgomp (13.2.1_git20240309-r1)
+#6 1.132 (8/16) Installing libatomic (13.2.1_git20240309-r1)
+#6 1.140 (9/16) Installing gmp (6.3.0-r1)
+#6 1.152 (10/16) Installing isl26 (0.26-r1)
+#6 1.176 (11/16) Installing mpfr4 (4.2.1-r0)
+#6 1.190 (12/16) Installing mpc1 (1.3.1-r1)
+#6 1.199 (13/16) Installing gcc (13.2.1_git20240309-r1)
+#6 2.065 (14/16) Installing musl-dev (1.2.5-r3)
+#6 2.167 (15/16) Installing g++ (13.2.1_git20240309-r1)
+#6 2.477 (16/16) Installing make (4.4.1-r2)
+#6 2.488 Executing busybox-1.36.1-r31.trigger
+#6 2.499 OK: 215 MiB in 30 packages
+#6 DONE 5.9s
+
+#7 [3/6] WORKDIR /src
+#7 DONE 0.4s
+
+#8 [4/6] COPY err/ /src/
+#8 DONE 0.0s
+
+#9 [5/6] RUN for i in $(seq 1 60); do echo "preparing $i"; done
+#9 0.149 preparing 1
+#9 0.149 preparing 2
+#9 0.149 preparing 3
+#9 0.149 preparing 4
+#9 0.149 preparing 5
+#9 0.149 preparing 6
+#9 0.149 preparing 7
+#9 0.149 preparing 8
+#9 0.149 preparing 9
+#9 0.149 preparing 10
+#9 0.149 preparing 11
+#9 0.149 preparing 12
+#9 0.149 preparing 13
+#9 0.149 preparing 14
+#9 0.149 preparing 15
+#9 0.149 preparing 16
+#9 0.149 preparing 17
+#9 0.149 preparing 18
+#9 0.149 preparing 19
+#9 0.149 preparing 20
+#9 0.149 preparing 21
+#9 0.149 preparing 22
+#9 0.149 preparing 23
+#9 0.149 preparing 24
+#9 0.149 preparing 25
+#9 0.149 preparing 26
+#9 0.149 preparing 27
+#9 0.149 preparing 28
+#9 0.149 preparing 29
+#9 0.149 preparing 30
+#9 0.149 preparing 31
+#9 0.149 preparing 32
+#9 0.149 preparing 33
+#9 0.149 preparing 34
+#9 0.149 preparing 35
+#9 0.149 preparing 36
+#9 0.149 preparing 37
+#9 0.149 preparing 38
+#9 0.149 preparing 39
+#9 0.149 preparing 40
+#9 0.149 preparing 41
+#9 0.149 preparing 42
+#9 0.149 preparing 43
+#9 0.149 preparing 44
+#9 0.149 preparing 45
+#9 0.149 preparing 46
+#9 0.149 preparing 47
+#9 0.149 preparing 48
+#9 0.149 preparing 49
+#9 0.149 preparing 50
+#9 0.149 preparing 51
+#9 0.149 preparing 52
+#9 0.149 preparing 53
+#9 0.149 preparing 54
+#9 0.149 preparing 55
+#9 0.149 preparing 56
+#9 0.149 preparing 57
+#9 0.149 preparing 58
+#9 0.149 preparing 59
+#9 0.149 preparing 60
+#9 DONE 0.2s
+
+#10 [6/6] RUN make -k -j4
+#10 0.136 mkdir -p build
+#10 0.138 cc -Wall -Wextra -O2 -g -Iinclude -c src/main.c -o build/main.o
+#10 0.139 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod0.c -o build/mod0.o
+#10 0.139 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod1.c -o build/mod1.o
+#10 0.139 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod10.c -o build/mod10.o
+#10 0.166 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod11.c -o build/mod11.o
+#10 0.168 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod12.c -o build/mod12.o
+#10 0.185 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod13.c -o build/mod13.o
+#10 0.188 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod14.c -o build/mod14.o
+#10 0.191 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod15.c -o build/mod15.o
+#10 0.197 src/mod14.c: In function 'mod14_compute':
+#10 0.197 src/mod14.c:9:18: warning: initialization of 'int *' from incompatible pointer type 'struct point *' [-Wincompatible-pointer-types]
+#10 0.197     9 |         int *q = &p;
+#10 0.197       |                  ^
+#10 0.197 src/mod14.c:10:17: error: 'struct point' has no member named 'z'
+#10 0.197    10 |         return p.z + x + *q
+#10 0.197       |                 ^
+#10 0.197 src/mod14.c:10:28: error: expected ';' before '}' token
+#10 0.197    10 |         return p.z + x + *q
+#10 0.197       |                            ^
+#10 0.197       |                            ;
+#10 0.197    11 | }
+#10 0.197       | ~                           
+#10 0.197 src/mod14.c:11:1: warning: control reaches end of non-void function [-Wreturn-type]
+#10 0.197    11 | }
+#10 0.197       | ^
+#10 0.198 make: *** [Makefile:15: build/mod14.o] Error 1
+#10 0.198 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod16.c -o build/mod16.o
+#10 0.198 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod17.c -o build/mod17.o
+#10 0.208 src/mod17.c: In function 'mod17_describe':
+#10 0.208 src/mod17.c:16:16: warning: 'return' with a value, in function returning void [-Wreturn-type]
+#10 0.208    16 |         return 0;
+#10 0.208       |                ^
+#10 0.208 src/mod17.c:12:6: note: declared here
+#10 0.208    12 | void mod17_describe(char *buf, size_t n)
+#10 0.208       |      ^~~~~~~~~~~~~~
+#10 0.213 src/mod17.c: In function 'mod17_compute':
+#10 0.213 src/mod17.c:8:31: warning: '%d' directive writing between 1 and 11 bytes into a region of size 0 [-Wformat-overflow=]
+#10 0.213     8 |         sprintf(small, "%d-%d-%d", x, x, x);
+#10 0.213       |                               ^~
+#10 0.213 src/mod17.c:8:9: note: 'sprintf' output between 6 and 36 bytes into a destination of size 4
+#10 0.213     8 |         sprintf(small, "%d-%d-%d", x, x, x);
+#10 0.213       |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#10 0.221 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod18.c -o build/mod18.o
+#10 0.221 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod19.c -o build/mod19.o
+#10 0.246 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod2.c -o build/mod2.o
+#10 0.246 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod20.c -o build/mod20.o
+#10 0.246 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod21.c -o build/mod21.o
+#10 0.253 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod22.c -o build/mod22.o
+#10 0.255 src/mod2.c: In function 'mod2_compute':
+#10 0.255 src/mod2.c:8:15: warning: comparison of integer expressions of different signedness: 'int' and 'unsigned int' [-Wsign-compare]
+#10 0.255     8 |         if (x < u)
+#10 0.255       |               ^
+#10 0.255 src/mod2.c:6:13: warning: unused variable 'unused_local' [-Wunused-variable]
+#10 0.255     6 |         int unused_local = 7;
+#10 0.255       |             ^~~~~~~~~~~~
+#10 0.255 src/mod2.c: In function 'mod2_describe':
+#10 0.255 src/mod2.c:24:35: warning: format '%s' expects argument of type 'char *', but argument 4 has type 'int' [-Wformat=]
+#10 0.255    24 |         snprintf(buf, n, "module %s", 2);
+#10 0.255       |                                  ~^   ~
+#10 0.255       |                                   |   |
+#10 0.255       |                                   |   int
+#10 0.255       |                                   char *
+#10 0.255       |                                  %d
+#10 0.255 src/mod2.c: In function 'mod2_compute':
+#10 0.255 src/mod2.c:12:19: warning: this statement may fall through [-Wimplicit-fallthrough=]
+#10 0.255    12 |                 x += 1;
+#10 0.255       |                 ~~^~~~
+#10 0.255 src/mod2.c:13:9: note: here
+#10 0.255    13 |         case 2:
+#10 0.255       |         ^~~~
+#10 0.267 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod23.c -o build/mod23.o
+#10 0.275 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod3.c -o build/mod3.o
+#10 0.276 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod4.c -o build/mod4.o
+#10 0.282 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod5.c -o build/mod5.o
+#10 0.292 src/mod5.c: In function 'helper':
+#10 0.292 src/mod5.c:4:30: warning: unused parameter 'b' [-Wunused-parameter]
+#10 0.292     4 | static int helper(int a, int b)
+#10 0.292       |                          ~~~~^
+#10 0.292 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod6.c -o build/mod6.o
+#10 0.292 src/mod5.c: In function 'mod5_compute':
+#10 0.292 src/mod5.c:12:31: error: 'undeclared_counter' undeclared (first use in this function)
+#10 0.292    12 |         return helper(x, y) + undeclared_counter;
+#10 0.292       |                               ^~~~~~~~~~~~~~~~~~
+#10 0.292 src/mod5.c:12:31: note: each undeclared identifier is reported only once for each function it appears in
+#10 0.292 src/mod5.c: In function 'mod5_describe':
+#10 0.292 src/mod5.c:17:19: warning: initialization of 'char *' from 'int' makes pointer from integer without a cast [-Wint-conversion]
+#10 0.292    17 |         char *p = 42;
+#10 0.292       |                   ^~
+#10 0.292 src/mod5.c:18:37: warning: format '%d' expects argument of type 'int', but argument 4 has type 'char *' [-Wformat=]
+#10 0.292    18 |         snprintf(buf, n, "module 5 %d", p);
+#10 0.292       |                                    ~^   ~
+#10 0.292       |                                     |   |
+#10 0.292       |                                     int char *
+#10 0.292       |                                    %s
+#10 0.293 src/mod5.c: In function 'mod5_compute':
+#10 0.293 src/mod5.c:13:1: warning: control reaches end of non-void function [-Wreturn-type]
+#10 0.293    13 | }
+#10 0.293       | ^
+#10 0.294 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod7.c -o build/mod7.o
+#10 0.294 make: *** [Makefile:15: build/mod5.o] Error 1
+#10 0.304 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod8.c -o build/mod8.o
+#10 0.305 cc -Wall -Wextra -O2 -g -Iinclude -c src/mod9.c -o build/mod9.o
+#10 0.314 src/mod9.c:2:10: fatal error: missing_config.h: No such file or directory
+#10 0.314     2 | #include "missing_config.h"
+#10 0.314       |          ^~~~~~~~~~~~~~~~~~
+#10 0.314 compilation terminated.
+#10 0.315 make: *** [Makefile:15: build/mod9.o] Error 1
+#10 0.315 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx0.cpp -o build/cxx0.o
+#10 0.316 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx1.cpp -o build/cxx1.o
+#10 0.319 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx2.cpp -o build/cxx2.o
+#10 0.334 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx3.cpp -o build/cxx3.o
+#10 0.578 src/cxx1.cpp: In function 'T cap::sum(const std::vector<T>&)':
+#10 0.578 src/cxx1.cpp:13:21: error: 'accumulate_like' is not a member of 'std'
+#10 0.578    13 |         return std::accumulate_like(xs);
+#10 0.578       |                     ^~~~~~~~~~~~~~~
+#10 0.581 src/cxx3.cpp: In function 'int cxx3_score(int)':
+#10 0.581 src/cxx3.cpp:18:18: error: use of deleted function 'std::unique_ptr<_Tp, _Dp>& std::unique_ptr<_Tp, _Dp>::operator=(const std::unique_ptr<_Tp, _Dp>&) [with _Tp = Widget; _Dp = std::default_delete<Widget>]'
+#10 0.581    18 |         m["a"] = w;
+#10 0.581       |                  ^
+#10 0.581 In file included from /usr/include/c++/13.2.1/memory:78,
+#10 0.581                  from src/cxx3.cpp:4:
+#10 0.581 /usr/include/c++/13.2.1/bits/unique_ptr.h:523:19: note: declared here
+#10 0.581   523 |       unique_ptr& operator=(const unique_ptr&) = delete;
+#10 0.581       |                   ^~~~~~~~
+#10 0.584 src/cxx3.cpp:20:21: error: no matching function for call to 'push_back(const char [13])'
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |         ~~~~~~~~~~~~^~~~~~~~~~~~~~~~
+#10 0.584 In file included from /usr/include/c++/13.2.1/vector:66,
+#10 0.584                  from src/cxx3.cpp:1:
+#10 0.584 /usr/include/c++/13.2.1/bits/stl_vector.h:1278:7: note: candidate: 'void std::vector<_Tp, _Alloc>::push_back(const value_type&) [with _Tp = Widget; _Alloc = std::allocator<Widget>; value_type = Widget]' (near match)
+#10 0.584  1278 |       push_back(const value_type& __x)
+#10 0.584       |       ^~~~~~~~~
+#10 0.584 /usr/include/c++/13.2.1/bits/stl_vector.h:1278:7: note:   conversion of argument 1 would be ill-formed:
+#10 0.584 src/cxx3.cpp:20:22: error: invalid user-defined conversion from 'const char [13]' to 'const std::vector<Widget>::value_type&' {aka 'const Widget&'} [-fpermissive]
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |                      ^~~~~~~~~~~~~~
+#10 0.584 src/cxx3.cpp:10:9: note: candidate is: 'Widget::Widget(int)' (near match)
+#10 0.584    10 |         Widget(int v) : v(v) {}
+#10 0.584       |         ^~~~~~
+#10 0.584 src/cxx3.cpp:10:9: note:   conversion of argument 1 would be ill-formed:
+#10 0.584 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |                      ^~~~~~~~~~~~~~
+#10 0.584       |                      |
+#10 0.584       |                      const char*
+#10 0.584 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |                      ^~~~~~~~~~~~~~
+#10 0.584       |                      |
+#10 0.584       |                      const char*
+#10 0.584 src/cxx3.cpp:10:20: note:   initializing argument 1 of 'Widget::Widget(int)'
+#10 0.584    10 |         Widget(int v) : v(v) {}
+#10 0.584       |                ~~~~^
+#10 0.584 /usr/include/c++/13.2.1/bits/stl_vector.h:1295:7: note: candidate: 'void std::vector<_Tp, _Alloc>::push_back(value_type&&) [with _Tp = Widget; _Alloc = std::allocator<Widget>; value_type = Widget]' (near match)
+#10 0.584  1295 |       push_back(value_type&& __x)
+#10 0.584       |       ^~~~~~~~~
+#10 0.584 /usr/include/c++/13.2.1/bits/stl_vector.h:1295:7: note:   conversion of argument 1 would be ill-formed:
+#10 0.584 src/cxx3.cpp:20:22: error: invalid user-defined conversion from 'const char [13]' to 'std::vector<Widget>::value_type&&' {aka 'Widget&&'} [-fpermissive]
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |                      ^~~~~~~~~~~~~~
+#10 0.584 src/cxx3.cpp:10:9: note: candidate is: 'Widget::Widget(int)' (near match)
+#10 0.584    10 |         Widget(int v) : v(v) {}
+#10 0.584       |         ^~~~~~
+#10 0.584 src/cxx3.cpp:10:9: note:   conversion of argument 1 would be ill-formed:
+#10 0.584 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |                      ^~~~~~~~~~~~~~
+#10 0.584       |                      |
+#10 0.584       |                      const char*
+#10 0.584 src/cxx3.cpp:20:22: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+#10 0.584    20 |         ws.push_back("not a widget");
+#10 0.584       |                      ^~~~~~~~~~~~~~
+#10 0.584       |                      |
+#10 0.584       |                      const char*
+#10 0.584 src/cxx3.cpp:10:20: note:   initializing argument 1 of 'Widget::Widget(int)'
+#10 0.584    10 |         Widget(int v) : v(v) {}
+#10 0.584       |                ~~~~^
+#10 0.658 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx4.cpp -o build/cxx4.o
+#10 0.658 make: *** [Makefile:18: build/cxx1.o] Error 1
+#10 0.659 make: *** [Makefile:18: build/cxx3.o] Error 1
+#10 0.659 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx5.cpp -o build/cxx5.o
+#10 1.354 make: Target 'all' not remade because of errors.
+#10 ERROR: process "/bin/sh -c make -k -j4" did not complete successfully: exit code: 2
+------
+ > [6/6] RUN make -k -j4:
+0.584       |                      |
+0.584       |                      const char*
+0.584 src/cxx3.cpp:10:20: note:   initializing argument 1 of 'Widget::Widget(int)'
+0.584    10 |         Widget(int v) : v(v) {}
+0.584       |                ~~~~^
+0.658 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx4.cpp -o build/cxx4.o
+0.658 make: *** [Makefile:18: build/cxx1.o] Error 1
+0.659 make: *** [Makefile:18: build/cxx3.o] Error 1
+0.659 g++ -Wall -Wextra -O2 -g -std=c++17 -Iinclude -c src/cxx5.cpp -o build/cxx5.o
+1.354 make: Target 'all' not remade because of errors.
+------
+Dockerfile.run-fail:6
+--------------------
+   4 |     COPY err/ /src/
+   5 |     RUN for i in $(seq 1 60); do echo "preparing $i"; done
+   6 | >>> RUN make -k -j4
+   7 |     CMD ["/src/build/app"]
+   8 |     
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c make -k -j4" did not complete successfully: exit code: 2

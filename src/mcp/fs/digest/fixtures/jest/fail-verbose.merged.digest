@@ -1,0 +1,255 @@
+  console.log
+    starting checkout flow
+
+      at Object.log (tests/fail/broken.test.js:37:13)
+
+  console.warn
+    inventory service slow
+
+      36 |   it('logs then fails', () => {
+      37 |     console.log('starting checkout flow');
+    > 38 |     console.warn('inventory service slow');
+         |             ^
+      39 |     console.error('payment gateway returned 502');
+      40 |     expect(7).toBe(8);
+      41 |   });
+
+      at Object.warn (tests/fail/broken.test.js:38:13)
+
+  console.error
+    payment gateway returned 502
+
+      37 |     console.log('starting checkout flow');
+      38 |     console.warn('inventory service slow');
+    > 39 |     console.error('payment gateway returned 502');
+         |             ^
+      40 |     expect(7).toBe(8);
+      41 |   });
+      42 |
+
+      at Object.error (tests/fail/broken.test.js:39:13)
+
+FAIL tests/fail/broken.test.js
+  broken
+    ✕ object diff (5 ms)
+    ✕ array diff (2 ms)
+    ✕ multiline string with blank lines (2 ms)
+    ✕ throws from nested call
+    ✕ type error
+    ✕ logs then fails (16 ms)
+    ✕ async rejection (11 ms)
+    ✕ times out (302 ms)
+    ✓ add(1, 1) = 2
+    ✕ add(2, 2) = 5
+    ✓ add(3, 3) = 6
+    ○ skipped skipped test
+    ✎ todo write coverage for refunds
+
+  ● broken › object diff
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 2
+    + Received  + 2
+
+      Object {
+        "active": true,
+    -   "age": 30,
+    +   "age": 31,
+    +   "extra": null,
+        "name": "alice",
+        "roles": Array [
+          "admin",
+    -     "dev",
+        ],
+      }
+
+      11 |   it('object diff', () => {
+      12 |     expect({ name: 'alice', age: 31, roles: ['admin'], active: true, extra: null })
+    > 13 |       .toEqual({ name: 'alice', age: 30, roles: ['admin', 'dev'], active: true });
+         |        ^
+      14 |   });
+      15 |
+      16 |   it('array diff', () => {
+
+      at Object.toEqual (tests/fail/broken.test.js:13:8)
+
+  ● broken › array diff
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 2
+    + Received  + 1
+
+      Array [
+        1,
+        2,
+    -   30,
+    +   3,
+        4,
+        5,
+    -   6,
+      ]
+
+      15 |
+      16 |   it('array diff', () => {
+    > 17 |     expect([1, 2, 3, 4, 5]).toEqual([1, 2, 30, 4, 5, 6]);
+         |                             ^
+      18 |   });
+      19 |
+      20 |   it('multiline string with blank lines', () => {
+
+      at Object.toEqual (tests/fail/broken.test.js:17:29)
+
+  ● broken › multiline string with blank lines
+
+    expect(received).toBe(expected) // Object.is equality
+
+    - Expected  - 2
+    + Received  + 2
+
+      header
+
+      body line one
+    - body line 2
+    + body line two
+
+    - footer v2
+    + footer v1
+      ↵
+
+      20 |   it('multiline string with blank lines', () => {
+      21 |     expect('header\n\nbody line one\nbody line two\n\nfooter v1\n')
+    > 22 |       .toBe('header\n\nbody line one\nbody line 2\n\nfooter v2\n');
+         |        ^
+      23 |   });
+      24 |
+      25 |   it('throws from nested call', () => {
+
+      at Object.toBe (tests/fail/broken.test.js:22:8)
+
+  ● broken › throws from nested call
+
+    insufficient funds: balance=5 amount=50
+
+      3 |   constructor(balance) { this.balance = balance; }
+      4 |   withdraw(amount) {
+    > 5 |     if (amount > this.balance) throw new Error(`insufficient funds: balance=${this.balance} amount=${amount}`);
+        |                                      ^
+      6 |     this.balance -= amount;
+      7 |   }
+      8 | }
+
+      at Account.withdraw (tests/fail/broken.test.js:5:38)
+      at Object.withdraw (tests/fail/broken.test.js:28:7)
+
+  ● broken › type error
+
+    TypeError: Cannot read properties of undefined (reading 'port')
+
+      31 |   it('type error', () => {
+      32 |     const cfg = undefined;
+    > 33 |     expect(cfg.port).toBe(8080);
+         |                ^
+      34 |   });
+      35 |
+      36 |   it('logs then fails', () => {
+
+      at Object.port (tests/fail/broken.test.js:33:16)
+
+  ● broken › logs then fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 8
+    Received: 7
+
+      38 |     console.warn('inventory service slow');
+      39 |     console.error('payment gateway returned 502');
+    > 40 |     expect(7).toBe(8);
+         |               ^
+      41 |   });
+      42 |
+      43 |   it('async rejection', async () => {
+
+      at Object.toBe (tests/fail/broken.test.js:40:15)
+
+  ● broken › async rejection
+
+    upstream returned 503
+
+    retry budget exhausted
+
+      43 |   it('async rejection', async () => {
+      44 |     await new Promise((r) => setTimeout(r, 10));
+    > 45 |     throw new Error('upstream returned 503\n\nretry budget exhausted');
+         |           ^
+      46 |   });
+      47 |
+      48 |   it('times out', async () => {
+
+      at Object.<anonymous> (tests/fail/broken.test.js:45:11)
+
+  ● broken › times out
+
+    thrown: "Exceeded timeout of 300 ms for a test.
+    Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout."
+
+      at _getError (node_modules/jest-circus/build/jestAdapterInit.js:1985:12)
+          at Array.map (<anonymous>)
+
+    Cause:
+        thrown: "Exceeded timeout of 300 ms for a test.
+        Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout."
+
+          46 |   });
+          47 |
+        > 48 |   it('times out', async () => {
+             |   ^
+          49 |     await new Promise((r) => setTimeout(r, 2000));
+          50 |   }, 300);
+          51 |
+
+          at it (tests/fail/broken.test.js:48:3)
+          at Object.describe (tests/fail/broken.test.js:10:1)
+
+  ● broken › add(2, 2) = 5
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 5
+    Received: 4
+
+      51 |
+      52 |   it.each([[1, 1, 2], [2, 2, 5], [3, 3, 6]])('add(%i, %i) = %i', (a, b, want) => {
+    > 53 |     expect(a + b).toBe(want);
+         |                   ^
+      54 |   });
+      55 |
+      56 |   it.skip('skipped test', () => { expect(true).toBe(false); });
+
+      at toBe (tests/fail/broken.test.js:53:19)
+
+  console.log
+    progress math 0
+
+      at Object.log (tests/fail/math.test.js:4:13)
+
+  console.log
+    progress math 15
+
+      at Object.log (tests/fail/math.test.js:50:13)
+
+  console.log
+    progress math 30
+
+      at Object.log (tests/fail/math.test.js:96:13)
+
+Test Suites: 1 failed, 4 passed, 5 total
+Tests:       9 failed, 1 skipped, 1 todo, 162 passed, 173 total
+Snapshots:   0 total
+Time:        0.656 s, estimated 1 s
+Ran all test suites matching tests/fail.
+Jest did not exit one second after the test run has completed.
+
+'This usually means that there are asynchronous operations that weren't stopped in your tests. Consider running Jest with `--detectOpenHandles` to troubleshoot this issue.

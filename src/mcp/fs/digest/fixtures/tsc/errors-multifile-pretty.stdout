@@ -1,0 +1,89 @@
+[96merr/models/user.ts[0m:[93m23[0m:[93m43[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m23[0m     address: { street: "Main", city: "X", zip: 12345 },
+[7m  [0m [91m                                          ~~~[0m
+
+  [96merr/models/user.ts[0m:[93m4[0m:[93m3[0m
+    [7m4[0m   zip: string;
+    [7m [0m [96m  ~~~[0m
+    The expected type comes from property 'zip' which is declared here on type 'Address'
+
+[96merr/models/user.ts[0m:[93m24[0m:[93m22[0m - [91merror[0m[90m TS2322: [0mType '"owner"' is not assignable to type '"admin" | "editor" | "viewer"'.
+
+[7m24[0m     roles: ["admin", "owner"],
+[7m  [0m [91m                     ~~~~~~~[0m
+
+[96merr/services/orders.ts[0m:[93m11[0m:[93m10[0m - [91merror[0m[90m TS2554: [0mExpected 2 arguments, but got 1.
+
+[7m11[0m   return add(o.total);
+[7m  [0m [91m         ~~~[0m
+
+  [96merr/util/math.ts[0m:[93m1[0m:[93m32[0m
+    [7m1[0m export function add(a: number, b: number): number {
+    [7m [0m [96m                               ~~~~~~~~~[0m
+    An argument for 'b' was not provided.
+
+[96merr/services/orders.ts[0m:[93m15[0m:[93m35[0m - [91merror[0m[90m TS2366: [0mFunction lacks ending return statement and return type does not include 'undefined'.
+
+[7m15[0m export function status(o: Order): "open" | "closed" {
+[7m  [0m [91m                                  ~~~~~~~~~~~~~~~~~[0m
+
+[96merr/services/orders.ts[0m:[93m24[0m:[93m10[0m - [91merror[0m[90m TS18048: [0m'l' is possibly 'undefined'.
+
+[7m24[0m   return l.sku;
+[7m  [0m [91m         ~[0m
+
+[96merr/services/userService.ts[0m:[93m3[0m:[93m10[0m - [91merror[0m[90m TS2305: [0mModule '"../util/strings"' has no exported member 'slugify'.
+
+[7m3[0m import { slugify } from "../util/strings";
+[7m [0m [91m         ~~~~~~~[0m
+
+[96merr/services/userService.ts[0m:[93m4[0m:[93m24[0m - [91merror[0m[90m TS2307: [0mCannot find module 'pg-missing-driver' or its corresponding type declarations.
+
+[7m4[0m import { Client } from "pg-missing-driver";
+[7m [0m [91m                       ~~~~~~~~~~~~~~~~~~~[0m
+
+[96merr/services/userService.ts[0m:[93m5[0m:[93m20[0m - [91merror[0m[90m TS2732: [0mCannot find module './config.json'. Consider using '--resolveJsonModule' to import module with '.json' extension.
+
+[7m5[0m import config from "./config.json";
+[7m [0m [91m                   ~~~~~~~~~~~~~~~[0m
+
+[96merr/services/userService.ts[0m:[93m16[0m:[93m36[0m - [91merror[0m[90m TS2551: [0mProperty 'mail' does not exist on type 'User'. Did you mean 'email'?
+
+[7m16[0m     return this.users.map((u) => u.mail);
+[7m  [0m [91m                                   ~~~~[0m
+
+  [96merr/models/user.ts[0m:[93m9[0m:[93m3[0m
+    [7m9[0m   email: string;
+    [7m [0m [96m  ~~~~~[0m
+    'email' is declared here.
+
+[96merr/services/userService.ts[0m:[93m21[0m:[93m5[0m - [91merror[0m[90m TS2322: [0mType 'User | undefined' is not assignable to type 'User'.
+  Type 'undefined' is not assignable to type 'User'.
+
+[7m21[0m     return this.users.find((u) => u.id === "1");
+[7m  [0m [91m    ~~~~~~[0m
+
+[96merr/services/userService.ts[0m:[93m21[0m:[93m35[0m - [91merror[0m[90m TS2367: [0mThis comparison appears to be unintentional because the types 'number' and 'string' have no overlap.
+
+[7m21[0m     return this.users.find((u) => u.id === "1");
+[7m  [0m [91m                                  ~~~~~~~~~~~~[0m
+
+[96merr/services/userService.ts[0m:[93m25[0m:[93m10[0m - [91merror[0m[90m TS7006: [0mParameter 'cb' implicitly has an 'any' type.
+
+[7m25[0m   rename(cb) {
+[7m  [0m [91m         ~~[0m
+
+[96merr/util/strings.ts[0m:[93m7[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m7[0m   const width: string = n;
+[7m [0m [91m        ~~~~~[0m
+
+
+Found 13 errors in 4 files.
+
+Errors  Files
+     2  err/models/user.ts[90m:23[0m
+     3  err/services/orders.ts[90m:11[0m
+     7  err/services/userService.ts[90m:3[0m
+     1  err/util/strings.ts[90m:7[0m

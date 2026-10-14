@@ -1,0 +1,74 @@
+assets by status 852 KiB [cached] 61 assets
+orphan modules 795 KiB [orphan] 31 modules
+runtime modules 8.07 KiB 11 modules
+modules by path ./app-err/ 824 KiB (javascript) 144 KiB (asset)
+  javascript modules 823 KiB 60 modules
+  asset modules 144 KiB (asset) 1.23 KiB (javascript)
+    ./app-err/assets/icon0.svg 4.79 KiB (asset) 42 bytes (javascript) [built] [code generated]
+    + 29 modules
+modules by path ./node_modules/ 8.15 KiB
+  modules by path ./node_modules/style-loader/dist/runtime/*.js 5.84 KiB
+    ./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js 2.42 KiB [built] [code generated]
+    + 5 modules
+  modules by path ./node_modules/css-loader/dist/runtime/*.js 2.31 KiB
+    ./node_modules/css-loader/dist/runtime/noSourceMaps.js 64 bytes [built] [code generated]
+    ./node_modules/css-loader/dist/runtime/api.js 2.25 KiB [built] [code generated]
+ERROR in ./app-err/pages/page4.js 2:0-45
+Module not found: Error: Can't resolve '../lib/dates.js' in '/tmp/octofs-digest-cap-builds/web/app-err/pages'
+resolve '../lib/dates.js' in '/tmp/octofs-digest-cap-builds/web/app-err/pages'
+  using description file: /tmp/octofs-digest-cap-builds/web/package.json (relative path: ./app-err/pages)
+    Field 'browser' doesn't contain a valid alias configuration
+    using description file: /tmp/octofs-digest-cap-builds/web/package.json (relative path: ./app-err/lib/dates.js)
+      no extension
+        Field 'browser' doesn't contain a valid alias configuration
+        /tmp/octofs-digest-cap-builds/web/app-err/lib/dates.js doesn't exist
+      .js
+        Field 'browser' doesn't contain a valid alias configuration
+        /tmp/octofs-digest-cap-builds/web/app-err/lib/dates.js.js doesn't exist
+      .json
+        Field 'browser' doesn't contain a valid alias configuration
+        /tmp/octofs-digest-cap-builds/web/app-err/lib/dates.js.json doesn't exist
+      .wasm
+        Field 'browser' doesn't contain a valid alias configuration
+        /tmp/octofs-digest-cap-builds/web/app-err/lib/dates.js.wasm doesn't exist
+      .html
+        Field 'browser' doesn't contain a valid alias configuration
+        /tmp/octofs-digest-cap-builds/web/app-err/lib/dates.js.html doesn't exist
+      as directory
+        /tmp/octofs-digest-cap-builds/web/app-err/lib/dates.js doesn't exist
+ @ ./app-err/main.js
+
+ERROR in ./app-err/pages/page11.js 2:0-47
+Module not found: Error: Can't resolve 'chart-lib-not-installed' in '/tmp/octofs-digest-cap-builds/web/app-err/pages'
+resolve 'chart-lib-not-installed' in '/tmp/octofs-digest-cap-builds/web/app-err/pages'
+  Parsed request is a module
+  using description file: /tmp/octofs-digest-cap-builds/web/package.json (relative path: ./app-err/pages)
+    Field 'browser' doesn't contain a valid alias configuration
+    resolve as module
+      /tmp/octofs-digest-cap-builds/web/app-err/pages/node_modules doesn't exist or is not a directory
+      /tmp/octofs-digest-cap-builds/web/app-err/node_modules doesn't exist or is not a directory
+      looking for modules in /tmp/octofs-digest-cap-builds/web/node_modules
+        single file module
+          using description file: /tmp/octofs-digest-cap-builds/web/package.json (relative path: ./node_modules/chart-lib-not-installed)
+            no extension
+              Field 'browser' doesn't contain a valid alias configuration
+              /tmp/octofs-digest-cap-builds/web/node_modules/chart-lib-not-installed doesn't exist
+            .js
+              Field 'browser' doesn't contain a valid alias configuration
+              /tmp/octofs-digest-cap-builds/web/node_modules/chart-lib-not-installed.js doesn't exist
+            .json
+              Field 'browser' doesn't contain a valid alias configuration
+              /tmp/octofs-digest-cap-builds/web/node_modules/chart-lib-not-installed.json doesn't exist
+            .wasm
+              Field 'browser' doesn't contain a valid alias configuration
+              /tmp/octofs-digest-cap-builds/web/node_modules/chart-lib-not-installed.wasm doesn't exist
+            .html
+              Field 'browser' doesn't contain a valid alias configuration
+              /tmp/octofs-digest-cap-builds/web/node_modules/chart-lib-not-installed.html doesn't exist
+        /tmp/octofs-digest-cap-builds/web/node_modules/chart-lib-not-installed doesn't exist
+      /tmp/octofs-digest-cap-builds/node_modules doesn't exist or is not a directory
+      /tmp/node_modules doesn't exist or is not a directory
+      /node_modules doesn't exist or is not a directory
+ @ ./app-err/main.js
+
+webpack 5.111.1 compiled with 2 errors in 1602 ms

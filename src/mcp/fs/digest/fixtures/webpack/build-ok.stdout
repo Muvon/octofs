@@ -1,0 +1,47 @@
+assets by path *.js 709 KiB
+  asset main.2f61f3961f258edb06be.js 687 KiB [emitted] [immutable] [minimized] [big] (name: main)
+  asset 103.d1035e92a07e1519b531.js 743 bytes [emitted] [immutable] [minimized]
+  asset 132.268b198fcffa21f38e91.js 743 bytes [emitted] [immutable] [minimized]
+  asset 209.c2439189f84156881dc8.js 743 bytes [emitted] [immutable] [minimized]
+  asset 223.cafb98339796d57cb677.js 743 bytes [emitted] [immutable] [minimized]
+  + 26 assets
+assets by path *.svg 144 KiB
+  asset 1ef5de68a983d0fc471a.svg 4.79 KiB [emitted] [immutable] [from: app-ok/assets/icon15.svg]
+  asset 206c3d8dc74e699980e6.svg 4.79 KiB [emitted] [immutable] [from: app-ok/assets/icon3.svg]
+  asset 34379d46d1bd6e87424a.svg 4.79 KiB [emitted] [immutable] [from: app-ok/assets/icon28.svg]
+  asset 397d3ed24644af484b2a.svg 4.79 KiB [emitted] [immutable] [from: app-ok/assets/icon16.svg]
+  asset 3fd3c4d7c1494b676193.svg 4.79 KiB [emitted] [immutable] [from: app-ok/assets/icon0.svg]
+  asset 4db9d5b3276ef51523c7.svg 4.79 KiB [emitted] [immutable] [from: app-ok/assets/icon13.svg]
+  + 24 assets
+orphan modules 797 KiB [orphan] 33 modules
+runtime modules 8.07 KiB 11 modules
+modules by path ./app-ok/ 827 KiB (javascript) 144 KiB (asset)
+  javascript modules 826 KiB 62 modules
+  asset modules 144 KiB (asset) 1.23 KiB (javascript)
+    ./app-ok/assets/icon0.svg 4.79 KiB (asset) 42 bytes (javascript) [built] [code generated]
+    + 29 modules
+modules by path ./node_modules/ 8.15 KiB
+  modules by path ./node_modules/style-loader/dist/runtime/*.js 5.84 KiB
+    ./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js 2.42 KiB [built] [code generated]
+    + 5 modules
+  modules by path ./node_modules/css-loader/dist/runtime/*.js 2.31 KiB
+    ./node_modules/css-loader/dist/runtime/noSourceMaps.js 64 bytes [built] [code generated]
+    ./node_modules/css-loader/dist/runtime/api.js 2.25 KiB [built] [code generated]
+
+WARNING in asset size limit: The following asset(s) exceed the recommended size limit (244 KiB).
+This can impact web performance.
+Assets: 
+  main.2f61f3961f258edb06be.js (687 KiB)
+    Largest modules: ./app-ok/main.js + 3 modules (764 KiB), ./node_modules/css-loader/dist/cjs.js!./app-ok/styles/main.css (5.12 KiB), webpack/runtime/jsonp chunk loading (2.98 KiB)
+
+WARNING in entrypoint size limit: The following entrypoint(s) combined asset size exceeds the recommended limit (244 KiB). This can impact web performance.
+Entrypoints:
+  main (687 KiB)
+      main.2f61f3961f258edb06be.js
+
+WARNING in webpack performance recommendations: 
+The runtime is part of the initial chunk of main. It describes every other chunk, so a change anywhere in the build rewrites these assets and clients download them again.
+Set 'optimization.runtimeChunk' to emit the runtime as its own chunk.
+For more info visit https://webpack.js.org/configuration/optimization/#optimizationruntimechunk
+
+webpack 5.111.1 compiled with 3 warnings in 1801 ms

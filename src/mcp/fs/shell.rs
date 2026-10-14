@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Shell execution functionality for the Filesystem MCP provider
+//! Shell execution functionality for the filesystem MCP provider.
 
 use super::super::McpToolCall;
 use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
@@ -619,6 +619,26 @@ fn shell_token_spans(s: &str) -> Vec<(usize, usize)> {
 /// the server constructs one that captures the rmcp peer.
 pub type BackgroundNotify = Box<dyn FnOnce(String) + Send>;
 
+pub(super) fn oversized_output_message(
+	status_code: i32,
+	output_bytes: usize,
+	stored_output: Option<&Path>,
+) -> String {
+	if let Some(path) = stored_output {
+		return format!(
+			"Command exited with code {status_code}, but its digest is {}, too large to return in one tool result (limit {}). Full output: {}. Use `view` to read the parts you need.",
+			format_megabytes(output_bytes),
+			format_megabytes(MAX_RESULT_BYTES),
+			path.display()
+		);
+	}
+	format!(
+		"Command exited with code {status_code}, but its output is {}, too large to return in one tool result (limit {}). Redirect it to a file (`cmd > out.log`) and `view` the parts you need, or filter it in the pipeline (`cmd 2>&1 | tail -n 200`).",
+		format_megabytes(output_bytes),
+		format_megabytes(MAX_RESULT_BYTES)
+	)
+}
+
 /// The outcome of a shell call. `resource_uri` is set only when the command was
 /// automatically promoted to the background: the server advertises it as an
 /// MCP resource link so the client can follow it generically. Commands that
@@ -810,19 +830,11 @@ async fn execute_with_timeout(
 
 			// The command already ran, so its exit code is the one fact worth keeping.
 			if final_output.len() > MAX_RESULT_BYTES {
-				if let Some(path) = stored_output {
-					bail!(
-						"Command exited with code {status_code}, but its digest is {}, too large to return in one tool result (limit {}). Full output: {}. Use `view` to read the parts you need.",
-						format_megabytes(final_output.len()),
-						format_megabytes(MAX_RESULT_BYTES),
-						path.display()
-					);
-				}
-				bail!(
-					"Command exited with code {status_code}, but its output is {}, too large to return in one tool result (limit {}). Redirect it to a file (`cmd > out.log`) and `view` the parts you need, or filter it in the pipeline (`cmd 2>&1 | tail -n 200`).",
-					format_megabytes(final_output.len()),
-					format_megabytes(MAX_RESULT_BYTES)
-				);
+				bail!(oversized_output_message(
+					status_code,
+					final_output.len(),
+					stored_output.as_deref(),
+				));
 			}
 
 			// MCP Protocol Compliance: Use error() for failed commands, success() for successful ones

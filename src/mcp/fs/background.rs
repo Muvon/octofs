@@ -19,7 +19,7 @@
 //! returns a resource URI `octofs://jobs/<id>`. The server exposes each job as a
 //! readable resource and, when the process exits, emits
 //! `notifications/resources/updated` for that URI. A subscribed client reads the
-//! resource to get the exit code and a digest or output tail — event-driven, no polling.
+//! resource to get the exit code and the foreground result — event-driven, no polling.
 //! This module owns the registry and the log files; it knows nothing about the
 //! MCP client. The completion signal is delivered through an opaque callback
 //! the server layer supplies (it captures the rmcp peer there), so this file
@@ -34,9 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
-/// The most raw output any single resource read returns. Build logs run long; the
-/// tail is what carries the verdict (errors, the final test summary), so the
-/// head is dropped when the log is bigger than this.
+/// Running jobs expose only a progress tail; finished jobs retain the foreground result.
 const MAX_TAIL_BYTES: usize = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +51,7 @@ pub struct Job {
 	pub stderr_path: PathBuf,
 	pub working_dir: PathBuf,
 	pub status: Arc<Mutex<JobStatus>>,
-	digest: Arc<OnceLock<String>>,
+	finished_output: Arc<OnceLock<String>>,
 	pub pid: u32,
 	pub started_unix: u64,
 }
@@ -160,7 +158,7 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 			stderr_path,
 			working_dir: working_dir.to_path_buf(),
 			status: Arc::new(Mutex::new(JobStatus::Running)),
-			digest: Arc::new(OnceLock::new()),
+			finished_output: Arc::new(OnceLock::new()),
 			pid: 0,
 			started_unix: now_unix(),
 		},
@@ -210,35 +208,22 @@ pub(super) async fn process_output(
 	(full_output, None)
 }
 
-async fn cache_digest(job: &Job) -> Result<()> {
-	let stdout_size = tokio::fs::metadata(&job.stdout_path)
-		.await
-		.context("Failed to stat background stdout")?
-		.len();
-	let stderr_size = tokio::fs::metadata(&job.stderr_path)
-		.await
-		.context("Failed to stat background stderr")?
-		.len();
-	if stdout_size + stderr_size > MAX_RESULT_BYTES as u64 {
-		return Ok(());
-	}
+async fn read_finished_output(job: &Job, code: i32) -> Result<String> {
 	let stdout = tokio::fs::read(&job.stdout_path)
 		.await
-		.context("Failed to read background stdout")?;
+		.map_err(|e| anyhow!("Failed to read command stdout: {}", e))?;
 	let stderr = tokio::fs::read(&job.stderr_path)
 		.await
-		.context("Failed to read background stderr")?;
-	// Descendants may still hold capture handles after the shell exits.
-	if stdout.len() + stderr.len() > MAX_RESULT_BYTES {
-		return Ok(());
-	}
+		.map_err(|e| anyhow!("Failed to read command stderr: {}", e))?;
 	let (output, path) = process_output(&stdout, &stderr, job).await;
-	if path.is_some() && output.len() <= MAX_RESULT_BYTES {
-		job.digest
-			.set(output)
-			.map_err(|_| anyhow!("Output digest already set for job {}", job.id))?;
+	if output.len() > MAX_RESULT_BYTES {
+		return Ok(super::shell::oversized_output_message(
+			code,
+			output.len(),
+			path.as_deref(),
+		));
 	}
-	Ok(())
+	Ok(output)
 }
 
 /// The directory may be absent when no shell command ran in this process.
@@ -271,14 +256,20 @@ where
 
 	let uri = resource_uri(&id);
 	tokio::spawn(async move {
-		let code = match child.wait().await {
-			Ok(status) => status.code().unwrap_or(-1),
-			Err(_) => -1,
-		};
+		let result = child.wait().await;
 		super::shell::unregister_child(pid);
-		if let Err(error) = cache_digest(&completed_job).await {
-			warn!("Failed to digest output for background job {id}: {error:#}");
-		}
+		let (code, output) = match result {
+			Ok(status) => {
+				let code = status.code().unwrap_or(-1);
+				let output = match read_finished_output(&completed_job, code).await {
+					Ok(output) => output,
+					Err(error) => error.to_string(),
+				};
+				(code, output)
+			}
+			Err(error) => (-1, format!("Error: Command execution failed: {error}")),
+		};
+		completed_job.finished_output.get_or_init(|| output);
 		if let Ok(mut guard) = completed_job.status.lock() {
 			*guard = JobStatus::Exited(code);
 		}
@@ -295,7 +286,7 @@ pub(crate) fn status(id: &str) -> Option<JobStatus> {
 		.map(Job::status)
 }
 
-/// A point-in-time read of a job: its status and a digest or output tail.
+/// A point-in-time read: status and the foreground result if finished, a tail if running.
 pub struct JobView {
 	pub command: String,
 	pub status: JobStatus,
@@ -321,7 +312,7 @@ fn read_tail(path: &Path) -> (Vec<u8>, bool) {
 	}
 }
 
-/// Read a job's status and cached digest or raw output tail. `None` if the id is unknown.
+/// Read the finished foreground result or a running job's tail. `None` if the id is unknown.
 pub fn read(id: &str) -> Option<JobView> {
 	let job = jobs()
 		.lock()
@@ -329,11 +320,11 @@ pub fn read(id: &str) -> Option<JobView> {
 		.get(id)
 		.cloned()?;
 	let status = job.status();
-	if let (JobStatus::Exited(_), Some(output)) = (status, job.digest.get()) {
+	if matches!(status, JobStatus::Exited(_)) {
 		return Some(JobView {
 			command: job.command.clone(),
 			status,
-			output: output.clone(),
+			output: job.finished_output.get()?.clone(),
 			truncated: false,
 		});
 	}

@@ -1,0 +1,11 @@
+# example.com/build/broken [example.com/build/broken.test]
+broken/a.go:5:2: "os" imported and not used
+broken/a.go:9:6: declared and not used: unused
+broken/a.go:10:9: cannot use "str" (untyped string constant) as int value in return statement
+broken/a.go:13:24: undefined: undefinedVar
+broken/b.go:4:15: undefined: missingFunc
+# example.com/build/testonly [example.com/build/testonly.test]
+testonly/x_test.go:6:12: undefined: Y
+# example.com/build/vetfail
+# [example.com/build/vetfail]
+vetfail/v.go:5:44: fmt.Sprintf format %s has arg n of wrong type int

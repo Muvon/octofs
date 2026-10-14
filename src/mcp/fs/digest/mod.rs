@@ -37,7 +37,10 @@ macro_rules! parsers {
 	};
 }
 
-parsers!(cargo);
+parsers!(
+	cargo, pytest, go_test, vitest, jest, phpunit, rspec, pip, pnpm, go_mod, make, vite, webpack,
+	docker, tsc,
+);
 
 pub(super) fn join_streams(stdout: &str, stderr: &str) -> String {
 	if stderr.is_empty() {
@@ -200,3 +203,7 @@ fn valid_selection(lines: &[&str], indices: &[usize]) -> bool {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 pub(super) mod mod_tests;
+
+#[cfg(test)]
+#[path = "build_capture_tests.rs"]
+mod build_capture_tests;

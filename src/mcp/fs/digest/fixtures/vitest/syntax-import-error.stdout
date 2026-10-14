@@ -1,0 +1,13 @@
+
+ RUN  v5.0.2 /tmp/octofs-digest-cap-tests/js-vitest
+
+ ❯ tests/syntax/bad_syntax.test.mjs (0 test)
+ ❯ tests/syntax/bad_import.test.mjs (0 test)
+ ✓ tests/syntax/strings.test.mjs (30 tests) 7ms
+ ✓ tests/syntax/math.test.mjs (30 tests) 6ms
+
+ Test Files  2 failed | 2 passed (4)
+      Tests  60 passed (60)
+   Start at  11:01:53
+   Duration  192ms (transform 50%, import 20%, worker 15%, tests 14%, environment 1%)
+

@@ -1,0 +1,46 @@
+  console.log
+    starting checkout flow
+
+      at Object.log (tests/fail/broken.test.js:37:13)
+
+  console.warn
+    inventory service slow
+
+      36 |   it('logs then fails', () => {
+      37 |     console.log('starting checkout flow');
+    > 38 |     console.warn('inventory service slow');
+         |             ^
+      39 |     console.error('payment gateway returned 502');
+      40 |     expect(7).toBe(8);
+      41 |   });
+
+      at Object.warn (tests/fail/broken.test.js:38:13)
+
+  console.error
+    payment gateway returned 502
+
+      37 |     console.log('starting checkout flow');
+      38 |     console.warn('inventory service slow');
+    > 39 |     console.error('payment gateway returned 502');
+         |             ^
+      40 |     expect(7).toBe(8);
+      41 |   });
+      42 |
+
+      at Object.error (tests/fail/broken.test.js:39:13)
+
+  console.log
+    progress math 0
+
+      at Object.log (tests/fail/math.test.js:4:13)
+
+  console.log
+    progress math 15
+
+      at Object.log (tests/fail/math.test.js:50:13)
+
+  console.log
+    progress math 30
+
+      at Object.log (tests/fail/math.test.js:96:13)
+

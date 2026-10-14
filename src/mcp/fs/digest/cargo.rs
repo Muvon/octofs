@@ -382,7 +382,11 @@ fn test_failed(line: &str) -> bool {
 }
 
 fn test_header(line: &str) -> bool {
-	line.starts_with("Running ") || line.starts_with("Doc-tests ")
+	if let Some(name) = line.strip_prefix("Doc-tests ") {
+		return !name.is_empty() && !name.contains(char::is_whitespace);
+	}
+	line.strip_prefix("Running ")
+		.is_some_and(|target| target.contains(" (") && target.ends_with(')'))
 }
 
 fn progress(line: &str) -> bool {
@@ -394,6 +398,7 @@ fn progress(line: &str) -> bool {
 		"Downloaded ",
 		"Updating ",
 		"Locking ",
+		"Adding ",
 		"Blocking waiting ",
 	]
 	.iter()

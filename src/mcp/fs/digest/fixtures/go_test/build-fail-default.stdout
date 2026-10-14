@@ -1,0 +1,5 @@
+FAIL	example.com/build/broken [build failed]
+ok  	example.com/build/good	0.018s
+FAIL	example.com/build/testonly [build failed]
+FAIL	example.com/build/vetfail [build failed]
+FAIL

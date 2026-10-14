@@ -224,7 +224,7 @@ const CLAUDE_CHANNEL_CAPABILITY: &str = "claude/channel";
 const CLAUDE_CHANNEL_NOTIFICATION: &str = "notifications/claude/channel";
 
 /// Push a finished job to Claude Code as a channel message carrying what
-/// `resources/read` returns for it: the exit code and a digest or output tail.
+/// `resources/read` returns for it: the exit code and the finished foreground result.
 async fn notify_claude_channel(peer: &Peer<RoleServer>, uri: &str) {
 	let Some(id) = fs::background::job_id_from_uri(uri) else {
 		return;
@@ -491,7 +491,8 @@ impl OctofsServer {
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
 			A command still running after ~10s moves to the background and returns a \
-			job resource; you are notified with the exit code and output when it exits. Do \
+			job resource showing a progress tail while running; on exit you receive the exit code \
+			and the same output as a foreground command. Do \
 			NOT poll, sleep, re-run or `ps` it, or start a variant of it (other flags or filters) — \
 			the result arrives on its own. Do only work that doesn't need it; to wait for it, reply \
 			with a brief status and no tool call; resume dependent work when its completion \
@@ -793,7 +794,7 @@ impl ServerHandler for OctofsServer {
 	}
 
 	// Background shell jobs are surfaced as resources: each promoted command is
-	// `octofs://jobs/<id>`, readable for its status and output tail. On exit the
+	// `octofs://jobs/<id>`, readable for its status and retained output. On exit the
 	// job's wait task emits `resources/updated` for that URI (see the `shell`
 	// handler's notifier), so a client learns a build finished without polling.
 	async fn list_resources(

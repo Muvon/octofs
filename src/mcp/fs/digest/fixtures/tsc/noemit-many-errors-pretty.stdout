@@ -1,0 +1,1384 @@
+[96mmany/feature0.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-0' or its corresponding type declarations.
+
+[7m1[0m import { helper0 } from "./does-not-exist-0";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature0.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature0.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s0";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature0.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature0.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature0.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature0.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h0: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature0.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h0: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature1.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-1' or its corresponding type declarations.
+
+[7m1[0m import { helper1 } from "./does-not-exist-1";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature1.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature1.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s1";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature1.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature1.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature1.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature1.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h1: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature1.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h1: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature10.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-10' or its corresponding type declarations.
+
+[7m1[0m import { helper10 } from "./does-not-exist-10";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature10.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature10.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s10";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature10.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature10.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature10.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature10.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h10: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature10.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h10: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature11.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-11' or its corresponding type declarations.
+
+[7m1[0m import { helper11 } from "./does-not-exist-11";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature11.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature11.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s11";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature11.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature11.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature11.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature11.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h11: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature11.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h11: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature12.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-12' or its corresponding type declarations.
+
+[7m1[0m import { helper12 } from "./does-not-exist-12";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature12.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature12.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s12";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature12.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature12.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature12.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature12.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h12: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature12.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h12: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature13.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-13' or its corresponding type declarations.
+
+[7m1[0m import { helper13 } from "./does-not-exist-13";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature13.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature13.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s13";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature13.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature13.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature13.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature13.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h13: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature13.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h13: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature14.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-14' or its corresponding type declarations.
+
+[7m1[0m import { helper14 } from "./does-not-exist-14";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature14.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature14.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s14";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature14.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature14.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature14.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature14.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h14: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature14.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h14: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature15.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-15' or its corresponding type declarations.
+
+[7m1[0m import { helper15 } from "./does-not-exist-15";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature15.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature15.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s15";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature15.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature15.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature15.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature15.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h15: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature15.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h15: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature16.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-16' or its corresponding type declarations.
+
+[7m1[0m import { helper16 } from "./does-not-exist-16";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature16.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature16.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s16";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature16.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature16.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature16.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature16.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h16: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature16.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h16: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature17.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-17' or its corresponding type declarations.
+
+[7m1[0m import { helper17 } from "./does-not-exist-17";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature17.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature17.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s17";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature17.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature17.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature17.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature17.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h17: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature17.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h17: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature18.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-18' or its corresponding type declarations.
+
+[7m1[0m import { helper18 } from "./does-not-exist-18";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature18.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature18.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s18";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature18.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature18.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature18.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature18.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h18: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature18.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h18: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature19.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-19' or its corresponding type declarations.
+
+[7m1[0m import { helper19 } from "./does-not-exist-19";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature19.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature19.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s19";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature19.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature19.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature19.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature19.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h19: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature19.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h19: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature2.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-2' or its corresponding type declarations.
+
+[7m1[0m import { helper2 } from "./does-not-exist-2";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature2.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature2.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s2";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature2.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature2.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature2.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature2.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h2: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature2.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h2: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature20.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-20' or its corresponding type declarations.
+
+[7m1[0m import { helper20 } from "./does-not-exist-20";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature20.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature20.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s20";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature20.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature20.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature20.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature20.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h20: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature20.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h20: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature21.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-21' or its corresponding type declarations.
+
+[7m1[0m import { helper21 } from "./does-not-exist-21";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature21.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature21.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s21";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature21.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature21.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature21.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature21.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h21: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature21.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h21: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature22.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-22' or its corresponding type declarations.
+
+[7m1[0m import { helper22 } from "./does-not-exist-22";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature22.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature22.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s22";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature22.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature22.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature22.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature22.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h22: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature22.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h22: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature23.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-23' or its corresponding type declarations.
+
+[7m1[0m import { helper23 } from "./does-not-exist-23";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature23.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature23.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s23";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature23.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature23.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature23.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature23.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h23: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature23.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h23: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature24.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-24' or its corresponding type declarations.
+
+[7m1[0m import { helper24 } from "./does-not-exist-24";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature24.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature24.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s24";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature24.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature24.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature24.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature24.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h24: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature24.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h24: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature25.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-25' or its corresponding type declarations.
+
+[7m1[0m import { helper25 } from "./does-not-exist-25";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature25.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature25.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s25";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature25.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature25.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature25.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature25.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h25: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature25.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h25: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature26.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-26' or its corresponding type declarations.
+
+[7m1[0m import { helper26 } from "./does-not-exist-26";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature26.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature26.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s26";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature26.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature26.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature26.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature26.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h26: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature26.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h26: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature27.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-27' or its corresponding type declarations.
+
+[7m1[0m import { helper27 } from "./does-not-exist-27";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature27.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature27.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s27";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature27.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature27.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature27.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature27.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h27: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature27.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h27: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature28.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-28' or its corresponding type declarations.
+
+[7m1[0m import { helper28 } from "./does-not-exist-28";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature28.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature28.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s28";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature28.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature28.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature28.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature28.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h28: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature28.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h28: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature29.ts[0m:[93m1[0m:[93m26[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-29' or its corresponding type declarations.
+
+[7m1[0m import { helper29 } from "./does-not-exist-29";
+[7m [0m [91m                         ~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature29.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature29.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s29";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature29.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature29.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature29.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature29.ts[0m:[93m16[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h29: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                     ~[0m
+
+  [96mmany/feature29.ts[0m:[93m16[0m:[93m21[0m
+    [7m16[0m export const h29: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                    ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature3.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-3' or its corresponding type declarations.
+
+[7m1[0m import { helper3 } from "./does-not-exist-3";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature3.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature3.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s3";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature3.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature3.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature3.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature3.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h3: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature3.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h3: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature4.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-4' or its corresponding type declarations.
+
+[7m1[0m import { helper4 } from "./does-not-exist-4";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature4.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature4.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s4";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature4.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature4.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature4.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature4.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h4: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature4.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h4: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature5.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-5' or its corresponding type declarations.
+
+[7m1[0m import { helper5 } from "./does-not-exist-5";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature5.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature5.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s5";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature5.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature5.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature5.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature5.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h5: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature5.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h5: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature6.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-6' or its corresponding type declarations.
+
+[7m1[0m import { helper6 } from "./does-not-exist-6";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature6.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature6.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s6";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature6.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature6.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature6.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature6.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h6: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature6.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h6: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature7.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-7' or its corresponding type declarations.
+
+[7m1[0m import { helper7 } from "./does-not-exist-7";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature7.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature7.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s7";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature7.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature7.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature7.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature7.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h7: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature7.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h7: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature8.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-8' or its corresponding type declarations.
+
+[7m1[0m import { helper8 } from "./does-not-exist-8";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature8.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature8.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s8";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature8.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature8.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature8.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature8.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h8: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature8.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h8: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+[96mmany/feature9.ts[0m:[93m1[0m:[93m25[0m - [91merror[0m[90m TS2307: [0mCannot find module './does-not-exist-9' or its corresponding type declarations.
+
+[7m1[0m import { helper9 } from "./does-not-exist-9";
+[7m [0m [91m                        ~~~~~~~~~~~~~~~~~~~~[0m
+
+[96mmany/feature9.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m   const a: string = x;
+[7m [0m [91m        ~[0m
+
+[96mmany/feature9.ts[0m:[93m5[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m5[0m   const b: number = "s9";
+[7m [0m [91m        ~[0m
+
+[96mmany/feature9.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2339: [0mProperty 'w' does not exist on type '{ v: number; }'.
+
+[7m7[0m   c.w = 2;
+[7m [0m [91m    ~[0m
+
+[96mmany/feature9.ts[0m:[93m9[0m:[93m3[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m9[0m   return x;
+[7m [0m [91m  ~~~~~~[0m
+
+[96mmany/feature9.ts[0m:[93m13[0m:[93m27[0m - [91merror[0m[90m TS2551: [0mProperty 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+
+[7m13[0m   return arr.map((s) => s.toFixed(2));
+[7m  [0m [91m                          ~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.es2015.core.d.ts[0m:[93m487[0m:[93m5[0m
+    [7m487[0m     fixed(): string;
+    [7m   [0m [96m    ~~~~~~~~~~~~~~~~[0m
+    'fixed' is declared here.
+
+[96mmany/feature9.ts[0m:[93m16[0m:[93m37[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'boolean'.
+
+[7m16[0m export const h9: { k: boolean } = { k: "yes" };
+[7m  [0m [91m                                    ~[0m
+
+  [96mmany/feature9.ts[0m:[93m16[0m:[93m20[0m
+    [7m16[0m export const h9: { k: boolean } = { k: "yes" };
+    [7m  [0m [96m                   ~[0m
+    The expected type comes from property 'k' which is declared here on type '{ k: boolean; }'
+
+
+Found 210 errors in 30 files.
+
+Errors  Files
+     7  many/feature0.ts[90m:1[0m
+     7  many/feature1.ts[90m:1[0m
+     7  many/feature10.ts[90m:1[0m
+     7  many/feature11.ts[90m:1[0m
+     7  many/feature12.ts[90m:1[0m
+     7  many/feature13.ts[90m:1[0m
+     7  many/feature14.ts[90m:1[0m
+     7  many/feature15.ts[90m:1[0m
+     7  many/feature16.ts[90m:1[0m
+     7  many/feature17.ts[90m:1[0m
+     7  many/feature18.ts[90m:1[0m
+     7  many/feature19.ts[90m:1[0m
+     7  many/feature2.ts[90m:1[0m
+     7  many/feature20.ts[90m:1[0m
+     7  many/feature21.ts[90m:1[0m
+     7  many/feature22.ts[90m:1[0m
+     7  many/feature23.ts[90m:1[0m
+     7  many/feature24.ts[90m:1[0m
+     7  many/feature25.ts[90m:1[0m
+     7  many/feature26.ts[90m:1[0m
+     7  many/feature27.ts[90m:1[0m
+     7  many/feature28.ts[90m:1[0m
+     7  many/feature29.ts[90m:1[0m
+     7  many/feature3.ts[90m:1[0m
+     7  many/feature4.ts[90m:1[0m
+     7  many/feature5.ts[90m:1[0m
+     7  many/feature6.ts[90m:1[0m
+     7  many/feature7.ts[90m:1[0m
+     7  many/feature8.ts[90m:1[0m
+     7  many/feature9.ts[90m:1[0m

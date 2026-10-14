@@ -1,0 +1,4 @@
+go: github.com/octofs-digest/does-not-exist@v1.0.0: reading github.com/octofs-digest/does-not-exist/go.mod at revision v1.0.0: git ls-remote -q --end-of-options https://github.com/octofs-digest/does-not-exist in /tmp/octofs-digest-cap-installs/gomodcache/cache/vcs/8c507ea679240f77041f8b3337be06af31c9f0f414b383dc519c85d57f7a4f8a: exit status 128:
+	fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Confirm the import path was entered correctly.
+If this is a private repository, see https://golang.org/doc/faq#git_https for additional information.

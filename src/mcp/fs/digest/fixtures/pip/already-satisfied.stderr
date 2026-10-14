@@ -1,0 +1,3 @@
+
+[notice] A new release of pip is available: 23.3.2 -> 26.2.1
+[notice] To update, run: python3 -m pip install --upgrade pip

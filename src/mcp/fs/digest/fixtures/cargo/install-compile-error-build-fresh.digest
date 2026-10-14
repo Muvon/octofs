@@ -1,0 +1,139 @@
+      Adding thiserror v1.0.69 (available: v2.0.21)
+  Downloaded thiserror v2.0.21
+  Downloaded thiserror-impl v2.0.21
+  Downloaded thiserror v1.0.69
+  Downloaded thiserror-impl v1.0.69
+   Compiling thiserror v1.0.69
+   Compiling thiserror-impl v1.0.69
+warning: unused import: `std::collections::HashMap`
+ --> src/main.rs:1:5
+  |
+1 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0277]: the trait bound `Uuid: serde::Serialize` is not satisfied
+    --> src/main.rs:12:10
+     |
+  12 | #[derive(Serialize, Deserialize, Debug)]
+     |          ^^^^^^^^^ the trait `Serialize` is not implemented for `Uuid`
+  13 | struct Record {
+  14 |     id: uuid::Uuid,
+     |     -- required by a bound introduced by this call
+     |
+     = note: for local types consider adding `#[derive(serde::Serialize)]` to your `Uuid` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `Serialize`:
+               &'a T
+               &'a mut T
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+               (T0, T1, T2, T3)
+               (T0, T1, T2, T3, T4)
+             and 137 others
+note: required by a bound in `_::_serde::ser::SerializeStruct::serialize_field`
+    --> /tmp/octofs-digest-cap-installs/cargohome/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/src/ser/mod.rs:1917:21
+     |
+1915 |     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+     |        --------------- required by a bound in this associated function
+1916 |     where
+1917 |         T: ?Sized + Serialize;
+     |                     ^^^^^^^^^ required by this bound in `SerializeStruct::serialize_field`
+     = note: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Uuid: serde::Deserialize<'de>` is not satisfied
+    --> src/main.rs:14:6
+     |
+  14 |     id: uuid::Uuid,
+     |         ^^^^^^^^^^ the trait `Deserialize<'_>` is not implemented for `Uuid`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `Uuid` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+               (T0, T1, T2, T3)
+             and 152 others
+note: required by a bound in `next_element`
+    --> /tmp/octofs-digest-cap-installs/cargohome/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/src/de/mod.rs:1771:12
+     |
+1769 |     fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>
+     |        ------------ required by a bound in this associated function
+1770 |     where
+1771 |         T: Deserialize<'de>,
+     |            ^^^^^^^^^^^^^^^^ required by this bound in `SeqAccess::next_element`
+
+error[E0277]: the trait bound `Uuid: serde::Deserialize<'de>` is not satisfied
+    --> src/main.rs:14:6
+     |
+  14 |     id: uuid::Uuid,
+     |         ^^^^^^^^^^ the trait `Deserialize<'_>` is not implemented for `Uuid`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `Uuid` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+               (T0, T1, T2, T3)
+             and 152 others
+note: required by a bound in `next_value`
+    --> /tmp/octofs-digest-cap-installs/cargohome/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/src/de/mod.rs:1916:12
+     |
+1914 |     fn next_value<V>(&mut self) -> Result<V, Self::Error>
+     |        ---------- required by a bound in this associated function
+1915 |     where
+1916 |         V: Deserialize<'de>,
+     |            ^^^^^^^^^^^^^^^^ required by this bound in `MapAccess::next_value`
+
+error[E0277]: the trait bound `Uuid: serde::Deserialize<'de>` is not satisfied
+  --> src/main.rs:12:21
+   |
+12 | #[derive(Serialize, Deserialize, Debug)]
+   |                     ^^^^^^^^^^^ the trait `Deserialize<'_>` is not implemented for `Uuid`
+   |
+   = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `Uuid` type
+   = note: for types from other crates check whether the crate offers a `serde` feature flag
+   = help: the following other types implement trait `Deserialize<'de>`:
+             &'a Path
+             &'a [u8]
+             &'a str
+             ()
+             (T,)
+             (T0, T1)
+             (T0, T1, T2)
+             (T0, T1, T2, T3)
+           and 152 others
+note: required by a bound in `_::_serde::__private229::de::missing_field`
+  --> /tmp/octofs-digest-cap-installs/cargohome/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:26:8
+   |
+24 | pub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>
+   |        ------------- required by a bound in this function
+25 | where
+26 |     V: Deserialize<'de>,
+   |        ^^^^^^^^^^^^^^^^ required by this bound in `missing_field`
+   = note: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `unused_count`
+  --> src/main.rs:29:6
+   |
+29 |     let unused_count = 3;
+   |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused_count`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `octofs-digest-fixture` (bin "octofs-digest-fixture") generated 2 warnings
+error: could not compile `octofs-digest-fixture` (bin "octofs-digest-fixture") due to 4 previous errors; 2 warnings emitted

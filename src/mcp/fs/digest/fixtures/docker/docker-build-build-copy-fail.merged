@@ -1,0 +1,40 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.copy-fail
+#1 transferring dockerfile: 222B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/alpine:3.20
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/5] FROM docker.io/library/alpine:3.20
+#4 DONE 0.0s
+
+#5 [2/5] WORKDIR /src
+#5 CACHED
+
+#6 [internal] load build context
+#6 transferring context: 3.38kB done
+#6 DONE 0.0s
+
+#7 [3/5] COPY ok/ /src/
+#7 CACHED
+
+#8 [4/5] COPY config/settings.yaml /etc/app/settings.yaml
+#8 ERROR: failed to calculate checksum of ref EMDT:5LUX:FWQL:DU4G:4COM:E6Z4:ZFXH:QDM2:X3JZ:ANWV:XTCJ:7HOV::gau0az9iit3j79nqqmg8evycz: "/config/settings.yaml": not found
+------
+ > [4/5] COPY config/settings.yaml /etc/app/settings.yaml:
+------
+Dockerfile.copy-fail:4
+--------------------
+   2 |     WORKDIR /src
+   3 |     COPY ok/ /src/
+   4 | >>> COPY config/settings.yaml /etc/app/settings.yaml
+   5 |     RUN echo never reached
+   6 |     
+--------------------
+ERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref EMDT:5LUX:FWQL:DU4G:4COM:E6Z4:ZFXH:QDM2:X3JZ:ANWV:XTCJ:7HOV::gau0az9iit3j79nqqmg8evycz: "/config/settings.yaml": not found

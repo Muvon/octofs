@@ -1,0 +1,37 @@
+
+ RUN  v5.0.2 /tmp/octofs-digest-cap-tests/js-vitest
+
+ ✓ tests/pass/views.test.mjs (40 tests) 51ms
+stdout | tests/pass/math.test.mjs > math > adds 0 + 1
+progress math 0
+
+stdout | tests/pass/math.test.mjs > math > adds 15 + 1
+progress math 15
+
+stdout | tests/pass/math.test.mjs > math > adds 30 + 1
+progress math 30
+
+ ✓ tests/pass/utils.test.mjs (40 tests) 35ms
+ ✓ tests/pass/math.test.mjs (40 tests) 31ms
+stdout | tests/pass/strings.test.mjs > strings > adds 0 + 1
+progress strings 0
+
+stdout | tests/pass/strings.test.mjs > strings > adds 15 + 1
+progress strings 15
+
+stdout | tests/pass/strings.test.mjs > strings > adds 30 + 1
+progress strings 30
+
+ ✓ tests/pass/parsers.test.mjs (40 tests) 46ms
+ ✓ tests/pass/models.test.mjs (40 tests) 61ms
+ ✓ tests/pass/strings.test.mjs (40 tests) 35ms
+
+ Test Files  6 passed (6)
+      Tests  240 passed (240)
+   Start at  11:01:26
+   Duration  2.32s (transform 80%, import 13%, tests 4%, worker 3%)
+
+  Transform  transforming modules took 5.14s · 80% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

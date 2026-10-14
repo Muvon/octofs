@@ -1,0 +1,210 @@
+many/feature0.ts(1,25): error TS2307: Cannot find module './does-not-exist-0' or its corresponding type declarations.
+many/feature0.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature0.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature0.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature0.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature0.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature0.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature1.ts(1,25): error TS2307: Cannot find module './does-not-exist-1' or its corresponding type declarations.
+many/feature1.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature1.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature1.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature1.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature1.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature1.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature10.ts(1,26): error TS2307: Cannot find module './does-not-exist-10' or its corresponding type declarations.
+many/feature10.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature10.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature10.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature10.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature10.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature10.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature11.ts(1,26): error TS2307: Cannot find module './does-not-exist-11' or its corresponding type declarations.
+many/feature11.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature11.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature11.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature11.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature11.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature11.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature12.ts(1,26): error TS2307: Cannot find module './does-not-exist-12' or its corresponding type declarations.
+many/feature12.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature12.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature12.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature12.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature12.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature12.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature13.ts(1,26): error TS2307: Cannot find module './does-not-exist-13' or its corresponding type declarations.
+many/feature13.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature13.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature13.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature13.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature13.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature13.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature14.ts(1,26): error TS2307: Cannot find module './does-not-exist-14' or its corresponding type declarations.
+many/feature14.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature14.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature14.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature14.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature14.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature14.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature15.ts(1,26): error TS2307: Cannot find module './does-not-exist-15' or its corresponding type declarations.
+many/feature15.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature15.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature15.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature15.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature15.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature15.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature16.ts(1,26): error TS2307: Cannot find module './does-not-exist-16' or its corresponding type declarations.
+many/feature16.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature16.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature16.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature16.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature16.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature16.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature17.ts(1,26): error TS2307: Cannot find module './does-not-exist-17' or its corresponding type declarations.
+many/feature17.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature17.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature17.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature17.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature17.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature17.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature18.ts(1,26): error TS2307: Cannot find module './does-not-exist-18' or its corresponding type declarations.
+many/feature18.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature18.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature18.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature18.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature18.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature18.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature19.ts(1,26): error TS2307: Cannot find module './does-not-exist-19' or its corresponding type declarations.
+many/feature19.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature19.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature19.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature19.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature19.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature19.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature2.ts(1,25): error TS2307: Cannot find module './does-not-exist-2' or its corresponding type declarations.
+many/feature2.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature2.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature2.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature2.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature2.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature2.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature20.ts(1,26): error TS2307: Cannot find module './does-not-exist-20' or its corresponding type declarations.
+many/feature20.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature20.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature20.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature20.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature20.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature20.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature21.ts(1,26): error TS2307: Cannot find module './does-not-exist-21' or its corresponding type declarations.
+many/feature21.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature21.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature21.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature21.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature21.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature21.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature22.ts(1,26): error TS2307: Cannot find module './does-not-exist-22' or its corresponding type declarations.
+many/feature22.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature22.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature22.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature22.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature22.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature22.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature23.ts(1,26): error TS2307: Cannot find module './does-not-exist-23' or its corresponding type declarations.
+many/feature23.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature23.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature23.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature23.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature23.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature23.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature24.ts(1,26): error TS2307: Cannot find module './does-not-exist-24' or its corresponding type declarations.
+many/feature24.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature24.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature24.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature24.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature24.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature24.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature25.ts(1,26): error TS2307: Cannot find module './does-not-exist-25' or its corresponding type declarations.
+many/feature25.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature25.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature25.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature25.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature25.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature25.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature26.ts(1,26): error TS2307: Cannot find module './does-not-exist-26' or its corresponding type declarations.
+many/feature26.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature26.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature26.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature26.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature26.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature26.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature27.ts(1,26): error TS2307: Cannot find module './does-not-exist-27' or its corresponding type declarations.
+many/feature27.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature27.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature27.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature27.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature27.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature27.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature28.ts(1,26): error TS2307: Cannot find module './does-not-exist-28' or its corresponding type declarations.
+many/feature28.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature28.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature28.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature28.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature28.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature28.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature29.ts(1,26): error TS2307: Cannot find module './does-not-exist-29' or its corresponding type declarations.
+many/feature29.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature29.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature29.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature29.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature29.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature29.ts(16,38): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature3.ts(1,25): error TS2307: Cannot find module './does-not-exist-3' or its corresponding type declarations.
+many/feature3.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature3.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature3.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature3.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature3.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature3.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature4.ts(1,25): error TS2307: Cannot find module './does-not-exist-4' or its corresponding type declarations.
+many/feature4.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature4.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature4.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature4.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature4.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature4.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature5.ts(1,25): error TS2307: Cannot find module './does-not-exist-5' or its corresponding type declarations.
+many/feature5.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature5.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature5.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature5.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature5.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature5.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature6.ts(1,25): error TS2307: Cannot find module './does-not-exist-6' or its corresponding type declarations.
+many/feature6.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature6.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature6.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature6.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature6.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature6.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature7.ts(1,25): error TS2307: Cannot find module './does-not-exist-7' or its corresponding type declarations.
+many/feature7.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature7.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature7.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature7.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature7.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature7.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature8.ts(1,25): error TS2307: Cannot find module './does-not-exist-8' or its corresponding type declarations.
+many/feature8.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature8.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature8.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature8.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature8.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature8.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.
+many/feature9.ts(1,25): error TS2307: Cannot find module './does-not-exist-9' or its corresponding type declarations.
+many/feature9.ts(4,9): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature9.ts(5,9): error TS2322: Type 'string' is not assignable to type 'number'.
+many/feature9.ts(7,5): error TS2339: Property 'w' does not exist on type '{ v: number; }'.
+many/feature9.ts(9,3): error TS2322: Type 'number' is not assignable to type 'string'.
+many/feature9.ts(13,27): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+many/feature9.ts(16,37): error TS2322: Type 'string' is not assignable to type 'boolean'.

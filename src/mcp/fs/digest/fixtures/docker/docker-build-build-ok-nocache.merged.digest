@@ -1,0 +1,4 @@
+#11 [7/7] RUN echo "deprecated: config key 'legacy_mode' will be removed in v3" >&2
+#11 0.309 deprecated: config key 'legacy_mode' will be removed in v3
+#11 DONE 0.4s
+#12 naming to docker.io/library/octofs-digest-cap-builds:ok done

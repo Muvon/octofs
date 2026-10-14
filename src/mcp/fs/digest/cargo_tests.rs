@@ -87,6 +87,20 @@ fn truncated_and_mixed_real_captures_are_rejected() {
 		),
 		(
 			pass_stdout.clone(),
+			pass_stderr
+				.lines()
+				.map(|line| {
+					if line.trim_start().starts_with("Running ") {
+						"Running an unrelated application"
+					} else {
+						line
+					}
+				})
+				.collect::<Vec<_>>()
+				.join("\n"),
+		),
+		(
+			pass_stdout.clone(),
 			format!("{pass_stderr}\nwarning: truncated diagnostic\n  incomplete details"),
 		),
 		(
@@ -155,4 +169,97 @@ fn summaries_reject_nonfinite_and_partial_counts() {
 	] {
 		assert!(summary(line).is_none(), "{line}");
 	}
+}
+
+macro_rules! install_capture {
+	($name:literal) => {
+		(
+			$name,
+			include_str!(concat!("fixtures/cargo/install-", $name, ".stdout")),
+			include_str!(concat!("fixtures/cargo/install-", $name, ".stderr")),
+			include_str!(concat!("fixtures/cargo/install-", $name, ".merged")),
+		)
+	};
+}
+
+#[test]
+fn fresh_install_builds_digest_but_fetches_keep_the_terminal_requirement() {
+	use crate::mcp::fs::digest::digest_with;
+	use crate::mcp::fs::shell::clean_terminal_noise;
+
+	for (name, stdout, stderr, merged, golden, merged_golden) in [
+		{
+			let (name, stdout, stderr, merged) = install_capture!("build-fresh");
+			(
+				name,
+				stdout,
+				stderr,
+				merged,
+				include_str!("fixtures/cargo/install-build-fresh.digest"),
+				include_str!("fixtures/cargo/install-build-fresh.merged.digest"),
+			)
+		},
+		{
+			let (name, stdout, stderr, merged) = install_capture!("compile-error-build-fresh");
+			(
+				name,
+				stdout,
+				stderr,
+				merged,
+				include_str!("fixtures/cargo/install-compile-error-build-fresh.digest"),
+				include_str!("fixtures/cargo/install-compile-error-build-fresh.merged.digest"),
+			)
+		},
+	] {
+		for (stdout, stderr, golden) in [(stdout, stderr, golden), (merged, "", merged_golden)] {
+			let stdout = clean_terminal_noise(stdout);
+			let stderr = clean_terminal_noise(stderr);
+			let out = lines(&stdout);
+			let err = lines(&stderr);
+			let selection = select(&out, &err).unwrap();
+			let body = join_streams(
+				&render(&out, &selection.stdout),
+				&render(&err, &selection.stderr),
+			);
+			assert_eq!(body, golden, "{name}");
+			let omitted = out.len() + err.len() - selection.stdout.len() - selection.stderr.len();
+			let output = digest_with(&stdout, &stderr, Path::new(SPILL_PATH), &[select]).unwrap();
+			assert_eq!(
+				output,
+				format!("{body}\n[digest: {omitted} lines omitted — full output: {SPILL_PATH}]")
+			);
+			println!(
+				"install {name}: {} -> {} bytes",
+				join_streams(&stdout, &stderr).len(),
+				output.len()
+			);
+			for _ in 0..10 {
+				assert_eq!(
+					Some(&output),
+					digest_with(&stdout, &stderr, Path::new(SPILL_PATH), &[select]).as_ref()
+				);
+			}
+			let corrupted = format!("{stderr}\n      Adding unfinished v1.0.0");
+			assert!(digest_with(&stdout, &corrupted, Path::new(SPILL_PATH), &[select]).is_none());
+		}
+	}
+	for (name, stdout, stderr, merged) in [
+		install_capture!("fetch-fresh"),
+		install_capture!("build-cached"),
+		install_capture!("compile-error-build-cached"),
+		install_capture!("build-badversion"),
+	] {
+		for (stdout, stderr) in [(stdout, stderr), (merged, "")] {
+			let stdout = clean_terminal_noise(stdout);
+			let stderr = clean_terminal_noise(stderr);
+			assert!(
+				digest_with(&stdout, &stderr, Path::new(SPILL_PATH), &[select]).is_none(),
+				"{name}"
+			);
+			if name == "fetch-fresh" {
+				assert!(select(&lines(&stdout), &lines(&stderr)).is_none());
+			}
+		}
+	}
+	assert!(select(&[], &lines("      Adding unfinished v1.0.0")).is_none());
 }

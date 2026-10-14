@@ -1,0 +1,26 @@
+assets by status 848 KiB [cached] 60 assets
+orphan modules 796 KiB [orphan] 32 modules
+runtime modules 9.16 KiB 12 modules
+modules by path ./app-syntax/ 826 KiB (javascript) 139 KiB (asset)
+  javascript modules 824 KiB 61 modules
+  asset modules 139 KiB (asset) 1.19 KiB (javascript)
+    ./app-syntax/assets/icon0.svg 4.79 KiB (asset) 42 bytes (javascript) [built] [code generated]
+    + 28 modules
+modules by path ./node_modules/ 8.15 KiB
+  modules by path ./node_modules/style-loader/dist/runtime/*.js 5.84 KiB
+    ./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js 2.42 KiB [built] [code generated]
+    + 5 modules
+  modules by path ./node_modules/css-loader/dist/runtime/*.js 2.31 KiB
+    ./node_modules/css-loader/dist/runtime/noSourceMaps.js 64 bytes [built] [code generated]
+    ./node_modules/css-loader/dist/runtime/api.js 2.25 KiB [built] [code generated]
+ERROR in ./app-syntax/pages/page19.js 5:2
+Module parse failed: Unexpected keyword 'return' (5:2)
+File was parsed as module type 'javascript/auto'.
+You may need an appropriate loader to handle this file type, currently no loaders are configured to process this file. See https://webpack.js.org/concepts#loaders
+  4 |   const x = {
+> 5 |   return `<img src="${icon}">`;
+    |   ^
+  6 | }
+ @ ./app-syntax/main.js 25:16-43
+
+webpack 5.111.1 compiled with 1 error in 1766 ms

@@ -1,0 +1,439 @@
+=== RUN   TestAuth0
+    auth_test.go:6: checking 0 + 1
+--- PASS: TestAuth0 (0.00s)
+=== RUN   TestAuth1
+--- PASS: TestAuth1 (0.00s)
+=== RUN   TestAuth2
+--- PASS: TestAuth2 (0.00s)
+=== RUN   TestAuth3
+--- PASS: TestAuth3 (0.00s)
+=== RUN   TestAuth4
+--- PASS: TestAuth4 (0.00s)
+=== RUN   TestAuth5
+--- PASS: TestAuth5 (0.00s)
+=== RUN   TestAuth6
+--- PASS: TestAuth6 (0.00s)
+=== RUN   TestAuth7
+--- PASS: TestAuth7 (0.00s)
+=== RUN   TestAuth8
+--- PASS: TestAuth8 (0.00s)
+=== RUN   TestAuth9
+--- PASS: TestAuth9 (0.00s)
+=== RUN   TestAuth10
+    auth_test.go:67: checking 10 + 1
+--- PASS: TestAuth10 (0.00s)
+=== RUN   TestAuth11
+--- PASS: TestAuth11 (0.00s)
+=== RUN   TestAuth12
+--- PASS: TestAuth12 (0.00s)
+=== RUN   TestAuth13
+--- PASS: TestAuth13 (0.00s)
+=== RUN   TestAuth14
+--- PASS: TestAuth14 (0.00s)
+=== RUN   TestAuth15
+--- PASS: TestAuth15 (0.00s)
+=== RUN   TestAuth16
+--- PASS: TestAuth16 (0.00s)
+=== RUN   TestAuth17
+--- PASS: TestAuth17 (0.00s)
+=== RUN   TestAuth18
+--- PASS: TestAuth18 (0.00s)
+=== RUN   TestAuth19
+--- PASS: TestAuth19 (0.00s)
+=== RUN   TestAuth20
+    auth_test.go:128: checking 20 + 1
+--- PASS: TestAuth20 (0.00s)
+=== RUN   TestAuth21
+--- PASS: TestAuth21 (0.00s)
+=== RUN   TestAuth22
+--- PASS: TestAuth22 (0.00s)
+=== RUN   TestAuth23
+--- PASS: TestAuth23 (0.00s)
+=== RUN   TestAuth24
+--- PASS: TestAuth24 (0.00s)
+=== RUN   TestAuth25
+--- PASS: TestAuth25 (0.00s)
+=== RUN   TestAuth26
+--- PASS: TestAuth26 (0.00s)
+=== RUN   TestAuth27
+--- PASS: TestAuth27 (0.00s)
+=== RUN   TestAuth28
+--- PASS: TestAuth28 (0.00s)
+=== RUN   TestAuth29
+--- PASS: TestAuth29 (0.00s)
+=== RUN   TestAuth30
+    auth_test.go:189: checking 30 + 1
+--- PASS: TestAuth30 (0.00s)
+=== RUN   TestAuth31
+--- PASS: TestAuth31 (0.00s)
+=== RUN   TestAuth32
+--- PASS: TestAuth32 (0.00s)
+=== RUN   TestAuth33
+--- PASS: TestAuth33 (0.00s)
+=== RUN   TestAuth34
+--- PASS: TestAuth34 (0.00s)
+=== RUN   TestAuth35
+--- PASS: TestAuth35 (0.00s)
+=== RUN   TestAuth36
+--- PASS: TestAuth36 (0.00s)
+=== RUN   TestAuth37
+--- PASS: TestAuth37 (0.00s)
+=== RUN   TestAuth38
+--- PASS: TestAuth38 (0.00s)
+=== RUN   TestAuth39
+--- PASS: TestAuth39 (0.00s)
+=== RUN   TestAuthTable
+=== RUN   TestAuthTable/#00
+=== RUN   TestAuthTable/#01
+=== RUN   TestAuthTable/#02
+--- PASS: TestAuthTable (0.00s)
+    --- PASS: TestAuthTable/#00 (0.00s)
+    --- PASS: TestAuthTable/#01 (0.00s)
+    --- PASS: TestAuthTable/#02 (0.00s)
+PASS
+ok  	example.com/fail/auth	0.003s
+=== RUN   TestBilling0
+    billing_test.go:6: checking 0 + 1
+--- PASS: TestBilling0 (0.00s)
+=== RUN   TestBilling1
+--- PASS: TestBilling1 (0.00s)
+=== RUN   TestBilling2
+--- PASS: TestBilling2 (0.00s)
+=== RUN   TestBilling3
+--- PASS: TestBilling3 (0.00s)
+=== RUN   TestBilling4
+--- PASS: TestBilling4 (0.00s)
+=== RUN   TestBilling5
+--- PASS: TestBilling5 (0.00s)
+=== RUN   TestBilling6
+--- PASS: TestBilling6 (0.00s)
+=== RUN   TestBilling7
+--- PASS: TestBilling7 (0.00s)
+=== RUN   TestBilling8
+--- PASS: TestBilling8 (0.00s)
+=== RUN   TestBilling9
+--- PASS: TestBilling9 (0.00s)
+=== RUN   TestBilling10
+    billing_test.go:67: checking 10 + 1
+--- PASS: TestBilling10 (0.00s)
+=== RUN   TestBilling11
+--- PASS: TestBilling11 (0.00s)
+=== RUN   TestBilling12
+--- PASS: TestBilling12 (0.00s)
+=== RUN   TestBilling13
+--- PASS: TestBilling13 (0.00s)
+=== RUN   TestBilling14
+--- PASS: TestBilling14 (0.00s)
+=== RUN   TestBilling15
+--- PASS: TestBilling15 (0.00s)
+=== RUN   TestBilling16
+--- PASS: TestBilling16 (0.00s)
+=== RUN   TestBilling17
+--- PASS: TestBilling17 (0.00s)
+=== RUN   TestBilling18
+--- PASS: TestBilling18 (0.00s)
+=== RUN   TestBilling19
+--- PASS: TestBilling19 (0.00s)
+=== RUN   TestBilling20
+    billing_test.go:128: checking 20 + 1
+--- PASS: TestBilling20 (0.00s)
+=== RUN   TestBilling21
+--- PASS: TestBilling21 (0.00s)
+=== RUN   TestBilling22
+--- PASS: TestBilling22 (0.00s)
+=== RUN   TestBilling23
+--- PASS: TestBilling23 (0.00s)
+=== RUN   TestBilling24
+--- PASS: TestBilling24 (0.00s)
+=== RUN   TestBilling25
+--- PASS: TestBilling25 (0.00s)
+=== RUN   TestBilling26
+--- PASS: TestBilling26 (0.00s)
+=== RUN   TestBilling27
+--- PASS: TestBilling27 (0.00s)
+=== RUN   TestBilling28
+--- PASS: TestBilling28 (0.00s)
+=== RUN   TestBilling29
+--- PASS: TestBilling29 (0.00s)
+=== RUN   TestBilling30
+    billing_test.go:189: checking 30 + 1
+--- PASS: TestBilling30 (0.00s)
+=== RUN   TestBilling31
+--- PASS: TestBilling31 (0.00s)
+=== RUN   TestBilling32
+--- PASS: TestBilling32 (0.00s)
+=== RUN   TestBilling33
+--- PASS: TestBilling33 (0.00s)
+=== RUN   TestBilling34
+--- PASS: TestBilling34 (0.00s)
+=== RUN   TestBilling35
+--- PASS: TestBilling35 (0.00s)
+=== RUN   TestBilling36
+--- PASS: TestBilling36 (0.00s)
+=== RUN   TestBilling37
+--- PASS: TestBilling37 (0.00s)
+=== RUN   TestBilling38
+--- PASS: TestBilling38 (0.00s)
+=== RUN   TestBilling39
+--- PASS: TestBilling39 (0.00s)
+=== RUN   TestBillingTable
+=== RUN   TestBillingTable/#00
+=== RUN   TestBillingTable/#01
+=== RUN   TestBillingTable/#02
+--- PASS: TestBillingTable (0.00s)
+    --- PASS: TestBillingTable/#00 (0.00s)
+    --- PASS: TestBillingTable/#01 (0.00s)
+    --- PASS: TestBillingTable/#02 (0.00s)
+PASS
+ok  	example.com/fail/billing	0.004s
+=== RUN   TestCache0
+    cache_test.go:6: checking 0 + 1
+--- PASS: TestCache0 (0.00s)
+=== RUN   TestCache1
+--- PASS: TestCache1 (0.00s)
+=== RUN   TestCache2
+--- PASS: TestCache2 (0.00s)
+=== RUN   TestCache3
+    cache_test.go:25: requires network
+--- SKIP: TestCache3 (0.00s)
+=== RUN   TestCache4
+--- PASS: TestCache4 (0.00s)
+=== RUN   TestCache5
+--- PASS: TestCache5 (0.00s)
+=== RUN   TestCache6
+--- PASS: TestCache6 (0.00s)
+=== RUN   TestCache7
+--- PASS: TestCache7 (0.00s)
+=== RUN   TestCache8
+--- PASS: TestCache8 (0.00s)
+=== RUN   TestCache9
+--- PASS: TestCache9 (0.00s)
+=== RUN   TestCache10
+    cache_test.go:68: checking 10 + 1
+--- PASS: TestCache10 (0.00s)
+=== RUN   TestCache11
+--- PASS: TestCache11 (0.00s)
+=== RUN   TestCache12
+--- PASS: TestCache12 (0.00s)
+=== RUN   TestCache13
+--- PASS: TestCache13 (0.00s)
+=== RUN   TestCache14
+--- PASS: TestCache14 (0.00s)
+=== RUN   TestCache15
+--- PASS: TestCache15 (0.00s)
+=== RUN   TestCache16
+--- PASS: TestCache16 (0.00s)
+=== RUN   TestCache17
+--- PASS: TestCache17 (0.00s)
+=== RUN   TestCache18
+--- PASS: TestCache18 (0.00s)
+=== RUN   TestCache19
+--- PASS: TestCache19 (0.00s)
+=== RUN   TestCache20
+    cache_test.go:129: checking 20 + 1
+--- PASS: TestCache20 (0.00s)
+=== RUN   TestCache21
+--- PASS: TestCache21 (0.00s)
+=== RUN   TestCache22
+--- PASS: TestCache22 (0.00s)
+=== RUN   TestCache23
+--- PASS: TestCache23 (0.00s)
+=== RUN   TestCache24
+--- PASS: TestCache24 (0.00s)
+=== RUN   TestCache25
+--- PASS: TestCache25 (0.00s)
+=== RUN   TestCache26
+--- PASS: TestCache26 (0.00s)
+=== RUN   TestCache27
+--- PASS: TestCache27 (0.00s)
+=== RUN   TestCache28
+--- PASS: TestCache28 (0.00s)
+=== RUN   TestCache29
+--- PASS: TestCache29 (0.00s)
+=== RUN   TestCache30
+    cache_test.go:190: checking 30 + 1
+--- PASS: TestCache30 (0.00s)
+=== RUN   TestCache31
+--- PASS: TestCache31 (0.00s)
+=== RUN   TestCache32
+--- PASS: TestCache32 (0.00s)
+=== RUN   TestCache33
+--- PASS: TestCache33 (0.00s)
+=== RUN   TestCache34
+--- PASS: TestCache34 (0.00s)
+=== RUN   TestCache35
+--- PASS: TestCache35 (0.00s)
+=== RUN   TestCache36
+--- PASS: TestCache36 (0.00s)
+=== RUN   TestCache37
+--- PASS: TestCache37 (0.00s)
+=== RUN   TestCache38
+--- PASS: TestCache38 (0.00s)
+=== RUN   TestCache39
+--- PASS: TestCache39 (0.00s)
+=== RUN   TestCacheTable
+=== RUN   TestCacheTable/#00
+=== RUN   TestCacheTable/#01
+=== RUN   TestCacheTable/#02
+--- PASS: TestCacheTable (0.00s)
+    --- PASS: TestCacheTable/#00 (0.00s)
+    --- PASS: TestCacheTable/#01 (0.00s)
+    --- PASS: TestCacheTable/#02 (0.00s)
+PASS
+ok  	example.com/fail/cache	0.004s
+=== RUN   TestStock
+    inventory_test.go:8: Stock(0) = -1, want 0
+    inventory_test.go:8: Stock(1) = 0, want 1
+    inventory_test.go:8: Stock(2) = 1, want 2
+    inventory_test.go:8: Stock(3) = 2, want 3
+    inventory_test.go:8: Stock(4) = 3, want 4
+--- FAIL: TestStock (0.00s)
+FAIL
+FAIL	example.com/fail/inventory	0.003s
+?   	example.com/fail/notests	[no test files]
+=== RUN   TestTotalOK
+--- PASS: TestTotalOK (0.00s)
+=== RUN   TestTotalWrong
+    orders_test.go:16: computing total for cart #17
+    orders_test.go:17: prices=[10 20 30]
+    orders_test.go:20: Total() = 60, want 70
+    orders_test.go:22: continuing after error
+--- FAIL: TestTotalWrong (0.00s)
+=== RUN   TestMultilineMessage
+    orders_test.go:29: mismatch:
+        --- want
+        line one
+        
+        line three
+        
+        --- got
+        line one
+        line two
+        line three
+--- FAIL: TestMultilineMessage (0.00s)
+=== RUN   TestFatalStops
+stdout from TestFatalStops before fatal
+    orders_test.go:35: cannot open fixture "testdata/orders.json": no such file or directory
+--- FAIL: TestFatalStops (0.00s)
+=== RUN   TestSubtests
+=== RUN   TestSubtests/empty
+    orders_test.go:44: case empty
+=== RUN   TestSubtests/single
+    orders_test.go:44: case single
+=== RUN   TestSubtests/negative
+    orders_test.go:44: case negative
+    orders_test.go:46: Total([-1 -2]) = -3, want -4
+=== RUN   TestSubtests/big
+    orders_test.go:44: case big
+--- FAIL: TestSubtests (0.00s)
+    --- PASS: TestSubtests/empty (0.00s)
+    --- PASS: TestSubtests/single (0.00s)
+    --- FAIL: TestSubtests/negative (0.00s)
+    --- PASS: TestSubtests/big (0.00s)
+=== RUN   TestSkipped
+    orders_test.go:53: skipping: needs DATABASE_URL
+--- SKIP: TestSkipped (0.00s)
+=== RUN   TestLongLog
+    orders_test.go:57: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+        second log line
+        
+        after blank
+    orders_test.go:58: failed with long log
+--- FAIL: TestLongLog (0.00s)
+FAIL
+FAIL	example.com/fail/orders	0.003s
+=== RUN   TestStorage0
+    storage_test.go:6: checking 0 + 1
+--- PASS: TestStorage0 (0.00s)
+=== RUN   TestStorage1
+--- PASS: TestStorage1 (0.00s)
+=== RUN   TestStorage2
+--- PASS: TestStorage2 (0.00s)
+=== RUN   TestStorage3
+--- PASS: TestStorage3 (0.00s)
+=== RUN   TestStorage4
+--- PASS: TestStorage4 (0.00s)
+=== RUN   TestStorage5
+--- PASS: TestStorage5 (0.00s)
+=== RUN   TestStorage6
+--- PASS: TestStorage6 (0.00s)
+=== RUN   TestStorage7
+--- PASS: TestStorage7 (0.00s)
+=== RUN   TestStorage8
+--- PASS: TestStorage8 (0.00s)
+=== RUN   TestStorage9
+--- PASS: TestStorage9 (0.00s)
+=== RUN   TestStorage10
+    storage_test.go:67: checking 10 + 1
+--- PASS: TestStorage10 (0.00s)
+=== RUN   TestStorage11
+--- PASS: TestStorage11 (0.00s)
+=== RUN   TestStorage12
+--- PASS: TestStorage12 (0.00s)
+=== RUN   TestStorage13
+--- PASS: TestStorage13 (0.00s)
+=== RUN   TestStorage14
+--- PASS: TestStorage14 (0.00s)
+=== RUN   TestStorage15
+--- PASS: TestStorage15 (0.00s)
+=== RUN   TestStorage16
+--- PASS: TestStorage16 (0.00s)
+=== RUN   TestStorage17
+--- PASS: TestStorage17 (0.00s)
+=== RUN   TestStorage18
+--- PASS: TestStorage18 (0.00s)
+=== RUN   TestStorage19
+--- PASS: TestStorage19 (0.00s)
+=== RUN   TestStorage20
+    storage_test.go:128: checking 20 + 1
+--- PASS: TestStorage20 (0.00s)
+=== RUN   TestStorage21
+--- PASS: TestStorage21 (0.00s)
+=== RUN   TestStorage22
+--- PASS: TestStorage22 (0.00s)
+=== RUN   TestStorage23
+--- PASS: TestStorage23 (0.00s)
+=== RUN   TestStorage24
+--- PASS: TestStorage24 (0.00s)
+=== RUN   TestStorage25
+--- PASS: TestStorage25 (0.00s)
+=== RUN   TestStorage26
+--- PASS: TestStorage26 (0.00s)
+=== RUN   TestStorage27
+--- PASS: TestStorage27 (0.00s)
+=== RUN   TestStorage28
+--- PASS: TestStorage28 (0.00s)
+=== RUN   TestStorage29
+--- PASS: TestStorage29 (0.00s)
+=== RUN   TestStorage30
+    storage_test.go:189: checking 30 + 1
+--- PASS: TestStorage30 (0.00s)
+=== RUN   TestStorage31
+--- PASS: TestStorage31 (0.00s)
+=== RUN   TestStorage32
+--- PASS: TestStorage32 (0.00s)
+=== RUN   TestStorage33
+--- PASS: TestStorage33 (0.00s)
+=== RUN   TestStorage34
+--- PASS: TestStorage34 (0.00s)
+=== RUN   TestStorage35
+--- PASS: TestStorage35 (0.00s)
+=== RUN   TestStorage36
+--- PASS: TestStorage36 (0.00s)
+=== RUN   TestStorage37
+--- PASS: TestStorage37 (0.00s)
+=== RUN   TestStorage38
+--- PASS: TestStorage38 (0.00s)
+=== RUN   TestStorage39
+--- PASS: TestStorage39 (0.00s)
+=== RUN   TestStorageTable
+=== RUN   TestStorageTable/#00
+=== RUN   TestStorageTable/#01
+=== RUN   TestStorageTable/#02
+--- PASS: TestStorageTable (0.00s)
+    --- PASS: TestStorageTable/#00 (0.00s)
+    --- PASS: TestStorageTable/#01 (0.00s)
+    --- PASS: TestStorageTable/#02 (0.00s)
+PASS
+ok  	example.com/fail/storage	0.003s
+FAIL

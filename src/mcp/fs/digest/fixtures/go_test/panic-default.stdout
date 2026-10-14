@@ -1,0 +1,48 @@
+--- FAIL: TestNilDeref (0.00s)
+    crash_test.go:10: walking list
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x5376bc]
+
+goroutine 20 [running]:
+testing.tRunner.func1.2({0x56c600, 0x6d9de0})
+	/usr/lib/golang/src/testing/testing.go:1974 +0x232
+testing.tRunner.func1()
+	/usr/lib/golang/src/testing/testing.go:1977 +0x349
+panic({0x56c600?, 0x6d9de0?})
+	/usr/lib/golang/src/runtime/panic.go:860 +0x13a
+example.com/panic/crash.TestNilDeref(0x2f8d6ae62488?)
+	/tmp/octofs-digest-cap-tests/go/panic/crash/crash_test.go:12 +0x3c
+testing.tRunner(0x2f8d6ae62488, 0x5a69c0)
+	/usr/lib/golang/src/testing/testing.go:2036 +0xea
+created by testing.(*T).Run in goroutine 1
+	/usr/lib/golang/src/testing/testing.go:2101 +0x4c5
+FAIL	example.com/panic/crash	0.013s
+--- FAIL: TestCustomPanic (0.00s)
+panic: invariant violated: balance < 0
+	
+	ledger dump follows [recovered, repanicked]
+
+goroutine 19 [running]:
+testing.tRunner.func1.2({0x56b100, 0x101f65924380})
+	/usr/lib/golang/src/testing/testing.go:1974 +0x232
+testing.tRunner.func1()
+	/usr/lib/golang/src/testing/testing.go:1977 +0x349
+panic({0x56b100?, 0x101f65924380?})
+	/usr/lib/golang/src/runtime/panic.go:860 +0x13a
+example.com/panic/custom.TestCustomPanic(0x101f65962248?)
+	/tmp/octofs-digest-cap-tests/go/panic/custom/c_test.go:9 +0x3b
+testing.tRunner(0x101f65962248, 0x5a69c0)
+	/usr/lib/golang/src/testing/testing.go:2036 +0xea
+created by testing.(*T).Run in goroutine 1
+	/usr/lib/golang/src/testing/testing.go:2101 +0x4c5
+FAIL	example.com/panic/custom	0.012s
+panic: runtime error: index out of range [5] with length 3
+
+goroutine 7 [running]:
+example.com/panic/goroutine.TestIndexPanic.func1()
+	/tmp/octofs-digest-cap-tests/go/panic/goroutine/g_test.go:15 +0x45
+created by example.com/panic/goroutine.TestIndexPanic in goroutine 6
+	/tmp/octofs-digest-cap-tests/go/panic/goroutine/g_test.go:11 +0x65
+FAIL	example.com/panic/goroutine	0.017s
+ok  	example.com/panic/ok1	0.006s
+FAIL

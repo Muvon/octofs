@@ -1,0 +1,8 @@
+ ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/this-package-does-not-exist-octofs-xyz: Not Found - 404
+
+This error happened while installing a direct dependency of /tmp/octofs-digest-cap-installs/pnpm
+
+this-package-does-not-exist-octofs-xyz is not in the npm registry, or you have no permission to fetch it.
+
+No authorization header was set for the request.
+Progress: resolved 1, reused 0, downloaded 0, added 0

@@ -1,0 +1,158 @@
+#9 [5/8] RUN pip install -r requirements.txt
+#9 4.241 Collecting requests==2.32.3 (from -r requirements.txt (line 1))
+#9 4.243   Downloading requests-2.32.3-py3-none-any.whl.metadata (4.6 kB)
+#9 4.349 Collecting flask==3.0.3 (from -r requirements.txt (line 2))
+#9 4.359   Downloading flask-3.0.3-py3-none-any.whl.metadata (3.2 kB)
+#9 4.455 Collecting rich==13.9.4 (from -r requirements.txt (line 3))
+#9 4.462   Downloading rich-13.9.4-py3-none-any.whl.metadata (18 kB)
+#9 4.614 Collecting pydantic==2.9.2 (from -r requirements.txt (line 4))
+#9 4.622   Downloading pydantic-2.9.2-py3-none-any.whl.metadata (149 kB)
+#9 5.015 Collecting sqlalchemy==2.0.36 (from -r requirements.txt (line 5))
+#9 5.025   Downloading SQLAlchemy-2.0.36-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (9.7 kB)
+#9 5.108 Collecting pyyaml==6.0.2 (from -r requirements.txt (line 6))
+#9 5.119   Downloading PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.1 kB)
+#9 5.319 Collecting charset-normalizer<4,>=2 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 5.328   Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+#9 5.426 Collecting idna<4,>=2.5 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 5.435   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+#9 5.506 Collecting urllib3<3,>=1.21.1 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 5.515   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+#9 5.588 Collecting certifi>=2017.4.17 (from requests==2.32.3->-r requirements.txt (line 1))
+#9 5.617   Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+#9 5.719 Collecting Werkzeug>=3.0.0 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 5.730   Downloading werkzeug-3.1.9-py3-none-any.whl.metadata (4.1 kB)
+#9 5.787 Collecting Jinja2>=3.1.2 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 5.851   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+#9 5.895 Collecting itsdangerous>=2.1.2 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 5.905   Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+#9 5.946 Collecting click>=8.1.3 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 5.955   Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+#9 6.031 Collecting blinker>=1.6.2 (from flask==3.0.3->-r requirements.txt (line 2))
+#9 6.031   Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+#9 6.031 Collecting markdown-it-py>=2.2.0 (from rich==13.9.4->-r requirements.txt (line 3))
+#9 6.038   Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+#9 6.136 Collecting pygments<3.0.0,>=2.13.0 (from rich==13.9.4->-r requirements.txt (line 3))
+#9 6.136   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+#9 6.162 Collecting annotated-types>=0.6.0 (from pydantic==2.9.2->-r requirements.txt (line 4))
+#9 6.170   Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+#9 6.891 Collecting pydantic-core==2.23.4 (from pydantic==2.9.2->-r requirements.txt (line 4))
+#9 6.900   Downloading pydantic_core-2.23.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+#9 6.928 Collecting typing-extensions>=4.6.1 (from pydantic==2.9.2->-r requirements.txt (line 4))
+#9 6.936   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+#9 7.157 Collecting greenlet!=0.4.17 (from sqlalchemy==2.0.36->-r requirements.txt (line 5))
+#9 7.169   Downloading greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (3.8 kB)
+#9 7.345 Collecting MarkupSafe>=2.0 (from Jinja2>=3.1.2->flask==3.0.3->-r requirements.txt (line 2))
+#9 7.345   Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+#9 7.436 Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich==13.9.4->-r requirements.txt (line 3))
+#9 7.446   Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+#9 7.513 Downloading requests-2.32.3-py3-none-any.whl (64 kB)
+#9 7.590 Downloading flask-3.0.3-py3-none-any.whl (101 kB)
+#9 7.597 Downloading rich-13.9.4-py3-none-any.whl (242 kB)
+#9 7.622 Downloading pydantic-2.9.2-py3-none-any.whl (434 kB)
+#9 7.793 Downloading SQLAlchemy-2.0.36-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.2 MB)
+#9 7.845    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.2/3.2 MB 63.9 MB/s eta 0:00:00
+#9 7.855 Downloading PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (767 kB)
+#9 7.869    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 767.5/767.5 kB 54.4 MB/s eta 0:00:00
+#9 7.879 Downloading pydantic_core-2.23.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+#9 7.928    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 40.0 MB/s eta 0:00:00
+#9 7.937 Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+#9 7.978 Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+#9 8.009 Downloading certifi-2026.7.22-py3-none-any.whl (136 kB)
+#9 8.026 Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (257 kB)
+#9 8.038 Downloading click-8.5.0-py3-none-any.whl (125 kB)
+#9 8.050 Downloading greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (621 kB)
+#9 8.072    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 621.4/621.4 kB 114.0 MB/s eta 0:00:00
+#9 8.081 Downloading idna-3.20-py3-none-any.whl (69 kB)
+#9 8.095 Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+#9 8.105 Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+#9 8.116 Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+#9 8.127 Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+#9 8.155    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 41.3 MB/s eta 0:00:00
+#9 8.165 Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+#9 8.175 Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+#9 8.187 Downloading werkzeug-3.1.9-py3-none-any.whl (228 kB)
+#9 8.204 Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+#9 8.214 Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+#9 8.330 Installing collected packages: urllib3, typing-extensions, pyyaml, pygments, mdurl, MarkupSafe, itsdangerous, idna, greenlet, click, charset-normalizer, certifi, blinker, annotated-types, Werkzeug, sqlalchemy, requests, pydantic-core, markdown-it-py, Jinja2, rich, pydantic, flask
+#9 13.48 Successfully installed Jinja2-3.1.6 MarkupSafe-3.0.4 Werkzeug-3.1.9 annotated-types-0.8.0 blinker-1.9.0 certifi-2026.7.22 charset-normalizer-3.5.2 click-8.5.0 flask-3.0.3 greenlet-3.5.6 idna-3.20 itsdangerous-2.2.0 markdown-it-py-4.2.0 mdurl-0.1.2 pydantic-2.9.2 pydantic-core-2.23.4 pygments-2.21.0 pyyaml-6.0.2 requests-2.32.3 rich-13.9.4 sqlalchemy-2.0.36 typing-extensions-4.16.0 urllib3-2.8.0
+#9 13.54 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#9 DONE 13.9s
+#11 [7/8] RUN pip install psycopg2==2.9.10
+#11 1.219 Collecting psycopg2==2.9.10
+#11 1.341   Downloading psycopg2-2.9.10.tar.gz (385 kB)
+#11 1.509   Installing build dependencies: started
+#11 3.157   Installing build dependencies: finished with status 'done'
+#11 3.158   Getting requirements to build wheel: started
+#11 3.436   Getting requirements to build wheel: finished with status 'error'
+#11 3.441   error: subprocess-exited-with-error
+#11 3.441
+#11 3.441   × Getting requirements to build wheel did not run successfully.
+#11 3.441   │ exit code: 1
+#11 3.441   ╰─> [34 lines of output]
+#11 3.441       /tmp/pip-build-env-yktty_zu/overlay/lib/python3.12/site-packages/setuptools/dist.py:765: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+#11 3.441       !!
+#11 3.441
+#11 3.441               ********************************************************************************
+#11 3.441               Please consider removing the following classifiers in favor of a SPDX license expression:
+#11 3.441
+#11 3.441               License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)
+#11 3.441
+#11 3.441               See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+#11 3.441               ********************************************************************************
+#11 3.441
+#11 3.441       !!
+#11 3.441         self._finalize_license_expression()
+#11 3.441       running egg_info
+#11 3.441       writing psycopg2.egg-info/PKG-INFO
+#11 3.441       writing dependency_links to psycopg2.egg-info/dependency_links.txt
+#11 3.441       writing top-level names to psycopg2.egg-info/top_level.txt
+#11 3.441
+#11 3.441       Error: pg_config executable not found.
+#11 3.441
+#11 3.441       pg_config is required to build psycopg2 from source.  Please add the directory
+#11 3.441       containing pg_config to the $PATH or specify the full executable path with the
+#11 3.441       option:
+#11 3.441
+#11 3.441           python setup.py build_ext --pg-config /path/to/pg_config build ...
+#11 3.441
+#11 3.441       or with the pg_config option in 'setup.cfg'.
+#11 3.441
+#11 3.441       If you prefer to avoid building psycopg2 from source, please install the PyPI
+#11 3.441       'psycopg2-binary' package instead.
+#11 3.441
+#11 3.441       For further information please check the 'doc/src/install.rst' file (also at
+#11 3.441       <https://www.psycopg.org/docs/install.html>).
+#11 3.441
+#11 3.441       [end of output]
+#11 3.441
+#11 3.441   note: This error originates from a subprocess, and is likely not a problem with pip.
+#11 3.443 error: subprocess-exited-with-error
+#11 3.443
+#11 3.443 × Getting requirements to build wheel did not run successfully.
+#11 3.443 │ exit code: 1
+#11 3.443 ╰─> See above for output.
+#11 3.443
+#11 3.443 note: This error originates from a subprocess, and is likely not a problem with pip.
+#11 ERROR: process "/bin/sh -c pip install psycopg2==2.9.10" did not complete successfully: exit code: 1
+------
+ > [7/8] RUN pip install psycopg2==2.9.10:
+3.441       [end of output]
+3.441
+3.441   note: This error originates from a subprocess, and is likely not a problem with pip.
+3.443 error: subprocess-exited-with-error
+3.443
+3.443 × Getting requirements to build wheel did not run successfully.
+3.443 │ exit code: 1
+3.443 ╰─> See above for output.
+3.443
+3.443 note: This error originates from a subprocess, and is likely not a problem with pip.
+------
+Dockerfile.fail:8
+--------------------
+   6 |     RUN pip install -r requirements.txt
+   7 |     COPY app.py .
+   8 | >>> RUN pip install psycopg2==2.9.10
+   9 |     RUN python -c "import flask; print('unreachable')"
+  10 |     CMD ["python", "app.py"]
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c pip install psycopg2==2.9.10" did not complete successfully: exit code: 1

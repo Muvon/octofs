@@ -1,0 +1,43 @@
+
+ RUN  v5.0.2 /tmp/octofs-digest-cap-tests/js-vitest
+
+ ❯ tests/syntax/bad_syntax.test.mjs (0 test)
+ ❯ tests/syntax/bad_import.test.mjs (0 test)
+ ✓ tests/syntax/math.test.mjs (30 tests) 14ms
+ ✓ tests/syntax/strings.test.mjs (30 tests) 10ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/syntax/bad_import.test.mjs [ tests/syntax/bad_import.test.mjs ]
+Error: Cannot find module './does-not-exist.mjs' imported from /tmp/octofs-digest-cap-tests/js-vitest/tests/syntax/bad_import.test.mjs
+ ❯ tests/syntax/bad_import.test.mjs:2:1
+      1| import { describe, it, test, expect } from 'vitest';
+      2| import { helper } from './does-not-exist.mjs';
+       | ^
+      3| describe('imp', () => { it('y', () => { expect(helper()).toBe(1); }); …
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/syntax/bad_syntax.test.mjs [ tests/syntax/bad_syntax.test.mjs ]
+Error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+  Plugin: vite:import-analysis
+  File: /tmp/octofs-digest-cap-tests/js-vitest/tests/syntax/bad_syntax.test.mjs:1:0
+  1  |  import { describe, it, test, expect } from 'vitest';
+     |  ^
+  2  |  describe('bad', () => {
+  3  |    it('x', () => {
+ ❯ TransformPluginContext._formatLog node_modules/vite/dist/node/chunks/node.js:8766:39
+ ❯ TransformPluginContext.error node_modules/vite/dist/node/chunks/node.js:8763:14
+ ❯ TransformPluginContext.transform node_modules/vite/dist/node/chunks/node.js:26596:10
+ ❯ EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/node.js:8545:14
+ ❯ loadAndTransform node_modules/vite/dist/node/chunks/node.js:20184:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 2 passed (4)
+      Tests  60 passed (60)
+   Start at  11:01:54
+   Duration  338ms (transform 52%, import 23%, worker 14%, tests 11%)
+

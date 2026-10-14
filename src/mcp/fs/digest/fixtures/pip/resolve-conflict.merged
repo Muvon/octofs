@@ -1,0 +1,38 @@
+Collecting requests==2.32.3 (from -r requirements-conflict.txt (line 1))
+  Downloading requests-2.32.3-py3-none-any.whl.metadata (4.6 kB)
+Collecting flask==3.0.3 (from -r requirements-conflict.txt (line 2))
+  Downloading flask-3.0.3-py3-none-any.whl.metadata (3.2 kB)
+Collecting werkzeug==2.0.3 (from -r requirements-conflict.txt (line 3))
+  Downloading Werkzeug-2.0.3-py3-none-any.whl.metadata (4.5 kB)
+Collecting pandas==2.2.3 (from -r requirements-conflict.txt (line 4))
+  Downloading pandas-2.2.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (89 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 89.9/89.9 kB 8.0 MB/s eta 0:00:00
+Collecting pydantic==2.9.2 (from -r requirements-conflict.txt (line 5))
+  Downloading pydantic-2.9.2-py3-none-any.whl.metadata (149 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 149.4/149.4 kB 19.6 MB/s eta 0:00:00
+Collecting pydantic-core==2.10.0 (from -r requirements-conflict.txt (line 6))
+  Downloading pydantic_core-2.10.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.5 kB)
+Collecting charset-normalizer<4,>=2 (from requests==2.32.3->-r requirements-conflict.txt (line 1))
+  Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 46.4/46.4 kB 17.0 MB/s eta 0:00:00
+Collecting idna<4,>=2.5 (from requests==2.32.3->-r requirements-conflict.txt (line 1))
+  Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Collecting urllib3<3,>=1.21.1 (from requests==2.32.3->-r requirements-conflict.txt (line 1))
+  Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting certifi>=2017.4.17 (from requests==2.32.3->-r requirements-conflict.txt (line 1))
+  Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+INFO: pip is looking at multiple versions of flask to determine which version is compatible with other requirements. This could take a while.
+ERROR: Cannot install -r requirements-conflict.txt (line 2) and werkzeug==2.0.3 because these package versions have conflicting dependencies.
+
+The conflict is caused by:
+    The user requested werkzeug==2.0.3
+    flask 3.0.3 depends on Werkzeug>=3.0.0
+
+To fix this you could try to:
+1. loosen the range of package versions you've specified
+2. remove package versions to allow pip attempt to solve the dependency conflict
+
+ERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts
+
+[notice] A new release of pip is available: 23.3.2 -> 26.2.1
+[notice] To update, run: python3 -m pip install --upgrade pip

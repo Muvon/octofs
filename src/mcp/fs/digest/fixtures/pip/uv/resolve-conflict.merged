@@ -1,0 +1,4 @@
+Using Python 3.12.12 environment at: /tmp/octofs-digest-cap-installs/venv-uvtarget
+error: No solution found when resolving dependencies
+  cause: Because flask==3.0.3 depends on werkzeug>=3.0.0 and you require flask==3.0.3, we can conclude that you require werkzeug>=3.0.0.
+         And because you require werkzeug==2.0.3, we can conclude that your requirements are unsatisfiable.

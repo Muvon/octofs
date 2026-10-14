@@ -1,0 +1,28 @@
+[  3%] Building C object CMakeFiles/core.dir/src/mod1.c.o
+[  6%] Building C object CMakeFiles/core.dir/src/mod11.c.o
+[ 12%] Building C object CMakeFiles/core.dir/src/mod10.c.o
+[  9%] Building C object CMakeFiles/core.dir/src/mod0.c.o
+[ 15%] Building C object CMakeFiles/core.dir/src/mod12.c.o
+[ 18%] Building C object CMakeFiles/core.dir/src/mod13.c.o
+[ 21%] Building C object CMakeFiles/core.dir/src/mod15.c.o
+[ 24%] Building C object CMakeFiles/core.dir/src/mod14.c.o
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c: In function ‘mod14_compute’:
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:9:18: error: initialization of ‘int *’ from incompatible pointer type ‘struct point *’ [-Wincompatible-pointer-types]
+    9 |         int *q = &p;
+      |                  ^
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:10:17: error: ‘struct point’ has no member named ‘z’
+   10 |         return p.z + x + *q
+      |                 ^
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:10:28: error: expected ‘;’ before ‘}’ token
+   10 |         return p.z + x + *q
+      |                            ^
+      |                            ;
+   11 | }
+      | ~                           
+/tmp/octofs-digest-cap-builds/c/err/src/mod14.c:11:1: warning: control reaches end of non-void function [-Wreturn-type]
+   11 | }
+      | ^
+gmake[2]: *** [CMakeFiles/core.dir/build.make:160: CMakeFiles/core.dir/src/mod14.c.o] Error 1
+gmake[2]: *** Waiting for unfinished jobs....
+gmake[1]: *** [CMakeFiles/Makefile2:85: CMakeFiles/core.dir/all] Error 2
+gmake: *** [Makefile:91: all] Error 2

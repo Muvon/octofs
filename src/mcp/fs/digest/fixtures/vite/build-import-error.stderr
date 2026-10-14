@@ -1,0 +1,13 @@
+x Build failed in 54ms
+error during build:
+[vite]: Rollup failed to resolve import "chart-lib-not-installed" from "/tmp/octofs-digest-cap-builds/web/app-err/pages/page11.js".
+This is most likely unintended because it can break your application at runtime.
+If you do want to externalize this module explicitly add it to
+`build.rollupOptions.external`
+    at viteWarn (file:///tmp/octofs-digest-cap-builds/web/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:65855:17)
+    at onRollupWarning (file:///tmp/octofs-digest-cap-builds/web/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:65887:5)
+    at onwarn (file:///tmp/octofs-digest-cap-builds/web/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:65550:7)
+    at file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/node-entry.js:22027:13
+    at Object.logger [as onLog] (file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/node-entry.js:24007:9)
+    at ModuleLoader.handleInvalidResolvedId (file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/node-entry.js:22752:26)
+    at file:///tmp/octofs-digest-cap-builds/web/node_modules/rollup/dist/es/shared/node-entry.js:22710:26
