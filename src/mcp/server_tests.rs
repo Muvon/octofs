@@ -630,12 +630,10 @@ fn running_job_status_names_its_pid_kill_command_and_progress() {
 		created,
 		format!("shell: cargo test · PID 4242 (stop: {stop})")
 	);
-	let polled = super::job_status_message(&running, true);
-	assert!(
-		polled.starts_with(&created)
-			&& polled.contains(" · running ")
-			&& polled.ends_with(" · running 12 tests"),
-		"{polled}"
+	assert_eq!(
+		super::job_status_message(&running, true),
+		format!("{created} · running 12 tests"),
+		"an idle job polls to the same status: no elapsed counter"
 	);
 	assert_eq!(
 		super::job_status_message(&view(JobStatus::Exited(0)), true),

@@ -305,8 +305,10 @@ fn job_task(id: &str, view: &fs::background::JobView, progress: bool) -> Task {
 
 /// What a client shows for a job. While it runs: its PID and the command that
 /// kills it — the stop the foreground reply always offered, usable from any
-/// shell, alongside `tasks/cancel` — and, with `progress`, the elapsed time
-/// and latest output line, so a stuck job is visible without reading its log.
+/// shell, alongside `tasks/cancel` — and, with `progress`, the latest output
+/// line, so a stuck job is visible without reading its log. No elapsed time:
+/// the task's `createdAt` already carries it, and a ticking counter makes every
+/// poll of an idle job look like new state to clients that compare statuses.
 fn job_status_message(view: &fs::background::JobView, progress: bool) -> String {
 	let label = job_label(&view.command);
 	if view.status != fs::background::JobStatus::Running {
@@ -319,13 +321,6 @@ fn job_status_message(view: &fs::background::JobView, progress: bool) -> String 
 	};
 	let mut message = format!("{label} · PID {} (stop: {stop})", view.pid);
 	if progress {
-		let now = std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.map_or(0, |elapsed| elapsed.as_secs());
-		message.push_str(&format!(
-			" · running {}s",
-			now.saturating_sub(view.started_unix)
-		));
 		if let Some(line) = view
 			.output
 			.lines()
