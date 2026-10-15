@@ -359,3 +359,103 @@ fn test_sftp_path_home_relative_and_absolute() {
 	// Absolute paths pass through unchanged.
 	assert_eq!(parse_path_source("ssh://host/etc").sftp_path(), "/etc");
 }
+
+#[test]
+fn jump_target_rejects_malformed_hosts_and_ports() {
+	// Unclosed IPv6 bracket.
+	assert!(parse_jump_target("user@[2001:db8::1:2222").is_err());
+	// Garbage after the closing bracket.
+	assert!(parse_jump_target("[2001:db8::1]x").is_err());
+	// Non-numeric ports.
+	assert!(parse_jump_target("jump:notaport").is_err());
+	assert!(parse_jump_target("user@[2001:db8::1]:nope").is_err());
+	// Whitespace is trimmed before parsing.
+	assert_eq!(
+		parse_jump_target("  jump  ").unwrap(),
+		("jump", 22, "", false, false)
+	);
+}
+
+#[test]
+fn ssh_config_host_patterns_match_with_negation_and_globs() {
+	// Glob patterns, case-insensitivity and `!` negation.
+	let text = r#"
+Host *.example.com !bad.example.com
+  User star
+Host other
+  User other
+"#;
+	let home = std::path::Path::new("/home/me");
+	assert_eq!(
+		parse_ssh_host_config(text, "foo.example.com", home)
+			.user
+			.as_deref(),
+		Some("star")
+	);
+	// A negated pattern excludes even a host another pattern matches.
+	assert_eq!(
+		parse_ssh_host_config(text, "bad.example.com", home).user,
+		None
+	);
+	// `Match` blocks stop option application until the next Host line.
+	let text = "Match all\n  User matched\nHost other\n  User other\n";
+	assert_eq!(parse_ssh_host_config(text, "anyhost", home).user, None);
+	// IdentityAgent `none` and `SSH_AUTH_SOCK` keep the env default.
+	let text = "Host *\n  IdentityAgent none\n";
+	assert_eq!(parse_ssh_host_config(text, "h", home).identity_agent, None);
+	// ProxyCommand is recorded for the transport check.
+	let text = "Host via\n  ProxyCommand nc %h %p\n";
+	assert_eq!(
+		parse_ssh_host_config(text, "via", home)
+			.proxy_command
+			.as_deref(),
+		Some("nc %h %p")
+	);
+}
+
+#[test]
+fn relative_resolution_joins_remote_paths_with_forward_slashes_only() {
+	// A workdir path ending in '/' must not produce a double slash.
+	let workdir = PathBuf::from("ssh://user@host:2222/root/");
+	match resolve_path_source("src/main.rs", &workdir) {
+		PathSource::Remote { path, .. } => assert_eq!(path, "/root/src/main.rs"),
+		_ => panic!("expected Remote"),
+	}
+	// Windows-style separators in the relative path are normalized.
+	match resolve_path_source("src\\main.rs", &workdir) {
+		PathSource::Remote { path, .. } => assert_eq!(path, "/root/src/main.rs"),
+		_ => panic!("expected Remote"),
+	}
+}
+
+#[test]
+fn malformed_ipv6_urls_fall_back_to_port_22() {
+	// An unclosed bracket keeps the whole host_part as the host.
+	match parse_path_source("ssh://user@[2001:db8::1/path") {
+		PathSource::Remote { host, port, .. } => {
+			assert_eq!(host, "[2001:db8::1");
+			assert_eq!(port, 22);
+		}
+		_ => panic!("expected Remote"),
+	}
+	// A non-numeric port falls back to 22 but stays marked explicit.
+	match parse_path_source("ssh://host:notaport/x") {
+		PathSource::Remote {
+			host,
+			port,
+			port_explicit,
+			..
+		} => {
+			assert_eq!(host, "host");
+			assert_eq!(port, 22);
+			assert!(port_explicit);
+		}
+		_ => panic!("expected Remote"),
+	}
+}
+
+#[test]
+fn remote_parent_of_root_path_is_none() {
+	// "/" has no parent even with an authority attached.
+	assert!(parse_path_source("ssh://host/").parent().is_none());
+}

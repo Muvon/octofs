@@ -450,3 +450,82 @@ async fn a_scratch_heredoc_and_a_piped_read_run() {
 	let out = execute_shell_command(&call, None).await.expect("runs");
 	assert!(out.text.contains("hello"), "{}", out.text);
 }
+
+#[test]
+fn redirect_targets_respect_quotes_and_skip_fd_dups() {
+	// Quoted targets are found (quotes kept, like the shell tokenizes);
+	// fd duplications are not file writes.
+	assert_eq!(redirect_targets("echo x > 'out file.txt'"), vec!["'out"]);
+	assert_eq!(redirect_targets("cmd 2>&1 > \"a b\""), vec!["\"a"]);
+	assert!(redirect_targets("cmd >&2").is_empty());
+	// >> appends to the same target; escaped > is literal text.
+	assert_eq!(redirect_targets("cmd >> log.txt"), vec!["log.txt"]);
+	assert!(redirect_targets("echo a\\>b").is_empty());
+	// A target ends at the next shell metacharacter.
+	assert_eq!(redirect_targets("cmd > out.txt | next"), vec!["out.txt"]);
+}
+
+#[test]
+fn ssh_remote_command_extracts_and_unquotes_the_body() {
+	// Options with separate args are skipped; the body is unquoted.
+	assert_eq!(
+		ssh_remote_command("ssh -p 22 host 'cat /etc/passwd'"),
+		Some("cat /etc/passwd")
+	);
+	assert_eq!(
+		ssh_remote_command("ssh host \"grep x /var/log\""),
+		Some("grep x /var/log")
+	);
+	// A local pipe cuts the remote command at the pipe.
+	assert_eq!(
+		ssh_remote_command("ssh host 'dmesg' | tail -1"),
+		Some("dmesg")
+	);
+	// No remote command (interactive session / port forward).
+	assert_eq!(ssh_remote_command("ssh -N -L 8080:h:80 host"), None);
+	assert_eq!(ssh_remote_command("ssh host"), None);
+	// Glued option args (-p22) do not swallow the destination.
+	assert_eq!(ssh_remote_command("ssh -p22 host 'ls /'"), Some("ls /"));
+}
+
+#[test]
+fn sed_in_place_detection_covers_bundled_and_long_flags() {
+	assert!(sed_edits_in_place("sed -ni 's/a/b/p' f"));
+	assert!(sed_edits_in_place("sed --in-place=.bak 's/a/b/' f"));
+	assert!(!sed_edits_in_place("sed -n '1p' f"));
+	// -e contains no 'i' as a short flag cluster.
+	assert!(!sed_edits_in_place("sed -e 's/a/b/' f"));
+}
+
+#[test]
+fn stashes_changes_ignores_read_only_stash_subcommands() {
+	for cmd in [
+		"git stash list",
+		"git stash show -p",
+		"git stash pop",
+		"git stash apply stash@{0}",
+		"git stash drop stash@{0}",
+		"git stash branch wip",
+		"git -C /repo stash clear",
+	] {
+		assert!(!stashes_changes(cmd), "{cmd} must not count as stashing");
+	}
+	for cmd in [
+		"git stash push -m wip",
+		"git stash save",
+		"git stash --keep-index",
+	] {
+		assert!(stashes_changes(cmd), "{cmd} must count as stashing");
+	}
+}
+
+#[test]
+fn clean_terminal_noise_keeps_tabs_and_collapses_blank_runs() {
+	// Tabs are real content (alignment) and survive; other control chars drop.
+	assert_eq!(clean_terminal_noise("a\tb"), "a\tb");
+	assert_eq!(clean_terminal_noise("a\u{1}b"), "ab");
+	// A blank line between repeats flushes the run: no bogus marker.
+	assert_eq!(clean_terminal_noise("x\n\nx\nx"), "x\n\nx\nx");
+	// Empty input stays empty.
+	assert_eq!(clean_terminal_noise(""), "");
+}

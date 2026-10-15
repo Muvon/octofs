@@ -6727,8 +6727,9 @@ mod tests {
 	//   OCTOFS_TEST_SSH_USER=user \
 	//   OCTOFS_TEST_SSH_PORT=2222 \
 	//   OCTOFS_TEST_SSH_KEY=/path/to/key \
-	//   cargo test -- --ignored remote_
-
+	//   cargo test remote_
+	// Without OCTOFS_TEST_SSH_HOST every test below returns immediately, so the
+	// suite stays green on machines with no SSH server (CI starts one).
 	fn remote_test_prefix() -> Option<String> {
 		let host = std::env::var("OCTOFS_TEST_SSH_HOST").ok()?;
 		let user = std::env::var("OCTOFS_TEST_SSH_USER")
@@ -6771,523 +6772,550 @@ mod tests {
 		let _ = prefix;
 	}
 
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_view_create_and_read() {
-		let Some(_) = remote_test_prefix() else {
-			return;
-		};
-		let dir = setup_remote_dir().await;
-		let file_path = format!("{dir}/hello.txt");
-
-		// Create a file via text_editor
-		let call = McpToolCall::test_call(
-			"text_editor",
-			json!({
-				"command": "create",
-				"path": file_path,
-				"content": "line one\nline two\nline three\n"
-			}),
-		);
-		let result = crate::mcp::fs::core::execute_text_editor(&call).await;
-		assert!(result.is_ok(), "create failed: {:?}", result.err());
-
-		// View it back
-		let view_call = McpToolCall::test_call(
-			"view",
-			json!({
-				"path": file_path
-			}),
-		);
-		let content = execute_view(&view_call).await.expect("view failed");
-		assert!(content.contains("line one"), "content: {content}");
-		assert!(content.contains("line three"), "content: {content}");
-
-		cleanup_remote_dir(&dir).await;
+	/// One runtime for every remote test: the global SFTP pool caches a session
+	/// whose background tasks are bound to the runtime that created it. A
+	/// per-test runtime (what `#[tokio::test]` builds) drops those tasks when the
+	/// first test finishes, and every later test reusing the cached session
+	/// fails with "sender dropped". One shared runtime keeps the pool alive.
+	fn remote_runtime() -> &'static tokio::runtime::Runtime {
+		static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+		RUNTIME.get_or_init(|| {
+			tokio::runtime::Builder::new_multi_thread()
+				.enable_all()
+				.build()
+				.expect("remote test runtime")
+		})
 	}
 
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_str_replace() {
-		let Some(_) = remote_test_prefix() else {
+	#[test]
+	fn remote_view_create_and_read() {
+		if remote_test_prefix().is_none() {
 			return;
-		};
-		let dir = setup_remote_dir().await;
-		let file_path = format!("{dir}/replace.txt");
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/hello.txt");
 
-		// Create initial content
-		let call = McpToolCall::test_call(
-			"text_editor",
-			json!({
-				"command": "create",
-				"path": file_path,
-				"content": "alpha\nbeta\ngamma\n"
-			}),
-		);
-		crate::mcp::fs::core::execute_text_editor(&call)
-			.await
-			.unwrap();
-
-		// Replace beta -> BETA
-		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
-		let diff = crate::mcp::fs::text_editing::str_replace_spec(&source, "beta", "BETA", false)
-			.await
-			.expect("str_replace failed");
-		assert!(diff.contains("BETA"), "diff: {diff}");
-
-		// Verify on disk
-		let content = crate::mcp::fs::remote::io_read_to_string(&source)
-			.await
-			.unwrap();
-		assert!(content.contains("BETA"), "content: {content}");
-		assert!(!content.contains("beta"), "content: {content}");
-
-		cleanup_remote_dir(&dir).await;
-	}
-
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_batch_edit() {
-		let Some(_) = remote_test_prefix() else {
-			return;
-		};
-		let dir = setup_remote_dir().await;
-		let file_path = format!("{dir}/batch.txt");
-
-		// Create initial content
-		let remote_content = "one\ntwo\nthree\nfour\nfive\n";
-		let call = McpToolCall::test_call(
-			"text_editor",
-			json!({
-				"command": "create",
-				"path": file_path,
-				"content": remote_content
-			}),
-		);
-		crate::mcp::fs::core::execute_text_editor(&call)
-			.await
-			.unwrap();
-
-		// Replace lines 2-3 (two -> TWO, three -> REPLACED) by line id
-		let batch_call = McpToolCall::test_call(
-			"batch_edit",
-			json!({
-				"path": file_path,
-				"operations": [
-					{
-						"operation": "replace",
-						"start": lid(remote_content, 2),
-						"end": lid(remote_content, 3),
-						"content": "TWO\nREPLACED"
-					}
-				]
-			}),
-		);
-		let result = execute_batch_edit(&batch_call).await;
-		assert!(result.is_ok(), "batch_edit failed: {:?}", result.err());
-
-		// Verify
-		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
-		let content = crate::mcp::fs::remote::io_read_to_string(&source)
-			.await
-			.unwrap();
-		assert!(content.contains("TWO"), "content: {content}");
-		assert!(content.contains("REPLACED"), "content: {content}");
-		assert!(!content.contains("two"), "content: {content}");
-		assert!(!content.contains("three"), "content: {content}");
-
-		cleanup_remote_dir(&dir).await;
-	}
-
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_directory_listing() {
-		let Some(_) = remote_test_prefix() else {
-			return;
-		};
-		let dir = setup_remote_dir().await;
-
-		// Create a couple files
-		for name in ["a.txt", "b.txt"] {
-			let path = format!("{dir}/{name}");
+			// Create a file via text_editor
 			let call = McpToolCall::test_call(
 				"text_editor",
 				json!({
 					"command": "create",
-					"path": path,
-					"content": "test\n"
+					"path": file_path,
+					"content": "line one\nline two\nline three\n"
+				}),
+			);
+			let result = crate::mcp::fs::core::execute_text_editor(&call).await;
+			assert!(result.is_ok(), "create failed: {:?}", result.err());
+
+			// View it back
+			let view_call = McpToolCall::test_call(
+				"view",
+				json!({
+					"path": file_path
+				}),
+			);
+			let content = execute_view(&view_call).await.expect("view failed");
+			assert!(content.contains("line one"), "content: {content}");
+			assert!(content.contains("line three"), "content: {content}");
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
+
+	#[test]
+	fn remote_str_replace() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/replace.txt");
+
+			// Create initial content
+			let call = McpToolCall::test_call(
+				"text_editor",
+				json!({
+					"command": "create",
+					"path": file_path,
+					"content": "alpha\nbeta\ngamma\n"
 				}),
 			);
 			crate::mcp::fs::core::execute_text_editor(&call)
 				.await
 				.unwrap();
-		}
 
-		// List the directory
-		let list_call = McpToolCall::test_call(
-			"view",
-			json!({
-				"path": dir }),
-		);
-		let listing = execute_view(&list_call).await.expect("listing failed");
-		assert!(listing.contains("a.txt"), "listing: {listing}");
-		assert!(listing.contains("b.txt"), "listing: {listing}");
+			// Replace beta -> BETA
+			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+			let diff =
+				crate::mcp::fs::text_editing::str_replace_spec(&source, "beta", "BETA", false)
+					.await
+					.expect("str_replace failed");
+			assert!(diff.contains("BETA"), "diff: {diff}");
 
-		cleanup_remote_dir(&dir).await;
+			// Verify on disk
+			let content = crate::mcp::fs::remote::io_read_to_string(&source)
+				.await
+				.unwrap();
+			assert!(content.contains("BETA"), "content: {content}");
+			assert!(!content.contains("beta"), "content: {content}");
+
+			cleanup_remote_dir(&dir).await;
+		})
 	}
 
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_directory_listing_nested_pattern_content_hidden() {
-		let Some(_) = remote_test_prefix() else {
+	#[test]
+	fn remote_batch_edit() {
+		if remote_test_prefix().is_none() {
 			return;
-		};
-		let dir = setup_remote_dir().await;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/batch.txt");
 
-		// Nested tree: root files, a subdir with a file, a hidden file, and a
-		// .gitignore that prunes one subtree.
-		for (path, content) in [
-			(format!("{dir}/root.rs"), "fn main() {}\n".to_string()),
-			(
-				format!("{dir}/nested/deep/leaf.rs"),
-				"needle here\n".to_string(),
-			),
-			(format!("{dir}/nested/other.md"), "plain\n".to_string()),
-			(format!("{dir}/.hidden.txt"), "hidden\n".to_string()),
-			(format!("{dir}/.gitignore"), "ignored_dir/\n".to_string()),
-			(
-				format!("{dir}/ignored_dir/skip.rs"),
-				"skipped\n".to_string(),
-			),
-		] {
+			// Create initial content
+			let remote_content = "one\ntwo\nthree\nfour\nfive\n";
 			let call = McpToolCall::test_call(
 				"text_editor",
 				json!({
 					"command": "create",
-					"path": path,
-					"content": content
+					"path": file_path,
+					"content": remote_content
 				}),
 			);
 			crate::mcp::fs::core::execute_text_editor(&call)
 				.await
 				.unwrap();
+
+			// Replace lines 2-3 (two -> TWO, three -> REPLACED) by line id
+			let batch_call = McpToolCall::test_call(
+				"batch_edit",
+				json!({
+					"path": file_path,
+					"operations": [
+						{
+							"operation": "replace",
+							"start": lid(remote_content, 2),
+							"end": lid(remote_content, 3),
+							"content": "TWO\nREPLACED"
+						}
+					]
+				}),
+			);
+			let result = execute_batch_edit(&batch_call).await;
+			assert!(result.is_ok(), "batch_edit failed: {:?}", result.err());
+
+			// Verify
+			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+			let content = crate::mcp::fs::remote::io_read_to_string(&source)
+				.await
+				.unwrap();
+			assert!(content.contains("TWO"), "content: {content}");
+			assert!(content.contains("REPLACED"), "content: {content}");
+			assert!(!content.contains("two"), "content: {content}");
+			assert!(!content.contains("three"), "content: {content}");
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
+
+	#[test]
+	fn remote_directory_listing() {
+		if remote_test_prefix().is_none() {
+			return;
 		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
 
-		// Bare listing: root entries only (REMOTE_DEFAULT_MAX_DEPTH = 1), hidden
-		// files excluded, .gitignore-pruned entries absent.
-		let list_call = McpToolCall::test_call("view", json!({ "path": dir }));
-		let listing = execute_view(&list_call).await.expect("listing failed");
-		assert!(listing.contains("root.rs"), "listing: {listing}");
-		assert!(
-			!listing.contains("leaf.rs"),
-			"bare listing must not recurse: {listing}"
-		);
-		assert!(
-			!listing.contains(".hidden.txt"),
-			"hidden excluded by default: {listing}"
-		);
-		assert!(
-			!listing.contains("ignored_dir"),
-			"gitignored dir pruned: {listing}"
-		);
-
-		// include_hidden reveals dotfiles.
-		let hidden_call =
-			McpToolCall::test_call("view", json!({ "path": dir, "include_hidden": true }));
-		let listing = execute_view(&hidden_call)
-			.await
-			.expect("hidden listing failed");
-		assert!(listing.contains(".hidden.txt"), "hidden listing: {listing}");
-
-		// Pattern search walks the whole tree and matches by glob.
-		let pattern_call =
-			McpToolCall::test_call("view", json!({ "path": dir, "pattern": "*.rs" }));
-		let listing = execute_view(&pattern_call)
-			.await
-			.expect("pattern listing failed");
-		assert!(
-			listing.contains("nested/deep/leaf.rs"),
-			"pattern listing: {listing}"
-		);
-		assert!(!listing.contains("other.md"), "pattern listing: {listing}");
-		assert!(
-			!listing.contains("ignored_dir/skip.rs"),
-			"gitignore honored in search: {listing}"
-		);
-
-		// Content search walks the tree and reports the matching file.
-		let content_call =
-			McpToolCall::test_call("view", json!({ "path": dir, "content": "needle" }));
-		let listing = execute_view(&content_call)
-			.await
-			.expect("content listing failed");
-		assert!(listing.contains("leaf.rs"), "content listing: {listing}");
-		assert!(
-			listing.contains("needle here"),
-			"content listing: {listing}"
-		);
-
-		// No match reports the explicit message, not an error.
-		let nomatch_call =
-			McpToolCall::test_call("view", json!({ "path": dir, "pattern": "*.nomatch" }));
-		let listing = execute_view(&nomatch_call)
-			.await
-			.expect("nomatch listing failed");
-		assert!(
-			listing.contains("No files matched pattern"),
-			"nomatch listing: {listing}"
-		);
-
-		cleanup_remote_dir(&dir).await;
-	}
-
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_extract_lines() {
-		let Some(_) = remote_test_prefix() else {
-			return;
-		};
-		let dir = setup_remote_dir().await;
-		let src_path = format!("{dir}/extract_src.txt");
-		let dst_path = format!("{dir}/extract_dst.txt");
-
-		// Create source file
-		let call = McpToolCall::test_call(
-			"text_editor",
-			json!({
-				"command": "create",
-				"path": src_path,
-				"content": "L1\nL2\nL3\nL4\nL5\n"
-			}),
-		);
-		crate::mcp::fs::core::execute_text_editor(&call)
-			.await
-			.unwrap();
-
-		// Extract lines 2-3 into dst
-		let extract_call = McpToolCall::test_call(
-			"extract_lines",
-			json!({
-				"from_path": src_path,
-				"from_start": 2,
-				"from_end": 3,
-				"append_path": dst_path,
-				"append_line": -1
-			}),
-		);
-		let result = execute_extract_lines(&extract_call).await;
-		assert!(result.is_ok(), "extract_lines failed: {:?}", result.err());
-
-		// Verify destination
-		let dst_source = crate::mcp::fs::remote::parse_path_source(&dst_path);
-		let content = crate::mcp::fs::remote::io_read_to_string(&dst_source)
-			.await
-			.unwrap();
-		assert!(content.contains("L2"), "content: {content}");
-		assert!(content.contains("L3"), "content: {content}");
-
-		cleanup_remote_dir(&dir).await;
-	}
-
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_undo_edit() {
-		let Some(_) = remote_test_prefix() else {
-			return;
-		};
-		let dir = setup_remote_dir().await;
-		let file_path = format!("{dir}/undo.txt");
-
-		// Create initial content
-		let call = McpToolCall::test_call(
-			"text_editor",
-			json!({
-				"command": "create",
-				"path": file_path,
-				"content": "original\n"
-			}),
-		);
-		crate::mcp::fs::core::execute_text_editor(&call)
-			.await
-			.unwrap();
-
-		// Replace original -> modified
-		let source = crate::mcp::fs::remote::parse_path_source(&file_path);
-		crate::mcp::fs::text_editing::str_replace_spec(&source, "original", "modified", false)
-			.await
-			.unwrap();
-
-		// Verify modification
-		let content = crate::mcp::fs::remote::io_read_to_string(&source)
-			.await
-			.unwrap();
-		assert!(content.contains("modified"), "content: {content}");
-
-		// Undo
-		let undone = crate::mcp::fs::core::undo_edit(&source)
-			.await
-			.expect("undo failed");
-		assert!(undone.contains("Successfully undid"), "undone: {undone}");
-
-		// Verify on disk
-		let content = crate::mcp::fs::remote::io_read_to_string(&source)
-			.await
-			.unwrap();
-		assert!(content.contains("original"), "content: {content}");
-		assert!(!content.contains("modified"), "content: {content}");
-
-		cleanup_remote_dir(&dir).await;
-	}
-
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_workdir_set() {
-		let Some(_) = remote_test_prefix() else {
-			return;
-		};
-		let dir = setup_remote_dir().await;
-
-		let call = McpToolCall::test_call(
-			"workdir",
-			json!({
-			"path": dir }),
-		);
-		let result = crate::mcp::fs::execute_workdir_command(&call)
-			.await
-			.expect("workdir set failed");
-		match result {
-			crate::mcp::fs::WorkdirResult::Set { current, .. } => {
-				let current = current.to_string_lossy();
-				assert!(
-					current.starts_with("ssh://") || current.starts_with("sftp://"),
-					"expected remote workdir URL, got: {current}"
+			// Create a couple files
+			for name in ["a.txt", "b.txt"] {
+				let path = format!("{dir}/{name}");
+				let call = McpToolCall::test_call(
+					"text_editor",
+					json!({
+						"command": "create",
+						"path": path,
+						"content": "test\n"
+					}),
 				);
+				crate::mcp::fs::core::execute_text_editor(&call)
+					.await
+					.unwrap();
 			}
-			_ => panic!("expected WorkdirResult::Set"),
+
+			// List the directory
+			let list_call = McpToolCall::test_call(
+				"view",
+				json!({
+				"path": dir }),
+			);
+			let listing = execute_view(&list_call).await.expect("listing failed");
+			assert!(listing.contains("a.txt"), "listing: {listing}");
+			assert!(listing.contains("b.txt"), "listing: {listing}");
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
+
+	#[test]
+	fn remote_directory_listing_nested_pattern_content_hidden() {
+		if remote_test_prefix().is_none() {
+			return;
 		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
 
-		cleanup_remote_dir(&dir).await;
+			// Nested tree: root files, a subdir with a file, a hidden file, and a
+			// .gitignore that prunes one subtree.
+			for (path, content) in [
+				(format!("{dir}/root.rs"), "fn main() {}\n".to_string()),
+				(
+					format!("{dir}/nested/deep/leaf.rs"),
+					"needle here\n".to_string(),
+				),
+				(format!("{dir}/nested/other.md"), "plain\n".to_string()),
+				(format!("{dir}/.hidden.txt"), "hidden\n".to_string()),
+				(format!("{dir}/.gitignore"), "ignored_dir/\n".to_string()),
+				(
+					format!("{dir}/ignored_dir/skip.rs"),
+					"skipped\n".to_string(),
+				),
+			] {
+				let call = McpToolCall::test_call(
+					"text_editor",
+					json!({
+						"command": "create",
+						"path": path,
+						"content": content
+					}),
+				);
+				crate::mcp::fs::core::execute_text_editor(&call)
+					.await
+					.unwrap();
+			}
+
+			// Bare listing: root entries only (REMOTE_DEFAULT_MAX_DEPTH = 1), hidden
+			// files excluded, .gitignore-pruned entries absent.
+			let list_call = McpToolCall::test_call("view", json!({ "path": dir }));
+			let listing = execute_view(&list_call).await.expect("listing failed");
+			assert!(listing.contains("root.rs"), "listing: {listing}");
+			assert!(
+				!listing.contains("leaf.rs"),
+				"bare listing must not recurse: {listing}"
+			);
+			assert!(
+				!listing.contains(".hidden.txt"),
+				"hidden excluded by default: {listing}"
+			);
+			assert!(
+				!listing.contains("ignored_dir"),
+				"gitignored dir pruned: {listing}"
+			);
+
+			// include_hidden reveals dotfiles.
+			let hidden_call =
+				McpToolCall::test_call("view", json!({ "path": dir, "include_hidden": true }));
+			let listing = execute_view(&hidden_call)
+				.await
+				.expect("hidden listing failed");
+			assert!(listing.contains(".hidden.txt"), "hidden listing: {listing}");
+
+			// Pattern search walks the whole tree and matches by glob.
+			let pattern_call =
+				McpToolCall::test_call("view", json!({ "path": dir, "pattern": "*.rs" }));
+			let listing = execute_view(&pattern_call)
+				.await
+				.expect("pattern listing failed");
+			assert!(
+				listing.contains("nested/deep/leaf.rs"),
+				"pattern listing: {listing}"
+			);
+			assert!(!listing.contains("other.md"), "pattern listing: {listing}");
+			assert!(
+				!listing.contains("ignored_dir/skip.rs"),
+				"gitignore honored in search: {listing}"
+			);
+
+			// Content search walks the tree and reports the matching file.
+			let content_call =
+				McpToolCall::test_call("view", json!({ "path": dir, "content": "needle" }));
+			let listing = execute_view(&content_call)
+				.await
+				.expect("content listing failed");
+			assert!(listing.contains("leaf.rs"), "content listing: {listing}");
+			assert!(
+				listing.contains("needle here"),
+				"content listing: {listing}"
+			);
+
+			// No match reports the explicit message, not an error.
+			let nomatch_call =
+				McpToolCall::test_call("view", json!({ "path": dir, "pattern": "*.nomatch" }));
+			let listing = execute_view(&nomatch_call)
+				.await
+				.expect("nomatch listing failed");
+			assert!(
+				listing.contains("No files matched pattern"),
+				"nomatch listing: {listing}"
+			);
+
+			cleanup_remote_dir(&dir).await;
+		})
 	}
 
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_io_error_paths_and_metadata() {
-		use crate::mcp::fs::remote::{
-			io_canonicalize, io_create_dir_all, io_exists, io_is_dir, io_is_file, io_metadata,
-			io_read, io_read_to_string, io_remove_file, io_write, parse_path_source,
-		};
-
-		let Some(_) = remote_test_prefix() else {
+	#[test]
+	fn remote_extract_lines() {
+		if remote_test_prefix().is_none() {
 			return;
-		};
-		let dir = setup_remote_dir().await;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let src_path = format!("{dir}/extract_src.txt");
+			let dst_path = format!("{dir}/extract_dst.txt");
 
-		// Missing file: read, metadata and remove all fail with an error.
-		let missing = parse_path_source(&format!("{dir}/missing.txt"));
-		assert!(io_read_to_string(&missing).await.is_err());
-		assert!(io_read(&missing).await.is_err());
-		assert!(io_metadata(&missing).await.is_err());
-		assert!(io_remove_file(&missing).await.is_err());
-		assert!(!io_exists(&missing).await.unwrap());
-		assert!(!io_is_dir(&missing).await.unwrap_or(false));
-		assert!(!io_is_file(&missing).await.unwrap_or(false));
-		// SFTP realpath may resolve nonexistent paths, so no error assertion here;
-		// the existing-file case below verifies canonicalize works.
+			// Create source file
+			let call = McpToolCall::test_call(
+				"text_editor",
+				json!({
+					"command": "create",
+					"path": src_path,
+					"content": "L1\nL2\nL3\nL4\nL5\n"
+				}),
+			);
+			crate::mcp::fs::core::execute_text_editor(&call)
+				.await
+				.unwrap();
 
-		// Existing file: write then read round-trip, metadata, predicates.
-		let file = parse_path_source(&format!("{dir}/data.txt"));
-		io_write(&file, b"hello remote\n").await.unwrap();
-		assert_eq!(io_read_to_string(&file).await.unwrap(), "hello remote\n");
-		assert_eq!(io_read(&file).await.unwrap(), b"hello remote\n");
-		assert!(io_exists(&file).await.unwrap());
-		assert!(!io_is_dir(&file).await.unwrap());
-		assert!(io_is_file(&file).await.unwrap());
-		let meta = io_metadata(&file).await.unwrap();
-		assert_eq!(meta.size, b"hello remote\n".len() as u64);
-		assert!(!meta.is_dir);
-		assert!(meta.is_file);
-		let canon = io_canonicalize(&file).await.unwrap();
-		assert!(canon.to_string_lossy().contains("data.txt"));
+			// Extract lines 2-3 into dst
+			let extract_call = McpToolCall::test_call(
+				"extract_lines",
+				json!({
+					"from_path": src_path,
+					"from_start": 2,
+					"from_end": 3,
+					"append_path": dst_path,
+					"append_line": -1
+				}),
+			);
+			let result = execute_extract_lines(&extract_call).await;
+			assert!(result.is_ok(), "extract_lines failed: {:?}", result.err());
 
-		// Remove then verify it is gone.
-		io_remove_file(&file).await.unwrap();
-		assert!(!io_exists(&file).await.unwrap());
+			// Verify destination
+			let dst_source = crate::mcp::fs::remote::parse_path_source(&dst_path);
+			let content = crate::mcp::fs::remote::io_read_to_string(&dst_source)
+				.await
+				.unwrap();
+			assert!(content.contains("L2"), "content: {content}");
+			assert!(content.contains("L3"), "content: {content}");
 
-		// create_dir_all on an existing directory succeeds (idempotent).
-		let dir_source = parse_path_source(&dir);
-		io_create_dir_all(&dir_source).await.unwrap();
-		assert!(io_exists(&dir_source).await.unwrap());
-		assert!(io_is_dir(&dir_source).await.unwrap());
-		assert!(!io_is_file(&dir_source).await.unwrap());
-
-		cleanup_remote_dir(&dir).await;
+			cleanup_remote_dir(&dir).await;
+		})
 	}
 
-	#[tokio::test]
-	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
-	async fn remote_connect_and_auth_failures() {
-		use crate::mcp::fs::remote::{io_read_to_string, parse_path_source, SftpPool, SshConfig};
-		use std::time::Duration;
-
-		let Some(_) = remote_test_prefix() else {
+	#[test]
+	fn remote_undo_edit() {
+		if remote_test_prefix().is_none() {
 			return;
-		};
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/undo.txt");
 
-		// A dedicated pool with a short timeout so failure cases return fast.
-		let pool = SftpPool::new(SshConfig {
-			key_path: None,
-			timeout: Duration::from_secs(5),
-		});
+			// Create initial content
+			let call = McpToolCall::test_call(
+				"text_editor",
+				json!({
+					"command": "create",
+					"path": file_path,
+					"content": "original\n"
+				}),
+			);
+			crate::mcp::fs::core::execute_text_editor(&call)
+				.await
+				.unwrap();
 
-		// 1. Unreachable host: connect fails with a contextual error.
-		let _dead = parse_path_source("ssh://octofs_no_such_host_invalid.invalid/x.txt");
-		let err = match pool
-			.get_or_connect(
-				"octofs_no_such_host_invalid.invalid",
-				22,
-				"nobody",
-				true,
-				true,
-			)
-			.await
-		{
-			Ok(_) => panic!("connect to invalid host must fail"),
-			Err(e) => e,
-		};
-		let msg = format!("{err:#}");
-		assert!(
-			msg.contains("SSH connect to") || msg.contains("timed out"),
-			"unexpected error: {msg}"
-		);
+			// Replace original -> modified
+			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+			crate::mcp::fs::text_editing::str_replace_spec(&source, "original", "modified", false)
+				.await
+				.unwrap();
 
-		// 2. Auth failure against the real localhost sshd with a bogus user:
-		// connect succeeds, every auth method is rejected, and the error
-		// enumerates the reasons (agent + key files).
-		let err = match pool
-			.get_or_connect("localhost", 22, "octofs_no_such_user", true, true)
-			.await
-		{
-			Ok(_) => panic!("auth with unknown user must fail"),
-			Err(e) => e,
-		};
-		let msg = format!("{err:#}");
-		assert!(
-			msg.contains("SSH authentication failed for octofs_no_such_user@localhost"),
-			"unexpected error: {msg}"
-		);
+			// Verify modification
+			let content = crate::mcp::fs::remote::io_read_to_string(&source)
+				.await
+				.unwrap();
+			assert!(content.contains("modified"), "content: {content}");
 
-		// 3. The same failure surfaces through the io_* layer with the
-		// global pool (which must stay usable for the passing tests after).
-		let bogus = parse_path_source("ssh://octofs_no_such_user@localhost/tmp/nope.txt");
-		assert!(io_read_to_string(&bogus).await.is_err());
+			// Undo
+			let undone = crate::mcp::fs::core::undo_edit(&source)
+				.await
+				.expect("undo failed");
+			assert!(undone.contains("Successfully undid"), "undone: {undone}");
 
-		// 4. The global pool still connects fine for the real user.
-		ensure_sftp_pool();
-		let prefix = remote_test_prefix().unwrap();
-		let source = parse_path_source(&format!("{prefix}/auth_check.txt"));
-		crate::mcp::fs::remote::io_write(&source, b"ok")
-			.await
-			.unwrap();
-		assert_eq!(io_read_to_string(&source).await.unwrap(), "ok");
+			// Verify on disk
+			let content = crate::mcp::fs::remote::io_read_to_string(&source)
+				.await
+				.unwrap();
+			assert!(content.contains("original"), "content: {content}");
+			assert!(!content.contains("modified"), "content: {content}");
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
+
+	#[test]
+	fn remote_workdir_set() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+
+			let call = McpToolCall::test_call(
+				"workdir",
+				json!({
+			"path": dir }),
+			);
+			let result = crate::mcp::fs::execute_workdir_command(&call)
+				.await
+				.expect("workdir set failed");
+			match result {
+				crate::mcp::fs::WorkdirResult::Set { current, .. } => {
+					let current = current.to_string_lossy();
+					assert!(
+						current.starts_with("ssh://") || current.starts_with("sftp://"),
+						"expected remote workdir URL, got: {current}"
+					);
+				}
+				_ => panic!("expected WorkdirResult::Set"),
+			}
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
+
+	#[test]
+	fn remote_io_error_paths_and_metadata() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			use crate::mcp::fs::remote::{
+				io_canonicalize, io_create_dir_all, io_exists, io_is_dir, io_is_file, io_metadata,
+				io_read, io_read_to_string, io_remove_file, io_write, parse_path_source,
+			};
+
+			let dir = setup_remote_dir().await;
+
+			// Missing file: read, metadata and remove all fail with an error.
+			let missing = parse_path_source(&format!("{dir}/missing.txt"));
+			assert!(io_read_to_string(&missing).await.is_err());
+			assert!(io_read(&missing).await.is_err());
+			assert!(io_metadata(&missing).await.is_err());
+			assert!(io_remove_file(&missing).await.is_err());
+			assert!(!io_exists(&missing).await.unwrap());
+			assert!(!io_is_dir(&missing).await.unwrap_or(false));
+			assert!(!io_is_file(&missing).await.unwrap_or(false));
+			// SFTP realpath may resolve nonexistent paths, so no error assertion here;
+			// the existing-file case below verifies canonicalize works.
+
+			// Existing file: write then read round-trip, metadata, predicates.
+			let file = parse_path_source(&format!("{dir}/data.txt"));
+			io_write(&file, b"hello remote\n").await.unwrap();
+			assert_eq!(io_read_to_string(&file).await.unwrap(), "hello remote\n");
+			assert_eq!(io_read(&file).await.unwrap(), b"hello remote\n");
+			assert!(io_exists(&file).await.unwrap());
+			assert!(!io_is_dir(&file).await.unwrap());
+			assert!(io_is_file(&file).await.unwrap());
+			let meta = io_metadata(&file).await.unwrap();
+			assert_eq!(meta.size, b"hello remote\n".len() as u64);
+			assert!(!meta.is_dir);
+			assert!(meta.is_file);
+			let canon = io_canonicalize(&file).await.unwrap();
+			assert!(canon.to_string_lossy().contains("data.txt"));
+
+			// Remove then verify it is gone.
+			io_remove_file(&file).await.unwrap();
+			assert!(!io_exists(&file).await.unwrap());
+
+			// create_dir_all on an existing directory succeeds (idempotent).
+			let dir_source = parse_path_source(&dir);
+			io_create_dir_all(&dir_source).await.unwrap();
+			assert!(io_exists(&dir_source).await.unwrap());
+			assert!(io_is_dir(&dir_source).await.unwrap());
+			assert!(!io_is_file(&dir_source).await.unwrap());
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
+
+	#[test]
+	fn remote_connect_and_auth_failures() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			use crate::mcp::fs::remote::{
+				io_read_to_string, parse_path_source, SftpPool, SshConfig,
+			};
+			use std::time::Duration;
+
+			// A dedicated pool with a short timeout so failure cases return fast.
+			let pool = SftpPool::new(SshConfig {
+				key_path: None,
+				timeout: Duration::from_secs(5),
+			});
+
+			// 1. Unreachable host: connect fails with a contextual error.
+			let _dead = parse_path_source("ssh://octofs_no_such_host_invalid.invalid/x.txt");
+			let err = match pool
+				.get_or_connect(
+					"octofs_no_such_host_invalid.invalid",
+					22,
+					"nobody",
+					true,
+					true,
+				)
+				.await
+			{
+				Ok(_) => panic!("connect to invalid host must fail"),
+				Err(e) => e,
+			};
+			let msg = format!("{err:#}");
+			assert!(
+				msg.contains("SSH connect to") || msg.contains("timed out"),
+				"unexpected error: {msg}"
+			);
+
+			// 2. Auth failure against the real localhost sshd with a bogus user:
+			// connect succeeds, every auth method is rejected, and the error
+			// enumerates the reasons (agent + key files).
+			let err = match pool
+				.get_or_connect("localhost", 22, "octofs_no_such_user", true, true)
+				.await
+			{
+				Ok(_) => panic!("auth with unknown user must fail"),
+				Err(e) => e,
+			};
+			let msg = format!("{err:#}");
+			assert!(
+				msg.contains("SSH authentication failed for octofs_no_such_user@localhost"),
+				"unexpected error: {msg}"
+			);
+
+			// 3. The same failure surfaces through the io_* layer with the
+			// global pool (which must stay usable for the passing tests after).
+			let bogus = parse_path_source("ssh://octofs_no_such_user@localhost/tmp/nope.txt");
+			assert!(io_read_to_string(&bogus).await.is_err());
+
+			// 4. The global pool still connects fine for the real user.
+			ensure_sftp_pool();
+			let prefix = remote_test_prefix().unwrap();
+			let source = parse_path_source(&format!("{prefix}/auth_check.txt"));
+			crate::mcp::fs::remote::io_write(&source, b"ok")
+				.await
+				.unwrap();
+			assert_eq!(io_read_to_string(&source).await.unwrap(), "ok");
+		})
 	}
 }

@@ -1055,3 +1055,70 @@ fn least_recently_used_session_is_dropped_at_capacity() {
 	assert!(states.contains_key(&Some("0".to_string())));
 	assert!(!states.contains_key(&Some("1".to_string())));
 }
+
+#[test]
+fn strip_null_variants_collapses_nullable_types_and_unions() {
+	let mut schema = serde_json::json!({
+		"path": {"type": ["string", "null"]},
+		"start": {"anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "null"}]},
+		"items": {"type": "array", "items": {"type": ["integer", "null"]}},
+		"kept": {"type": ["string", "integer"]},
+	});
+	super::strip_null_variants(&mut schema);
+	assert_eq!(
+		schema,
+		serde_json::json!({
+			"path": {"type": "string"},
+			"start": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+			"items": {"type": "array", "items": {"type": "integer"}},
+			"kept": {"type": ["string", "integer"]},
+		})
+	);
+	// A single-variant anyOf collapses into the parent, keeping its keys.
+	let mut schema = serde_json::json!({"end": {"anyOf": [{"type": "string", "description": "d"}, {"type": "null"}]}});
+	super::strip_null_variants(&mut schema);
+	assert_eq!(schema["end"]["type"], "string");
+	assert_eq!(schema["end"]["description"], "d");
+	assert!(schema["end"].get("anyOf").is_none());
+}
+
+#[test]
+fn batch_edit_rejects_non_string_list_content_and_missing_path() {
+	// A list holding a non-string element is a clear error, not silent loss.
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
+		"path": "f",
+		"operations": [{"operation": "insert", "start": 0, "content": ["a", 3]}],
+	}))
+	.expect_err("non-string list element");
+	assert!(
+		err.to_string().contains("content list must hold strings"),
+		"got: {err}"
+	);
+
+	// Non-string, non-list content is rejected too.
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
+		"path": "f",
+		"operations": [{"operation": "insert", "start": 0, "content": 42}],
+	}))
+	.expect_err("numeric content");
+	assert!(
+		err.to_string()
+			.contains("content must be a string or a list of lines"),
+		"got: {err}"
+	);
+
+	// No path anywhere is a missing-field error.
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
+		"operations": [{"operation": "insert", "start": 0, "content": "a"}],
+	}))
+	.expect_err("no path named");
+	assert!(err.to_string().contains("path"), "got: {err}");
+
+	// A malformed operation body surfaces serde's error.
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
+		"path": "f",
+		"operations": [{"operation": "teleport", "start": 0, "content": "a"}],
+	}))
+	.expect_err("unknown operation");
+	assert!(!err.to_string().is_empty());
+}
