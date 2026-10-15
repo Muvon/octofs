@@ -132,3 +132,7 @@ pub fn format_extracted_content_smart(
 		result_lines.join("\n")
 	}
 }
+
+#[cfg(test)]
+#[path = "truncation_tests.rs"]
+mod truncation_tests;

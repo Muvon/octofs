@@ -310,3 +310,52 @@ fn test_resolve_relative_under_remote_workdir() {
 	// A local workdir keeps relative paths local.
 	assert!(!resolve_path_source("src/main.rs", Path::new("/tmp/w")).is_remote());
 }
+
+#[test]
+fn test_as_local_path() {
+	let local = parse_path_source("/local/path");
+	assert_eq!(local.as_local_path(), Some(Path::new("/local/path")));
+	let remote = parse_path_source("ssh://host/path");
+	assert_eq!(remote.as_local_path(), None);
+}
+
+#[test]
+fn test_parent_local_and_remote() {
+	// Local parent of a nested path.
+	let local = parse_path_source("/local/dir/file.txt");
+	match local.parent() {
+		Some(PathSource::Local(p)) => assert_eq!(p, Path::new("/local/dir")),
+		other => panic!("expected Local parent, got {other:?}"),
+	}
+	// Root has no parent.
+	assert!(parse_path_source("/").parent().is_none());
+
+	// Remote parent keeps authority parts and strips the last component.
+	let remote = parse_path_source("ssh://user@host:2222/dir/file.txt");
+	match remote.parent() {
+		Some(PathSource::Remote {
+			host,
+			port,
+			user,
+			path,
+			..
+		}) => {
+			assert_eq!(host, "host");
+			assert_eq!(port, 2222);
+			assert_eq!(user, "user");
+			assert_eq!(path, "/dir");
+		}
+		other => panic!("expected Remote parent, got {other:?}"),
+	}
+	// Remote root has no parent.
+	assert!(parse_path_source("ssh://host/").parent().is_none());
+}
+
+#[test]
+fn test_sftp_path_home_relative_and_absolute() {
+	// /~ and /~/x resolve relative to the login home.
+	assert_eq!(parse_path_source("ssh://host/~").sftp_path(), ".");
+	assert_eq!(parse_path_source("ssh://host/~/sub").sftp_path(), "sub");
+	// Absolute paths pass through unchanged.
+	assert_eq!(parse_path_source("ssh://host/etc").sftp_path(), "/etc");
+}

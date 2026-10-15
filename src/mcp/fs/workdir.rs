@@ -143,3 +143,7 @@ pub async fn execute_workdir_command(call: &McpToolCall) -> Result<WorkdirResult
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "workdir_tests.rs"]
+mod workdir_tests;

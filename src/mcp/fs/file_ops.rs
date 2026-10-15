@@ -173,3 +173,7 @@ pub async fn create_file_spec(source: &PathSource, content: &str) -> Result<Stri
 		content.len()
 	))
 }
+
+#[cfg(test)]
+#[path = "file_ops_tests.rs"]
+mod file_ops_tests;

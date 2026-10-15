@@ -6927,11 +6927,116 @@ mod tests {
 		let list_call = McpToolCall::test_call(
 			"view",
 			json!({
-			"path": dir }),
+				"path": dir }),
 		);
 		let listing = execute_view(&list_call).await.expect("listing failed");
 		assert!(listing.contains("a.txt"), "listing: {listing}");
 		assert!(listing.contains("b.txt"), "listing: {listing}");
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_directory_listing_nested_pattern_content_hidden() {
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+
+		// Nested tree: root files, a subdir with a file, a hidden file, and a
+		// .gitignore that prunes one subtree.
+		for (path, content) in [
+			(format!("{dir}/root.rs"), "fn main() {}\n".to_string()),
+			(
+				format!("{dir}/nested/deep/leaf.rs"),
+				"needle here\n".to_string(),
+			),
+			(format!("{dir}/nested/other.md"), "plain\n".to_string()),
+			(format!("{dir}/.hidden.txt"), "hidden\n".to_string()),
+			(format!("{dir}/.gitignore"), "ignored_dir/\n".to_string()),
+			(
+				format!("{dir}/ignored_dir/skip.rs"),
+				"skipped\n".to_string(),
+			),
+		] {
+			let call = McpToolCall::test_call(
+				"text_editor",
+				json!({
+					"command": "create",
+					"path": path,
+					"content": content
+				}),
+			);
+			crate::mcp::fs::core::execute_text_editor(&call)
+				.await
+				.unwrap();
+		}
+
+		// Bare listing: root entries only (REMOTE_DEFAULT_MAX_DEPTH = 1), hidden
+		// files excluded, .gitignore-pruned entries absent.
+		let list_call = McpToolCall::test_call("view", json!({ "path": dir }));
+		let listing = execute_view(&list_call).await.expect("listing failed");
+		assert!(listing.contains("root.rs"), "listing: {listing}");
+		assert!(
+			!listing.contains("leaf.rs"),
+			"bare listing must not recurse: {listing}"
+		);
+		assert!(
+			!listing.contains(".hidden.txt"),
+			"hidden excluded by default: {listing}"
+		);
+		assert!(
+			!listing.contains("ignored_dir"),
+			"gitignored dir pruned: {listing}"
+		);
+
+		// include_hidden reveals dotfiles.
+		let hidden_call =
+			McpToolCall::test_call("view", json!({ "path": dir, "include_hidden": true }));
+		let listing = execute_view(&hidden_call)
+			.await
+			.expect("hidden listing failed");
+		assert!(listing.contains(".hidden.txt"), "hidden listing: {listing}");
+
+		// Pattern search walks the whole tree and matches by glob.
+		let pattern_call =
+			McpToolCall::test_call("view", json!({ "path": dir, "pattern": "*.rs" }));
+		let listing = execute_view(&pattern_call)
+			.await
+			.expect("pattern listing failed");
+		assert!(
+			listing.contains("nested/deep/leaf.rs"),
+			"pattern listing: {listing}"
+		);
+		assert!(!listing.contains("other.md"), "pattern listing: {listing}");
+		assert!(
+			!listing.contains("ignored_dir/skip.rs"),
+			"gitignore honored in search: {listing}"
+		);
+
+		// Content search walks the tree and reports the matching file.
+		let content_call =
+			McpToolCall::test_call("view", json!({ "path": dir, "content": "needle" }));
+		let listing = execute_view(&content_call)
+			.await
+			.expect("content listing failed");
+		assert!(listing.contains("leaf.rs"), "content listing: {listing}");
+		assert!(
+			listing.contains("needle here"),
+			"content listing: {listing}"
+		);
+
+		// No match reports the explicit message, not an error.
+		let nomatch_call =
+			McpToolCall::test_call("view", json!({ "path": dir, "pattern": "*.nomatch" }));
+		let listing = execute_view(&nomatch_call)
+			.await
+			.expect("nomatch listing failed");
+		assert!(
+			listing.contains("No files matched pattern"),
+			"nomatch listing: {listing}"
+		);
 
 		cleanup_remote_dir(&dir).await;
 	}
