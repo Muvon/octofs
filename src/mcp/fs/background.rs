@@ -20,6 +20,8 @@
 //! readable resource and, when the process exits, emits
 //! `notifications/resources/updated` for that URI. A subscribed client reads the
 //! resource to get the exit code and the foreground result — event-driven, no polling.
+//! A client that declared the MCP tasks extension gets the job as a task instead
+//! and polls it; the server answers from the same registry (`read`, `cancel`).
 //! This module owns the registry and the log files; it knows nothing about the
 //! MCP client. The completion signal is delivered through an opaque callback
 //! the server layer supplies (it captures the rmcp peer there), so this file
@@ -29,7 +31,7 @@ use crate::utils::truncation::MAX_RESULT_BYTES;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
@@ -54,6 +56,9 @@ pub struct Job {
 	finished_output: Arc<OnceLock<String>>,
 	pub pid: u32,
 	pub started_unix: u64,
+	finished_unix: Arc<OnceLock<u64>>,
+	/// Set when a client stopped the job while it was still running.
+	cancel_requested: Arc<AtomicBool>,
 }
 
 impl Job {
@@ -161,6 +166,8 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 			finished_output: Arc::new(OnceLock::new()),
 			pid: 0,
 			started_unix: now_unix(),
+			finished_unix: Arc::new(OnceLock::new()),
+			cancel_requested: Arc::new(AtomicBool::new(false)),
 		},
 		stdout_file,
 		stderr_file,
@@ -270,6 +277,7 @@ where
 			Err(error) => (-1, format!("Error: Command execution failed: {error}")),
 		};
 		completed_job.finished_output.get_or_init(|| output);
+		completed_job.finished_unix.get_or_init(now_unix);
 		if let Ok(mut guard) = completed_job.status.lock() {
 			*guard = JobStatus::Exited(code);
 		}
@@ -286,12 +294,53 @@ pub(crate) fn status(id: &str) -> Option<JobStatus> {
 		.map(Job::status)
 }
 
+/// Ask a running job to stop with SIGTERM to its process group, the same as the
+/// `kill -- -<pid>` the shell response offers. The wait task still records the
+/// exit, so a stopped job reads as finished. `None` if the id is unknown; a job
+/// that already exited is left as it is.
+pub async fn cancel(id: &str) -> Option<()> {
+	let job = jobs()
+		.lock()
+		.expect("jobs registry mutex poisoned")
+		.get(id)
+		.cloned()?;
+	if job.status() == JobStatus::Running {
+		job.cancel_requested.store(true, Ordering::Relaxed);
+		terminate(job.pid).await;
+	}
+	Some(())
+}
+
+#[cfg(unix)]
+async fn terminate(pid: u32) {
+	// SAFETY: kill is always safe with valid arguments; a negative pid targets
+	// the job's process group (the child is a session leader, PGID == PID).
+	unsafe {
+		libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
+	}
+}
+
+#[cfg(not(unix))]
+async fn terminate(pid: u32) {
+	let status = tokio::process::Command::new("taskkill")
+		.args(["/PID", &pid.to_string(), "/T", "/F"])
+		.status()
+		.await;
+	if let Err(error) = status {
+		warn!("Failed to stop background job process {pid}: {error}");
+	}
+}
+
 /// A point-in-time read: status and the foreground result if finished, a tail if running.
 pub struct JobView {
 	pub command: String,
 	pub status: JobStatus,
 	pub output: String,
 	pub truncated: bool,
+	pub started_unix: u64,
+	/// Set once the process has exited.
+	pub finished_unix: Option<u64>,
+	pub cancel_requested: bool,
 }
 
 fn read_tail(path: &Path) -> (Vec<u8>, bool) {
@@ -326,6 +375,9 @@ pub fn read(id: &str) -> Option<JobView> {
 			status,
 			output: job.finished_output.get()?.clone(),
 			truncated: false,
+			started_unix: job.started_unix,
+			finished_unix: job.finished_unix.get().copied(),
+			cancel_requested: job.cancel_requested.load(Ordering::Relaxed),
 		});
 	}
 	// Read only the tails, not whole files: build/test logs can be hundreds of
@@ -347,6 +399,9 @@ pub fn read(id: &str) -> Option<JobView> {
 		status,
 		output,
 		truncated: stdout_truncated || stderr_truncated || output_truncated,
+		started_unix: job.started_unix,
+		finished_unix: None,
+		cancel_requested: job.cancel_requested.load(Ordering::Relaxed),
 	})
 }
 

@@ -26,9 +26,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::model::{
-	CacheScope, CallToolRequestParams, ClientCapabilities, ClientConfig, ContentBlock,
+	CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams,
+	ClientCapabilities, ClientConfig, ContentBlock, DetailedTask, ErrorCode, GetTaskParams,
 	Implementation, ProtocolVersion, ReadResourceRequestParams, SubscribeRequestParams,
-	SubscriptionFilter,
+	SubscriptionFilter, TaskPayload, TaskStatus,
 };
 use rmcp::service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, RunningService};
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
@@ -38,18 +39,24 @@ use tokio::sync::Mutex;
 use super::{OctofsServer, Sessions, MAX_TRACKED_SESSIONS};
 
 /// Minimal client that records unsolicited `resources/updated` pushes and Claude
-/// Code channel messages.
+/// Code channel messages, optionally declaring the SEP-2663 tasks extension.
 #[derive(Clone, Debug)]
 struct RecordingClient {
 	unsolicited: Arc<Mutex<Vec<String>>>,
 	channel: Arc<Mutex<Vec<serde_json::Value>>>,
 	protocol_version: ProtocolVersion,
+	tasks: bool,
 }
 
 impl ClientHandler for RecordingClient {
 	fn get_info(&self) -> ClientConfig {
+		let capabilities = if self.tasks {
+			ClientCapabilities::builder().enable_tasks().build()
+		} else {
+			ClientCapabilities::default()
+		};
 		ClientConfig::new(
-			ClientCapabilities::default(),
+			capabilities,
 			Implementation::new("octofs-test-client", "0.0.0"),
 		)
 		.with_protocol_version(self.protocol_version.clone())
@@ -87,6 +94,7 @@ impl ClientHandler for RecordingClient {
 async fn connect_with_lifecycle(
 	protocol_version: ProtocolVersion,
 	lifecycle: ClientLifecycleMode,
+	tasks: bool,
 ) -> (
 	RunningService<RoleClient, RecordingClient>,
 	tokio::task::JoinHandle<()>,
@@ -111,6 +119,7 @@ async fn connect_with_lifecycle(
 			unsolicited: unsolicited.clone(),
 			channel: Arc::new(Mutex::new(Vec::new())),
 			protocol_version,
+			tasks,
 		}
 		.serve_with_lifecycle(client_io, lifecycle),
 	)
@@ -131,6 +140,7 @@ async fn connect() -> (
 			preferred_versions: vec![ProtocolVersion::V_2026_07_28],
 			legacy_version: None,
 		},
+		false,
 	)
 	.await
 }
@@ -143,21 +153,41 @@ async fn connect_legacy() -> (
 	connect_with_lifecycle(
 		ProtocolVersion::V_2025_11_25,
 		ClientLifecycleMode::Initialize,
+		false,
 	)
 	.await
 }
 
-/// Start a ~2s job and return the resource link advertised when the test-only
-/// foreground window automatically promotes it.
-/// Each platform uses its native bounded-wait command; the POSIX loop keeps
-/// `sleep` inside the shell guard's documented leniency.
-async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> String {
-	let command = if cfg!(target_os = "windows") {
+async fn connect_with_tasks() -> (
+	RunningService<RoleClient, RecordingClient>,
+	tokio::task::JoinHandle<()>,
+	Arc<Mutex<Vec<String>>>,
+) {
+	connect_with_lifecycle(
+		ProtocolVersion::V_2026_07_28,
+		ClientLifecycleMode::Auto {
+			preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+			legacy_version: None,
+		},
+		true,
+	)
+	.await
+}
+
+/// A ~2s command in each platform's native bounded-wait form; the POSIX loop
+/// keeps `sleep` inside the shell guard's documented leniency.
+fn two_second_command() -> &'static str {
+	if cfg!(target_os = "windows") {
 		"ping -n 3 127.0.0.1"
 	} else {
 		"for i in 1 2; do sleep 1; done"
-	};
-	let serde_json::Value::Object(arguments) = json!({"command": command}) else {
+	}
+}
+
+/// Start a ~2s job and return the resource link advertised when the test-only
+/// foreground window automatically promotes it.
+async fn start_job(client: &RunningService<RoleClient, RecordingClient>) -> String {
+	let serde_json::Value::Object(arguments) = json!({"command": two_second_command()}) else {
 		unreachable!("literal object argument")
 	};
 	let params = CallToolRequestParams::new("shell").with_arguments(arguments);
@@ -352,6 +382,153 @@ async fn no_claude_channel_message_on_2026_07_28_connections() {
 	// The channel message would follow the resources/updated push from the same task.
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	assert!(client.service().channel.lock().await.is_empty());
+}
+
+/// Call `shell` as a tasks client and return the id of the task the promoted job
+/// was handed over as.
+async fn start_task(client: &RunningService<RoleClient, RecordingClient>, command: &str) -> String {
+	let serde_json::Value::Object(arguments) = json!({ "command": command }) else {
+		unreachable!("literal object argument")
+	};
+	let params = CallToolRequestParams::new("shell").with_arguments(arguments);
+	match client.call_tool_once(params).await.expect("call shell") {
+		CallToolResponse::Task(created) => {
+			assert_eq!(created.task.status, TaskStatus::Working);
+			assert!(created.task.poll_interval_ms.is_some(), "{created:?}");
+			created.task.task_id
+		}
+		other => panic!("a promoted job is handed over as a task; got {other:?}"),
+	}
+}
+
+async fn wait_for_terminal_task(
+	client: &RunningService<RoleClient, RecordingClient>,
+	id: &str,
+) -> DetailedTask {
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+	loop {
+		let result = client
+			.get_task(GetTaskParams::new(id))
+			.await
+			.expect("tasks/get");
+		if result.task.status().is_terminal() {
+			return result.task;
+		}
+		assert!(
+			tokio::time::Instant::now() < deadline,
+			"task {id} never finished"
+		);
+		tokio::time::sleep(Duration::from_millis(100)).await;
+	}
+}
+
+fn completed_result(task: DetailedTask) -> CallToolResult {
+	let TaskPayload::Completed { result } = task.payload else {
+		panic!("expected a completed task, got {task:?}");
+	};
+	serde_json::from_value(serde_json::Value::Object(result)).expect("result is a CallToolResult")
+}
+
+fn result_text(result: &CallToolResult) -> String {
+	result
+		.content
+		.iter()
+		.find_map(|block| block.as_text().map(|text| text.text.clone()))
+		.expect("text result")
+}
+
+/// A client that declared the tasks extension gets the promoted job as a task
+/// and its result by polling, with no completion pushed at it.
+#[tokio::test(flavor = "multi_thread")]
+async fn promoted_job_is_handed_to_a_tasks_client_as_a_task() {
+	let (client, _server_task, unsolicited) = connect_with_tasks().await;
+	let info = client.peer_info().expect("server info");
+	assert!(
+		info.capabilities.supports_tasks(),
+		"the tasks extension must be advertised"
+	);
+	let id = start_task(&client, two_second_command()).await;
+
+	let task = wait_for_terminal_task(&client, &id).await;
+	assert!(
+		task.task
+			.status_message
+			.as_deref()
+			.is_some_and(|message| message.starts_with("shell: ")),
+		"{task:?}"
+	);
+	let result = completed_result(task);
+	assert_ne!(result.is_error, Some(true), "{result:?}");
+
+	// A push would follow the exit the poll just observed.
+	tokio::time::sleep(Duration::from_millis(500)).await;
+	assert!(unsolicited.lock().await.is_empty());
+	assert!(client.service().channel.lock().await.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_job_task_result_is_an_error_led_by_the_exit_code() {
+	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
+	let id = start_task(
+		&client,
+		"for i in 1 2; do sleep 1; done; echo built; exit 3",
+	)
+	.await;
+
+	let result = completed_result(wait_for_terminal_task(&client, &id).await);
+	assert_eq!(result.is_error, Some(true), "{result:?}");
+	let text = result_text(&result);
+	assert!(
+		text.starts_with("Command failed with exit code 3"),
+		"{text}"
+	);
+	assert!(text.contains("built"), "{text}");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelled_task_stops_the_job_and_reports_cancelled() {
+	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
+	let id = start_task(
+		&client,
+		"for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do sleep 1; done",
+	)
+	.await;
+
+	let started = tokio::time::Instant::now();
+	client
+		.cancel_task(CancelTaskParams::new(id.clone()))
+		.await
+		.expect("tasks/cancel");
+	let task = wait_for_terminal_task(&client, &id).await;
+	assert_eq!(task.status(), TaskStatus::Cancelled, "{task:?}");
+	assert!(
+		started.elapsed() < Duration::from_secs(10),
+		"cancel must stop the job, not wait it out"
+	);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_task_id_is_invalid_params() {
+	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
+	for error in [
+		client
+			.get_task(GetTaskParams::new("0-0"))
+			.await
+			.expect_err("tasks/get"),
+		client
+			.cancel_task(CancelTaskParams::new("0-0"))
+			.await
+			.expect_err("tasks/cancel"),
+	] {
+		match error {
+			rmcp::ServiceError::McpError(error) => {
+				assert_eq!(error.code, ErrorCode::INVALID_PARAMS, "{error:?}")
+			}
+			other => panic!("expected an MCP error, got {other:?}"),
+		}
+	}
 }
 
 /// 2026-07-28 requires `ttlMs` and `cacheScope` on list and read results. A

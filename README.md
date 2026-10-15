@@ -518,15 +518,24 @@ distinct commands may run concurrently, including from the same working
 directory. An exact duplicate command in the same working directory is rejected
 while the first copy is still running.
 
-The completion is delivered as `resources/updated` for the job resource (on a
-`subscriptions/listen` stream when the client opened one). Claude Code does not
+A client that declares the MCP tasks extension (`io.modelcontextprotocol/tasks`,
+SEP-2663) gets the promoted command as a task whose id is the job id. The client
+polls `tasks/get` and receives the same result a foreground call would have
+returned (an error result led by the exit code when the command failed);
+`tasks/cancel` stops the command's process group.
+
+Other clients get the completion as `resources/updated` for the job resource (on
+a `subscriptions/listen` stream when the client opened one). Claude Code does not
 surface that to the model, so octofs also sends it as a Claude Code channel
 message (`notifications/claude/channel`) on pre-2026-07-28 connections — the
 exit code and output tail wake the session. Claude Code accepts channel
-messages only from servers enabled for the session, in interactive mode:
+messages only from servers enabled for the session, in interactive mode, and
+only on pre-2026-07-28 connections. Claude Code negotiates 2026-07-28 with stdio
+servers by default, so until it declares the tasks extension, opt out of that as
+well:
 
 ```bash
-claude --dangerously-load-development-channels server:octofs
+MCP_PROTOCOL_NEGOTIATION=legacy claude --dangerously-load-development-channels server:octofs
 ```
 
 Without it, read the job's resource link when you need the result.

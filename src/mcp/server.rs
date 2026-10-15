@@ -20,11 +20,14 @@ use std::sync::{Arc, RwLock};
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
 	model::{
-		CacheScope, CallToolResult, ContentBlock, CustomNotification, ExperimentalCapabilities,
-		Implementation, JsonObject, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
-		ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
-		RequestId, Resource, ResourceContents, ServerCapabilities, ServerConfig,
-		ServerNotification, SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
+		CacheScope, CallToolResponse, CallToolResult, CancelTaskParams, ContentBlock,
+		CreateTaskResult, CustomNotification, DetailedTask, ExperimentalCapabilities,
+		GetTaskParams, GetTaskResult, Implementation, JsonObject, ListResourcesResult,
+		ListToolsResult, PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams,
+		ReadResourceResponse, ReadResourceResult, RequestId, Resource, ResourceContents,
+		ServerCapabilities, ServerConfig, ServerNotification, SubscribeRequestParams,
+		SubscriptionFilter, Task, TaskPayload, TaskStatus, UnsubscribeRequestParams,
+		UpdateTaskParams,
 	},
 	schemars,
 	service::{Peer, RequestContext, SubscriptionContext, SubscriptionSink},
@@ -251,6 +254,75 @@ fn allows_unsolicited_notifications(context: &RequestContext<RoleServer>) -> boo
 		.is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
 }
 
+/// SEP-2663 tasks: a client that declared `io.modelcontextprotocol/tasks` gets a
+/// promoted shell job as a task whose id is the job id. The client polls
+/// `tasks/get` itself and hands the finished result to its model like any tool
+/// result, so no completion push is needed — the one path that reaches the model
+/// of a 2026-07-28 Claude Code session, which drops every unsolicited message.
+/// The extension belongs to the 2026-07-28 revision, so older connections never
+/// get a task.
+fn client_supports_tasks(context: &RequestContext<RoleServer>) -> bool {
+	!allows_unsolicited_notifications(context)
+		&& context
+			.client_capabilities()
+			.is_some_and(|capabilities| capabilities.supports_tasks())
+}
+
+/// Jobs run for seconds to hours; a couple of seconds keeps the result prompt
+/// without flooding the connection.
+const TASK_POLL_INTERVAL_MS: u64 = 2_000;
+
+fn rfc3339(unix: u64) -> String {
+	let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix);
+	chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// The resource-link name and task status message for a job: the command, so a
+/// client can describe it ("make reldebug … still running") without re-deriving it.
+fn job_label(command: &str) -> String {
+	let label: String = command.trim().chars().take(80).collect();
+	if label.is_empty() {
+		"background shell job".to_string()
+	} else {
+		format!("shell: {label}")
+	}
+}
+
+/// Base task fields for a job. Unlimited TTL: jobs stay readable until shutdown.
+/// A running job's state is unchanged since creation; its output tail is not
+/// task state.
+fn job_task(id: &str, view: &fs::background::JobView) -> Task {
+	let updated = view.finished_unix.unwrap_or(view.started_unix);
+	Task::new(
+		id,
+		TaskStatus::Working,
+		rfc3339(view.started_unix),
+		rfc3339(updated),
+	)
+	.with_status_message(job_label(&view.command))
+	.with_poll_interval_ms(TASK_POLL_INTERVAL_MS)
+}
+
+/// The result a foreground `shell` call returns for the same exit: the output on
+/// success, an error result led by the exit code otherwise.
+fn job_result(code: i32, output: &str, hints: &str) -> JsonObject {
+	let result = if code == 0 {
+		CallToolResult::success(vec![ContentBlock::text(format!("{output}{hints}"))])
+	} else {
+		CallToolResult::error(vec![ContentBlock::text(format!(
+			"Command failed with exit code {code}\n\n{output}{hints}"
+		))])
+	};
+	match serde_json::to_value(result) {
+		Ok(serde_json::Value::Object(map)) => map,
+		_ => JsonObject::new(),
+	}
+}
+
+fn unknown_task(id: &str) -> ErrorData {
+	ErrorData::invalid_params(format!("unknown task: {id}"), None)
+}
+
 /// How often a running foreground `shell` command reports liveness. Well below
 /// any sane client idle timeout so a single missed beat cannot cancel the call.
 const SHELL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
@@ -265,6 +337,9 @@ pub struct OctofsServer {
 	/// Listen streams opened by this client, for contract-clean delivery of
 	/// background-job completion notifications.
 	subscriptions: Arc<SubscriptionRegistry>,
+	/// Hints raised by a shell call that became a task, keyed by job id. The
+	/// task's result is built after that request ended, so they are kept for it.
+	task_hints: Arc<std::sync::Mutex<HashMap<String, String>>>,
 }
 
 impl OctofsServer {
@@ -281,6 +356,7 @@ impl OctofsServer {
 			root,
 			sessions: Arc::new(Sessions::default()),
 			subscriptions: Arc::new(SubscriptionRegistry::default()),
+			task_hints: Arc::default(),
 		}
 	}
 
@@ -504,7 +580,7 @@ impl OctofsServer {
 		&self,
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ShellParams>,
-	) -> Result<CallToolResult, String> {
+	) -> Result<CallToolResponse, String> {
 		let session = self.session(&context);
 		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
@@ -515,8 +591,8 @@ impl OctofsServer {
 		};
 		// Heartbeat while a command is inside the foreground window, so the MCP
 		// idle timeout does not cancel a call that is silent by nature. Anything
-		// still running at the boundary is returned as a background resource, so
-		// there is no held-open call or polling after promotion.
+		// still running at the boundary is returned as a background resource or a
+		// task, so there is no held-open call after promotion.
 		let progress_token = context.meta.get_progress_token();
 		let peer = context.peer.clone();
 		// A background job outlives this call; when it exits, emit
@@ -526,15 +602,17 @@ impl OctofsServer {
 		// notification on it (tagged with their subscription id by the sink);
 		// everyone else gets the unsolicited push the pre-2026-07-28 spec
 		// allowed. On pre-2026-07-28 connections the exit also goes out as a Claude
-		// Code channel message, the only push that reaches its model. The peer and
-		// registry handles are captured here and hidden behind an opaque callback so
-		// the fs layer stays protocol-free.
+		// Code channel message, the only push that reaches its model. A client that
+		// takes the job as a task polls for its exit instead, so it gets only the
+		// pushes it subscribed to. The peer and registry handles are captured here
+		// and hidden behind an opaque callback so the fs layer stays protocol-free.
 		let completion_peer = context.peer.clone();
 		let subscriptions = self.subscriptions.clone();
-		let push_channel = allows_unsolicited_notifications(&context);
+		let as_task = client_supports_tasks(&context);
+		let push_channel = !as_task && allows_unsolicited_notifications(&context);
 		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
 			tokio::spawn(async move {
-				if !notify_subscriptions(&subscriptions, &uri).await {
+				if !notify_subscriptions(&subscriptions, &uri).await && !as_task {
 					notify_peer_resource_updated(&completion_peer, &uri).await;
 				}
 				if push_channel {
@@ -542,27 +620,37 @@ impl OctofsServer {
 				}
 			});
 		});
-		// The resource link carries the command as its name, so a client can
-		// describe the job ("make reldebug … still running") without re-deriving
-		// it — e.g. when preserving pending jobs across a context compaction.
-		let job_label: String = params.command.trim().chars().take(80).collect();
+		let name = job_label(&params.command);
+		let task_hints = self.task_hints.clone();
 		let exec = request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
 				.map_err(|e| e.to_string())?;
-			let mut content = vec![ContentBlock::text(append_hints(outcome.text))];
-			if let Some(uri) = outcome.resource_uri {
-				// A ResourceLink is the protocol-native "watch this" signal: the
-				// client follows it generically, with no octofs-specific
-				// knowledge, so shell can be served by any MCP server.
-				let name = if job_label.is_empty() {
-					"background shell job".to_string()
-				} else {
-					format!("shell: {job_label}")
-				};
-				content.push(ContentBlock::resource_link(Resource::new(uri, name)));
+			let Some(uri) = outcome.resource_uri else {
+				let text = ContentBlock::text(append_hints(outcome.text));
+				return Ok(CallToolResult::success(vec![text]).into());
+			};
+			if as_task {
+				if let Some(id) = fs::background::job_id_from_uri(&uri) {
+					if let Some(view) = fs::background::read(id) {
+						let hints = append_hints(String::new());
+						if !hints.is_empty() {
+							if let Ok(mut task_hints) = task_hints.lock() {
+								task_hints.insert(id.to_string(), hints);
+							}
+						}
+						return Ok(CreateTaskResult::new(job_task(id, &view)).into());
+					}
+				}
 			}
-			Ok::<_, String>(CallToolResult::success(content))
+			// A ResourceLink is the protocol-native "watch this" signal: the
+			// client follows it generically, with no octofs-specific
+			// knowledge, so shell can be served by any MCP server.
+			let content = vec![
+				ContentBlock::text(append_hints(outcome.text)),
+				ContentBlock::resource_link(Resource::new(uri, name)),
+			];
+			Ok::<CallToolResponse, String>(CallToolResult::success(content).into())
 		});
 		tokio::pin!(exec);
 		let mut beats = 0.0_f64;
@@ -743,7 +831,8 @@ impl ServerHandler for OctofsServer {
 			// unsolicited push legacy clients expect (the `shell` notifier's
 			// fallback path). `claude/channel` lets Claude Code sessions that
 			// enabled octofs as a channel receive job exits (see
-			// `notify_claude_channel`).
+			// `notify_claude_channel`). The tasks extension hands promoted shell
+			// jobs to clients that declare it (see `client_supports_tasks`).
 			ServerCapabilities::builder()
 				.enable_experimental_with(ExperimentalCapabilities::from([(
 					CLAUDE_CHANNEL_CAPABILITY.to_string(),
@@ -752,6 +841,7 @@ impl ServerHandler for OctofsServer {
 				.enable_tools()
 				.enable_resources()
 				.enable_resources_subscribe()
+				.enable_tasks()
 				.build(),
 		)
 		.with_server_info(Implementation::from_build_env())
@@ -908,6 +998,60 @@ impl ServerHandler for OctofsServer {
 		_context: RequestContext<RoleServer>,
 	) -> Result<(), ErrorData> {
 		Ok(())
+	}
+
+	// SEP-2663: every task is a background shell job, so its state comes straight
+	// from the job registry. A running job is `working`; an exited one carries the
+	// result a foreground call would have returned, or `cancelled` if a client
+	// stopped it.
+	async fn get_task(
+		&self,
+		request: GetTaskParams,
+		_context: RequestContext<RoleServer>,
+	) -> Result<GetTaskResult, ErrorData> {
+		let id = request.task_id;
+		let view = fs::background::read(&id).ok_or_else(|| unknown_task(&id))?;
+		let payload = match view.status {
+			fs::background::JobStatus::Running => TaskPayload::Working,
+			fs::background::JobStatus::Exited(_) if view.cancel_requested => TaskPayload::Cancelled,
+			fs::background::JobStatus::Exited(code) => {
+				let hints = self
+					.task_hints
+					.lock()
+					.ok()
+					.and_then(|hints| hints.get(&id).cloned())
+					.unwrap_or_default();
+				TaskPayload::Completed {
+					result: job_result(code, &view.output, &hints),
+				}
+			}
+		};
+		Ok(GetTaskResult::new(DetailedTask::new(
+			job_task(&id, &view),
+			payload,
+		)))
+	}
+
+	// A shell task never asks for input, so there is nothing to answer; the spec
+	// has servers ignore responses to requests that are not outstanding.
+	async fn update_task(
+		&self,
+		request: UpdateTaskParams,
+		_context: RequestContext<RoleServer>,
+	) -> Result<(), ErrorData> {
+		fs::background::status(&request.task_id)
+			.map(|_| ())
+			.ok_or_else(|| unknown_task(&request.task_id))
+	}
+
+	async fn cancel_task(
+		&self,
+		request: CancelTaskParams,
+		_context: RequestContext<RoleServer>,
+	) -> Result<(), ErrorData> {
+		fs::background::cancel(&request.task_id)
+			.await
+			.ok_or_else(|| unknown_task(&request.task_id))
 	}
 
 	// The default `initialize` (legacy clients) and `discover` (2026-07-28
