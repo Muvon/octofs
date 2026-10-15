@@ -7226,9 +7226,7 @@ mod tests {
 	#[tokio::test]
 	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
 	async fn remote_connect_and_auth_failures() {
-		use crate::mcp::fs::remote::{
-			init_sftp_pool, io_read_to_string, parse_path_source, SftpPool, SshConfig,
-		};
+		use crate::mcp::fs::remote::{io_read_to_string, parse_path_source, SftpPool, SshConfig};
 		use std::time::Duration;
 
 		let Some(_) = remote_test_prefix() else {

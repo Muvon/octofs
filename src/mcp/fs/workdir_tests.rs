@@ -38,6 +38,10 @@ async fn workdir_reset_returns_reset_without_touching_the_filesystem() {
 	assert!(matches!(result, WorkdirResult::Reset));
 }
 
+#[cfg_attr(
+	windows,
+	ignore = "creating symlinks needs a privilege Windows CI runners lack"
+)]
 #[tokio::test]
 async fn workdir_set_to_existing_directory_reports_previous_and_canonical_current() {
 	let dir = tempfile::tempdir().unwrap();
