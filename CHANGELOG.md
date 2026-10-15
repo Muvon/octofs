@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.18.1] - 2026-10-15
+
+### 📋 Release Summary
+
+Job status no longer includes elapsed time. Symlink tests now compile only on Unix.
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: expand test coverage for remote and parser behavior `6a0cf60f`
+- **fs**: adjust filesystem test portability `bc75fa7d`
+- **tests**: expand MCP and logging test coverage `843c124e`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: remove elapsed time from job status `01b102e3`
+- **fs**: compile symlink test only on Unix `11d8c423`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.18.0] - 2026-10-15
 
 ### 📋 Release Summary
