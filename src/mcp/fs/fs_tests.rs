@@ -7168,4 +7168,128 @@ mod tests {
 
 		cleanup_remote_dir(&dir).await;
 	}
+
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_io_error_paths_and_metadata() {
+		use crate::mcp::fs::remote::{
+			io_canonicalize, io_create_dir_all, io_exists, io_is_dir, io_is_file, io_metadata,
+			io_read, io_read_to_string, io_remove_file, io_write, parse_path_source,
+		};
+
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+		let dir = setup_remote_dir().await;
+
+		// Missing file: read, metadata and remove all fail with an error.
+		let missing = parse_path_source(&format!("{dir}/missing.txt"));
+		assert!(io_read_to_string(&missing).await.is_err());
+		assert!(io_read(&missing).await.is_err());
+		assert!(io_metadata(&missing).await.is_err());
+		assert!(io_remove_file(&missing).await.is_err());
+		assert!(!io_exists(&missing).await.unwrap());
+		assert!(!io_is_dir(&missing).await.unwrap_or(false));
+		assert!(!io_is_file(&missing).await.unwrap_or(false));
+		// SFTP realpath may resolve nonexistent paths, so no error assertion here;
+		// the existing-file case below verifies canonicalize works.
+
+		// Existing file: write then read round-trip, metadata, predicates.
+		let file = parse_path_source(&format!("{dir}/data.txt"));
+		io_write(&file, b"hello remote\n").await.unwrap();
+		assert_eq!(io_read_to_string(&file).await.unwrap(), "hello remote\n");
+		assert_eq!(io_read(&file).await.unwrap(), b"hello remote\n");
+		assert!(io_exists(&file).await.unwrap());
+		assert!(!io_is_dir(&file).await.unwrap());
+		assert!(io_is_file(&file).await.unwrap());
+		let meta = io_metadata(&file).await.unwrap();
+		assert_eq!(meta.size, b"hello remote\n".len() as u64);
+		assert!(!meta.is_dir);
+		assert!(meta.is_file);
+		let canon = io_canonicalize(&file).await.unwrap();
+		assert!(canon.to_string_lossy().contains("data.txt"));
+
+		// Remove then verify it is gone.
+		io_remove_file(&file).await.unwrap();
+		assert!(!io_exists(&file).await.unwrap());
+
+		// create_dir_all on an existing directory succeeds (idempotent).
+		let dir_source = parse_path_source(&dir);
+		io_create_dir_all(&dir_source).await.unwrap();
+		assert!(io_exists(&dir_source).await.unwrap());
+		assert!(io_is_dir(&dir_source).await.unwrap());
+		assert!(!io_is_file(&dir_source).await.unwrap());
+
+		cleanup_remote_dir(&dir).await;
+	}
+
+	#[tokio::test]
+	#[ignore = "Requires OCTOFS_TEST_SSH_HOST env var"]
+	async fn remote_connect_and_auth_failures() {
+		use crate::mcp::fs::remote::{
+			init_sftp_pool, io_read_to_string, parse_path_source, SftpPool, SshConfig,
+		};
+		use std::time::Duration;
+
+		let Some(_) = remote_test_prefix() else {
+			return;
+		};
+
+		// A dedicated pool with a short timeout so failure cases return fast.
+		let pool = SftpPool::new(SshConfig {
+			key_path: None,
+			timeout: Duration::from_secs(5),
+		});
+
+		// 1. Unreachable host: connect fails with a contextual error.
+		let _dead = parse_path_source("ssh://octofs_no_such_host_invalid.invalid/x.txt");
+		let err = match pool
+			.get_or_connect(
+				"octofs_no_such_host_invalid.invalid",
+				22,
+				"nobody",
+				true,
+				true,
+			)
+			.await
+		{
+			Ok(_) => panic!("connect to invalid host must fail"),
+			Err(e) => e,
+		};
+		let msg = format!("{err:#}");
+		assert!(
+			msg.contains("SSH connect to") || msg.contains("timed out"),
+			"unexpected error: {msg}"
+		);
+
+		// 2. Auth failure against the real localhost sshd with a bogus user:
+		// connect succeeds, every auth method is rejected, and the error
+		// enumerates the reasons (agent + key files).
+		let err = match pool
+			.get_or_connect("localhost", 22, "octofs_no_such_user", true, true)
+			.await
+		{
+			Ok(_) => panic!("auth with unknown user must fail"),
+			Err(e) => e,
+		};
+		let msg = format!("{err:#}");
+		assert!(
+			msg.contains("SSH authentication failed for octofs_no_such_user@localhost"),
+			"unexpected error: {msg}"
+		);
+
+		// 3. The same failure surfaces through the io_* layer with the
+		// global pool (which must stay usable for the passing tests after).
+		let bogus = parse_path_source("ssh://octofs_no_such_user@localhost/tmp/nope.txt");
+		assert!(io_read_to_string(&bogus).await.is_err());
+
+		// 4. The global pool still connects fine for the real user.
+		ensure_sftp_pool();
+		let prefix = remote_test_prefix().unwrap();
+		let source = parse_path_source(&format!("{prefix}/auth_check.txt"));
+		crate::mcp::fs::remote::io_write(&source, b"ok")
+			.await
+			.unwrap();
+		assert_eq!(io_read_to_string(&source).await.unwrap(), "ok");
+	}
 }

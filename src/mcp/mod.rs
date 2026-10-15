@@ -21,6 +21,10 @@ pub mod fs;
 pub mod request_ctx;
 pub mod server;
 
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod mod_tests;
+
 // Session working directory is now stored per-server-instance (see server.rs).
 // This module only provides helper functions for the session root directory.
 

@@ -753,6 +753,124 @@ async fn view_reads_a_job_link_like_resources_read() {
 	assert_eq!(missing.is_error, Some(true), "unknown job id is an error");
 }
 
+/// The tool handlers are thin wrappers: build McpToolCall from the session
+/// workdir, run the execute fn, append hints. Drive them end-to-end through
+/// the MCP connection so the wrapper lines count as covered.
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_handlers_text_editor_batch_edit_extract_lines_round_trip() {
+	let (client, _server_task, _unsolicited) = connect().await;
+
+	let call = |tool: &'static str, arguments: serde_json::Map<String, serde_json::Value>| {
+		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments))
+	};
+
+	// text_editor create
+	let create = call(
+		"text_editor",
+		json!({
+			"command": "create",
+			"path": "wrapper.txt",
+			"content": "alpha\nbeta\n"
+		})
+		.as_object()
+		.unwrap()
+		.clone(),
+	)
+	.await
+	.expect("text_editor create");
+	assert_ne!(create.is_error, Some(true), "{:?}", create.content);
+
+	// View the file to obtain line ids for batch_edit.
+	let viewed = call(
+		"view",
+		json!({ "path": "wrapper.txt", "full": true })
+			.as_object()
+			.unwrap()
+			.clone(),
+	)
+	.await
+	.expect("view wrapper");
+	let text = viewed
+		.content
+		.iter()
+		.find_map(|block| match block {
+			ContentBlock::Text(text) => Some(text.text.clone()),
+			_ => None,
+		})
+		.expect("view result text");
+	let id = text
+		.lines()
+		.find(|l| l.contains("alpha"))
+		.and_then(|l| l.split('|').next())
+		.unwrap_or_else(|| panic!("no alpha line id in view output: {text}"));
+	let edit = call(
+		"batch_edit",
+		json!({
+			"path": "wrapper.txt",
+			"operations": [
+				{ "operation": "replace", "start": id, "content": "ALPHA" }
+			]
+		})
+		.as_object()
+		.unwrap()
+		.clone(),
+	)
+	.await
+	.expect("batch_edit");
+	assert_ne!(edit.is_error, Some(true), "{:?}", edit.content);
+
+	// extract_lines: copy the edited line into a second file
+	let extract = call(
+		"extract_lines",
+		json!({
+			"from_path": "wrapper.txt",
+			"from_start": 1,
+			"append_path": "copied.txt",
+			"append_line": -1
+		})
+		.as_object()
+		.unwrap()
+		.clone(),
+	)
+	.await
+	.expect("extract_lines");
+	assert_ne!(extract.is_error, Some(true), "{:?}", extract.content);
+
+	// Verify the copy landed via view
+	let view = call(
+		"view",
+		json!({ "path": "copied.txt" }).as_object().unwrap().clone(),
+	)
+	.await
+	.expect("view copied");
+	let text = view
+		.content
+		.iter()
+		.find_map(|block| match block {
+			ContentBlock::Text(text) => Some(text.text.clone()),
+			_ => None,
+		})
+		.expect("view result text");
+	assert!(text.contains("ALPHA"), "copied content: {text}");
+
+	// Error path: batch_edit with a stale line id must surface the error.
+	let stale = call(
+		"batch_edit",
+		json!({
+			"path": "wrapper.txt",
+			"operations": [
+				{ "operation": "replace", "start": "99:zz", "content": "x" }
+			]
+		})
+		.as_object()
+		.unwrap()
+		.clone(),
+	)
+	.await
+	.expect("batch_edit stale returns a response");
+	assert_eq!(stale.is_error, Some(true), "stale id must error");
+}
+
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]

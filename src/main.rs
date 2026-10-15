@@ -20,6 +20,10 @@ mod cli;
 pub mod mcp;
 pub mod utils;
 
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod main_tests;
+
 use cli::{Cli, Commands};
 
 #[tokio::main]
