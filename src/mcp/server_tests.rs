@@ -28,8 +28,8 @@ use std::time::Duration;
 use rmcp::model::{
 	CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams,
 	ClientCapabilities, ClientConfig, ContentBlock, DetailedTask, ErrorCode, GetTaskParams,
-	Implementation, ProtocolVersion, ReadResourceRequestParams, SubscribeRequestParams,
-	SubscriptionFilter, TaskPayload, TaskStatus,
+	Implementation, InputResponses, ProtocolVersion, ReadResourceRequestParams,
+	SubscribeRequestParams, SubscriptionFilter, TaskPayload, TaskStatus, UpdateTaskParams,
 };
 use rmcp::service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, RunningService};
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
@@ -521,6 +521,10 @@ async fn unknown_task_id_is_invalid_params() {
 			.cancel_task(CancelTaskParams::new("0-0"))
 			.await
 			.expect_err("tasks/cancel"),
+		client
+			.update_task(UpdateTaskParams::new("0-0", InputResponses::new()))
+			.await
+			.expect_err("tasks/update"),
 	] {
 		match error {
 			rmcp::ServiceError::McpError(error) => {
@@ -529,6 +533,86 @@ async fn unknown_task_id_is_invalid_params() {
 			other => panic!("expected an MCP error, got {other:?}"),
 		}
 	}
+}
+
+/// No shell task asks for input, so a client's responses are acknowledged and
+/// change nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn update_on_a_known_task_is_acknowledged() {
+	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
+	let id = start_task(&client, two_second_command()).await;
+	client
+		.update_task(UpdateTaskParams::new(id.clone(), InputResponses::new()))
+		.await
+		.expect("tasks/update");
+	let result = completed_result(wait_for_terminal_task(&client, &id).await);
+	assert_ne!(result.is_error, Some(true), "{result:?}");
+}
+
+/// The tasks extension belongs to the 2026-07-28 revision: an older connection
+/// keeps the resource link even when its client declared tasks.
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_client_declaring_tasks_still_gets_a_resource_link() {
+	let (client, _server_task, _unsolicited) = connect_with_lifecycle(
+		ProtocolVersion::V_2025_11_25,
+		ClientLifecycleMode::Initialize,
+		true,
+	)
+	.await;
+	let uri = start_job(&client).await;
+	assert!(uri.starts_with("octofs://jobs/"), "{uri}");
+}
+
+/// Hints raised when the command started would be lost with the request that
+/// raised them; the task's result carries them instead.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn launch_hints_reach_the_task_result() {
+	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
+	let scratch = tempfile::tempdir().expect("scratch dir");
+	let command = format!(
+		"for i in 1 2; do sleep 1; done; echo '{{}}' > {}",
+		scratch.path().join("task.json").display()
+	);
+	let id = start_task(&client, &command).await;
+
+	let result = completed_result(wait_for_terminal_task(&client, &id).await);
+	let text = result_text(&result);
+	assert!(text.contains("⚠️ "), "{text}");
+}
+
+#[test]
+fn task_timestamps_are_rfc3339_utc() {
+	assert_eq!(super::rfc3339(0), "1970-01-01T00:00:00Z");
+	assert_eq!(super::rfc3339(1_792_000_000), "2026-10-14T17:46:40Z");
+}
+
+#[test]
+fn job_label_names_the_command_within_bounds() {
+	assert_eq!(super::job_label("  cargo test  "), "shell: cargo test");
+	assert_eq!(super::job_label("   "), "background shell job");
+	assert_eq!(
+		super::job_label(&"x".repeat(200)),
+		format!("shell: {}", "x".repeat(80))
+	);
+}
+
+#[test]
+fn job_result_frames_an_exit_like_a_foreground_call() {
+	let parse = |object| {
+		serde_json::from_value::<CallToolResult>(serde_json::Value::Object(object))
+			.expect("result is a CallToolResult")
+	};
+	let succeeded = parse(super::job_result(0, "done", ""));
+	assert_ne!(succeeded.is_error, Some(true));
+	assert_eq!(result_text(&succeeded), "done");
+
+	let failed = parse(super::job_result(2, "boom", "\n\n⚠️ hint\n"));
+	assert_eq!(failed.is_error, Some(true));
+	assert_eq!(
+		result_text(&failed),
+		"Command failed with exit code 2\n\nboom\n\n⚠️ hint\n"
+	);
 }
 
 /// 2026-07-28 requires `ttlMs` and `cacheScope` on list and read results. A

@@ -118,6 +118,60 @@ fn reading_an_unknown_job_is_none() {
 	assert!(read("no-such-job").is_none());
 }
 
+async fn wait_for_exit(id: &str) -> JobView {
+	for _ in 0..250 {
+		let view = read(id).expect("job is registered");
+		if matches!(view.status, JobStatus::Exited(_)) {
+			return view;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	panic!("job {id} must exit within the bound");
+}
+
+#[tokio::test]
+async fn cancelling_an_unknown_job_is_none() {
+	assert!(cancel("no-such-job").await.is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancel_stops_a_running_job_and_records_the_request() {
+	let job = spawn_test_job(
+		"for i in 1 2 3 4 5 6 7 8 9 10; do sleep 1; done # cancel-running",
+		&std::env::temp_dir(),
+		|_| {},
+	)
+	.await;
+	let running = read(&job.id).expect("job is registered");
+	assert!(!running.cancel_requested);
+	assert_eq!(running.finished_unix, None);
+
+	assert_eq!(cancel(&job.id).await, Some(()));
+	let view = wait_for_exit(&job.id).await;
+	assert!(
+		view.cancel_requested,
+		"a stop requested while running is recorded"
+	);
+	let finished = view.finished_unix.expect("an exited job has a finish time");
+	assert!(finished >= view.started_unix);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelling_a_finished_job_leaves_it_as_it_ended() {
+	let job = spawn_test_job("exit 0 # cancel-finished", &std::env::temp_dir(), |_| {}).await;
+	wait_for_exit(&job.id).await;
+
+	assert_eq!(cancel(&job.id).await, Some(()));
+	let view = read(&job.id).expect("job is registered");
+	assert_eq!(view.status, JobStatus::Exited(0));
+	assert!(
+		!view.cancel_requested,
+		"a job that already ended was not stopped"
+	);
+}
+
 #[tokio::test]
 async fn allows_distinct_jobs_but_refuses_a_duplicate_in_the_same_working_dir() {
 	// A dir unique to this test so it never collides with other tests' jobs.
