@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.18.0] - 2026-10-15
+
+### 📋 Release Summary
+
+Background shell jobs now support MCP tasks with progress reporting and stop commands. Windows shell command quoting is preserved.
+
+### ✨ New Features & Enhancements
+
+- **tasks**: show background task progress and stop commands `068abcc6`
+- **mcp**: support MCP tasks for background shell jobs `b4d78390`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: extend task and cancellation coverage `e6ba41a4`
+- **dependencies**: refresh locked dependencies `961a7a4b`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: preserve Windows shell command quoting `2311590f`
+
 ## [0.17.0] - 2026-10-14
 
 ### 📋 Release Summary
