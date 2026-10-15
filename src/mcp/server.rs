@@ -289,9 +289,9 @@ fn job_label(command: &str) -> String {
 }
 
 /// Base task fields for a job. Unlimited TTL: jobs stay readable until shutdown.
-/// A running job's state is unchanged since creation; its output tail is not
-/// task state.
-fn job_task(id: &str, view: &fs::background::JobView) -> Task {
+/// A running job's state is unchanged since creation; its progress rides in the
+/// status message.
+fn job_task(id: &str, view: &fs::background::JobView, progress: bool) -> Task {
 	let updated = view.finished_unix.unwrap_or(view.started_unix);
 	Task::new(
 		id,
@@ -299,8 +299,45 @@ fn job_task(id: &str, view: &fs::background::JobView) -> Task {
 		rfc3339(view.started_unix),
 		rfc3339(updated),
 	)
-	.with_status_message(job_label(&view.command))
+	.with_status_message(job_status_message(view, progress))
 	.with_poll_interval_ms(TASK_POLL_INTERVAL_MS)
+}
+
+/// What a client shows for a job. While it runs: its PID and the command that
+/// kills it — the stop the foreground reply always offered, usable from any
+/// shell, alongside `tasks/cancel` — and, with `progress`, the elapsed time
+/// and latest output line, so a stuck job is visible without reading its log.
+fn job_status_message(view: &fs::background::JobView, progress: bool) -> String {
+	let label = job_label(&view.command);
+	if view.status != fs::background::JobStatus::Running {
+		return label;
+	}
+	let stop = if cfg!(target_os = "windows") {
+		format!("taskkill /PID {} /T /F", view.pid)
+	} else {
+		format!("kill -- -{}", view.pid)
+	};
+	let mut message = format!("{label} · PID {} (stop: {stop})", view.pid);
+	if progress {
+		let now = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.map_or(0, |elapsed| elapsed.as_secs());
+		message.push_str(&format!(
+			" · running {}s",
+			now.saturating_sub(view.started_unix)
+		));
+		if let Some(line) = view
+			.output
+			.lines()
+			.rev()
+			.map(str::trim)
+			.find(|line| !line.is_empty())
+		{
+			let line: String = line.chars().take(120).collect();
+			message.push_str(&format!(" · {line}"));
+		}
+	}
+	message
 }
 
 /// The result a foreground `shell` call returns for the same exit: the output on
@@ -639,7 +676,7 @@ impl OctofsServer {
 								task_hints.insert(id.to_string(), hints);
 							}
 						}
-						return Ok(CreateTaskResult::new(job_task(id, &view)).into());
+						return Ok(CreateTaskResult::new(job_task(id, &view, false)).into());
 					}
 				}
 			}
@@ -1027,7 +1064,7 @@ impl ServerHandler for OctofsServer {
 			}
 		};
 		Ok(GetTaskResult::new(DetailedTask::new(
-			job_task(&id, &view),
+			job_task(&id, &view, true),
 			payload,
 		)))
 	}

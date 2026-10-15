@@ -522,7 +522,9 @@ A client that declares the MCP tasks extension (`io.modelcontextprotocol/tasks`,
 SEP-2663) gets the promoted command as a task whose id is the job id. The client
 polls `tasks/get` and receives the same result a foreground call would have
 returned (an error result led by the exit code when the command failed);
-`tasks/cancel` stops the command's process group.
+`tasks/cancel` stops the command's process group. While the command runs, the
+task's status message names its PID and kill command (`kill -- -<pid>`), the
+elapsed time, and its latest output line.
 
 Other clients get the completion as `resources/updated` for the job resource (on
 a `subscriptions/listen` stream when the client opened one). Claude Code does not

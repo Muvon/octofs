@@ -395,6 +395,14 @@ async fn start_task(client: &RunningService<RoleClient, RecordingClient>, comman
 		CallToolResponse::Task(created) => {
 			assert_eq!(created.task.status, TaskStatus::Working);
 			assert!(created.task.poll_interval_ms.is_some(), "{created:?}");
+			assert!(
+				created
+					.task
+					.status_message
+					.as_deref()
+					.is_some_and(|message| message.contains(" (stop: ")),
+				"a running job's status names how to kill it: {created:?}"
+			);
 			created.task.task_id
 		}
 		other => panic!("a promoted job is handed over as a task; got {other:?}"),
@@ -594,6 +602,45 @@ fn job_label_names_the_command_within_bounds() {
 	assert_eq!(
 		super::job_label(&"x".repeat(200)),
 		format!("shell: {}", "x".repeat(80))
+	);
+}
+
+#[test]
+fn running_job_status_names_its_pid_kill_command_and_progress() {
+	use crate::mcp::fs::background::{JobStatus, JobView};
+	let view = |status| JobView {
+		command: "cargo test".to_string(),
+		status,
+		output: "compiling\nrunning 12 tests\n\n".to_string(),
+		truncated: false,
+		started_unix: 0,
+		finished_unix: None,
+		cancel_requested: false,
+		pid: 4242,
+	};
+	let stop = if cfg!(target_os = "windows") {
+		"taskkill /PID 4242 /T /F"
+	} else {
+		"kill -- -4242"
+	};
+
+	let running = view(JobStatus::Running);
+	let created = super::job_status_message(&running, false);
+	assert_eq!(
+		created,
+		format!("shell: cargo test · PID 4242 (stop: {stop})")
+	);
+	let polled = super::job_status_message(&running, true);
+	assert!(
+		polled.starts_with(&created)
+			&& polled.contains(" · running ")
+			&& polled.ends_with(" · running 12 tests"),
+		"{polled}"
+	);
+	assert_eq!(
+		super::job_status_message(&view(JobStatus::Exited(0)), true),
+		"shell: cargo test",
+		"a finished job has nothing left to kill"
 	);
 }
 

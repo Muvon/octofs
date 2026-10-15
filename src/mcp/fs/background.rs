@@ -341,6 +341,7 @@ pub struct JobView {
 	/// Set once the process has exited.
 	pub finished_unix: Option<u64>,
 	pub cancel_requested: bool,
+	pub pid: u32,
 }
 
 fn read_tail(path: &Path) -> (Vec<u8>, bool) {
@@ -378,6 +379,7 @@ pub fn read(id: &str) -> Option<JobView> {
 			started_unix: job.started_unix,
 			finished_unix: job.finished_unix.get().copied(),
 			cancel_requested: job.cancel_requested.load(Ordering::Relaxed),
+			pid: job.pid,
 		});
 	}
 	// Read only the tails, not whole files: build/test logs can be hundreds of
@@ -402,6 +404,7 @@ pub fn read(id: &str) -> Option<JobView> {
 		started_unix: job.started_unix,
 		finished_unix: None,
 		cancel_requested: job.cancel_requested.load(Ordering::Relaxed),
+		pid: job.pid,
 	})
 }
 
