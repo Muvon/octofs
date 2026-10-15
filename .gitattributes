@@ -1,0 +1,3 @@
+# Digest fixtures are byte-exact tool captures (some contain CR progress
+# redraws) compared against goldens; never let checkout rewrite line endings.
+src/mcp/fs/digest/fixtures/** -text

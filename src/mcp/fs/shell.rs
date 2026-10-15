@@ -50,6 +50,27 @@ pub(super) fn unregister_child(pid: u32) {
 	}
 }
 
+/// Build the platform shell process for `command`.
+///
+/// On Windows the command goes to cmd as a raw argument: `args()` would quote it
+/// with MSVC rules and escape inner quotes as `\"`, which cmd does not
+/// understand, so a command like `powershell -Command "..."` reached its program
+/// mangled. `/S` makes cmd strip exactly the outer quote pair we add.
+pub(super) fn shell_process(command: &str) -> tokio::process::Command {
+	#[cfg(windows)]
+	{
+		let mut process = tokio::process::Command::new("cmd");
+		process.raw_arg(format!("/S /C \"{command}\""));
+		process
+	}
+	#[cfg(not(windows))]
+	{
+		let mut process = tokio::process::Command::new("sh");
+		process.args(["-c", command]);
+		process
+	}
+}
+
 /// Start the child in a new session. A separate process group alone still shares
 /// the MCP client's terminal, so an interactive shell (`zsh -ic`) could
 /// tcsetpgrp() itself into the foreground and leave the client stopped as a
@@ -671,8 +692,6 @@ async fn execute_with_timeout(
 	timeout: Duration,
 	on_background: Option<BackgroundNotify>,
 ) -> Result<ShellOutcome> {
-	use tokio::process::Command as TokioCommand;
-
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => {
@@ -710,17 +729,8 @@ async fn execute_with_timeout(
 	}
 
 	// Use tokio::process::Command for better cancellation support
-	let mut cmd = if cfg!(target_os = "windows") {
-		let mut cmd = TokioCommand::new("cmd");
-		cmd.args(["/C", &command]);
-		cmd.current_dir(&working_dir);
-		cmd
-	} else {
-		let mut cmd = TokioCommand::new("sh");
-		cmd.args(["-c", &command]);
-		cmd.current_dir(&working_dir);
-		cmd
-	};
+	let mut cmd = shell_process(&command);
+	cmd.current_dir(&working_dir);
 
 	#[cfg(unix)]
 	{

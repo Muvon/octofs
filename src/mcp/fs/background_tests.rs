@@ -21,22 +21,12 @@ pub(super) async fn spawn_test_job<F>(command: &str, working_dir: &Path, on_comp
 where
 	F: FnOnce(String) + Send + 'static,
 {
-	use tokio::process::Command;
-
 	let PreparedJob {
 		mut job,
 		stdout_file,
 		stderr_file,
 	} = prepare(command, working_dir).await.expect("prepare job");
-	let mut command_process = if cfg!(target_os = "windows") {
-		let mut process = Command::new("cmd");
-		process.args(["/C", command]);
-		process
-	} else {
-		let mut process = Command::new("sh");
-		process.args(["-c", command]);
-		process
-	};
+	let mut command_process = super::super::shell::shell_process(command);
 	command_process
 		.current_dir(working_dir)
 		.stdout(Stdio::from(stdout_file))
