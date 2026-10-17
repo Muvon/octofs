@@ -28,7 +28,8 @@
 // caught per-target with a self-healing error instead of a whole-file fingerprint gate.
 //
 // Outside a scope (unit tests calling executors directly) every accessor degrades to
-// a no-op: hints are dropped and views are always served in full.
+// a no-op: hints are dropped and views are always served in full. A session without
+// a view cache (its client reports no context epoch) is likewise served whole files.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ use super::fs::delta::ViewCache;
 
 struct RequestContext {
 	hints: RefCell<Vec<String>>,
-	view_cache: Arc<ViewCache>,
+	view_cache: Option<Arc<ViewCache>>,
 }
 
 tokio::task_local! {
@@ -45,7 +46,7 @@ tokio::task_local! {
 }
 
 /// Run `fut` with a fresh request context bound to the session's view cache.
-pub async fn with_request_context<F>(view_cache: Arc<ViewCache>, fut: F) -> F::Output
+pub async fn with_request_context<F>(view_cache: Option<Arc<ViewCache>>, fut: F) -> F::Output
 where
 	F: std::future::Future,
 {
@@ -59,9 +60,12 @@ where
 	.await
 }
 
-/// Run `f` against the session's view cache. `None` outside a request scope.
+/// Run `f` against the session's view cache. `None` outside a request scope or
+/// when the session has no view cache.
 pub fn with_view_cache<R>(f: impl FnOnce(&ViewCache) -> R) -> Option<R> {
-	CTX.try_with(|ctx| f(&ctx.view_cache)).ok()
+	CTX.try_with(|ctx| ctx.view_cache.as_deref().map(f))
+		.ok()
+		.flatten()
 }
 
 /// Push a hint for the current tool call. No-op outside a request scope.

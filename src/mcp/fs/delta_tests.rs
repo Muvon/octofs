@@ -149,7 +149,7 @@ async fn empty_file_views_are_explicit_and_preserve_deletion_deltas() {
 	let file = dir.path().join("empty.txt");
 	tokio::fs::write(&file, "").await.unwrap();
 
-	with_request_context(Arc::new(ViewCache::default()), async {
+	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		let first = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert_eq!(first, "[empty file, 0 lines]");
 		let unchanged = execute_view(&view_call(&file, json!({}))).await.unwrap();
@@ -184,7 +184,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 	let body: String = (1..=20).map(|i| format!("l{i}\n")).collect();
 	std::fs::write(&file, &body).unwrap();
 
-	with_request_context(Arc::new(ViewCache::default()), async {
+	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		let first = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert!(
 			first.starts_with(&format!("{}|l1\n", line_id(1, "l1"))),
@@ -255,7 +255,7 @@ async fn own_edits_keep_the_cache_current_but_unseen_changes_invalidate_it() {
 		)
 	};
 
-	with_request_context(Arc::new(ViewCache::default()), async {
+	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		execute_view(&view_call(&file, json!({}))).await.unwrap();
 		execute_text_editor(&replace("l3", "L3")).await.unwrap();
 		let after_edit = execute_view(&view_call(&file, json!({}))).await.unwrap();

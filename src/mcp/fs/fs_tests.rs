@@ -46,7 +46,7 @@ mod tests {
 				sender.send(uri).unwrap();
 			});
 			let result = crate::mcp::request_ctx::with_request_context(
-				cache.clone(),
+				Some(cache.clone()),
 				execute_shell_command(&call, Some(notify)),
 			)
 			.await;
@@ -94,10 +94,12 @@ mod tests {
 			let expected = digest::digest(&stdout, &stderr, std::path::Path::new(path)).unwrap();
 			assert!(text.ends_with(&expected));
 			let view_call = McpToolCall::test_call("view", json!({ "path": path }));
-			let view =
-				crate::mcp::request_ctx::with_request_context(cache, execute_view(&view_call))
-					.await
-					.expect("view full spill");
+			let view = crate::mcp::request_ctx::with_request_context(
+				Some(cache),
+				execute_view(&view_call),
+			)
+			.await
+			.expect("view full spill");
 			assert!(view.contains("test passing_test_number_000 ... ok"));
 			fs::remove_file(path).await.unwrap();
 		}

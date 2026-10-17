@@ -999,11 +999,12 @@ fn session_context(
 	peer: &rmcp::Peer<rmcp::RoleServer>,
 	id: &str,
 	workdir: &std::path::Path,
+	context_epoch: Option<u64>,
 ) -> rmcp::service::RequestContext<rmcp::RoleServer> {
 	let mut context =
 		rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
 	let capabilities: ClientCapabilities = serde_json::from_value(json!({
-		"experimental": {"session": {"session_id": id, "workdir": workdir}}
+		"experimental": {"session": {"session_id": id, "workdir": workdir, "context_epoch": context_epoch}}
 	}))
 	.expect("session capabilities");
 	context.meta.set_client_capabilities(capabilities);
@@ -1024,19 +1025,22 @@ async fn sessions_sharing_a_connection_keep_their_own_workdir() {
 	let service = rmcp::service::serve_directly(server.clone(), transport, None);
 	let peer = service.peer();
 
-	let a = server.session(&session_context(peer, "a", first.path()));
-	let b = server.session(&session_context(peer, "b", second.path()));
+	let a = server.session(&session_context(peer, "a", first.path(), Some(0)));
+	let b = server.session(&session_context(peer, "b", second.path(), Some(0)));
 	assert_eq!(a.workdir.get_current(), first.path());
 	assert_eq!(b.workdir.get_current(), second.path());
-	assert!(!Arc::ptr_eq(&a.view_cache, &b.view_cache));
+	assert!(!Arc::ptr_eq(
+		a.view_cache.as_ref().expect("a view cache"),
+		b.view_cache.as_ref().expect("b view cache")
+	));
 
 	a.workdir.set_current(nested.clone());
-	let again = server.session(&session_context(peer, "a", first.path()));
+	let again = server.session(&session_context(peer, "a", first.path(), Some(0)));
 	assert_eq!(again.workdir.get_current(), nested);
-	let other = server.session(&session_context(peer, "b", second.path()));
+	let other = server.session(&session_context(peer, "b", second.path(), Some(0)));
 	assert_eq!(other.workdir.get_current(), second.path());
 
-	let moved = server.session(&session_context(peer, "a", second.path()));
+	let moved = server.session(&session_context(peer, "a", second.path(), Some(0)));
 	assert_eq!(
 		moved.workdir.get_current(),
 		second.path(),
@@ -1054,25 +1058,26 @@ async fn sessions_sharing_a_connection_keep_their_own_workdir() {
 fn least_recently_used_session_is_dropped_at_capacity() {
 	let sessions = Sessions::default();
 	let root = std::path::PathBuf::from("/");
-	let first = sessions.get(Some("0".to_string()), root.clone(), 0);
+	let first = sessions.get(Some("0".to_string()), root.clone(), None);
 	for index in 1..MAX_TRACKED_SESSIONS {
-		sessions.get(Some(index.to_string()), root.clone(), 0);
+		sessions.get(Some(index.to_string()), root.clone(), None);
 	}
-	let touched = sessions.get(Some("0".to_string()), root.clone(), 0);
+	let touched = sessions.get(Some("0".to_string()), root.clone(), None);
 	assert!(Arc::ptr_eq(&first, &touched));
 
-	sessions.get(Some("new".to_string()), root, 0);
+	sessions.get(Some("new".to_string()), root, None);
 	let states = sessions.states.lock().expect("sessions lock");
 	assert_eq!(states.len(), MAX_TRACKED_SESSIONS);
 	assert!(states.contains_key(&Some("0".to_string())));
 	assert!(!states.contains_key(&Some("1".to_string())));
 }
 
-/// A new `context_epoch` means the client compacted or rewrote what the model
-/// was served: the next whole-file view comes in full again, while the session
-/// keeps its workdir. An unchanged epoch keeps answering with deltas.
+/// Deltas are opt-in: only a client that reports a `context_epoch` gets them,
+/// and a new epoch (the client compacted or rewrote what the model was served)
+/// serves the next whole-file view in full again while the session keeps its
+/// workdir. A client without an epoch is always served whole files.
 #[tokio::test]
-async fn context_epoch_change_serves_the_next_view_in_full() {
+async fn view_deltas_follow_the_client_context_epoch() {
 	let dir = tempfile::tempdir().expect("workdir");
 	let nested = dir.path().join("nested");
 	std::fs::create_dir(&nested).expect("nested dir");
@@ -1082,18 +1087,8 @@ async fn context_epoch_change_serves_the_next_view_in_full() {
 	let (transport, _client) = tokio::io::duplex(4096);
 	let service = rmcp::service::serve_directly(server.clone(), transport, None);
 	let peer = service.peer();
-	let context = |epoch: u64| {
-		let mut context =
-			rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
-		let capabilities: ClientCapabilities = serde_json::from_value(json!({
-			"experimental": {"session": {"session_id": "s", "workdir": dir.path(), "context_epoch": epoch}}
-		}))
-		.expect("session capabilities");
-		context.meta.set_client_capabilities(capabilities);
-		context
-	};
-	let view = |epoch: u64| {
-		let state = server.session(&context(epoch));
+	let view = |id: &str, epoch: Option<u64>| {
+		let state = server.session(&session_context(peer, id, dir.path(), epoch));
 		let call =
 			crate::mcp::McpToolCall::test_call("view", json!({"path": file.to_string_lossy()}));
 		async move {
@@ -1103,21 +1098,33 @@ async fn context_epoch_change_serves_the_next_view_in_full() {
 			.await
 		}
 	};
+	let unchanged = "[unchanged since you last viewed";
 
-	assert!(view(0).await.ends_with("|one"));
-	assert!(view(0)
-		.await
-		.starts_with("[unchanged since you last viewed"));
+	assert!(view("plain", None).await.ends_with("|one"));
+	assert!(
+		view("plain", None).await.ends_with("|one"),
+		"no epoch, no delta"
+	);
+
+	assert!(view("s", Some(0)).await.ends_with("|one"));
+	assert!(view("s", Some(0)).await.starts_with(unchanged));
 	server
-		.session(&context(0))
+		.session(&session_context(peer, "s", dir.path(), Some(0)))
 		.workdir
 		.set_current(nested.clone());
 
-	assert!(view(1).await.ends_with("|one"), "new epoch serves in full");
-	assert!(view(1)
-		.await
-		.starts_with("[unchanged since you last viewed"));
-	assert_eq!(server.session(&context(1)).workdir.get_current(), nested);
+	assert!(
+		view("s", Some(1)).await.ends_with("|one"),
+		"new epoch serves in full"
+	);
+	assert!(view("s", Some(1)).await.starts_with(unchanged));
+	assert_eq!(
+		server
+			.session(&session_context(peer, "s", dir.path(), Some(1)))
+			.workdir
+			.get_current(),
+		nested
+	);
 }
 
 #[test]

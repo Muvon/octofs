@@ -91,9 +91,10 @@ const MAX_TRACKED_SESSIONS: usize = 64;
 #[derive(Debug)]
 struct SessionState {
 	workdir: SessionWorkdir,
-	view_cache: Arc<fs::delta::ViewCache>,
-	/// Client context generation the view cache was filled under (see
-	/// `OctofsServer::session`).
+	/// Present only for clients that report a `context_epoch`: a delta is safe
+	/// only when the client says when the model lost what it was served.
+	view_cache: Option<Arc<fs::delta::ViewCache>>,
+	/// Client context generation the view cache was filled under.
 	context_epoch: std::sync::atomic::AtomicU64,
 	last_used: std::sync::atomic::AtomicU64,
 }
@@ -107,17 +108,26 @@ struct Sessions {
 }
 
 impl Sessions {
-	/// State for `id` anchored at `root`. A session whose anchor moved starts over
-	/// at the new root; one whose context epoch changed keeps its workdir but
-	/// loses its view cache.
-	fn get(&self, id: Option<String>, root: PathBuf, context_epoch: u64) -> Arc<SessionState> {
+	/// State for `id` anchored at `root`. A session whose anchor moved, or whose
+	/// client started or stopped reporting a context epoch, starts over; one
+	/// whose context epoch changed keeps its workdir but loses its view cache.
+	fn get(
+		&self,
+		id: Option<String>,
+		root: PathBuf,
+		context_epoch: Option<u64>,
+	) -> Arc<SessionState> {
 		use std::sync::atomic::Ordering;
 		let now = self.clock.fetch_add(1, Ordering::Relaxed);
 		let mut states = self.states.lock().expect("sessions lock poisoned");
-		if let Some(state) = states.get(&id).filter(|state| state.workdir.root == root) {
+		if let Some(state) = states.get(&id).filter(|state| {
+			state.workdir.root == root && state.view_cache.is_some() == context_epoch.is_some()
+		}) {
 			state.last_used.store(now, Ordering::Relaxed);
-			if state.context_epoch.swap(context_epoch, Ordering::Relaxed) != context_epoch {
-				state.view_cache.clear();
+			if let (Some(cache), Some(epoch)) = (&state.view_cache, context_epoch) {
+				if state.context_epoch.swap(epoch, Ordering::Relaxed) != epoch {
+					cache.clear();
+				}
 			}
 			return state.clone();
 		}
@@ -132,8 +142,8 @@ impl Sessions {
 		}
 		let state = Arc::new(SessionState {
 			workdir: SessionWorkdir::new(root),
-			view_cache: Arc::new(fs::delta::ViewCache::default()),
-			context_epoch: std::sync::atomic::AtomicU64::new(context_epoch),
+			view_cache: context_epoch.map(|_| Arc::new(fs::delta::ViewCache::default())),
+			context_epoch: std::sync::atomic::AtomicU64::new(context_epoch.unwrap_or_default()),
 			last_used: std::sync::atomic::AtomicU64::new(now),
 		});
 		states.insert(id, state.clone());
@@ -407,7 +417,8 @@ impl OctofsServer {
 	/// `context_epoch` is the client's context generation: it changes whenever
 	/// the client compacts or rewrites content the model already received, so
 	/// whole-file views served before it may no longer be in the model's context
-	/// and must not be answered with a delta. Absent means 0.
+	/// and must not be answered with a delta. A client that sends no epoch gives
+	/// no such guarantee and is always served whole files.
 	///
 	/// Resolved on every request: modern clients (2026-07-28) carry capabilities
 	/// in each request's `_meta`, and one connection can serve many sessions;
@@ -419,7 +430,7 @@ impl OctofsServer {
 			.and_then(|capabilities| capabilities.experimental)
 			.and_then(|mut experimental| experimental.remove("session"));
 		let Some(session) = session else {
-			return self.sessions.get(None, self.root.clone(), 0);
+			return self.sessions.get(None, self.root.clone(), None);
 		};
 		let id = session
 			.get("session_id")
@@ -434,10 +445,7 @@ impl OctofsServer {
 				self.root.clone()
 			}
 		};
-		let context_epoch = session
-			.get("context_epoch")
-			.and_then(|v| v.as_u64())
-			.unwrap_or(0);
+		let context_epoch = session.get("context_epoch").and_then(|v| v.as_u64());
 		self.sessions.get(id, root, context_epoch)
 	}
 }
@@ -463,7 +471,7 @@ impl OctofsServer {
 		description = "Read files, list directories, search content. Lines render as \
 			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target. Listings \
 			are recursive and gitignore-aware, one `path\tNL\t~Nt` (lines, ~tokens) per file. \
-			Re-viewing a whole file returns only the hunks changed since your last view (or an \
+			Re-viewing a whole file may return only the hunks changed since your last view (or an \
 			unchanged marker); ranged reads always return the requested lines. Reuse returned \
 			content: read a complete block in one call, combine adjacent windows, never re-read \
 			overlapping ranges or narrow one just to pick edit targets; re-read only when the file \

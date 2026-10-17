@@ -44,6 +44,14 @@ bypass the cache by design — only whole-file views update it. Octofs's own
 writes keep the cache truthful via `delta::note_write` / `note_create`, so an
 edit followed by a whole-file view does not replay the file.
 
+Deltas are opt-in per client: a session gets a `ViewCache` only when its client
+sends `context_epoch` (a non-negative integer) in `experimental.session` on every
+request — the 2026-07-28 per-request capabilities in `_meta`. The client bumps the
+epoch whenever it compacts or rewrites content the model already received; a
+changed epoch clears the session's cache, so the next whole-file view is served in
+full. Clients that send no epoch (no way to know what the model still holds) are
+always served whole files.
+
 **Context-economy contract** (encoded in the tool description): reuse returned
 content, read a complete block in one call, never re-read overlapping ranges;
 re-read only when the file may have changed or output was truncated. Oversized

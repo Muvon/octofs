@@ -19,6 +19,10 @@
 //! in full. Whole-file views set it; this server's own writes keep it in step
 //! (see `note_write`); ranged views and searches leave it alone because they
 //! show the model only part of the file.
+//!
+//! Deltas are opt-in: a session gets a cache only when its client reports a
+//! `context_epoch`, and a changed epoch clears it (see `OctofsServer::session`).
+//! Only the client knows when compaction dropped what the model was served.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

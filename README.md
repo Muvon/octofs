@@ -58,7 +58,7 @@ Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart — but it's 
 | **Transport** | STDIO + Streamable HTTP | STDIO only |
 | **Shell Integration** | Automatic foreground-to-background handoff | Limited or none |
 | **Remote Files** | Transparent SSH/SFTP on every file tool | None |
-| **Re-reads** | Delta views — re-viewing a file returns only the hunks changed since | Full file every time |
+| **Re-reads** | Delta views — re-viewing a file returns only the hunks changed since (clients that report a context epoch) | Full file every time |
 | **Safety** | Gitignore-aware, stale-write detection, path validation | Full filesystem access |
 
 ---
