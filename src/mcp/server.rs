@@ -876,7 +876,12 @@ impl ServerHandler for OctofsServer {
 				.enable_tasks()
 				.build(),
 		)
-		.with_server_info(Implementation::from_build_env())
+		// Not `Implementation::from_build_env()`: that is a plain fn in rmcp, so its
+		// `env!` reads rmcp's crate name and version, not ours.
+		.with_server_info(Implementation::new(
+			env!("CARGO_PKG_NAME"),
+			env!("CARGO_PKG_VERSION"),
+		))
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
 			"Filesystem tools. File lines render as `N:hh|content`; `N:hh` is the line id edit \

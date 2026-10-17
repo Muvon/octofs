@@ -372,6 +372,20 @@ async fn job_completion_is_pushed_as_a_claude_channel_message_on_legacy_connecti
 	assert!(content.contains("status: exited with code 0"), "{content}");
 }
 
+/// Clients log and display `serverInfo`, so it must name octofs and its release,
+/// not the rmcp library it is built on.
+#[tokio::test(flavor = "multi_thread")]
+async fn server_info_identifies_octofs_not_rmcp() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+	let info = client.peer_info().expect("server info");
+	let server = info
+		.server_info
+		.as_ref()
+		.expect("initialize carries serverInfo");
+	assert_eq!(server.name, "octofs");
+	assert_eq!(server.version, env!("CARGO_PKG_VERSION"));
+}
+
 /// 2026-07-28 carries no unsolicited notifications and Claude Code drops channels
 /// on such a connection, so none is sent there.
 #[tokio::test(flavor = "multi_thread")]
