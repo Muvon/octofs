@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.18.2] - 2026-10-17
+
+### 📋 Release Summary
+
+View deltas are gated on context epochs, and cached views are invalidated when the context changes. The server reports its octofs identity.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update Rust dependency requirements `a36c4396`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: gate view deltas on context epochs `d5c73c33`
+- **mcp**: invalidate cached views on context changes `d597cce5`
+- **mcp**: report octofs server identity `98317811`
+
 ## [0.18.1] - 2026-10-15
 
 ### 📋 Release Summary
