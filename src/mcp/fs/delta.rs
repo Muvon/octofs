@@ -67,6 +67,13 @@ impl ViewCache {
 			entries.remove(key);
 		}
 	}
+
+	/// Drop every entry: the client's context no longer holds what was served.
+	pub fn clear(&self) {
+		if let Ok(mut entries) = self.entries.lock() {
+			entries.clear();
+		}
+	}
 }
 
 /// Line-ending agnostic form: views and edits both work on `lines()`.

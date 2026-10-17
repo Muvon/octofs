@@ -1054,18 +1054,70 @@ async fn sessions_sharing_a_connection_keep_their_own_workdir() {
 fn least_recently_used_session_is_dropped_at_capacity() {
 	let sessions = Sessions::default();
 	let root = std::path::PathBuf::from("/");
-	let first = sessions.get(Some("0".to_string()), root.clone());
+	let first = sessions.get(Some("0".to_string()), root.clone(), 0);
 	for index in 1..MAX_TRACKED_SESSIONS {
-		sessions.get(Some(index.to_string()), root.clone());
+		sessions.get(Some(index.to_string()), root.clone(), 0);
 	}
-	let touched = sessions.get(Some("0".to_string()), root.clone());
+	let touched = sessions.get(Some("0".to_string()), root.clone(), 0);
 	assert!(Arc::ptr_eq(&first, &touched));
 
-	sessions.get(Some("new".to_string()), root);
+	sessions.get(Some("new".to_string()), root, 0);
 	let states = sessions.states.lock().expect("sessions lock");
 	assert_eq!(states.len(), MAX_TRACKED_SESSIONS);
 	assert!(states.contains_key(&Some("0".to_string())));
 	assert!(!states.contains_key(&Some("1".to_string())));
+}
+
+/// A new `context_epoch` means the client compacted or rewrote what the model
+/// was served: the next whole-file view comes in full again, while the session
+/// keeps its workdir. An unchanged epoch keeps answering with deltas.
+#[tokio::test]
+async fn context_epoch_change_serves_the_next_view_in_full() {
+	let dir = tempfile::tempdir().expect("workdir");
+	let nested = dir.path().join("nested");
+	std::fs::create_dir(&nested).expect("nested dir");
+	let file = dir.path().join("f.txt");
+	std::fs::write(&file, "one\n").expect("write file");
+	let server = OctofsServer::with_root(dir.path().to_path_buf());
+	let (transport, _client) = tokio::io::duplex(4096);
+	let service = rmcp::service::serve_directly(server.clone(), transport, None);
+	let peer = service.peer();
+	let context = |epoch: u64| {
+		let mut context =
+			rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
+		let capabilities: ClientCapabilities = serde_json::from_value(json!({
+			"experimental": {"session": {"session_id": "s", "workdir": dir.path(), "context_epoch": epoch}}
+		}))
+		.expect("session capabilities");
+		context.meta.set_client_capabilities(capabilities);
+		context
+	};
+	let view = |epoch: u64| {
+		let state = server.session(&context(epoch));
+		let call =
+			crate::mcp::McpToolCall::test_call("view", json!({"path": file.to_string_lossy()}));
+		async move {
+			crate::mcp::request_ctx::with_request_context(state.view_cache.clone(), async {
+				crate::mcp::fs::execute_view(&call).await.expect("view")
+			})
+			.await
+		}
+	};
+
+	assert!(view(0).await.ends_with("|one"));
+	assert!(view(0)
+		.await
+		.starts_with("[unchanged since you last viewed"));
+	server
+		.session(&context(0))
+		.workdir
+		.set_current(nested.clone());
+
+	assert!(view(1).await.ends_with("|one"), "new epoch serves in full");
+	assert!(view(1)
+		.await
+		.starts_with("[unchanged since you last viewed"));
+	assert_eq!(server.session(&context(1)).workdir.get_current(), nested);
 }
 
 #[test]

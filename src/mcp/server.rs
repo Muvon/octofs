@@ -92,6 +92,9 @@ const MAX_TRACKED_SESSIONS: usize = 64;
 struct SessionState {
 	workdir: SessionWorkdir,
 	view_cache: Arc<fs::delta::ViewCache>,
+	/// Client context generation the view cache was filled under (see
+	/// `OctofsServer::session`).
+	context_epoch: std::sync::atomic::AtomicU64,
 	last_used: std::sync::atomic::AtomicU64,
 }
 
@@ -105,13 +108,17 @@ struct Sessions {
 
 impl Sessions {
 	/// State for `id` anchored at `root`. A session whose anchor moved starts over
-	/// at the new root.
-	fn get(&self, id: Option<String>, root: PathBuf) -> Arc<SessionState> {
+	/// at the new root; one whose context epoch changed keeps its workdir but
+	/// loses its view cache.
+	fn get(&self, id: Option<String>, root: PathBuf, context_epoch: u64) -> Arc<SessionState> {
 		use std::sync::atomic::Ordering;
 		let now = self.clock.fetch_add(1, Ordering::Relaxed);
 		let mut states = self.states.lock().expect("sessions lock poisoned");
 		if let Some(state) = states.get(&id).filter(|state| state.workdir.root == root) {
 			state.last_used.store(now, Ordering::Relaxed);
+			if state.context_epoch.swap(context_epoch, Ordering::Relaxed) != context_epoch {
+				state.view_cache.clear();
+			}
 			return state.clone();
 		}
 		if !states.contains_key(&id) && states.len() >= MAX_TRACKED_SESSIONS {
@@ -126,6 +133,7 @@ impl Sessions {
 		let state = Arc::new(SessionState {
 			workdir: SessionWorkdir::new(root),
 			view_cache: Arc::new(fs::delta::ViewCache::default()),
+			context_epoch: std::sync::atomic::AtomicU64::new(context_epoch),
 			last_used: std::sync::atomic::AtomicU64::new(now),
 		});
 		states.insert(id, state.clone());
@@ -393,7 +401,13 @@ impl OctofsServer {
 	}
 
 	/// The calling session's state, from the octomind session context in the
-	/// client capabilities (`experimental.session`: `session_id`, `workdir`).
+	/// client capabilities (`experimental.session`: `session_id`, `workdir`,
+	/// `context_epoch`).
+	///
+	/// `context_epoch` is the client's context generation: it changes whenever
+	/// the client compacts or rewrites content the model already received, so
+	/// whole-file views served before it may no longer be in the model's context
+	/// and must not be answered with a delta. Absent means 0.
 	///
 	/// Resolved on every request: modern clients (2026-07-28) carry capabilities
 	/// in each request's `_meta`, and one connection can serve many sessions;
@@ -405,7 +419,7 @@ impl OctofsServer {
 			.and_then(|capabilities| capabilities.experimental)
 			.and_then(|mut experimental| experimental.remove("session"));
 		let Some(session) = session else {
-			return self.sessions.get(None, self.root.clone());
+			return self.sessions.get(None, self.root.clone(), 0);
 		};
 		let id = session
 			.get("session_id")
@@ -420,7 +434,11 @@ impl OctofsServer {
 				self.root.clone()
 			}
 		};
-		self.sessions.get(id, root)
+		let context_epoch = session
+			.get("context_epoch")
+			.and_then(|v| v.as_u64())
+			.unwrap_or(0);
+		self.sessions.get(id, root, context_epoch)
 	}
 }
 
