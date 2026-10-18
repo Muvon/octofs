@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.18.3] - 2026-10-18
+
+### 🔧 Improvements & Optimizations
+
+- **release**: inherit secrets in release workflow `ed550d29`
+
 ## [0.18.2] - 2026-10-17
 
 ### 📋 Release Summary
