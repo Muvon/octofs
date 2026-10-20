@@ -68,9 +68,7 @@ impl PathSource {
 	pub fn lock_key(&self) -> String {
 		match self {
 			PathSource::Local(p) => p.to_string_lossy().to_string(),
-			PathSource::Remote {
-				host, port, path, ..
-			} => {
+			PathSource::Remote { host, port, path, .. } => {
 				format!("{host}:{port}{path}")
 			}
 		}
@@ -88,17 +86,13 @@ impl PathSource {
 				user_explicit,
 				port_explicit,
 			} => {
-				let user = user_explicit
-					.then(|| format!("{user}@"))
-					.unwrap_or_default();
+				let user = user_explicit.then(|| format!("{user}@")).unwrap_or_default();
 				let host = if host.contains(':') {
 					format!("[{host}]")
 				} else {
 					host.clone()
 				};
-				let port = port_explicit
-					.then(|| format!(":{port}"))
-					.unwrap_or_default();
+				let port = port_explicit.then(|| format!(":{port}")).unwrap_or_default();
 				format!("ssh://{user}{host}{port}{path}")
 			}
 		}
@@ -166,9 +160,7 @@ impl From<&PathBuf> for PathSource {
 /// Defaults: port 22, user from `$USER` (or "root" if unset); both are
 /// overridden by `~/.ssh/config` when not explicit in the URL.
 pub fn parse_path_source(path: &str) -> PathSource {
-	let rest = path
-		.strip_prefix("ssh://")
-		.or_else(|| path.strip_prefix("sftp://"));
+	let rest = path.strip_prefix("ssh://").or_else(|| path.strip_prefix("sftp://"));
 
 	let Some(rest) = rest else {
 		return PathSource::Local(PathBuf::from(path));
@@ -293,10 +285,7 @@ mod sftp {
 	impl client::Handler for SshHandler {
 		type Error = anyhow::Error;
 
-		async fn check_server_key(
-			&mut self,
-			server_public_key: &PublicKeyOrCertificate,
-		) -> Result<bool, Self::Error> {
+		async fn check_server_key(&mut self, server_public_key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
 			// A certificate is trusted via its certified key: russh verifies the
 			// certificate signature before this call, and known_hosts stores plain keys.
 			let server_key = server_public_key.public_key();
@@ -394,11 +383,7 @@ mod sftp {
 
 	/// Parse OpenSSH config text for `host`. Scalar options use OpenSSH's
 	/// first-obtained-value rule; IdentityFile entries accumulate.
-	pub(super) fn parse_ssh_host_config(
-		text: &str,
-		host: &str,
-		home: &std::path::Path,
-	) -> SshHostConfig {
+	pub(super) fn parse_ssh_host_config(text: &str, host: &str, home: &std::path::Path) -> SshHostConfig {
 		let mut cfg = SshHostConfig::default();
 		// Options before the first Host line apply to every host.
 		let mut applies = true;
@@ -407,8 +392,7 @@ mod sftp {
 			if line.is_empty() || line.starts_with('#') {
 				continue;
 			}
-			let Some((keyword, value)) = line.split_once(|c: char| c.is_whitespace() || c == '=')
-			else {
+			let Some((keyword, value)) = line.split_once(|c: char| c.is_whitespace() || c == '=') else {
 				continue;
 			};
 			let value = value.trim().trim_matches('"');
@@ -455,9 +439,7 @@ mod sftp {
 		};
 		// Let OpenSSH flatten Include, Match, token expansion, and platform-specific
 		// config locations. `-G` only prints configuration; it never connects.
-		let resolution = tokio::process::Command::new("ssh")
-			.args(["-G", "--", host])
-			.output();
+		let resolution = tokio::process::Command::new("ssh").args(["-G", "--", host]).output();
 		if let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(5), resolution).await {
 			if output.status.success() {
 				if let Ok(text) = String::from_utf8(output.stdout) {
@@ -602,17 +584,12 @@ mod sftp {
 			user_explicit: bool,
 			port_explicit: bool,
 		) -> Result<Arc<SftpSession>> {
-			let key = format!(
-				"{user}@{host}:{port}:user-explicit={user_explicit}:port-explicit={port_explicit}"
-			);
+			let key = format!("{user}@{host}:{port}:user-explicit={user_explicit}:port-explicit={port_explicit}");
 			let mut sessions = self.sessions.lock().await;
 			match sessions.get(&key) {
 				Some(pooled)
 					if !pooled.handle.is_closed()
-						&& pooled
-							.proxy_handle
-							.as_ref()
-							.is_none_or(|handle| !handle.is_closed()) =>
+						&& pooled.proxy_handle.as_ref().is_none_or(|handle| !handle.is_closed()) =>
 				{
 					return Ok(pooled.sftp.clone());
 				}
@@ -708,23 +685,15 @@ mod sftp {
 			// from this address.
 			match tokio::time::timeout(self.config.timeout, setup).await {
 				Ok(Ok(session)) => {
-					tracing::debug!(
-						"ssh: sftp session ready for {}:{}",
-						target.host,
-						target.port
-					);
+					tracing::debug!("ssh: sftp session ready for {}:{}", target.host, target.port);
 					Ok((handle, proxy_handle, session))
 				}
 				Ok(Err(e)) => {
-					let _ = handle
-						.disconnect(russh::Disconnect::ByApplication, "", "en")
-						.await;
+					let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
 					Err(e)
 				}
 				Err(_) => {
-					let _ = handle
-						.disconnect(russh::Disconnect::ByApplication, "", "en")
-						.await;
+					let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
 					Err(anyhow!(
 						"SSH session setup for {}:{} timed out after {}s. Most likely your SSH agent (e.g. 1Password) is holding the signature request until you authorize octofs: unlock the agent app, look for its authorization prompt, approve it, and retry — later calls are instant. --ssh-timeout raises the limit",
 						target.host,
@@ -739,10 +708,7 @@ mod sftp {
 			&self,
 			target: &ResolvedSshTarget,
 			config: Arc<client::Config>,
-		) -> Result<(
-			client::Handle<SshHandler>,
-			Option<client::Handle<SshHandler>>,
-		)> {
+		) -> Result<(client::Handle<SshHandler>, Option<client::Handle<SshHandler>>)> {
 			if target
 				.config
 				.proxy_command
@@ -781,22 +747,10 @@ mod sftp {
 				return Ok((handle, None));
 			};
 
-			let (jump_host, jump_port, jump_user, user_explicit, port_explicit) =
-				parse_jump_target(proxy)?;
+			let (jump_host, jump_port, jump_user, user_explicit, port_explicit) = parse_jump_target(proxy)?;
 			let default_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
-			let jump_user = if user_explicit {
-				jump_user
-			} else {
-				&default_user
-			};
-			let jump = resolve_ssh_target(
-				jump_host,
-				jump_port,
-				jump_user,
-				user_explicit,
-				port_explicit,
-			)
-			.await;
+			let jump_user = if user_explicit { jump_user } else { &default_user };
+			let jump = resolve_ssh_target(jump_host, jump_port, jump_user, user_explicit, port_explicit).await;
 			if jump
 				.config
 				.proxy_jump
@@ -891,10 +845,7 @@ mod sftp {
 			// 1. SSH agent
 			#[cfg(unix)]
 			let (agent_result, agent_label) = match &host_cfg.identity_agent {
-				Some(sock) => (
-					AgentClient::connect_uds(sock).await,
-					format!("agent '{sock}'"),
-				),
+				Some(sock) => (AgentClient::connect_uds(sock).await, format!("agent '{sock}'")),
 				None => (AgentClient::connect_env().await, "ssh-agent".to_string()),
 			};
 			// Windows has no unix sockets (russh's connect_env is unix-only):
@@ -906,28 +857,19 @@ mod sftp {
 					.identity_agent
 					.clone()
 					.unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".to_string());
-				(
-					AgentClient::connect_named_pipe(&pipe).await,
-					format!("agent '{pipe}'"),
-				)
+				(AgentClient::connect_named_pipe(&pipe).await, format!("agent '{pipe}'"))
 			};
 
 			match agent_result {
 				Ok(mut agent) => match agent.request_identities().await {
 					Ok(identities) => {
-						tracing::debug!(
-							"ssh: {agent_label}: {} identities offered",
-							identities.len()
-						);
+						tracing::debug!("ssh: {agent_label}: {} identities offered", identities.len());
 						if identities.is_empty() {
 							reasons.push(format!("{agent_label} has no identities loaded"));
 						}
 						for identity in &identities {
 							let pub_key = identity.public_key().into_owned();
-							tracing::debug!(
-								"ssh: trying agent identity {} via {agent_label}",
-								pub_key.algorithm()
-							);
+							tracing::debug!("ssh: trying agent identity {} via {agent_label}", pub_key.algorithm());
 							match handle
 								.authenticate_publickey_with(user, pub_key, None, &mut agent)
 								.await
@@ -951,9 +893,7 @@ mod sftp {
 							));
 						}
 					}
-					Err(e) => {
-						reasons.push(format!("{agent_label}: failed to list identities: {e}"))
-					}
+					Err(e) => reasons.push(format!("{agent_label}: failed to list identities: {e}")),
 				},
 				Err(e) => reasons.push(format!("{agent_label} unavailable: {e}")),
 			}
@@ -1081,8 +1021,7 @@ mod sftp {
 	/// replacement characters back and silently corrupt the file.
 	pub async fn remote_read_to_string(source: &super::PathSource) -> Result<String> {
 		let bytes = remote_read(source).await?;
-		String::from_utf8(bytes)
-			.map_err(|_| anyhow!("{}: stream did not contain valid UTF-8", source.display()))
+		String::from_utf8(bytes).map_err(|_| anyhow!("{}: stream did not contain valid UTF-8", source.display()))
 	}
 
 	/// Write content to a remote file (creates or truncates).
@@ -1155,9 +1094,7 @@ mod sftp {
 	}
 
 	/// List a remote directory. Returns (name, metadata) for each entry, sorted by name.
-	pub async fn remote_list_dir(
-		source: &super::PathSource,
-	) -> Result<Vec<(String, RemoteMetadata)>> {
+	pub async fn remote_list_dir(source: &super::PathSource) -> Result<Vec<(String, RemoteMetadata)>> {
 		let path = source.sftp_path();
 		let sftp = remote_session(source).await?;
 		let read_dir = sftp
@@ -1193,9 +1130,9 @@ mod sftp {
 }
 
 pub use sftp::{
-	init_sftp_pool, remote_canonicalize, remote_create_dir_all, remote_exists, remote_list_dir,
-	remote_metadata, remote_read, remote_read_to_string, remote_remove_file, remote_write,
-	sftp_pool, RemoteMetadata, SftpPool, SshConfig,
+	init_sftp_pool, remote_canonicalize, remote_create_dir_all, remote_exists, remote_list_dir, remote_metadata,
+	remote_read, remote_read_to_string, remote_remove_file, remote_write, sftp_pool, RemoteMetadata, SftpPool,
+	SshConfig,
 };
 
 // ── Unified I/O dispatch layer ─────────────────────────────────────────

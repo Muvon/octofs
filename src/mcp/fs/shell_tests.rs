@@ -17,10 +17,7 @@ use super::*;
 #[tokio::test]
 async fn test_shell_misuse_always_rejected() {
 	// No modes: misuse is a hard error, nothing executes.
-	let call = crate::mcp::McpToolCall::test_call(
-		"shell",
-		serde_json::json!({ "command": "cat src/main.rs" }),
-	);
+	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat src/main.rs" }));
 	let err = execute_shell_command(&call, None)
 		.await
 		.expect_err("misuse must be rejected");
@@ -35,8 +32,7 @@ async fn test_quick_command_keeps_foreground_response() {
 		"printf stdout; printf stderr 1>&2"
 	};
 	let temp = tempfile::tempdir().expect("temp workdir");
-	let mut call =
-		crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+	let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 	call.workdir = temp.path().to_path_buf();
 	let outcome = execute_with_timeout(&call, Duration::from_secs(5), None)
 		.await
@@ -79,8 +75,7 @@ async fn test_foreground_timeout_promotes_same_command() {
 		"for i in 1 2; do echo tick-$i; sleep 1; done"
 	};
 	let temp = tempfile::tempdir().expect("temp workdir");
-	let mut call =
-		crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+	let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 	call.workdir = temp.path().to_path_buf();
 	let outcome = execute_with_timeout(&call, Duration::from_millis(100), None)
 		.await
@@ -146,8 +141,7 @@ async fn a_promoted_stashing_command_warns_that_changes_are_off_disk() {
 		("false && git stash; for i in 1 2; do sleep 1; done", true),
 		("for i in 1 2; do sleep 1; done", false),
 	] {
-		let mut call =
-			crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+		let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 		call.workdir = temp.path().to_path_buf();
 		let outcome = execute_with_timeout(&call, Duration::from_millis(100), None)
 			.await
@@ -164,8 +158,7 @@ async fn a_promoted_stashing_command_warns_that_changes_are_off_disk() {
 
 #[tokio::test]
 async fn test_rejects_remote_workdir() {
-	let mut call =
-		crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "echo hi" }));
+	let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "echo hi" }));
 	call.workdir = std::path::PathBuf::from("ssh://user@host:22/tmp");
 	let err = execute_shell_command(&call, None)
 		.await
@@ -178,10 +171,7 @@ async fn test_rejects_remote_workdir() {
 async fn output_too_large_to_deliver_fails_with_the_exit_code() {
 	// ~11 MB of distinct lines, so terminal-noise collapsing can't shrink it.
 	let temp = tempfile::tempdir().expect("temp workdir");
-	let mut call = crate::mcp::McpToolCall::test_call(
-		"shell",
-		serde_json::json!({ "command": "seq 1 1500000" }),
-	);
+	let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "seq 1 1500000" }));
 	call.workdir = temp.path().to_path_buf();
 	let err = execute_with_timeout(&call, Duration::from_secs(30), None)
 		.await
@@ -203,10 +193,7 @@ fn test_clean_terminal_noise() {
 	assert_eq!(clean_terminal_noise("\x1b[1;32mok\x1b[0m"), "ok");
 	assert_eq!(clean_terminal_noise("\x1b[2K\x1b[1Adone"), "done");
 	// OSC hyperlink wrapper stripped, visible text kept
-	assert_eq!(
-		clean_terminal_noise("\x1b]8;;http://x\x07link\x1b]8;;\x07"),
-		"link"
-	);
+	assert_eq!(clean_terminal_noise("\x1b]8;;http://x\x07link\x1b]8;;\x07"), "link");
 	// \r progress frames collapse to the final visible frame
 	assert_eq!(
 		clean_terminal_noise("Downloading 10%\rDownloading 55%\rDone.\n"),
@@ -220,10 +207,7 @@ fn test_clean_terminal_noise() {
 	// Invisible trailing padding and blank lines around output are dropped;
 	// leading spaces on the first content line survive (table alignment)
 	assert_eq!(clean_terminal_noise("Done.   \t\n\n\n"), "Done.");
-	assert_eq!(
-		clean_terminal_noise("\n\n  % Total\nbody"),
-		"  % Total\nbody"
-	);
+	assert_eq!(clean_terminal_noise("\n\n  % Total\nbody"), "  % Total\nbody");
 	// Runs of identical lines collapse to line + count; info is preserved
 	assert_eq!(
 		clean_terminal_noise("same\nsame\nsame\nsame\nnext"),
@@ -325,9 +309,7 @@ fn test_detect_shell_misuse() {
 	// A pipe after ssh is a local downstream transform, not the remote command
 	assert!(passes("ssh host 'dmesg' | grep oops"));
 	// One quote layer strips; a nested interpreter stays opaque, same as locally
-	assert!(passes(
-		"ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'"
-	));
+	assert!(passes("ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'"));
 
 	// Bare / chained sleep is blocked in every common shape
 	assert!(rejection("sleep 40").is_some());
@@ -373,8 +355,8 @@ fn test_detect_shell_misuse() {
 #[test]
 fn scratch_writes_outside_the_workdir_run_with_a_hint() {
 	// Scratch files outside the workdir are no tracked edit: they run with a hint
-	let scratch = hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js")
-		.expect("a /tmp heredoc runs");
+	let scratch =
+		hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js").expect("a /tmp heredoc runs");
 	assert!(scratch.contains("text_editor"), "{scratch}");
 	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
 }
@@ -405,8 +387,7 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 
 #[test]
 fn a_read_in_a_compound_is_rejected_by_name() {
-	let msg =
-		rejection("php -v && git log --oneline -3 && find . -name x").expect("find is blocked");
+	let msg = rejection("php -v && git log --oneline -3 && find . -name x").expect("find is blocked");
 	assert!(msg.contains("`find` is blocked"), "{msg}");
 }
 
@@ -415,9 +396,7 @@ fn a_read_only_awk_check_is_not_an_edit() {
 	// Observed six times across one benchmark arm: `awk 'length > 88 …' files`
 	// (a line-length check that writes nothing) rejected as "editing files",
 	// and the agent retrying variants of it.
-	assert!(passes(
-		"git diff; awk 'length > 88 {print FILENAME\": \"FNR}' src/a.py"
-	));
+	assert!(passes("git diff; awk 'length > 88 {print FILENAME\": \"FNR}' src/a.py"));
 	assert!(passes("sed -n '1,5p' file.txt | wc -l"));
 }
 
@@ -445,8 +424,7 @@ async fn a_scratch_heredoc_and_a_piped_read_run() {
 		"cat > {f} <<'EOF'\nhello\nEOF\nsort {f} | grep hello",
 		f = file.display()
 	);
-	let call =
-		crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 	let out = execute_shell_command(&call, None).await.expect("runs");
 	assert!(out.text.contains("hello"), "{}", out.text);
 }
@@ -477,10 +455,7 @@ fn ssh_remote_command_extracts_and_unquotes_the_body() {
 		Some("grep x /var/log")
 	);
 	// A local pipe cuts the remote command at the pipe.
-	assert_eq!(
-		ssh_remote_command("ssh host 'dmesg' | tail -1"),
-		Some("dmesg")
-	);
+	assert_eq!(ssh_remote_command("ssh host 'dmesg' | tail -1"), Some("dmesg"));
 	// No remote command (interactive session / port forward).
 	assert_eq!(ssh_remote_command("ssh -N -L 8080:h:80 host"), None);
 	assert_eq!(ssh_remote_command("ssh host"), None);
@@ -510,11 +485,7 @@ fn stashes_changes_ignores_read_only_stash_subcommands() {
 	] {
 		assert!(!stashes_changes(cmd), "{cmd} must not count as stashing");
 	}
-	for cmd in [
-		"git stash push -m wip",
-		"git stash save",
-		"git stash --keep-index",
-	] {
+	for cmd in ["git stash push -m wip", "git stash save", "git stash --keep-index"] {
 		assert!(stashes_changes(cmd), "{cmd} must count as stashing");
 	}
 }

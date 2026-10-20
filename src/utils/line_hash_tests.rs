@@ -29,9 +29,7 @@ fn test_line_hash_deterministic_and_content_only() {
 fn test_line_hash_format() {
 	let h = line_hash("test");
 	assert_eq!(h.len(), 2);
-	assert!(h
-		.chars()
-		.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+	assert!(h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
 }
 
 #[test]
@@ -55,10 +53,7 @@ fn test_verify_line_id_stale_shows_fresh_context() {
 	let err = verify_line_id(2, &old_hash, &lines).unwrap_err();
 	assert!(err.contains("does not match"), "got: {err}");
 	assert!(err.contains("CHANGED"), "fresh content shown: {err}");
-	assert!(
-		err.contains(&line_id_at(&lines, 2)),
-		"fresh id shown: {err}"
-	);
+	assert!(err.contains(&line_id_at(&lines, 2)), "fresh id shown: {err}");
 	assert!(err.contains("view"), "suggests ranged view: {err}");
 }
 
@@ -68,10 +63,7 @@ fn test_verify_line_id_reports_moved_content() {
 	let lines = vec!["first", "inserted", "also inserted", "target"];
 	let hash = line_hash("target");
 	let err = verify_line_id(2, &hash, &lines).unwrap_err();
-	assert!(
-		err.contains(&format!("4:{hash}")),
-		"relocation candidate shown: {err}"
-	);
+	assert!(err.contains(&format!("4:{hash}")), "relocation candidate shown: {err}");
 }
 
 #[test]

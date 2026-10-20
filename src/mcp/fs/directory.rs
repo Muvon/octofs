@@ -15,9 +15,7 @@
 // Directory operations module — file listing and content search using ignore + pure-Rust matching.
 
 use super::super::McpToolCall;
-use super::remote::{
-	io_list_dir, io_read, io_read_to_string, resolve_path_source, IoMetadata, PathSource,
-};
+use super::remote::{io_list_dir, io_read, io_read_to_string, resolve_path_source, IoMetadata, PathSource};
 use super::search::{self, Matcher};
 use crate::utils::line_hash::line_id_at;
 use anyhow::{bail, Result};
@@ -83,9 +81,7 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 	};
 
 	if let Some(mt) = mtime {
-		let mut cache = annotation_cache()
-			.lock()
-			.expect("annotation cache poisoned");
+		let mut cache = annotation_cache().lock().expect("annotation cache poisoned");
 		// ponytail: crude bound — clear and rebuild lazily instead of tracking LRU.
 		if cache.len() >= ANNOTATION_CACHE_MAX {
 			cache.clear();
@@ -110,8 +106,7 @@ fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
 	}
 	if pattern.chars().any(char::is_control) {
 		return Err(
-			"Invalid `pattern`: control characters are not allowed. Pass one single-line glob string."
-				.to_string(),
+			"Invalid `pattern`: control characters are not allowed. Pass one single-line glob string.".to_string(),
 		);
 	}
 
@@ -168,10 +163,7 @@ fn split_pattern_alternatives(pattern: &str) -> Result<Vec<&str>, String> {
 			));
 		}
 		if *glob == "!" {
-			return Err(
-				"Invalid `pattern` glob \"!\": an exclusion must include a glob after `!`."
-					.to_string(),
-			);
+			return Err("Invalid `pattern` glob \"!\": an exclusion must include a glob after `!`.".to_string());
 		}
 	}
 	Ok(alternatives)
@@ -427,11 +419,7 @@ async fn collect_remote_files(
 		let ignore_reads: Vec<_> = listed
 			.iter()
 			.enumerate()
-			.filter(|(_, (_, entries))| {
-				entries
-					.iter()
-					.any(|(name, meta)| name == ".gitignore" && meta.is_file)
-			})
+			.filter(|(_, (_, entries))| entries.iter().any(|(name, meta)| name == ".gitignore" && meta.is_file))
 			.map(|(i, (dir, _))| {
 				let gitignore = remote_child(&dir.source, ".gitignore");
 				let rel = dir.rel.clone();
@@ -484,12 +472,7 @@ async fn collect_remote_files(
 
 // Render content-search hits for one remote file, or None when it is binary,
 // unreadable or has no match.
-fn render_content_matches(
-	rel_path: &str,
-	bytes: &[u8],
-	matcher: &Matcher,
-	context_lines: usize,
-) -> Option<String> {
+fn render_content_matches(rel_path: &str, bytes: &[u8], matcher: &Matcher, context_lines: usize) -> Option<String> {
 	let sample_size = bytes.len().min(512);
 	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
 	if null_count > sample_size / 10 {
@@ -508,11 +491,7 @@ fn render_content_matches(
 		let mut rendered = Vec::new();
 		for &n in &block.line_numbers {
 			if n <= file_lines.len() {
-				rendered.push(format!(
-					"{}|{}",
-					line_id_at(&file_lines, n),
-					file_lines[n - 1]
-				));
+				rendered.push(format!("{}|{}", line_id_at(&file_lines, n), file_lines[n - 1]));
 			}
 		}
 		rendered_blocks.push(rendered.join("\n"));
@@ -581,9 +560,7 @@ async fn list_directory_remote(
 				let matcher = matcher.clone();
 				async move {
 					let hit = match io_read(&file_source).await {
-						Ok(bytes) => {
-							render_content_matches(&rel_path, &bytes, &matcher, context_lines)
-						}
+						Ok(bytes) => render_content_matches(&rel_path, &bytes, &matcher, context_lines),
 						Err(_) => None,
 					};
 					(i, hit)
@@ -597,11 +574,7 @@ async fn list_directory_remote(
 			.collect();
 		hits.sort_by_key(|(i, _)| *i);
 
-		Ok(hits
-			.into_iter()
-			.map(|(_, h)| h)
-			.collect::<Vec<_>>()
-			.join("\n\n"))
+		Ok(hits.into_iter().map(|(_, h)| h).collect::<Vec<_>>().join("\n\n"))
 	} else {
 		let mut lines: Vec<String> = Vec::new();
 		for (rel_path, meta) in &files {
@@ -633,22 +606,14 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.get("include_hidden")
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
-	let context_lines = call
-		.parameters
-		.get("context")
-		.and_then(|v| v.as_i64())
-		.unwrap_or(0) as usize;
+	let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 
 	let working_dir = call.workdir.clone();
 
 	// Remote paths (ssh://, sftp://) dispatch to the SFTP listing path.
 	let source = resolve_path_source(directory, &working_dir);
 	if source.is_remote() {
-		let regex_flag = call
-			.parameters
-			.get("regex")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false);
+		let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
 		// A bare listing stops at the root; pattern/content searches walk the
 		// whole tree like rg, since a depth cap would silently drop matches.
 		let is_search = pattern.is_some() || content.as_ref().is_some_and(|c| !c.trim().is_empty());
@@ -681,11 +646,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 	if has_content {
 		// Content search mode
 		let content_pattern = content.unwrap();
-		let regex_flag = call
-			.parameters
-			.get("regex")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false);
+		let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
 
 		// Compile matcher up front so invalid regex fails fast with a clear error.
 		let matcher = Matcher::new(&content_pattern, regex_flag)?;
@@ -748,11 +709,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 						let mut rendered = Vec::new();
 						for &n in &block.line_numbers {
 							if n <= file_lines.len() {
-								rendered.push(format!(
-									"{}|{}",
-									line_id_at(&file_lines, n),
-									file_lines[n - 1]
-								));
+								rendered.push(format!("{}|{}", line_id_at(&file_lines, n), file_lines[n - 1]));
 							}
 						}
 						rendered_blocks.push(rendered.join("\n"));
@@ -803,12 +760,10 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 						Ok(meta) if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES => {
 							format!("{}\t(large: {}MB)", rel_path, meta.len() / (1024 * 1024))
 						}
-						Ok(meta) => {
-							match annotation_suffix(&full_path, meta.modified().ok(), meta.len()) {
-								Some(suffix) => format!("{}\t{}", rel_path, suffix),
-								None => rel_path.clone(),
-							}
-						}
+						Ok(meta) => match annotation_suffix(&full_path, meta.modified().ok(), meta.len()) {
+							Some(suffix) => format!("{}\t{}", rel_path, suffix),
+							None => rel_path.clone(),
+						},
 						Err(_) => rel_path.clone(),
 					};
 					(i, line)

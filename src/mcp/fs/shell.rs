@@ -171,11 +171,11 @@ static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat/te
 // printing a prompt and hitting EOF mid-read (or invoking a pager that
 // misbehaves without a TTY).
 pub(super) static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
-	("GIT_TERMINAL_PROMPT", "0"), // git: fail instead of prompting for credentials
+	("GIT_TERMINAL_PROMPT", "0"),          // git: fail instead of prompting for credentials
 	("DEBIAN_FRONTEND", "noninteractive"), // apt/dpkg: never prompt
-	("PAGER", "cat"),             // don't invoke less (hangs / garbled without TTY)
-	("GIT_PAGER", "cat"),         // same for git log/diff/show
-	("NO_COLOR", "1"),            // suppress ANSI colors at the source (no-color.org)
+	("PAGER", "cat"),                      // don't invoke less (hangs / garbled without TTY)
+	("GIT_PAGER", "cat"),                  // same for git log/diff/show
+	("NO_COLOR", "1"),                     // suppress ANSI colors at the source (no-color.org)
 ];
 
 // Matches terminal escape sequences: CSI (colors, cursor movement), OSC (titles,
@@ -185,9 +185,8 @@ pub(super) static NONINTERACTIVE_ENVS: &[(&str, &str)] = &[
 static ANSI_ESCAPES: OnceLock<regex::Regex> = OnceLock::new();
 
 fn ansi_re() -> &'static regex::Regex {
-	ANSI_ESCAPES.get_or_init(|| {
-		regex::Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)").unwrap()
-	})
+	ANSI_ESCAPES
+		.get_or_init(|| regex::Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)").unwrap())
 }
 
 // Compact captured output to exactly what a human would see on the terminal after
@@ -234,11 +233,7 @@ pub(super) fn clean_terminal_noise(raw: &str) -> String {
 		lines.push(out);
 	}
 	flush_repeats(&mut lines, &mut repeats);
-	lines
-		.join("\n")
-		.trim_start_matches('\n')
-		.trim_end()
-		.to_string()
+	lines.join("\n").trim_start_matches('\n').trim_end().to_string()
 }
 
 // Emit the pending duplicate-run count from clean_terminal_noise.
@@ -331,13 +326,14 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 		if matches!(prog, "echo" | "printf" | "cat") {
 			let targets = redirect_targets(segment);
 			if !targets.is_empty() {
-				let untracked =
-					workdir.is_some_and(|dir| targets.iter().all(|t| outside_workdir(t, dir)));
+				let untracked = workdir.is_some_and(|dir| targets.iter().all(|t| outside_workdir(t, dir)));
 				if !untracked {
 					return Some(Misuse::Reject(blocked_message(prog, REDIRECT_WRITE_HINT)));
 				}
 				hint.get_or_insert_with(|| {
-					format!("`{prog}` wrote a file via redirect; text_editor create writes content without shell quoting.")
+					format!(
+						"`{prog}` wrote a file via redirect; text_editor create writes content without shell quoting."
+					)
 				});
 				continue;
 			}
@@ -436,9 +432,7 @@ fn redirect_targets(segment: &str) -> Vec<&str> {
 				}
 				if j < bytes.len() && bytes[j] != b'&' {
 					let end = segment[j..]
-						.find(|c: char| {
-							c.is_whitespace() || matches!(c, '|' | '<' | '>' | '&' | ';')
-						})
+						.find(|c: char| c.is_whitespace() || matches!(c, '|' | '<' | '>' | '&' | ';'))
 						.map_or(bytes.len(), |k| j + k);
 					targets.push(&segment[j..end]);
 					i = end;
@@ -562,9 +556,7 @@ fn ssh_remote_command(segment: &str) -> Option<&str> {
 		};
 		// A cluster of plain option letters ending in an arg-taker consumes
 		// the next token; glued args (`-p22`, `-oKey=val`) do not.
-		if opt.bytes().all(|c| c.is_ascii_alphabetic())
-			&& opt.bytes().last().is_some_and(|c| ARG_OPTS.contains(&c))
-		{
+		if opt.bytes().all(|c| c.is_ascii_alphabetic()) && opt.bytes().last().is_some_and(|c| ARG_OPTS.contains(&c)) {
 			idx += 1;
 		}
 	}
@@ -640,11 +632,7 @@ fn shell_token_spans(s: &str) -> Vec<(usize, usize)> {
 /// the server constructs one that captures the rmcp peer.
 pub type BackgroundNotify = Box<dyn FnOnce(String) + Send>;
 
-pub(super) fn oversized_output_message(
-	status_code: i32,
-	output_bytes: usize,
-	stored_output: Option<&Path>,
-) -> String {
+pub(super) fn oversized_output_message(status_code: i32, output_bytes: usize, stored_output: Option<&Path>) -> String {
 	if let Some(path) = stored_output {
 		return format!(
 			"Command exited with code {status_code}, but its digest is {}, too large to return in one tool result (limit {}). Full output: {}. Use `view` to read the parts you need.",
@@ -832,8 +820,7 @@ async fn execute_with_timeout(
 
 			// Label stderr by stream, not verdict: warnings and progress land there
 			// on success too, and the exit code below is the only failure signal.
-			let (final_output, stored_output) =
-				super::background::process_output(&stdout, &stderr, &job).await;
+			let (final_output, stored_output) = super::background::process_output(&stdout, &stderr, &job).await;
 
 			// Add detailed execution results including status code
 			let success = status.success();

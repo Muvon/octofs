@@ -16,9 +16,7 @@
 
 use super::super::McpToolCall;
 use super::core::save_file_history;
-use super::remote::{
-	io_exists, io_metadata, io_read_to_string, io_remove_file, io_write, PathSource,
-};
+use super::remote::{io_exists, io_metadata, io_read_to_string, io_remove_file, io_write, PathSource};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -271,16 +269,8 @@ fn line_similarity(a: &str, b: &str) -> f64 {
 fn lcs_length(a: &[char], b: &[char]) -> usize {
 	// Cap to avoid quadratic blowup on very large inputs
 	const MAX_CHARS: usize = 2000;
-	let a = if a.len() > MAX_CHARS {
-		&a[..MAX_CHARS]
-	} else {
-		a
-	};
-	let b = if b.len() > MAX_CHARS {
-		&b[..MAX_CHARS]
-	} else {
-		b
-	};
+	let a = if a.len() > MAX_CHARS { &a[..MAX_CHARS] } else { a };
+	let b = if b.len() > MAX_CHARS { &b[..MAX_CHARS] } else { b };
 
 	let mut prev = vec![0usize; b.len() + 1];
 	let mut curr = vec![0usize; b.len() + 1];
@@ -436,11 +426,7 @@ fn build_str_replace_diff(
 		push_added_lines(&mut diff, start + 1, added);
 	} else {
 		for (i, line) in added.iter().enumerate() {
-			diff.push(format!(
-				"+{}|{}",
-				line_id_at(new_lines, start + 1 + i),
-				line
-			));
+			diff.push(format!("+{}|{}", line_id_at(new_lines, start + 1 + i), line));
 		}
 	}
 
@@ -508,38 +494,24 @@ pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
 			let original_perms = match tokio::fs::metadata(path).await {
 				Ok(meta) => Some(meta.permissions()),
 				Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-				Err(e) => {
-					return Err(anyhow!(
-						"Failed to read metadata for '{}': {}",
-						path.display(),
-						e
-					))
-				}
+				Err(e) => return Err(anyhow!("Failed to read metadata for '{}': {}", path.display(), e)),
 			};
 
-			tokio::fs::write(&tmp_path, content).await.map_err(|e| {
-				anyhow!("Failed to write temp file for '{}': {}", path.display(), e)
-			})?;
+			tokio::fs::write(&tmp_path, content)
+				.await
+				.map_err(|e| anyhow!("Failed to write temp file for '{}': {}", path.display(), e))?;
 
 			if let Some(perms) = original_perms {
 				if let Err(e) = tokio::fs::set_permissions(&tmp_path, perms).await {
 					let _ = tokio::fs::remove_file(&tmp_path).await;
-					return Err(anyhow!(
-						"Failed to preserve permissions on '{}': {}",
-						path.display(),
-						e
-					));
+					return Err(anyhow!("Failed to preserve permissions on '{}': {}", path.display(), e));
 				}
 			}
 
 			if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
 				// Clean up temp file on rename failure
 				let _ = tokio::fs::remove_file(&tmp_path).await;
-				return Err(anyhow!(
-					"Failed to atomically replace '{}': {}",
-					path.display(),
-					e
-				));
+				return Err(anyhow!("Failed to atomically replace '{}': {}", path.display(), e));
 			}
 			Ok(())
 		}
@@ -599,11 +571,7 @@ impl EditableContent {
 
 		Self {
 			lines,
-			dominant_ending: if crlf_count > lf_count {
-				CRLF_ENDING
-			} else {
-				LF_ENDING
-			},
+			dominant_ending: if crlf_count > lf_count { CRLF_ENDING } else { LF_ENDING },
 			had_trailing_newline: raw.ends_with('\n'),
 		}
 	}
@@ -662,18 +630,9 @@ impl EditableContent {
 		Ok(())
 	}
 
-	fn replace_normalized_range(
-		&mut self,
-		start: usize,
-		end: usize,
-		replacement: &str,
-	) -> Result<()> {
+	fn replace_normalized_range(&mut self, start: usize, end: usize, replacement: &str) -> Result<()> {
 		let content = self.normalized();
-		if start > end
-			|| end > content.len()
-			|| !content.is_char_boundary(start)
-			|| !content.is_char_boundary(end)
-		{
+		if start > end || end > content.len() || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
 			bail!("Invalid internal replacement range {start}..{end}");
 		}
 
@@ -697,8 +656,7 @@ impl EditableContent {
 			let line_len = line.text.len() + usize::from(!line.ending.is_empty());
 			let next_offset = offset + line_len;
 			if start_line.is_none()
-				&& (start < next_offset
-					|| (start == content.len() && index + 1 == self.lines.len()))
+				&& (start < next_offset || (start == content.len() && index + 1 == self.lines.len()))
 			{
 				start_line = Some(index);
 				region_start = offset;
@@ -790,10 +748,7 @@ fn lines_with_ending(content: &str, ending: &'static str) -> Vec<EditableLine> {
 // Operation text is line content, never a source of file-format bytes. In particular,
 // `str::lines` does not remove a CR from a final segment without a following newline.
 fn incoming_content_lines(content: &str) -> Vec<&str> {
-	content
-		.lines()
-		.map(|line| line.trim_end_matches('\r'))
-		.collect()
+	content.lines().map(|line| line.trim_end_matches('\r')).collect()
 }
 
 fn sanitize_incoming_content(content: &str) -> String {
@@ -808,9 +763,7 @@ fn sanitize_incoming_content(content: &str) -> String {
 /// backslash + letter) as the real characters. Recovery heuristic only — applied
 /// when the raw form found no match and this form matches uniquely.
 fn unescape_literals(s: &str) -> String {
-	s.replace("\\n", "\n")
-		.replace("\\t", "\t")
-		.replace("\\r", "\r")
+	s.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
 }
 
 /// Apply a unique exact replacement and return the annotated diff.
@@ -876,8 +829,7 @@ async fn apply_replace_all(
 		.enumerate()
 		.map(|(i, &pos)| {
 			let new_pos = (pos as i64 + delta * i as i64).max(0) as usize;
-			let line = byte_offset_to_line(&new_content, new_pos.min(new_content.len()))
-				.min(new_lines.len().max(1));
+			let line = byte_offset_to_line(&new_content, new_pos.min(new_content.len())).min(new_lines.len().max(1));
 			if new_lines.is_empty() {
 				format!("line {line}")
 			} else {
@@ -985,17 +937,12 @@ pub async fn str_replace_spec(
 			let un_occurrences = content.matches(&un_old).count();
 			let un_new = sanitize_incoming_content(&unescape_literals(new_text));
 			if replace_all && un_occurrences >= 1 {
-				crate::mcp::request_ctx::push_hint(
-					"Literal \\n/\\t in old_text were treated as real newlines/tabs.",
-				);
+				crate::mcp::request_ctx::push_hint("Literal \\n/\\t in old_text were treated as real newlines/tabs.");
 				return apply_replace_all(source, &original, &content, &un_old, &un_new).await;
 			}
 			if un_occurrences == 1 {
-				crate::mcp::request_ctx::push_hint(
-					"Literal \\n/\\t in old_text were treated as real newlines/tabs.",
-				);
-				return apply_unique_replacement(source, &original, &content, &un_old, &un_new)
-					.await;
+				crate::mcp::request_ctx::push_hint("Literal \\n/\\t in old_text were treated as real newlines/tabs.");
+				return apply_unique_replacement(source, &original, &content, &un_old, &un_new).await;
 			}
 		}
 	}
@@ -1036,19 +983,13 @@ pub async fn str_replace_spec(
 
 			save_file_history(source).await?;
 			let mut edited = original.clone();
-			edited.replace_normalized_range(
-				match_offset,
-				match_offset + actual_old.len(),
-				&adjusted_new,
-			)?;
+			edited.replace_normalized_range(match_offset, match_offset + actual_old.len(), &adjusted_new)?;
 			edited.preserve_trailing_newline();
 			let new_content = edited.normalized();
 			atomic_write(source, &edited.rendered()).await?;
 			super::delta::note_write(source, &content, &new_content);
 
-			crate::mcp::request_ctx::push_hint(
-				"Matched with whitespace normalized; indentation adjusted to the file.",
-			);
+			crate::mcp::request_ctx::push_hint("Matched with whitespace normalized; indentation adjusted to the file.");
 
 			let new_lines: Vec<&str> = new_content.lines().collect();
 			let diff = build_str_replace_diff(
@@ -1088,11 +1029,7 @@ pub async fn str_replace_spec(
 			));
 			// Show first 3 lines of the candidate as preview
 			for (j, line) in window.lines().take(3).enumerate() {
-				msg.push_str(&format!(
-					"     {}|{}\n",
-					line_id_at(&diag_lines, line_num + j),
-					line
-				));
+				msg.push_str(&format!("     {}|{}\n", line_id_at(&diag_lines, line_num + j), line));
 			}
 			if old_line_count > 3 {
 				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
@@ -1227,8 +1164,7 @@ fn detect_conflicts(operations: &[BatchOperation], file_lines: &[&str]) -> Resul
 						));
 					}
 				}
-				(OperationType::Insert, OperationType::Replace)
-				| (OperationType::Replace, OperationType::Insert) => {
+				(OperationType::Insert, OperationType::Replace) | (OperationType::Replace, OperationType::Insert) => {
 					let (ins, rep) = if op1.operation_type == OperationType::Insert {
 						(op1, op2)
 					} else {
@@ -1272,10 +1208,7 @@ fn insert_anchor(line_range: &LineRange) -> usize {
 // applied in reverse order (highest start first) so earlier replaces don't shift
 // later ones. After all replaces, we compute an offset map so inserts can find
 // their correct position in the (now modified) line array.
-async fn apply_batch_operations(
-	original: &EditableContent,
-	operations: &[BatchOperation],
-) -> Result<EditableContent> {
+async fn apply_batch_operations(original: &EditableContent, operations: &[BatchOperation]) -> Result<EditableContent> {
 	let mut lines = original.lines.clone();
 	let original_len = lines.len();
 
@@ -1508,12 +1441,7 @@ fn push_added_lines(diff: &mut Vec<String>, first_1idx: usize, content_lines: &[
 		return;
 	}
 	diff.push(format!("+{}|{}", id(0), content_lines[0]));
-	diff.push(format!(
-		"+{}..{} ({} lines as sent)",
-		id(1),
-		id(n - 2),
-		n - 2
-	));
+	diff.push(format!("+{}..{} ({} lines as sent)", id(1), id(n - 2), n - 2));
 	diff.push(format!("+{}|{}", id(n - 1), content_lines[n - 1]));
 }
 
@@ -1657,8 +1585,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let mut resolve_failures: Vec<String> = Vec::new();
 
 	for unresolved_op in unresolved_operations {
-		match resolve_unresolved_line_range(&unresolved_op.line_range, total_lines, &original_lines)
-		{
+		match resolve_unresolved_line_range(&unresolved_op.line_range, total_lines, &original_lines) {
 			Ok(resolved_range) => {
 				batch_operations.push(BatchOperation {
 					operation_type: unresolved_op.operation_type,
@@ -1708,13 +1635,9 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Range(s, e) => (s, e),
 					LineRange::Single(line) => (line, line),
 				};
-				if let Err(e) = check_replace_duplicates(
-					&content_lines,
-					&original_lines,
-					start,
-					end,
-					op.operation_index,
-				) {
+				if let Err(e) =
+					check_replace_duplicates(&content_lines, &original_lines, start, end, op.operation_index)
+				{
 					bail!("{}", e);
 				}
 			}
@@ -1741,8 +1664,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					let available = original_lines.len().saturating_sub(insert_after);
 					let check_len = content_lines.len().min(available);
 					if check_len >= 2
-						&& content_lines[..check_len]
-							== original_lines[insert_after..insert_after + check_len]
+						&& content_lines[..check_len] == original_lines[insert_after..insert_after + check_len]
 					{
 						bail!(
 							"Duplicate block detected in operation {}: the {} lines inserted after {} already exist at {}-{}.",
@@ -1794,12 +1716,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let mut offset: i64 = 0;
 
 	// 1-indexed position in the final file = original position + offset of prior ops.
-	let shift =
-		|orig_1idx: usize, offset: i64| -> usize { (orig_1idx as i64 + offset).max(1) as usize };
+	let shift = |orig_1idx: usize, offset: i64| -> usize { (orig_1idx as i64 + offset).max(1) as usize };
 	// Render context line `new_i` from the final file, if in range.
 	let ctx_line = |new_i: usize| -> Option<String> {
-		(new_i >= 1 && new_i <= new_lines.len())
-			.then(|| format!("{}|{}", new_prefix(new_i), new_lines[new_i - 1]))
+		(new_i >= 1 && new_i <= new_lines.len()).then(|| format!("{}|{}", new_prefix(new_i), new_lines[new_i - 1]))
 	};
 
 	for op in &display_ops {
@@ -1824,11 +1744,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					diff.extend(ctx_line(new_i));
 				}
 				// Removed lines collapse to their ORIGINAL id range — the model saw them.
-				diff.push(super::delta::removed_marker(
-					&original_lines,
-					start - 1,
-					end - 1,
-				));
+				diff.push(super::delta::removed_marker(&original_lines, start - 1, end - 1));
 				// Added lines — at their FINAL positions, ids computed from the
 				// added content itself (always correct, no bounds concern).
 				push_added_lines(&mut diff, new_start, &content_lines);
@@ -1889,9 +1805,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		.map(|op| {
 			let added = incoming_content_lines(&op.content).len() as i64;
 			match (&op.operation_type, &op.line_range) {
-				(OperationType::Replace, LineRange::Range(s, e)) => {
-					(*e, added - (*e - *s + 1) as i64)
-				}
+				(OperationType::Replace, LineRange::Range(s, e)) => (*e, added - (*e - *s + 1) as i64),
 				(OperationType::Replace, LineRange::Single(l)) => (*l, added - 1),
 				(OperationType::Insert, LineRange::Single(after)) => (*after, added),
 				(OperationType::Insert, LineRange::Range(s, _)) => (*s, added),

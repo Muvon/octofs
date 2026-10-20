@@ -37,10 +37,7 @@ macro_rules! parsers {
 	};
 }
 
-parsers!(
-	cargo, pytest, go_test, vitest, jest, phpunit, rspec, pip, pnpm, go_mod, make, vite, webpack,
-	docker, tsc,
-);
+parsers!(cargo, pytest, go_test, vitest, jest, phpunit, rspec, pip, pnpm, go_mod, make, vite, webpack, docker, tsc,);
 
 pub(super) fn join_streams(stdout: &str, stderr: &str) -> String {
 	if stderr.is_empty() {
@@ -74,16 +71,11 @@ fn digest_with(stdout: &str, stderr: &str, spill: &Path, parsers: &[Parser]) -> 
 		};
 		// Indices make generation impossible. Strict ordering also rules out
 		// duplication and movement, including for repeated important lines.
-		if !valid_selection(&stdout, &selection.stdout)
-			|| !valid_selection(&stderr, &selection.stderr)
-		{
+		if !valid_selection(&stdout, &selection.stdout) || !valid_selection(&stderr, &selection.stderr) {
 			return None;
 		}
 		let omitted = stdout.len() + stderr.len() - selection.stdout.len() - selection.stderr.len();
-		let output = join_streams(
-			&render(&stdout, &selection.stdout),
-			&render(&stderr, &selection.stderr),
-		);
+		let output = join_streams(&render(&stdout, &selection.stdout), &render(&stderr, &selection.stderr));
 		if output.is_empty() {
 			return None;
 		}
@@ -105,11 +97,7 @@ fn lines(input: &str) -> Vec<&str> {
 }
 
 fn render(lines: &[&str], indices: &[usize]) -> String {
-	indices
-		.iter()
-		.map(|&i| lines[i])
-		.collect::<Vec<_>>()
-		.join("\n")
+	indices.iter().map(|&i| lines[i]).collect::<Vec<_>>().join("\n")
 }
 
 fn important(line: &str) -> bool {
@@ -184,9 +172,7 @@ fn valid_selection(lines: &[&str], indices: &[usize]) -> bool {
 			}
 			required[i..end].fill(true);
 		}
-		if line.trim() == "failures:"
-			|| (line.starts_with("---- ") && line.ends_with(" stdout ----"))
-		{
+		if line.trim() == "failures:" || (line.starts_with("---- ") && line.ends_with(" stdout ----")) {
 			let end = lines[i + 1..]
 				.iter()
 				.position(|line| line.starts_with("test result:"))
@@ -194,10 +180,7 @@ fn valid_selection(lines: &[&str], indices: &[usize]) -> bool {
 			required[i..end].fill(true);
 		}
 	}
-	required
-		.iter()
-		.zip(kept)
-		.all(|(&required, kept)| !required || kept)
+	required.iter().zip(kept).all(|(&required, kept)| !required || kept)
 }
 
 #[cfg(test)]

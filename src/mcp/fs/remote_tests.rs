@@ -38,10 +38,7 @@ Host dev
 	// OpenSSH uses the first value obtained, so Host * wins here.
 	assert_eq!(config.port, Some(2200));
 	assert_eq!(config.proxy_jump.as_deref(), Some("jump"));
-	assert_eq!(
-		config.identity_agent.as_deref(),
-		Some(expected_agent.as_str())
-	);
+	assert_eq!(config.identity_agent.as_deref(), Some(expected_agent.as_str()));
 	assert_eq!(config.identity_files, vec![expected_identity]);
 }
 
@@ -62,10 +59,7 @@ fn explicit_url_user_and_port_override_ssh_config() {
 
 #[test]
 fn parses_proxy_jump_forms() {
-	assert_eq!(
-		parse_jump_target("jump").unwrap(),
-		("jump", 22, "", false, false)
-	);
+	assert_eq!(parse_jump_target("jump").unwrap(), ("jump", 22, "", false, false));
 	assert_eq!(
 		parse_jump_target("user@jump:2222").unwrap(),
 		("jump", 2222, "user", true, true)
@@ -96,11 +90,7 @@ fn test_ssh_full_url() {
 	let result = parse_path_source("ssh://user@host:2222/path/to/file.txt");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "host");
 			assert_eq!(port, 2222);
@@ -116,11 +106,7 @@ fn test_sftp_scheme() {
 	let result = parse_path_source("sftp://admin@example.com/var/log/syslog");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "example.com");
 			assert_eq!(port, 22);
@@ -136,11 +122,7 @@ fn test_ssh_no_port() {
 	let result = parse_path_source("ssh://user@host/path");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "host");
 			assert_eq!(port, 22);
@@ -156,11 +138,7 @@ fn test_ssh_no_user() {
 	let result = parse_path_source("ssh://host:2222/path");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "host");
 			assert_eq!(port, 2222);
@@ -177,11 +155,7 @@ fn test_ssh_no_path() {
 	let result = parse_path_source("ssh://user@host:2222");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "host");
 			assert_eq!(port, 2222);
@@ -204,10 +178,7 @@ fn test_sftp_path_home_relative() {
 	assert_eq!(sftp("ssh://dev/etc/hosts"), "/etc/hosts");
 	assert_eq!(sftp("ssh://dev/~box/x"), "/~box/x");
 	let workdir = PathBuf::from("ssh://dev");
-	assert_eq!(
-		resolve_path_source("src/main.rs", &workdir).sftp_path(),
-		"src/main.rs"
-	);
+	assert_eq!(resolve_path_source("src/main.rs", &workdir).sftp_path(), "src/main.rs");
 }
 
 #[test]
@@ -215,11 +186,7 @@ fn test_ssh_ipv6_with_port() {
 	let result = parse_path_source("ssh://user@[::1]:2222/path");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "::1");
 			assert_eq!(port, 2222);
@@ -235,11 +202,7 @@ fn test_ssh_ipv6_no_port() {
 	let result = parse_path_source("ssh://user@[::1]/path");
 	match result {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "::1");
 			assert_eq!(port, 22);
@@ -252,14 +215,8 @@ fn test_ssh_ipv6_no_port() {
 
 #[test]
 fn test_remote_display_preserves_explicit_authority_parts() {
-	assert_eq!(
-		parse_path_source("ssh://dev/path").display(),
-		"ssh://dev/path"
-	);
-	assert_eq!(
-		parse_path_source("ssh://box@dev/path").display(),
-		"ssh://box@dev/path"
-	);
+	assert_eq!(parse_path_source("ssh://dev/path").display(), "ssh://dev/path");
+	assert_eq!(parse_path_source("ssh://box@dev/path").display(), "ssh://box@dev/path");
 	assert_eq!(
 		parse_path_source("ssh://box@dev:2222/path").display(),
 		"ssh://box@dev:2222/path"
@@ -294,11 +251,7 @@ fn test_resolve_relative_under_remote_workdir() {
 	let workdir = PathBuf::from("ssh://user@host:2222/root");
 	match resolve_path_source("src/main.rs", &workdir) {
 		PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		} => {
 			assert_eq!(host, "host");
 			assert_eq!(port, 2222);
@@ -334,11 +287,7 @@ fn test_parent_local_and_remote() {
 	let remote = parse_path_source("ssh://user@host:2222/dir/file.txt");
 	match remote.parent() {
 		Some(PathSource::Remote {
-			host,
-			port,
-			user,
-			path,
-			..
+			host, port, user, path, ..
 		}) => {
 			assert_eq!(host, "host");
 			assert_eq!(port, 2222);
@@ -370,10 +319,7 @@ fn jump_target_rejects_malformed_hosts_and_ports() {
 	assert!(parse_jump_target("jump:notaport").is_err());
 	assert!(parse_jump_target("user@[2001:db8::1]:nope").is_err());
 	// Whitespace is trimmed before parsing.
-	assert_eq!(
-		parse_jump_target("  jump  ").unwrap(),
-		("jump", 22, "", false, false)
-	);
+	assert_eq!(parse_jump_target("  jump  ").unwrap(), ("jump", 22, "", false, false));
 }
 
 #[test]
@@ -387,16 +333,11 @@ Host other
 "#;
 	let home = std::path::Path::new("/home/me");
 	assert_eq!(
-		parse_ssh_host_config(text, "foo.example.com", home)
-			.user
-			.as_deref(),
+		parse_ssh_host_config(text, "foo.example.com", home).user.as_deref(),
 		Some("star")
 	);
 	// A negated pattern excludes even a host another pattern matches.
-	assert_eq!(
-		parse_ssh_host_config(text, "bad.example.com", home).user,
-		None
-	);
+	assert_eq!(parse_ssh_host_config(text, "bad.example.com", home).user, None);
 	// `Match` blocks stop option application until the next Host line.
 	let text = "Match all\n  User matched\nHost other\n  User other\n";
 	assert_eq!(parse_ssh_host_config(text, "anyhost", home).user, None);
@@ -406,9 +347,7 @@ Host other
 	// ProxyCommand is recorded for the transport check.
 	let text = "Host via\n  ProxyCommand nc %h %p\n";
 	assert_eq!(
-		parse_ssh_host_config(text, "via", home)
-			.proxy_command
-			.as_deref(),
+		parse_ssh_host_config(text, "via", home).proxy_command.as_deref(),
 		Some("nc %h %p")
 	);
 }

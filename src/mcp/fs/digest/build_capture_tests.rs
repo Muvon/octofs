@@ -69,17 +69,10 @@ pub(super) fn check(captures: &[Capture], parser: Parser) {
 				assert_eq!(body, golden, "{} {mode} selection", capture.name);
 			}
 			let first = digest_with(&stdout, &stderr, Path::new(SPILL), &[parser]);
-			assert_eq!(
-				first.is_some(),
-				digested,
-				"{} {mode} framework",
-				capture.name
-			);
+			assert_eq!(first.is_some(), digested, "{} {mode} framework", capture.name);
 			if let Some(output) = &first {
 				let selection = parser(&stdout_lines, &stderr_lines).unwrap();
-				let omitted = stdout_lines.len() + stderr_lines.len()
-					- selection.stdout.len()
-					- selection.stderr.len();
+				let omitted = stdout_lines.len() + stderr_lines.len() - selection.stdout.len() - selection.stderr.len();
 				assert_eq!(
 					output,
 					&format!(
@@ -95,17 +88,10 @@ pub(super) fn check(captures: &[Capture], parser: Parser) {
 				first
 					.as_ref()
 					.map_or_else(|| join_streams(&stdout, &stderr).len(), String::len),
-				if first.is_none() {
-					" (pass-through)"
-				} else {
-					""
-				}
+				if first.is_none() { " (pass-through)" } else { "" }
 			);
 			for _ in 0..3 {
-				assert_eq!(
-					first,
-					digest_with(&stdout, &stderr, Path::new(SPILL), &[parser])
-				);
+				assert_eq!(first, digest_with(&stdout, &stderr, Path::new(SPILL), &[parser]));
 			}
 			if golden.is_some() {
 				let mut foreign = stdout.clone();

@@ -25,10 +25,7 @@ fn source(path: &std::path::Path) -> PathSource {
 #[tokio::test]
 async fn view_missing_file_is_an_error() {
 	let src = source(std::path::Path::new("/nonexistent/octofs/view.txt"));
-	let err = view_file_spec(&src, None, false)
-		.await
-		.unwrap_err()
-		.to_string();
+	let err = view_file_spec(&src, None, false).await.unwrap_err().to_string();
 	assert_eq!(err, "File not found");
 }
 
@@ -58,9 +55,7 @@ async fn view_oversized_file_is_refused_before_reading() {
 async fn view_ranged_read_renders_only_the_requested_lines() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	fs::write(file.path(), "one\ntwo\nthree\n").await.unwrap();
-	let out = view_file_spec(&source(file.path()), Some((2, 2)), false)
-		.await
-		.unwrap();
+	let out = view_file_spec(&source(file.path()), Some((2, 2)), false).await.unwrap();
 	assert!(out.contains("|two"));
 	assert!(!out.contains("|one"));
 	assert!(!out.contains("|three"));
@@ -122,9 +117,7 @@ async fn content_search_no_match_names_the_pattern() {
 #[tokio::test]
 async fn content_search_renders_matches_with_context_and_line_ids() {
 	let file = tempfile::NamedTempFile::new().unwrap();
-	fs::write(file.path(), "a\nb\nneedle\nc\nd\n")
-		.await
-		.unwrap();
+	fs::write(file.path(), "a\nb\nneedle\nc\nd\n").await.unwrap();
 	let out = view_file_with_content_search(&source(file.path()), "needle", 1, false)
 		.await
 		.unwrap();

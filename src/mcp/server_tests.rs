@@ -26,10 +26,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::model::{
-	CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams,
-	ClientCapabilities, ClientConfig, ContentBlock, DetailedTask, ErrorCode, GetTaskParams,
-	Implementation, InputResponses, ProtocolVersion, ReadResourceRequestParams,
-	SubscribeRequestParams, SubscriptionFilter, TaskPayload, TaskStatus, UpdateTaskParams,
+	CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams, ClientCapabilities,
+	ClientConfig, ContentBlock, DetailedTask, ErrorCode, GetTaskParams, Implementation, InputResponses,
+	ProtocolVersion, ReadResourceRequestParams, SubscribeRequestParams, SubscriptionFilter, TaskPayload, TaskStatus,
+	UpdateTaskParams,
 };
 use rmcp::service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, RunningService};
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
@@ -55,11 +55,8 @@ impl ClientHandler for RecordingClient {
 		} else {
 			ClientCapabilities::default()
 		};
-		ClientConfig::new(
-			capabilities,
-			Implementation::new("octofs-test-client", "0.0.0"),
-		)
-		.with_protocol_version(self.protocol_version.clone())
+		ClientConfig::new(capabilities, Implementation::new("octofs-test-client", "0.0.0"))
+			.with_protocol_version(self.protocol_version.clone())
 	}
 
 	async fn on_resource_updated(
@@ -76,10 +73,7 @@ impl ClientHandler for RecordingClient {
 		_context: NotificationContext<RoleClient>,
 	) {
 		if notification.method == "notifications/claude/channel" {
-			self.channel
-				.lock()
-				.await
-				.push(notification.params.unwrap_or_default());
+			self.channel.lock().await.push(notification.params.unwrap_or_default());
 		}
 	}
 }
@@ -150,12 +144,7 @@ async fn connect_legacy() -> (
 	tokio::task::JoinHandle<()>,
 	Arc<Mutex<Vec<String>>>,
 ) {
-	connect_with_lifecycle(
-		ProtocolVersion::V_2025_11_25,
-		ClientLifecycleMode::Initialize,
-		false,
-	)
-	.await
+	connect_with_lifecycle(ProtocolVersion::V_2025_11_25, ClientLifecycleMode::Initialize, false).await
 }
 
 async fn connect_with_tasks() -> (
@@ -228,12 +217,7 @@ async fn wait_for_job_exit(uri: &str) {
 async fn wait_for_unsolicited(unsolicited: &Arc<Mutex<Vec<String>>>, uri: &str) {
 	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
 	loop {
-		if unsolicited
-			.lock()
-			.await
-			.iter()
-			.any(|notified| notified == uri)
-		{
+		if unsolicited.lock().await.iter().any(|notified| notified == uri) {
 			return;
 		}
 		assert!(
@@ -251,11 +235,10 @@ async fn job_completion_is_delivered_on_the_listen_stream() {
 
 	let mut filter = SubscriptionFilter::new();
 	filter.resource_subscriptions = Some(vec![uri.clone()]);
-	let mut subscription =
-		tokio::time::timeout(Duration::from_secs(5), client.peer().listen(filter))
-			.await
-			.expect("listen establishes")
-			.expect("listen succeeds");
+	let mut subscription = tokio::time::timeout(Duration::from_secs(5), client.peer().listen(filter))
+		.await
+		.expect("listen establishes")
+		.expect("listen succeeds");
 	assert!(
 		subscription
 			.acknowledged()
@@ -301,11 +284,10 @@ async fn finished_job_is_replayed_to_a_late_listen_stream() {
 
 	let mut filter = SubscriptionFilter::new();
 	filter.resource_subscriptions = Some(vec![uri.clone()]);
-	let mut subscription =
-		tokio::time::timeout(Duration::from_secs(5), client.peer().listen(filter))
-			.await
-			.expect("late listen establishes")
-			.expect("late listen succeeds");
+	let mut subscription = tokio::time::timeout(Duration::from_secs(5), client.peer().listen(filter))
+		.await
+		.expect("late listen establishes")
+		.expect("late listen succeeds");
 	let notification = tokio::time::timeout(Duration::from_secs(5), subscription.next())
 		.await
 		.expect("finished job is replayed")
@@ -378,10 +360,7 @@ async fn job_completion_is_pushed_as_a_claude_channel_message_on_legacy_connecti
 async fn server_info_identifies_octofs_not_rmcp() {
 	let (client, _server_task, _unsolicited) = connect_legacy().await;
 	let info = client.peer_info().expect("server info");
-	let server = info
-		.server_info
-		.as_ref()
-		.expect("initialize carries serverInfo");
+	let server = info.server_info.as_ref().expect("initialize carries serverInfo");
 	assert_eq!(server.name, "octofs");
 	assert_eq!(server.version, env!("CARGO_PKG_VERSION"));
 }
@@ -423,23 +402,14 @@ async fn start_task(client: &RunningService<RoleClient, RecordingClient>, comman
 	}
 }
 
-async fn wait_for_terminal_task(
-	client: &RunningService<RoleClient, RecordingClient>,
-	id: &str,
-) -> DetailedTask {
+async fn wait_for_terminal_task(client: &RunningService<RoleClient, RecordingClient>, id: &str) -> DetailedTask {
 	let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
 	loop {
-		let result = client
-			.get_task(GetTaskParams::new(id))
-			.await
-			.expect("tasks/get");
+		let result = client.get_task(GetTaskParams::new(id)).await.expect("tasks/get");
 		if result.task.status().is_terminal() {
 			return result.task;
 		}
-		assert!(
-			tokio::time::Instant::now() < deadline,
-			"task {id} never finished"
-		);
+		assert!(tokio::time::Instant::now() < deadline, "task {id} never finished");
 		tokio::time::sleep(Duration::from_millis(100)).await;
 	}
 }
@@ -492,19 +462,12 @@ async fn promoted_job_is_handed_to_a_tasks_client_as_a_task() {
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_job_task_result_is_an_error_led_by_the_exit_code() {
 	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
-	let id = start_task(
-		&client,
-		"for i in 1 2; do sleep 1; done; echo built; exit 3",
-	)
-	.await;
+	let id = start_task(&client, "for i in 1 2; do sleep 1; done; echo built; exit 3").await;
 
 	let result = completed_result(wait_for_terminal_task(&client, &id).await);
 	assert_eq!(result.is_error, Some(true), "{result:?}");
 	let text = result_text(&result);
-	assert!(
-		text.starts_with("Command failed with exit code 3"),
-		"{text}"
-	);
+	assert!(text.starts_with("Command failed with exit code 3"), "{text}");
 	assert!(text.contains("built"), "{text}");
 }
 
@@ -535,10 +498,7 @@ async fn cancelled_task_stops_the_job_and_reports_cancelled() {
 async fn unknown_task_id_is_invalid_params() {
 	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
 	for error in [
-		client
-			.get_task(GetTaskParams::new("0-0"))
-			.await
-			.expect_err("tasks/get"),
+		client.get_task(GetTaskParams::new("0-0")).await.expect_err("tasks/get"),
 		client
 			.cancel_task(CancelTaskParams::new("0-0"))
 			.await
@@ -575,12 +535,8 @@ async fn update_on_a_known_task_is_acknowledged() {
 /// keeps the resource link even when its client declared tasks.
 #[tokio::test(flavor = "multi_thread")]
 async fn legacy_client_declaring_tasks_still_gets_a_resource_link() {
-	let (client, _server_task, _unsolicited) = connect_with_lifecycle(
-		ProtocolVersion::V_2025_11_25,
-		ClientLifecycleMode::Initialize,
-		true,
-	)
-	.await;
+	let (client, _server_task, _unsolicited) =
+		connect_with_lifecycle(ProtocolVersion::V_2025_11_25, ClientLifecycleMode::Initialize, true).await;
 	let uri = start_job(&client).await;
 	assert!(uri.starts_with("octofs://jobs/"), "{uri}");
 }
@@ -613,10 +569,7 @@ fn task_timestamps_are_rfc3339_utc() {
 fn job_label_names_the_command_within_bounds() {
 	assert_eq!(super::job_label("  cargo test  "), "shell: cargo test");
 	assert_eq!(super::job_label("   "), "background shell job");
-	assert_eq!(
-		super::job_label(&"x".repeat(200)),
-		format!("shell: {}", "x".repeat(80))
-	);
+	assert_eq!(super::job_label(&"x".repeat(200)), format!("shell: {}", "x".repeat(80)));
 }
 
 #[test]
@@ -640,10 +593,7 @@ fn running_job_status_names_its_pid_kill_command_and_progress() {
 
 	let running = view(JobStatus::Running);
 	let created = super::job_status_message(&running, false);
-	assert_eq!(
-		created,
-		format!("shell: cargo test · PID 4242 (stop: {stop})")
-	);
+	assert_eq!(created, format!("shell: cargo test · PID 4242 (stop: {stop})"));
 	assert_eq!(
 		super::job_status_message(&running, true),
 		format!("{created} · running 12 tests"),
@@ -659,8 +609,7 @@ fn running_job_status_names_its_pid_kill_command_and_progress() {
 #[test]
 fn job_result_frames_an_exit_like_a_foreground_call() {
 	let parse = |object| {
-		serde_json::from_value::<CallToolResult>(serde_json::Value::Object(object))
-			.expect("result is a CallToolResult")
+		serde_json::from_value::<CallToolResult>(serde_json::Value::Object(object)).expect("result is a CallToolResult")
 	};
 	let succeeded = parse(super::job_result(0, "done", ""));
 	assert_ne!(succeeded.is_error, Some(true));
@@ -736,10 +685,7 @@ async fn view_reads_a_job_link_like_resources_read() {
 		rmcp::model::ResourceContents::TextResourceContents { text, .. } => text.clone(),
 		other => panic!("job resource is text, got {other:?}"),
 	};
-	assert!(
-		expected.contains("status: exited with code 0"),
-		"{expected}"
-	);
+	assert!(expected.contains("status: exited with code 0"), "{expected}");
 
 	let view = |path: String| {
 		let serde_json::Value::Object(arguments) = json!({ "path": path }) else {
@@ -759,9 +705,7 @@ async fn view_reads_a_job_link_like_resources_read() {
 		.expect("text result");
 	assert_eq!(text, expected);
 
-	let missing = view("octofs://jobs/0-0".to_string())
-		.await
-		.expect("call view");
+	let missing = view("octofs://jobs/0-0".to_string()).await.expect("call view");
 	assert_eq!(missing.is_error, Some(true), "unknown job id is an error");
 }
 
@@ -849,12 +793,9 @@ async fn tool_handlers_text_editor_batch_edit_extract_lines_round_trip() {
 	assert_ne!(extract.is_error, Some(true), "{:?}", extract.content);
 
 	// Verify the copy landed via view
-	let view = call(
-		"view",
-		json!({ "path": "copied.txt" }).as_object().unwrap().clone(),
-	)
-	.await
-	.expect("view copied");
+	let view = call("view", json!({ "path": "copied.txt" }).as_object().unwrap().clone())
+		.await
+		.expect("view copied");
 	let text = view
 		.content
 		.iter()
@@ -965,21 +906,13 @@ async fn served_tool_schemas_carry_no_generator_noise() {
 	for tool in &tools.tools {
 		let schema = serde_json::to_string(tool.input_schema.as_ref()).expect("schema json");
 		assert!(
-			!schema.contains("\"$schema\"")
-				&& !schema.contains("\"format\"")
-				&& !schema.contains("\"default\":null"),
+			!schema.contains("\"$schema\"") && !schema.contains("\"format\"") && !schema.contains("\"default\":null"),
 			"{}: {schema}",
 			tool.name
 		);
 	}
-	let view = tools
-		.tools
-		.iter()
-		.find(|tool| tool.name == "view")
-		.expect("view tool");
-	let properties = view.input_schema["properties"]
-		.as_object()
-		.expect("view properties");
+	let view = tools.tools.iter().find(|tool| tool.name == "view").expect("view tool");
+	let properties = view.input_schema["properties"].as_object().expect("view properties");
 	for name in [
 		"path",
 		"start",
@@ -1001,8 +934,7 @@ fn session_context(
 	workdir: &std::path::Path,
 	context_epoch: Option<u64>,
 ) -> rmcp::service::RequestContext<rmcp::RoleServer> {
-	let mut context =
-		rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
+	let mut context = rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
 	let capabilities: ClientCapabilities = serde_json::from_value(json!({
 		"experimental": {"session": {"session_id": id, "workdir": workdir, "context_epoch": context_epoch}}
 	}))
@@ -1041,11 +973,7 @@ async fn sessions_sharing_a_connection_keep_their_own_workdir() {
 	assert_eq!(other.workdir.get_current(), second.path());
 
 	let moved = server.session(&session_context(peer, "a", second.path(), Some(0)));
-	assert_eq!(
-		moved.workdir.get_current(),
-		second.path(),
-		"a moved anchor starts over"
-	);
+	assert_eq!(moved.workdir.get_current(), second.path(), "a moved anchor starts over");
 
 	let anonymous = server.session(&rmcp::service::RequestContext::new(
 		rmcp::model::RequestId::Number(2),
@@ -1089,8 +1017,7 @@ async fn view_deltas_follow_the_client_context_epoch() {
 	let peer = service.peer();
 	let view = |id: &str, epoch: Option<u64>| {
 		let state = server.session(&session_context(peer, id, dir.path(), epoch));
-		let call =
-			crate::mcp::McpToolCall::test_call("view", json!({"path": file.to_string_lossy()}));
+		let call = crate::mcp::McpToolCall::test_call("view", json!({"path": file.to_string_lossy()}));
 		async move {
 			crate::mcp::request_ctx::with_request_context(state.view_cache.clone(), async {
 				crate::mcp::fs::execute_view(&call).await.expect("view")
@@ -1101,10 +1028,7 @@ async fn view_deltas_follow_the_client_context_epoch() {
 	let unchanged = "[unchanged since you last viewed";
 
 	assert!(view("plain", None).await.ends_with("|one"));
-	assert!(
-		view("plain", None).await.ends_with("|one"),
-		"no epoch, no delta"
-	);
+	assert!(view("plain", None).await.ends_with("|one"), "no epoch, no delta");
 
 	assert!(view("s", Some(0)).await.ends_with("|one"));
 	assert!(view("s", Some(0)).await.starts_with(unchanged));
@@ -1113,10 +1037,7 @@ async fn view_deltas_follow_the_client_context_epoch() {
 		.workdir
 		.set_current(nested.clone());
 
-	assert!(
-		view("s", Some(1)).await.ends_with("|one"),
-		"new epoch serves in full"
-	);
+	assert!(view("s", Some(1)).await.ends_with("|one"), "new epoch serves in full");
 	assert!(view("s", Some(1)).await.starts_with(unchanged));
 	assert_eq!(
 		server
@@ -1161,10 +1082,7 @@ fn batch_edit_rejects_non_string_list_content_and_missing_path() {
 		"operations": [{"operation": "insert", "start": 0, "content": ["a", 3]}],
 	}))
 	.expect_err("non-string list element");
-	assert!(
-		err.to_string().contains("content list must hold strings"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("content list must hold strings"), "got: {err}");
 
 	// Non-string, non-list content is rejected too.
 	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
@@ -1173,8 +1091,7 @@ fn batch_edit_rejects_non_string_list_content_and_missing_path() {
 	}))
 	.expect_err("numeric content");
 	assert!(
-		err.to_string()
-			.contains("content must be a string or a list of lines"),
+		err.to_string().contains("content must be a string or a list of lines"),
 		"got: {err}"
 	);
 

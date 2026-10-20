@@ -94,8 +94,7 @@ async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
 	{
 		use tokio::signal::unix::{signal, SignalKind};
 		let ct = service.cancellation_token();
-		let mut sigterm =
-			signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+		let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
 		tokio::select! {
 			_ = service.waiting() => {
 				// EOF on stdin — clean shutdown
@@ -166,8 +165,7 @@ fn init_mcp_logging() {
 		.and_then(|v| v.parse::<Level>().ok())
 		.unwrap_or(Level::WARN);
 
-	tracing::subscriber::set_global_default(StderrSubscriber { level })
-		.expect("failed to set tracing subscriber");
+	tracing::subscriber::set_global_default(StderrSubscriber { level }).expect("failed to set tracing subscriber");
 }
 
 /// Minimal tracing subscriber — writes level + message to stderr.

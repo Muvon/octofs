@@ -52,11 +52,7 @@ pub fn format_content_with_line_numbers(
 	let render = |i: usize| render_line(start_line_number + i, lines[i]);
 
 	if let Some((start, end)) = view_range {
-		let start_idx = if start == 0 {
-			0
-		} else {
-			start.saturating_sub(1)
-		};
+		let start_idx = if start == 0 { 0 } else { start.saturating_sub(1) };
 		let end_idx = if end == -1 {
 			lines.len()
 		} else {
@@ -65,16 +61,9 @@ pub fn format_content_with_line_numbers(
 
 		if start_idx >= lines.len() || start_idx > end_idx {
 			return if start_idx >= lines.len() {
-				format!(
-					"Start line {} exceeds content length ({} lines)",
-					start,
-					lines.len()
-				)
+				format!("Start line {} exceeds content length ({} lines)", start, lines.len())
 			} else {
-				format!(
-					"Start line {} must be less than or equal to end line {}",
-					start, end
-				)
+				format!("Start line {} must be less than or equal to end line {}", start, end)
 			};
 		}
 
@@ -101,11 +90,7 @@ pub fn format_content_with_line_numbers(
 /// Format extracted content with composite line ids and smart truncation.
 /// `start_line` is the 1-indexed position of `lines[0]` in the source file, so
 /// the ids match what a `view` of the source shows.
-pub fn format_extracted_content_smart(
-	lines: &[&str],
-	start_line: usize,
-	max_display_lines: Option<usize>,
-) -> String {
+pub fn format_extracted_content_smart(lines: &[&str], start_line: usize, max_display_lines: Option<usize>) -> String {
 	let render = |i: usize| render_line(start_line + i, lines[i]);
 
 	let max_lines = max_display_lines.unwrap_or(50);

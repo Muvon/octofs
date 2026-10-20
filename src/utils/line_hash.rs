@@ -64,9 +64,7 @@ pub fn line_id_at(lines: &[&str], line_1idx: usize) -> String {
 pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Result<usize, String> {
 	let total = lines.len();
 	if line == 0 || line > total {
-		let mut msg = format!(
-			"Line id \"{line}:{expected_hash}\" is out of range: the file has {total} lines."
-		);
+		let mut msg = format!("Line id \"{line}:{expected_hash}\" is out of range: the file has {total} lines.");
 		push_relocation(&mut msg, expected_hash, line, lines);
 		msg.push_str("\nRe-view the file for fresh ids.");
 		return Err(msg);
@@ -106,11 +104,7 @@ fn push_relocation(msg: &mut String, expected_hash: &str, expected_line: usize, 
 		return;
 	}
 	candidates.sort_by_key(|&n| n.abs_diff(expected_line));
-	let shown: Vec<String> = candidates
-		.iter()
-		.take(3)
-		.map(|&n| line_id_at(lines, n))
-		.collect();
+	let shown: Vec<String> = candidates.iter().take(3).map(|&n| line_id_at(lines, n)).collect();
 	msg.push_str(&format!(
 		"Hash {expected_hash} now matches {} (content moved, or hash paired with the wrong line).",
 		shown.join(", ")
@@ -131,16 +125,11 @@ pub(crate) fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize
 	if index > 0 {
 		let pos_index = index as usize;
 		if pos_index > total_lines {
-			return Err(format!(
-				"Line {index} exceeds file length ({total_lines} lines)"
-			));
+			return Err(format!("Line {index} exceeds file length ({total_lines} lines)"));
 		}
 		Ok(pos_index)
 	} else {
-		let from_end = index
-			.checked_neg()
-			.map(|v| v as usize)
-			.unwrap_or(usize::MAX);
+		let from_end = index.checked_neg().map(|v| v as usize).unwrap_or(usize::MAX);
 		if from_end > total_lines {
 			return Err(format!(
 				"Negative index {index} exceeds file length ({total_lines} lines)"
@@ -153,10 +142,7 @@ pub(crate) fn resolve_line_index(index: i64, total_lines: usize) -> Result<usize
 /// View-only variant: clamp out-of-bounds indices to the nearest valid line instead of
 /// erroring. Returns `(resolved_index, was_clamped)`. Line 0 is still rejected — it's a
 /// spec violation, not out-of-bounds.
-pub(crate) fn resolve_line_index_clamped(
-	index: i64,
-	total_lines: usize,
-) -> Result<(usize, bool), String> {
+pub(crate) fn resolve_line_index_clamped(index: i64, total_lines: usize) -> Result<(usize, bool), String> {
 	if index == 0 {
 		return Err("Line numbers are 1-indexed, use 1 for first line".to_string());
 	}
@@ -168,10 +154,7 @@ pub(crate) fn resolve_line_index_clamped(
 			Ok((pos, false))
 		}
 	} else {
-		let from_end = index
-			.checked_neg()
-			.map(|v| v as usize)
-			.unwrap_or(usize::MAX);
+		let from_end = index.checked_neg().map(|v| v as usize).unwrap_or(usize::MAX);
 		if from_end > total_lines {
 			// Negative index past the beginning — clamp to first line.
 			Ok((1, true))

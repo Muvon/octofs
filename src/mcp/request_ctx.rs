@@ -63,9 +63,7 @@ where
 /// Run `f` against the session's view cache. `None` outside a request scope or
 /// when the session has no view cache.
 pub fn with_view_cache<R>(f: impl FnOnce(&ViewCache) -> R) -> Option<R> {
-	CTX.try_with(|ctx| ctx.view_cache.as_deref().map(f))
-		.ok()
-		.flatten()
+	CTX.try_with(|ctx| ctx.view_cache.as_deref().map(f)).ok().flatten()
 }
 
 /// Push a hint for the current tool call. No-op outside a request scope.

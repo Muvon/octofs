@@ -116,14 +116,9 @@ pub(super) struct PreparedJob {
 /// foreground. Only an identical command already running in the same directory
 /// is rejected; independent commands may run concurrently.
 pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<PreparedJob> {
-	if let Some(running) = jobs()
-		.lock()
-		.expect("jobs registry mutex poisoned")
-		.values()
-		.find(|j| {
-			j.working_dir.as_path() == working_dir
-				&& j.command == command
-				&& j.status() == JobStatus::Running
+	if let Some(running) =
+		jobs().lock().expect("jobs registry mutex poisoned").values().find(|j| {
+			j.working_dir.as_path() == working_dir && j.command == command && j.status() == JobStatus::Running
 		}) {
 		return Err(anyhow!(
 			"`{}` is already running as background job {}. Wait for its completion \
@@ -182,8 +177,7 @@ pub(super) async fn discard(job: &Job) {
 }
 
 pub(super) fn output_path(job: &Job) -> PathBuf {
-	job.stdout_path
-		.with_file_name(format!("{}.output.log", job.id))
+	job.stdout_path.with_file_name(format!("{}.output.log", job.id))
 }
 
 /// Cleaned full output survives capture-file removal until shutdown.
@@ -197,11 +191,7 @@ pub(super) async fn spill(job: &Job, output: &str) -> Result<()> {
 	Ok(())
 }
 
-pub(super) async fn process_output(
-	stdout: &[u8],
-	stderr: &[u8],
-	job: &Job,
-) -> (String, Option<PathBuf>) {
+pub(super) async fn process_output(stdout: &[u8], stderr: &[u8], job: &Job) -> (String, Option<PathBuf>) {
 	let stdout = super::shell::clean_terminal_noise(&String::from_utf8_lossy(stdout));
 	let stderr = super::shell::clean_terminal_noise(&String::from_utf8_lossy(stderr));
 	let full_output = super::digest::join_streams(&stdout, &stderr);
@@ -242,8 +232,7 @@ async fn remove_jobs_dir(dir: &Path) -> Result<()> {
 	match tokio::fs::remove_dir_all(dir).await {
 		Ok(()) => Ok(()),
 		Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-		Err(error) => Err(error)
-			.with_context(|| format!("Failed to remove shell job directory: {}", dir.display())),
+		Err(error) => Err(error).with_context(|| format!("Failed to remove shell job directory: {}", dir.display())),
 	}
 }
 
@@ -299,11 +288,7 @@ pub(crate) fn status(id: &str) -> Option<JobStatus> {
 /// exit, so a stopped job reads as finished. `None` if the id is unknown; a job
 /// that already exited is left as it is.
 pub async fn cancel(id: &str) -> Option<()> {
-	let job = jobs()
-		.lock()
-		.expect("jobs registry mutex poisoned")
-		.get(id)
-		.cloned()?;
+	let job = jobs().lock().expect("jobs registry mutex poisoned").get(id).cloned()?;
 	if job.status() == JobStatus::Running {
 		job.cancel_requested.store(true, Ordering::Relaxed);
 		terminate(job.pid).await;
@@ -364,11 +349,7 @@ fn read_tail(path: &Path) -> (Vec<u8>, bool) {
 
 /// Read the finished foreground result or a running job's tail. `None` if the id is unknown.
 pub fn read(id: &str) -> Option<JobView> {
-	let job = jobs()
-		.lock()
-		.expect("jobs registry mutex poisoned")
-		.get(id)
-		.cloned()?;
+	let job = jobs().lock().expect("jobs registry mutex poisoned").get(id).cloned()?;
 	let status = job.status();
 	if matches!(status, JobStatus::Exited(_)) {
 		return Some(JobView {

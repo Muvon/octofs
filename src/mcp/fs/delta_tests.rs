@@ -94,10 +94,7 @@ fn delta_renders_hunks_with_fresh_ids_and_collapsed_removals() {
 	new.drain(11..14);
 	let out = render_delta(&old, &new).unwrap();
 	let lines: Vec<&str> = out.lines().collect();
-	assert_eq!(
-		lines[0],
-		"[changed since your last view: 2 hunk(s), 17 lines now]"
-	);
+	assert_eq!(lines[0], "[changed since your last view: 2 hunk(s), 17 lines now]");
 	assert_eq!(lines[1], "...");
 	assert_eq!(lines[2], format!("{}|l3", line_id(3, "l3")));
 	assert_eq!(lines[3], format!("{}|l4", line_id(4, "l4")));
@@ -157,9 +154,7 @@ async fn empty_file_views_are_explicit_and_preserve_deletion_deltas() {
 			unchanged,
 			"[unchanged since you last viewed or edited it: 0 lines. Pass full: true to re-read.]"
 		);
-		let forced = execute_view(&view_call(&file, json!({ "full": true })))
-			.await
-			.unwrap();
+		let forced = execute_view(&view_call(&file, json!({ "full": true }))).await.unwrap();
 		assert_eq!(forced, "[empty file, 0 lines]");
 
 		tokio::fs::write(&file, "hello\n").await.unwrap();
@@ -186,10 +181,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 
 	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		let first = execute_view(&view_call(&file, json!({}))).await.unwrap();
-		assert!(
-			first.starts_with(&format!("{}|l1\n", line_id(1, "l1"))),
-			"{first}"
-		);
+		assert!(first.starts_with(&format!("{}|l1\n", line_id(1, "l1"))), "{first}");
 		assert_eq!(first.lines().count(), 20);
 
 		let second = execute_view(&view_call(&file, json!({}))).await.unwrap();
@@ -202,10 +194,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 		let ranged = execute_view(&view_call(&file, json!({ "start": 3, "end": 4 })))
 			.await
 			.unwrap();
-		assert!(
-			ranged.starts_with(&format!("{}|l3\n", line_id(3, "l3"))),
-			"{ranged}"
-		);
+		assert!(ranged.starts_with(&format!("{}|l3\n", line_id(3, "l3"))), "{ranged}");
 
 		// External change: the next whole view is a delta.
 		std::fs::write(&file, body.replace("l10\n", "L10\n")).unwrap();
@@ -214,25 +203,14 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 			third.starts_with("[changed since your last view: 1 hunk(s), 20 lines now]"),
 			"{third}"
 		);
-		assert!(
-			third.contains(&format!("-{} (1 line)", line_id(10, "l10"))),
-			"{third}"
-		);
-		assert!(
-			third.contains(&format!("+{}|L10", line_id(10, "L10"))),
-			"{third}"
-		);
+		assert!(third.contains(&format!("-{} (1 line)", line_id(10, "l10"))), "{third}");
+		assert!(third.contains(&format!("+{}|L10", line_id(10, "L10"))), "{third}");
 		assert_eq!(third.lines().count(), 9);
 
 		// full: true forces the complete file and refreshes the cache.
-		let full = execute_view(&view_call(&file, json!({ "full": true })))
-			.await
-			.unwrap();
+		let full = execute_view(&view_call(&file, json!({ "full": true }))).await.unwrap();
 		assert_eq!(full.lines().count(), 20);
-		assert!(
-			full.contains(&format!("{}|L10", line_id(10, "L10"))),
-			"{full}"
-		);
+		assert!(full.contains(&format!("{}|L10", line_id(10, "L10"))), "{full}");
 	})
 	.await;
 }
@@ -267,10 +245,7 @@ async fn own_edits_keep_the_cache_current_but_unseen_changes_invalidate_it() {
 		std::fs::write(&file, current.replace("l8\n", "L8\n")).unwrap();
 		execute_text_editor(&replace("l5", "L5")).await.unwrap();
 		let after = execute_view(&view_call(&file, json!({}))).await.unwrap();
-		assert!(
-			after.starts_with(&format!("{}|l1\n", line_id(1, "l1"))),
-			"{after}"
-		);
+		assert!(after.starts_with(&format!("{}|l1\n", line_id(1, "l1"))), "{after}");
 		assert_eq!(after.lines().count(), 10);
 	})
 	.await;

@@ -114,8 +114,7 @@ impl Fixture {
 				quote(&stdout), quote(&stderr), self.exit_code
 			)
 		} else {
-			let quote =
-				|path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+			let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
 			format!(
 				"awk '1' {}; awk '1' {} >&2; exit {}",
 				quote(&stdout),
@@ -229,17 +228,8 @@ fn savings_include_the_marker_and_stream_framing() {
 	let input = format!("keep\n{}", "noise\n".repeat(1000));
 	let spill = Path::new("/tmp/output");
 	let digest = digest_with(&input, "", spill, &[keep_first]).unwrap();
-	assert_eq!(
-		digest,
-		"keep\n[digest: 1001 lines omitted — full output: /tmp/output]"
-	);
-	assert!(digest_with(
-		&input,
-		"",
-		Path::new(&"x".repeat(input.len())),
-		&[keep_first]
-	)
-	.is_none());
+	assert_eq!(digest, "keep\n[digest: 1001 lines omitted — full output: /tmp/output]");
+	assert!(digest_with(&input, "", Path::new(&"x".repeat(input.len())), &[keep_first]).is_none());
 }
 
 #[test]

@@ -48,12 +48,8 @@ async fn workdir_set_to_existing_directory_reports_previous_and_canonical_curren
 	// path: the raw input names the link, the canonical result names the
 	// target. (A trailing `.` alone would not — Path equality compares
 	// components and drops it.)
-	tokio::fs::create_dir(dir.path().join("real"))
-		.await
-		.unwrap();
-	tokio::fs::symlink("real", dir.path().join("alias"))
-		.await
-		.unwrap();
+	tokio::fs::create_dir(dir.path().join("real")).await.unwrap();
+	tokio::fs::symlink("real", dir.path().join("alias")).await.unwrap();
 	let call = McpToolCall::test_call("workdir", json!({ "path": dir.path().join("alias") }));
 	let result = execute_workdir_command(&call).await.unwrap();
 	match result {
@@ -96,10 +92,7 @@ async fn workdir_set_with_non_string_path_is_rejected() {
 		.err()
 		.expect("must fail")
 		.to_string();
-	assert!(
-		err.contains("must be a non-empty string"),
-		"error was: {err}"
-	);
+	assert!(err.contains("must be a non-empty string"), "error was: {err}");
 }
 
 #[tokio::test]
@@ -110,10 +103,7 @@ async fn workdir_set_with_whitespace_only_path_is_rejected() {
 		.err()
 		.expect("must fail")
 		.to_string();
-	assert!(
-		err.contains("must be a non-empty string"),
-		"error was: {err}"
-	);
+	assert!(err.contains("must be a non-empty string"), "error was: {err}");
 }
 
 #[test]

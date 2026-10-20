@@ -20,14 +20,12 @@ use std::sync::{Arc, RwLock};
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
 	model::{
-		CacheScope, CallToolResponse, CallToolResult, CancelTaskParams, ContentBlock,
-		CreateTaskResult, CustomNotification, DetailedTask, ExperimentalCapabilities,
-		GetTaskParams, GetTaskResult, Implementation, JsonObject, ListResourcesResult,
-		ListToolsResult, PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams,
-		ReadResourceResponse, ReadResourceResult, RequestId, Resource, ResourceContents,
-		ServerCapabilities, ServerConfig, ServerNotification, SubscribeRequestParams,
-		SubscriptionFilter, Task, TaskPayload, TaskStatus, UnsubscribeRequestParams,
-		UpdateTaskParams,
+		CacheScope, CallToolResponse, CallToolResult, CancelTaskParams, ContentBlock, CreateTaskResult,
+		CustomNotification, DetailedTask, ExperimentalCapabilities, GetTaskParams, GetTaskResult, Implementation,
+		JsonObject, ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+		ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, RequestId, Resource, ResourceContents,
+		ServerCapabilities, ServerConfig, ServerNotification, SubscribeRequestParams, SubscriptionFilter, Task,
+		TaskPayload, TaskStatus, UnsubscribeRequestParams, UpdateTaskParams,
 	},
 	schemars,
 	service::{Peer, RequestContext, SubscriptionContext, SubscriptionSink},
@@ -111,18 +109,14 @@ impl Sessions {
 	/// State for `id` anchored at `root`. A session whose anchor moved, or whose
 	/// client started or stopped reporting a context epoch, starts over; one
 	/// whose context epoch changed keeps its workdir but loses its view cache.
-	fn get(
-		&self,
-		id: Option<String>,
-		root: PathBuf,
-		context_epoch: Option<u64>,
-	) -> Arc<SessionState> {
+	fn get(&self, id: Option<String>, root: PathBuf, context_epoch: Option<u64>) -> Arc<SessionState> {
 		use std::sync::atomic::Ordering;
 		let now = self.clock.fetch_add(1, Ordering::Relaxed);
 		let mut states = self.states.lock().expect("sessions lock poisoned");
-		if let Some(state) = states.get(&id).filter(|state| {
-			state.workdir.root == root && state.view_cache.is_some() == context_epoch.is_some()
-		}) {
+		if let Some(state) = states
+			.get(&id)
+			.filter(|state| state.workdir.root == root && state.view_cache.is_some() == context_epoch.is_some())
+		{
 			state.last_used.store(now, Ordering::Relaxed);
 			if let (Some(cache), Some(epoch)) = (&state.view_cache, context_epoch) {
 				if state.context_epoch.swap(epoch, Ordering::Relaxed) != epoch {
@@ -311,14 +305,9 @@ fn job_label(command: &str) -> String {
 /// status message.
 fn job_task(id: &str, view: &fs::background::JobView, progress: bool) -> Task {
 	let updated = view.finished_unix.unwrap_or(view.started_unix);
-	Task::new(
-		id,
-		TaskStatus::Working,
-		rfc3339(view.started_unix),
-		rfc3339(updated),
-	)
-	.with_status_message(job_status_message(view, progress))
-	.with_poll_interval_ms(TASK_POLL_INTERVAL_MS)
+	Task::new(id, TaskStatus::Working, rfc3339(view.started_unix), rfc3339(updated))
+		.with_status_message(job_status_message(view, progress))
+		.with_poll_interval_ms(TASK_POLL_INTERVAL_MS)
 }
 
 /// What a client shows for a job. While it runs: its PID and the command that
@@ -339,13 +328,7 @@ fn job_status_message(view: &fs::background::JobView, progress: bool) -> String 
 	};
 	let mut message = format!("{label} · PID {} (stop: {stop})", view.pid);
 	if progress {
-		if let Some(line) = view
-			.output
-			.lines()
-			.rev()
-			.map(str::trim)
-			.find(|line| !line.is_empty())
-		{
+		if let Some(line) = view.output.lines().rev().map(str::trim).find(|line| !line.is_empty()) {
 			let line: String = line.chars().take(120).collect();
 			message.push_str(&format!(" · {line}"));
 		}
@@ -432,14 +415,9 @@ impl OctofsServer {
 		let Some(session) = session else {
 			return self.sessions.get(None, self.root.clone(), None);
 		};
-		let id = session
-			.get("session_id")
-			.and_then(|v| v.as_str())
-			.map(str::to_string);
+		let id = session.get("session_id").and_then(|v| v.as_str()).map(str::to_string);
 		let root = match session.get("workdir").and_then(|v| v.as_str()) {
-			Some(workdir) if Path::new(workdir).is_absolute() && Path::new(workdir).is_dir() => {
-				PathBuf::from(workdir)
-			}
+			Some(workdir) if Path::new(workdir).is_absolute() && Path::new(workdir).is_dir() => PathBuf::from(workdir),
 			workdir => {
 				debug!("Session workdir {workdir:?} is not an absolute directory path, using the server root");
 				self.root.clone()
@@ -526,9 +504,7 @@ impl OctofsServer {
 			workdir,
 		};
 		request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_text_editor(&call)
-				.await
-				.map_err(|e| e.to_string())?;
+			let result = fs::execute_text_editor(&call).await.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
 		})
 		.await
@@ -565,9 +541,7 @@ impl OctofsServer {
 			workdir,
 		};
 		request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_batch_edit(&call)
-				.await
-				.map_err(|e| e.to_string())?;
+			let result = fs::execute_batch_edit(&call).await.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
 		})
 		.await
@@ -599,9 +573,7 @@ impl OctofsServer {
 			workdir,
 		};
 		request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_extract_lines(&call)
-				.await
-				.map_err(|e| e.to_string())?;
+			let result = fs::execute_extract_lines(&call).await.map_err(|e| e.to_string())?;
 			Ok(append_hints(result))
 		})
 		.await
@@ -755,9 +727,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let result = fs::execute_workdir_command(&call)
-			.await
-			.map_err(|e| e.to_string())?;
+		let result = fs::execute_workdir_command(&call).await.map_err(|e| e.to_string())?;
 
 		// Update session workdir state based on the structured result
 		match &result {
@@ -796,25 +766,19 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 				strip_null_variants(nested);
 			}
 
-			let collapsed_type =
-				obj.get_mut("type")
-					.and_then(|t| t.as_array_mut())
-					.and_then(|types| {
-						types.retain(|t| t.as_str() != Some("null"));
-						(types.len() == 1).then(|| types[0].clone())
-					});
+			let collapsed_type = obj.get_mut("type").and_then(|t| t.as_array_mut()).and_then(|types| {
+				types.retain(|t| t.as_str() != Some("null"));
+				(types.len() == 1).then(|| types[0].clone())
+			});
 			if let Some(single) = collapsed_type {
 				obj.insert("type".to_string(), single);
 			}
 
 			for key in ["anyOf", "oneOf"] {
-				let only = obj
-					.get_mut(key)
-					.and_then(|v| v.as_array_mut())
-					.and_then(|variants| {
-						variants.retain(|v| v.get("type").and_then(|t| t.as_str()) != Some("null"));
-						(variants.len() == 1).then(|| variants[0].clone())
-					});
+				let only = obj.get_mut(key).and_then(|v| v.as_array_mut()).and_then(|variants| {
+					variants.retain(|v| v.get("type").and_then(|t| t.as_str()) != Some("null"));
+					(variants.len() == 1).then(|| variants[0].clone())
+				});
 				if let Some(serde_json::Value::Object(only)) = only {
 					obj.remove(key);
 					for (k, v) in only {
@@ -840,10 +804,7 @@ fn strip_null_variants(value: &mut serde_json::Value) {
 fn strip_generator_noise(schema: &mut serde_json::Map<String, serde_json::Value>) {
 	schema.remove("$schema");
 	schema.remove("format");
-	if schema
-		.get("default")
-		.is_some_and(serde_json::Value::is_null)
-	{
+	if schema.get("default").is_some_and(serde_json::Value::is_null) {
 		schema.remove("default");
 	}
 	for (key, value) in schema.iter_mut() {
@@ -904,10 +865,7 @@ impl ServerHandler for OctofsServer {
 		)
 		// Not `Implementation::from_build_env()`: that is a plain fn in rmcp, so its
 		// `env!` reads rmcp's crate name and version, not ours.
-		.with_server_info(Implementation::new(
-			env!("CARGO_PKG_NAME"),
-			env!("CARGO_PKG_VERSION"),
-		))
+		.with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
 			"Filesystem tools. File lines render as `N:hh|content`; `N:hh` is the line id edit \
@@ -984,18 +942,14 @@ impl ServerHandler for OctofsServer {
 		let uri = request.uri;
 		let id = fs::background::job_id_from_uri(&uri)
 			.ok_or_else(|| ErrorData::resource_not_found(format!("Not a job URI: {uri}"), None))?;
-		let body = fs::background::resource_text(id).ok_or_else(|| {
-			ErrorData::resource_not_found(format!("No such background job: {uri}"), None)
-		})?;
+		let body = fs::background::resource_text(id)
+			.ok_or_else(|| ErrorData::resource_not_found(format!("No such background job: {uri}"), None))?;
 		let result = ReadResourceResult::new(vec![ResourceContents::text(body, uri)]);
 		if !supports_cache_hints(&context) {
 			return Ok(result.into());
 		}
 		// A running job's tail changes between reads, and it is this session's job.
-		Ok(result
-			.with_ttl_ms(0)
-			.with_cache_scope(CacheScope::Private)
-			.into())
+		Ok(result.with_ttl_ms(0).with_cache_scope(CacheScope::Private).into())
 	}
 
 	// 2026-07-28 change notifications are opt-in: the client opens a
@@ -1003,10 +957,7 @@ impl ServerHandler for OctofsServer {
 	// acknowledges the accepted subset before `listen` runs. Accept whatever
 	// the client asked for — the SDK intersects it with the capabilities
 	// advertised in `get_info` (resources.subscribe gates URI subscriptions).
-	fn accepted_subscription_filter(
-		&self,
-		requested: &SubscriptionFilter,
-	) -> Option<SubscriptionFilter> {
+	fn accepted_subscription_filter(&self, requested: &SubscriptionFilter) -> Option<SubscriptionFilter> {
 		Some(requested.clone())
 	}
 
@@ -1018,11 +969,7 @@ impl ServerHandler for OctofsServer {
 	async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
 		let sink = context.sink().clone();
 		let id = sink.id().clone();
-		let uris = sink
-			.accepted()
-			.resource_subscriptions
-			.clone()
-			.unwrap_or_default();
+		let uris = sink.accepted().resource_subscriptions.clone().unwrap_or_default();
 		self.subscriptions.register(sink.clone());
 
 		// Registration happens before this check. If the job exits concurrently,
@@ -1333,10 +1280,12 @@ impl<'de> Deserialize<'de> for BatchEditParams {
 				match unique.as_slice() {
 					[only] => (*only).clone(),
 					[] => return Err(serde::de::Error::missing_field("path")),
-					_ => return Err(serde::de::Error::custom(
-						"batch_edit edits a single file, but the operations name different paths; \
+					_ => {
+						return Err(serde::de::Error::custom(
+							"batch_edit edits a single file, but the operations name different paths; \
 							 issue one batch_edit per file",
-					)),
+						))
+					}
 				}
 			}
 		};

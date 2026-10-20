@@ -20,9 +20,7 @@ impl WorkdirResult {
 	/// Serialize to JSON string for the MCP response.
 	pub fn to_json_string(&self) -> String {
 		match self {
-			Self::Get {
-				working_directory: wd,
-			} => json!({
+			Self::Get { working_directory: wd } => json!({
 				"success": true,
 				"action": "get",
 				"working_directory": wd.to_string_lossy(),
@@ -48,11 +46,7 @@ impl WorkdirResult {
 
 /// Execute working directory command
 pub async fn execute_workdir_command(call: &McpToolCall) -> Result<WorkdirResult> {
-	let reset = call
-		.parameters
-		.get("reset")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+	let reset = call.parameters.get("reset").and_then(|v| v.as_bool()).unwrap_or(false);
 
 	// Reset to original session directory
 	if reset {

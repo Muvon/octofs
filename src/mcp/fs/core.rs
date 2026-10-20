@@ -16,14 +16,11 @@
 
 use super::super::McpToolCall;
 use super::remote::{
-	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_to_string, resolve_path_source,
-	PathSource,
+	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_to_string, resolve_path_source, PathSource,
 };
 use crate::mcp::fs::{delta, directory, file_ops, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
-use crate::utils::truncation::{
-	format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES,
-};
+use crate::utils::truncation::{format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -144,10 +141,7 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 		// The restored content is not what the model last saw as a whole.
 		delta::forget(source);
 
-		Ok(format!(
-			"Successfully undid the last edit to {}",
-			source.display()
-		))
+		Ok(format!("Successfully undid the last edit to {}", source.display()))
 	} else {
 		bail!("No more undo history for this file (up to 10 levels are stored per file).");
 	}
@@ -231,9 +225,7 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 			};
 			text_editing::delete_file_spec(&resolve_path_source(&path, &call.workdir)).await
 		}
-		_ => bail!(
-			"Invalid command: {command}. Allowed commands are: create, str_replace, delete, undo_edit"
-		),
+		_ => bail!("Invalid command: {command}. Allowed commands are: create, str_replace, delete, undo_edit"),
 	}
 }
 
@@ -250,17 +242,13 @@ fn parse_optional_endpoint(value: Option<&Value>, name: &str) -> Result<Option<E
 /// Resolve one endpoint to a 1-indexed line for viewing. Both numbers and line ids
 /// clamp to file bounds (setting `clamped`) — a view is self-correcting because it
 /// returns fresh ids, so a stale id's position part is still the best answer.
-fn resolve_endpoint_to_line(
-	ep: &Endpoint,
-	total_lines: usize,
-	clamped: &mut bool,
-) -> Result<usize> {
+fn resolve_endpoint_to_line(ep: &Endpoint, total_lines: usize, clamped: &mut bool) -> Result<usize> {
 	let n = match ep {
 		Endpoint::Number(n) => *n,
 		Endpoint::Id { line, .. } => *line as i64,
 	};
-	let (line, was) = resolve_line_index_clamped(n, total_lines)
-		.map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
+	let (line, was) =
+		resolve_line_index_clamped(n, total_lines).map_err(|e| anyhow!("Invalid lines parameter: {e}"))?;
 	*clamped |= was;
 	Ok(line)
 }
@@ -285,10 +273,7 @@ async fn resolve_view_range(
 		}
 	}
 
-	let total_lines = io_read_to_string(source)
-		.await
-		.map(|c| c.lines().count())
-		.unwrap_or(0);
+	let total_lines = io_read_to_string(source).await.map(|c| c.lines().count()).unwrap_or(0);
 
 	if total_lines == 0 {
 		// Empty/unreadable file: there is nothing to clamp a range against, so render the
@@ -327,23 +312,9 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	// File + content: search the file for a literal/regex pattern and render with the same hash/number format
 	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {
 		if !content_pattern.trim().is_empty() {
-			let context_lines = call
-				.parameters
-				.get("context")
-				.and_then(|v| v.as_i64())
-				.unwrap_or(0) as usize;
-			let regex_flag = call
-				.parameters
-				.get("regex")
-				.and_then(|v| v.as_bool())
-				.unwrap_or(false);
-			return file_ops::view_file_with_content_search(
-				source,
-				content_pattern,
-				context_lines,
-				regex_flag,
-			)
-			.await;
+			let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+			let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
+			return file_ops::view_file_with_content_search(source, content_pattern, context_lines, regex_flag).await;
 		}
 	}
 
@@ -351,11 +322,7 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	let start_ep = parse_optional_endpoint(call.parameters.get("start"), "start")?;
 	let end_ep = parse_optional_endpoint(call.parameters.get("end"), "end")?;
 	let range = resolve_view_range(start_ep, end_ep, source).await?;
-	let full = call
-		.parameters
-		.get("full")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+	let full = call.parameters.get("full").and_then(|v| v.as_bool()).unwrap_or(false);
 	file_ops::view_file_spec(source, range, full).await
 }
 
@@ -388,9 +355,7 @@ async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<Stri
 
 	let roots: Vec<&str> = path.split('|').map(str::trim).collect();
 	if roots.iter().any(|root| root.is_empty()) {
-		bail!(
-			"Invalid content-search path alternatives {path:?}: every `|`-separated root must be non-empty."
-		);
+		bail!("Invalid content-search path alternatives {path:?}: every `|`-separated root must be non-empty.");
 	}
 	if roots.len() > MAX_SEARCH_ROOTS {
 		bail!(
@@ -433,16 +398,10 @@ async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<Stri
 		}
 	};
 	if sources.is_empty() {
-		bail!(
-			"No search root found: none of {} exist.",
-			summarize(&missing)
-		);
+		bail!("No search root found: none of {} exist.", summarize(&missing));
 	}
 	if !missing.is_empty() {
-		crate::mcp::request_ctx::push_hint(&format!(
-			"Skipped absent search root(s): {}.",
-			summarize(&missing)
-		));
+		crate::mcp::request_ctx::push_hint(&format!("Skipped absent search root(s): {}.", summarize(&missing)));
 	}
 
 	let mut results = Vec::new();
@@ -482,17 +441,14 @@ async fn render_view(call: &McpToolCall) -> Result<String> {
 		Some(Value::Array(_)) => bail!(
 			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
 		),
-		_ => bail!(
-			"Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."
-		),
+		_ => bail!("Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."),
 	};
 
 	// A background job's resource link reads like a file. Models try `view` on it
 	// first, and a client's generic resource reader may sit behind tool search
 	// (Claude Code's ReadMcpResourceTool is deferred), costing a round trip.
 	if let Some(id) = super::background::job_id_from_uri(&path) {
-		return super::background::resource_text(id)
-			.ok_or_else(|| anyhow!("No such background job: {path}"));
+		return super::background::resource_text(id).ok_or_else(|| anyhow!("No such background job: {path}"));
 	}
 
 	let source = resolve_path_source(&path, &call.workdir);
@@ -511,11 +467,7 @@ async fn render_view(call: &McpToolCall) -> Result<String> {
 
 	// Name the path and where it resolved to — a bare "File not found" hides
 	// workdir mismatches (relative path resolved against an unexpected root).
-	bail!(
-		"Path not found: {} (resolved to {})",
-		path,
-		source.display()
-	)
+	bail!("Path not found: {} (resolved to {})", path, source.display())
 }
 
 // Execute extract_lines command - MCP compliant implementation
@@ -540,13 +492,11 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// from_end omitted → single line (defaults to from_start). Resolution is deferred
 	// until after the source file is read.
 	let from_start_ep = match call.parameters.get("from_start") {
-		Some(v) if !v.is_null() => {
-			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'from_start': {e}"))?
-		}
+		Some(v) if !v.is_null() => line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'from_start': {e}"))?,
 		_ => bail!("Missing required parameter 'from_start' (line number or line id)"),
 	};
-	let from_end_ep = parse_optional_endpoint(call.parameters.get("from_end"), "from_end")?
-		.unwrap_or_else(|| from_start_ep.clone());
+	let from_end_ep =
+		parse_optional_endpoint(call.parameters.get("from_end"), "from_end")?.unwrap_or_else(|| from_start_ep.clone());
 
 	// Validate and extract append_path parameter
 	let append_path = match call.parameters.get("append_path") {
@@ -567,9 +517,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// Validate and extract append_line parameter: 0 (start), -1 (end), N (after line N),
 	// or a line id. Id verification is deferred until after the target file is read.
 	let append_line_ep = match call.parameters.get("append_line") {
-		Some(v) if !v.is_null() => {
-			line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?
-		}
+		Some(v) if !v.is_null() => line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?,
 		_ => {
 			bail!("Missing required parameter 'append_line' (0 = start, -1 = end, N, or a line id)")
 		}
@@ -597,18 +545,18 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	// with the current content instead of silently copying the wrong lines.
 	let resolve_extract_endpoint = |ep: &Endpoint, which: &str| -> Result<usize> {
 		match ep {
-			Endpoint::Number(n) => resolve_line_index(*n, total_lines)
-				.map_err(|e| anyhow!("Invalid from_{which}: {e}")),
-			Endpoint::Id { line, hash } => line_hash::verify_line_id(*line, hash, &source_lines)
-				.map_err(|e| anyhow!("Invalid from_{which}: {e}")),
+			Endpoint::Number(n) => {
+				resolve_line_index(*n, total_lines).map_err(|e| anyhow!("Invalid from_{which}: {e}"))
+			}
+			Endpoint::Id { line, hash } => {
+				line_hash::verify_line_id(*line, hash, &source_lines).map_err(|e| anyhow!("Invalid from_{which}: {e}"))
+			}
 		}
 	};
 	let from_start = resolve_extract_endpoint(&from_start_ep, "start")?;
 	let from_end = resolve_extract_endpoint(&from_end_ep, "end")?;
 	if from_start > from_end {
-		bail!(
-			"from_start (line {from_start}) is after from_end (line {from_end}) — the range must go forward"
-		);
+		bail!("from_start (line {from_start}) is after from_end (line {from_end}) — the range must go forward");
 	}
 	let from_range = (from_start, from_end);
 
@@ -634,17 +582,16 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let source_ends_with_newline = source_content.ends_with('\n');
 	let extracting_last_line = from_range.1 == total_lines;
 
-	let extracted_content =
-		if extracted_lines.len() == 1 && extracting_last_line && !source_ends_with_newline {
-			// Single line extraction from end of file without trailing newline
-			extracted_lines[0].to_string()
-		} else if extracting_last_line && source_ends_with_newline {
-			// Extracting from end and source has trailing newline - preserve it
-			format!("{}\n", extracted_lines.join("\n"))
-		} else {
-			// Normal case - join lines with newlines
-			extracted_lines.join("\n")
-		};
+	let extracted_content = if extracted_lines.len() == 1 && extracting_last_line && !source_ends_with_newline {
+		// Single line extraction from end of file without trailing newline
+		extracted_lines[0].to_string()
+	} else if extracting_last_line && source_ends_with_newline {
+		// Extracting from end and source has trailing newline - preserve it
+		format!("{}\n", extracted_lines.join("\n"))
+	} else {
+		// Normal case - join lines with newlines
+		extracted_lines.join("\n")
+	};
 
 	// Handle target file - create parent directories if needed
 	let append_source = resolve_path_source(&append_path, &call.workdir);
@@ -674,25 +621,22 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	let target_lines: Vec<&str> = target_content.lines().collect();
 
 	// Resolve append_line: line id → verified line number, or keep integer as-is (0/-1/N).
-	let append_line: i64 =
-		match append_line_ep {
-			Endpoint::Number(n) => {
-				if n < -1 {
-					bail!(
-					"Invalid append_line {n}: use 0 (beginning), -1 (end), N (after line N), or a line id"
-				);
-				}
-				n
+	let append_line: i64 = match append_line_ep {
+		Endpoint::Number(n) => {
+			if n < -1 {
+				bail!("Invalid append_line {n}: use 0 (beginning), -1 (end), N (after line N), or a line id");
 			}
-			Endpoint::Id { line, hash } => {
-				if target_content.is_empty() {
-					bail!("Cannot use a line id for append_line on an empty or non-existent target file");
-				}
-				let line = line_hash::verify_line_id(line, &hash, &target_lines)
-					.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
-				line as i64
+			n
+		}
+		Endpoint::Id { line, hash } => {
+			if target_content.is_empty() {
+				bail!("Cannot use a line id for append_line on an empty or non-existent target file");
 			}
-		};
+			let line = line_hash::verify_line_id(line, &hash, &target_lines)
+				.map_err(|e| anyhow::anyhow!("Invalid append_line: {e}"))?;
+			line as i64
+		}
+	};
 
 	let insert_after = if append_line == -1 {
 		target_lines.len()
@@ -741,8 +685,7 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	} else {
 		append_line as usize
 	};
-	if let Some(note) = text_editing::shift_note(&target_orig, &[(anchor, lines_extracted as i64)])
-	{
+	if let Some(note) = text_editing::shift_note(&target_orig, &[(anchor, lines_extracted as i64)]) {
 		out.push('\n');
 		out.push_str(&note);
 	}

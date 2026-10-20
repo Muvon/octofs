@@ -37,11 +37,7 @@ fn test_pattern_uses_ripgrep_glob_semantics() {
 	assert!(brace_alternation.contains(&"Cargo.toml".to_string()));
 	assert!(brace_alternation.contains(&"src/nested/lib.rs".to_string()));
 	assert!(!brace_alternation.contains(&"src/main.rsx".to_string()));
-	let mut nested_braces = vec![
-		"file.rs".to_string(),
-		"file.toml".to_string(),
-		"file.md".to_string(),
-	];
+	let mut nested_braces = vec!["file.rs".to_string(), "file.toml".to_string(), "file.md".to_string()];
 	filter_by_pattern(&mut nested_braces, "*.{rs,{toml,md}}").unwrap();
 	assert_eq!(nested_braces.len(), 3);
 
@@ -50,20 +46,10 @@ fn test_pattern_uses_ripgrep_glob_semantics() {
 	assert_eq!(single_star, vec!["src/main.rs"]);
 
 	let mut double_star_with_exclusion = all;
-	filter_by_pattern(
-		&mut double_star_with_exclusion,
-		"src/**/*.rs|!src/generated/**",
-	)
-	.unwrap();
-	assert_eq!(
-		double_star_with_exclusion,
-		vec!["src/main.rs", "src/nested/lib.rs"]
-	);
+	filter_by_pattern(&mut double_star_with_exclusion, "src/**/*.rs|!src/generated/**").unwrap();
+	assert_eq!(double_star_with_exclusion, vec!["src/main.rs", "src/nested/lib.rs"]);
 
-	let mut later_include_wins = vec![
-		"src/generated/drop.rs".to_string(),
-		"src/generated/keep.rs".to_string(),
-	];
+	let mut later_include_wins = vec!["src/generated/drop.rs".to_string(), "src/generated/keep.rs".to_string()];
 	filter_by_pattern(
 		&mut later_include_wins,
 		"src/**/*.rs|!src/generated/**|src/generated/keep.rs",
@@ -123,10 +109,7 @@ fn test_pattern_rejects_malformed_or_ambiguous_input_without_mutation() {
 		let mut files = original.clone();
 		let err = filter_by_pattern(&mut files, pattern).unwrap_err();
 		assert!(err.contains("Invalid `pattern`"), "{pattern:?}: {err}");
-		assert_eq!(
-			files, original,
-			"invalid pattern mutated files: {pattern:?}"
-		);
+		assert_eq!(files, original, "invalid pattern mutated files: {pattern:?}");
 	}
 
 	let mut files = vec!["#silent-comment".to_string()];
@@ -140,11 +123,7 @@ fn test_pattern_resource_limits() {
 	let oversized = "a".repeat(MAX_PATTERN_BYTES + 1);
 	let err = filter_by_pattern(&mut files, &oversized).unwrap_err();
 	assert!(err.contains("byte limit"), "got: {err}");
-	assert!(
-		err.len() < 300,
-		"error echoed oversized input: {} bytes",
-		err.len()
-	);
+	assert!(err.len() < 300, "error echoed oversized input: {} bytes", err.len());
 
 	let allowed: String = (0..MAX_PATTERN_ALTERNATIVES)
 		.map(|i| format!("file{i}"))
@@ -195,15 +174,11 @@ async fn test_listing_annotation_updates_after_modification() {
 		workdir: temp_path.to_path_buf(),
 	};
 
-	let first = list_directory(&call, temp_path.to_str().unwrap())
-		.await
-		.unwrap();
+	let first = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 	assert!(first.contains("2L"), "got: {first}");
 
 	fs::write(&file, "a\nb\nc\nd\n").unwrap();
-	let second = list_directory(&call, temp_path.to_str().unwrap())
-		.await
-		.unwrap();
+	let second = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 	assert!(
 		second.contains("4L"),
 		"cache must not serve a stale annotation: {second}"
@@ -230,9 +205,7 @@ async fn test_pattern_matches_filename_in_subdirectories() {
 		workdir: temp_path.to_path_buf(),
 	};
 
-	let result = list_directory(&call, temp_path.to_str().unwrap())
-		.await
-		.unwrap();
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 
 	assert!(
 		result.contains("app/src/Plugin/Order/Model.php"),
@@ -262,9 +235,7 @@ async fn test_pattern_no_matches_returns_explicit_message() {
 			workdir: temp_path.to_path_buf(),
 		};
 
-		let result = list_directory(&call, temp_path.to_str().unwrap())
-			.await
-			.unwrap();
+		let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 		assert_eq!(result, "No files matched pattern \"*lighthouse*\".");
 	}
 }
@@ -288,9 +259,7 @@ async fn test_pattern_with_slash_matches_relative_path() {
 		workdir: temp_path.to_path_buf(),
 	};
 
-	let result = list_directory(&call, temp_path.to_str().unwrap())
-		.await
-		.unwrap();
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 
 	assert!(result.contains("sub/a.rs"), "got: {result}");
 	assert!(!result.contains("b.rs"), "got: {result}");
@@ -318,9 +287,7 @@ async fn test_content_search_pattern_matches_filename_in_subdirectories() {
 		workdir: temp_path.to_path_buf(),
 	};
 
-	let result = list_directory(&call, temp_path.to_str().unwrap())
-		.await
-		.unwrap();
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 
 	assert!(
 		result.contains("app/src/Model.php"),
@@ -349,9 +316,7 @@ async fn test_content_search_respects_pattern_filter() {
 		workdir: temp_path.to_path_buf(),
 	};
 
-	let result = list_directory(&call, temp_path.to_str().unwrap())
-		.await
-		.unwrap();
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
 
 	assert!(result.contains("code.rs"), "got: {result}");
 	assert!(
@@ -452,10 +417,7 @@ async fn test_list_files_empty_content_should_list_files() {
 
 	let result = list_directory(
 		&call,
-		call.parameters
-			.get("directory")
-			.and_then(|v| v.as_str())
-			.unwrap_or("."),
+		call.parameters.get("directory").and_then(|v| v.as_str()).unwrap_or("."),
 	)
 	.await
 	.unwrap();
@@ -491,10 +453,7 @@ async fn test_list_files_no_content_parameter_should_list_files() {
 
 	let result = list_directory(
 		&call,
-		call.parameters
-			.get("directory")
-			.and_then(|v| v.as_str())
-			.unwrap_or("."),
+		call.parameters.get("directory").and_then(|v| v.as_str()).unwrap_or("."),
 	)
 	.await
 	.unwrap();
@@ -531,10 +490,7 @@ async fn test_list_files_whitespace_content_should_list_files() {
 
 	let result = list_directory(
 		&call,
-		call.parameters
-			.get("directory")
-			.and_then(|v| v.as_str())
-			.unwrap_or("."),
+		call.parameters.get("directory").and_then(|v| v.as_str()).unwrap_or("."),
 	)
 	.await
 	.unwrap();

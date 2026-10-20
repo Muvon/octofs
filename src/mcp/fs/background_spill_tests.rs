@@ -39,9 +39,7 @@ async fn foreground_spill_survives_capture_discard() {
 
 #[tokio::test]
 async fn spill_write_failure_names_the_path() {
-	let prepared = prepare("spill-failure-test", &std::env::temp_dir())
-		.await
-		.unwrap();
+	let prepared = prepare("spill-failure-test", &std::env::temp_dir()).await.unwrap();
 	let PreparedJob {
 		job,
 		stdout_file,
@@ -55,13 +53,9 @@ async fn spill_write_failure_names_the_path() {
 	assert!(error.to_string().contains(path.to_str().unwrap()));
 	let fixture = &FIXTURES[1];
 	let (stdout, stderr) = fixture.cleaned();
-	let (output, stored) =
-		process_output(fixture.stdout.as_bytes(), fixture.stderr.as_bytes(), &job).await;
+	let (output, stored) = process_output(fixture.stdout.as_bytes(), fixture.stderr.as_bytes(), &job).await;
 	assert_eq!(output, super::super::digest::join_streams(&stdout, &stderr));
-	assert!(
-		stored.is_none(),
-		"spill failure must return undigested output"
-	);
+	assert!(stored.is_none(), "spill failure must return undigested output");
 	tokio::fs::remove_dir(&path).await.unwrap();
 	discard(&job).await;
 }
@@ -119,11 +113,7 @@ async fn background_digest_is_cached_before_completion_notification() {
 		assert!(!notification.contains("[earlier output dropped"));
 		assert_eq!(notification, resource_text(&job.id).unwrap());
 		discard(&job).await;
-		assert_eq!(
-			read(&job.id).unwrap().output,
-			expected,
-			"reads use the cached digest"
-		);
+		assert_eq!(read(&job.id).unwrap().output, expected, "reads use the cached digest");
 		tokio::fs::remove_file(path).await.unwrap();
 	}
 }
@@ -171,9 +161,7 @@ async fn running_background_output_keeps_the_raw_tail() {
 		job,
 		stdout_file,
 		stderr_file,
-	} = prepare("running-tail-test", &std::env::temp_dir())
-		.await
-		.unwrap();
+	} = prepare("running-tail-test", &std::env::temp_dir()).await.unwrap();
 	drop(stdout_file);
 	drop(stderr_file);
 	let stdout = FIXTURES[7].stdout;
@@ -188,9 +176,7 @@ async fn running_background_output_keeps_the_raw_tail() {
 	assert!(view.truncated);
 	assert!(full.len() > MAX_TAIL_BYTES);
 	assert_eq!(view.output, &full[full.len() - MAX_TAIL_BYTES..]);
-	assert!(resource_text(&job.id)
-		.unwrap()
-		.contains("[earlier output dropped"));
+	assert!(resource_text(&job.id).unwrap().contains("[earlier output dropped"));
 	assert!(job.finished_output.get().is_none());
 
 	jobs().lock().unwrap().remove(&job.id);
@@ -203,9 +189,7 @@ async fn finished_background_output_over_the_limit_returns_the_shared_message() 
 		job,
 		stdout_file,
 		stderr_file,
-	} = prepare("large-digest-test", &std::env::temp_dir())
-		.await
-		.unwrap();
+	} = prepare("large-digest-test", &std::env::temp_dir()).await.unwrap();
 	drop(stdout_file);
 	drop(stderr_file);
 	let file = tokio::fs::File::create(&job.stdout_path).await.unwrap();

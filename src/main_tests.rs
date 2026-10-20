@@ -40,9 +40,7 @@ fn subscriber_emits_events_at_or_below_its_level() {
 
 #[test]
 fn subscriber_filters_events_above_its_level() {
-	let dispatch = tracing::dispatcher::Dispatch::new(StderrSubscriber {
-		level: Level::ERROR,
-	});
+	let dispatch = tracing::dispatcher::Dispatch::new(StderrSubscriber { level: Level::ERROR });
 	tracing::dispatcher::with_default(&dispatch, || {
 		tracing::warn!("this must not be emitted");
 	});

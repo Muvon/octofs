@@ -97,10 +97,7 @@ async fn promoted_job_captures_output_status_and_fires_completion() {
 		}
 		tokio::time::sleep(Duration::from_millis(20)).await;
 	}
-	assert!(
-		done.load(Ordering::Relaxed),
-		"on_complete must fire once the job exits"
-	);
+	assert!(done.load(Ordering::Relaxed), "on_complete must fire once the job exits");
 }
 
 #[test]
@@ -139,10 +136,7 @@ async fn cancel_stops_a_running_job_and_records_the_request() {
 
 	assert_eq!(cancel(&job.id).await, Some(()));
 	let view = wait_for_exit(&job.id).await;
-	assert!(
-		view.cancel_requested,
-		"a stop requested while running is recorded"
-	);
+	assert!(view.cancel_requested, "a stop requested while running is recorded");
 	let finished = view.finished_unix.expect("an exited job has a finish time");
 	assert!(finished >= view.started_unix);
 }
@@ -156,10 +150,7 @@ async fn cancelling_a_finished_job_leaves_it_as_it_ended() {
 	assert_eq!(cancel(&job.id).await, Some(()));
 	let view = read(&job.id).expect("job is registered");
 	assert_eq!(view.status, JobStatus::Exited(0));
-	assert!(
-		!view.cancel_requested,
-		"a job that already ended was not stopped"
-	);
+	assert!(!view.cancel_requested, "a job that already ended was not stopped");
 }
 
 #[tokio::test]
@@ -182,10 +173,7 @@ async fn allows_distinct_jobs_but_refuses_a_duplicate_in_the_same_working_dir() 
 		"an identical job in the same dir is refused while the first runs"
 	);
 	assert!(
-		refused
-			.unwrap_err()
-			.to_string()
-			.contains(&resource_uri(&first.id)),
+		refused.unwrap_err().to_string().contains(&resource_uri(&first.id)),
 		"the rejection points at the running job's resource"
 	);
 

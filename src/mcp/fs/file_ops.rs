@@ -15,8 +15,7 @@
 // File operations module - handling file viewing, creation, and basic manipulation
 
 use super::remote::{
-	io_create_dir_all, io_exists, io_is_file, io_metadata, io_read, io_read_to_string, io_write,
-	PathSource,
+	io_create_dir_all, io_exists, io_is_file, io_metadata, io_read, io_read_to_string, io_write, PathSource,
 };
 use super::search;
 use crate::utils::line_hash::line_id_at;
@@ -34,11 +33,7 @@ fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i
 // View the content of a file with line identifiers and an optional line range.
 // Directories are dispatched to `directory::list_directory` upstream in `execute_view`,
 // so this only ever handles regular files.
-pub async fn view_file_spec(
-	source: &PathSource,
-	line_range: Option<(usize, i64)>,
-	full: bool,
-) -> Result<String> {
+pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)>, full: bool) -> Result<String> {
 	if !io_exists(source).await? {
 		bail!("File not found");
 	}
@@ -103,25 +98,19 @@ pub async fn view_file_with_content_search(
 	}
 
 	// Lossy UTF-8 read so non-UTF-8 files (UTF-16 BOM, Latin-1, etc.) still match.
-	let bytes = io_read(source)
-		.await
-		.map_err(|e| anyhow!("Cannot read file: {}", e))?;
+	let bytes = io_read(source).await.map_err(|e| anyhow!("Cannot read file: {}", e))?;
 	let content = String::from_utf8_lossy(&bytes).into_owned();
 	let file_lines: Vec<&str> = content.lines().collect();
 	let total = file_lines.len();
 
 	if total == 0 {
-		return Ok(format!(
-			"File is empty — no content to match pattern \"{pattern}\"."
-		));
+		return Ok(format!("File is empty — no content to match pattern \"{pattern}\"."));
 	}
 
 	let matcher = search::Matcher::new(pattern, regex)?;
 	let blocks = search::search_lines(&content, &matcher, context_lines);
 	if blocks.is_empty() {
-		return Ok(format!(
-			"No matches for pattern \"{pattern}\" in this file."
-		));
+		return Ok(format!("No matches for pattern \"{pattern}\" in this file."));
 	}
 
 	// Render each block. Blocks follow each other directly: every line carries its
@@ -131,11 +120,7 @@ pub async fn view_file_with_content_search(
 	for block in &blocks {
 		let mut rendered = Vec::new();
 		for &n in &block.line_numbers {
-			rendered.push(format!(
-				"{}|{}",
-				line_id_at(&file_lines, n),
-				file_lines[n - 1]
-			));
+			rendered.push(format!("{}|{}", line_id_at(&file_lines, n), file_lines[n - 1]));
 		}
 		parts.push(rendered.join("\n"));
 	}
@@ -168,10 +153,7 @@ pub async fn create_file_spec(source: &PathSource, content: &str) -> Result<Stri
 		.map_err(|e| anyhow!("Permission denied. Cannot write to file: {}", e))?;
 	super::delta::note_create(source, content);
 
-	Ok(format!(
-		"File created successfully with {} bytes",
-		content.len()
-	))
+	Ok(format!("File created successfully with {} bytes", content.len()))
 }
 
 #[cfg(test)]
