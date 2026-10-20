@@ -46,7 +46,9 @@ pub enum Commands {
 		ssh_timeout: Option<u64>,
 
 		/// Shell misuse enforcement: "soft" (default) runs the command and appends a
-		/// warning naming the dedicated tool, "hard" rejects the command unexecuted
+		/// warning naming the dedicated tool, "hard" rejects the command unexecuted.
+		/// Pick per model: soft for models trained on shell chaining (GPT/codex
+		/// family), hard for models that follow tool steering (e.g. GLM)
 		#[arg(long, value_name = "MODE", default_value = "soft", value_parser = ["soft", "hard"])]
 		hint_mode: String,
 	},

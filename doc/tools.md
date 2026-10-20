@@ -145,7 +145,10 @@ contract when touching it:
   `tee`), a read program (cat/grep/find/ls) starting any command — alone, in a
   chain or as a pipeline head — file reads belong to `view`. `--hint-mode soft`
   (default) runs it and appends the guidance as a warning; `--hint-mode hard`
-  rejects the whole command unexecuted;
+  rejects the whole command unexecuted. Choose per model: soft for models
+  trained on shell chaining (GPT/codex family: `rg | sed` pipelines are their
+  native navigation), hard for models that follow tool steering (e.g. GLM,
+  where the block measured as a win);
 - run with a hint: a write to a scratch path outside the workdir;
 - pipelines are not split, so a read as a later pipe stage passes; read-only
   `sed`/`awk` pass;
