@@ -436,8 +436,8 @@ impl Default for OctofsServer {
 
 use std::path::{Path, PathBuf};
 
-// The shell description states the soft (default) misuse policy; list_tools
-// swaps it for the hard one under --hint-mode hard.
+// The shell description states the hard (default) misuse policy; list_tools
+// swaps it for the soft one under --hint-mode soft.
 pub(crate) const SHELL_MISUSE_SOFT: &str = "are discouraged and come back with a warning)";
 pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected)";
 
@@ -597,8 +597,7 @@ impl OctofsServer {
 			interactive commands or prefix `cd` to the workdir (`cd <other> && …` is fine one-off; \
 			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
 			read, list and search files (cat/grep/ls except as a later pipe stage, `sed -i` and \
-			echo/cat writes into the workdir are discouraged and come back with a warning). Output \
-			is terminal-clean \
+			echo/cat writes into the workdir are rejected). Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
@@ -904,10 +903,10 @@ impl ServerHandler for OctofsServer {
 				}
 				strip_generator_noise(&mut schema);
 				tool.input_schema = Arc::new(schema);
-				// The shell description is written for the default soft mode.
-				if tool.name == "shell" && crate::mcp::get_hint_mode() == crate::mcp::HintMode::Hard {
+				// The shell description is written for the default hard mode.
+				if tool.name == "shell" && crate::mcp::get_hint_mode() == crate::mcp::HintMode::Soft {
 					if let Some(description) = tool.description.as_mut() {
-						*description = description.replace(SHELL_MISUSE_SOFT, SHELL_MISUSE_HARD).into();
+						*description = description.replace(SHELL_MISUSE_HARD, SHELL_MISUSE_SOFT).into();
 					}
 				}
 				tool

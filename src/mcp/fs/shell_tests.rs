@@ -15,12 +15,13 @@
 use super::*;
 
 #[tokio::test]
-async fn test_shell_misuse_runs_with_a_warning_by_default() {
-	// Soft mode (the default): misuse runs and the guidance rides along as a hint.
-	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat /dev/null" }));
-	execute_shell_command(&call, None)
+async fn test_shell_misuse_is_rejected_by_default() {
+	// Hard mode (the default): misuse is an error and nothing executes.
+	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat src/main.rs" }));
+	let err = execute_shell_command(&call, None)
 		.await
-		.expect("soft mode runs the command");
+		.expect_err("hard mode rejects misuse");
+	assert!(err.to_string().contains("view"), "err: {err}");
 }
 
 #[test]
@@ -37,7 +38,7 @@ fn hard_and_soft_misuse_messages_say_what_happened() {
 #[test]
 fn shell_description_carries_the_phrase_hard_mode_replaces() {
 	let server = include_str!("../server.rs");
-	assert!(server.contains(&format!("workdir {}", crate::mcp::server::SHELL_MISUSE_SOFT)));
+	assert!(server.contains(&format!("workdir {}", crate::mcp::server::SHELL_MISUSE_HARD)));
 }
 
 #[tokio::test]
@@ -409,7 +410,7 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 #[test]
 fn a_read_in_a_compound_is_rejected_by_name() {
 	let msg = rejection("php -v && git log --oneline -3 && find . -name x").expect("find is blocked");
-	assert!(msg.contains("`find` in the shell is discouraged"), "{msg}");
+	assert!(msg.contains("`find` is blocked"), "{msg}");
 }
 
 #[test]
@@ -430,7 +431,7 @@ fn an_in_place_sed_is_blocked_as_an_edit() {
 		"sed -ni 's/a/b/p' src/x.c",
 	] {
 		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be blocked"));
-		assert!(msg.contains("`sed` in the shell is discouraged"), "{msg}");
+		assert!(msg.contains("`sed` is blocked"), "{msg}");
 		assert!(msg.contains("in place"), "{msg}");
 	}
 }

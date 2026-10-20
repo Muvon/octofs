@@ -60,9 +60,9 @@ pub fn set_hint_mode(mode: HintMode) {
 	HINT_MODE.set(mode).ok();
 }
 
-/// Current hint mode; soft unless the CLI chose hard.
+/// Current hint mode; hard unless the CLI chose soft.
 pub fn get_hint_mode() -> HintMode {
-	HINT_MODE.get().copied().unwrap_or(HintMode::Soft)
+	HINT_MODE.get().copied().unwrap_or(HintMode::Hard)
 }
 
 /// MCP tool call with per-session working directory context.

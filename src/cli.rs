@@ -45,11 +45,11 @@ pub enum Commands {
 		#[arg(long, value_name = "SECS")]
 		ssh_timeout: Option<u64>,
 
-		/// Shell misuse enforcement: "soft" (default) runs the command and appends a
-		/// warning naming the dedicated tool, "hard" rejects the command unexecuted.
-		/// Pick per model: soft for models trained on shell chaining (GPT/codex
-		/// family), hard for models that follow tool steering (e.g. GLM)
-		#[arg(long, value_name = "MODE", default_value = "soft", value_parser = ["soft", "hard"])]
+		/// Shell misuse enforcement: "hard" (default) rejects the command unexecuted,
+		/// "soft" runs it and appends a warning naming the dedicated tool.
+		/// Hard suits models that follow tool steering (GLM, gpt-6.1-sol); try soft
+		/// for a model that keeps re-sending blocked commands (watch the rejections)
+		#[arg(long, value_name = "MODE", default_value = "hard", value_parser = ["soft", "hard"])]
 		hint_mode: String,
 	},
 }

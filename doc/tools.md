@@ -143,12 +143,12 @@ contract when touching it:
 
 - misuse: `sed -i`, content writes into the workdir (`cat >`, `echo >`,
   `tee`), a read program (cat/grep/find/ls) starting any command — alone, in a
-  chain or as a pipeline head — file reads belong to `view`. `--hint-mode soft`
-  (default) runs it and appends the guidance as a warning; `--hint-mode hard`
-  rejects the whole command unexecuted. Choose per model: soft for models
-  trained on shell chaining (GPT/codex family: `rg | sed` pipelines are their
-  native navigation), hard for models that follow tool steering (e.g. GLM,
-  where the block measured as a win);
+  chain or as a pipeline head — file reads belong to `view`. `--hint-mode hard`
+  (default) rejects the whole command unexecuted; `--hint-mode soft` runs it and
+  appends the guidance as a warning. Hard suits models that follow tool steering:
+  a measured win on GLM-5.3, and gpt-6.1-sol rarely hits it (1 of 150 shell
+  calls over six tasks). Try soft for a model that keeps re-sending blocked
+  commands — watch the rejection count;
 - run with a hint: a write to a scratch path outside the workdir;
 - pipelines are not split, so a read as a later pipe stage passes; read-only
   `sed`/`awk` pass;
