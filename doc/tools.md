@@ -141,9 +141,11 @@ re-run or `ps` — start the next independent step or end the turn.
 **Misuse gate** (`detect_shell_misuse`). The gate is nuanced; preserve this
 contract when touching it:
 
-- rejected outright: `sed -i`, content writes into the workdir (`cat >`,
-  `echo >`, `tee`), a read program (cat/grep/find/ls) starting any command —
-  alone, in a chain or as a pipeline head — file reads belong to `view`;
+- misuse: `sed -i`, content writes into the workdir (`cat >`, `echo >`,
+  `tee`), a read program (cat/grep/find/ls) starting any command — alone, in a
+  chain or as a pipeline head — file reads belong to `view`. `--hint-mode soft`
+  (default) runs it and appends the guidance as a warning; `--hint-mode hard`
+  rejects the whole command unexecuted;
 - run with a hint: a write to a scratch path outside the workdir;
 - pipelines are not split, so a read as a later pipe stage passes; read-only
   `sed`/`awk` pass;

@@ -44,6 +44,27 @@ pub fn get_session_root_directory() -> PathBuf {
 		.unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
+/// How shell misuse (a program a dedicated tool covers) is enforced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HintMode {
+	/// The command runs; the guidance is appended to its result as a warning.
+	Soft,
+	/// The command is rejected with the guidance; nothing runs.
+	Hard,
+}
+
+static HINT_MODE: OnceLock<HintMode> = OnceLock::new();
+
+/// Set the hint mode (set once at startup from CLI).
+pub fn set_hint_mode(mode: HintMode) {
+	HINT_MODE.set(mode).ok();
+}
+
+/// Current hint mode; soft unless the CLI chose hard.
+pub fn get_hint_mode() -> HintMode {
+	HINT_MODE.get().copied().unwrap_or(HintMode::Soft)
+}
+
 /// MCP tool call with per-session working directory context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCall {

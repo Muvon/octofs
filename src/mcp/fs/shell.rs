@@ -403,10 +403,22 @@ fn sed_edits_in_place(segment: &str) -> bool {
 	})
 }
 
-/// Name the blocked program and state that nothing ran, so a compound command
-/// can be split instead of retried.
+/// Name the misused program. Hard mode states that nothing ran, so a compound
+/// command can be split instead of retried; soft mode says it ran anyway.
 fn blocked_message(prog: &str, hint: &str) -> String {
-	format!("`{prog}` is blocked, so the whole command was rejected and no part of it ran — re-send the rest as its own call. {hint}")
+	misuse_message(prog, hint, crate::mcp::get_hint_mode())
+}
+
+fn misuse_message(prog: &str, hint: &str, mode: crate::mcp::HintMode) -> String {
+	match mode {
+		crate::mcp::HintMode::Hard => format!(
+			"`{prog}` is blocked, so the whole command was rejected and no part of it ran — re-send the rest as its own call. {hint}"
+		),
+		crate::mcp::HintMode::Soft => format!(
+			"`{prog}` in the shell is discouraged here; the command ran anyway. {}",
+			hint.replace(" is blocked — ", " is discouraged — ")
+		),
+	}
 }
 
 /// Targets of the segment's unquoted `>` / `>>` file redirects.
@@ -696,9 +708,11 @@ async fn execute_with_timeout(
 		}
 	};
 
-	// Reject commands that can be done with dedicated MCP tools.
+	// Commands a dedicated MCP tool covers: rejected in hard mode, run with a
+	// warning in soft mode (--hint-mode).
 	match detect_shell_misuse(&command, Some(&call.workdir)) {
-		Some(Misuse::Reject(msg)) => bail!("{msg}"),
+		Some(Misuse::Reject(msg)) if crate::mcp::get_hint_mode() == crate::mcp::HintMode::Hard => bail!("{msg}"),
+		Some(Misuse::Reject(msg)) => crate::mcp::request_ctx::push_hint(&msg),
 		Some(Misuse::Hint(hint)) => crate::mcp::request_ctx::push_hint(&hint),
 		None => {}
 	}

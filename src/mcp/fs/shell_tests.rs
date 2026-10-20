@@ -15,13 +15,29 @@
 use super::*;
 
 #[tokio::test]
-async fn test_shell_misuse_always_rejected() {
-	// No modes: misuse is a hard error, nothing executes.
-	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat src/main.rs" }));
-	let err = execute_shell_command(&call, None)
+async fn test_shell_misuse_runs_with_a_warning_by_default() {
+	// Soft mode (the default): misuse runs and the guidance rides along as a hint.
+	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat /dev/null" }));
+	execute_shell_command(&call, None)
 		.await
-		.expect_err("misuse must be rejected");
-	assert!(err.to_string().contains("view"), "err: {err}");
+		.expect("soft mode runs the command");
+}
+
+#[test]
+fn hard_and_soft_misuse_messages_say_what_happened() {
+	let hint = "Reading files with the shell is blocked — use `view`.";
+	let hard = misuse_message("cat", hint, crate::mcp::HintMode::Hard);
+	assert!(hard.contains("no part of it ran"), "{hard}");
+	assert!(hard.contains("is blocked — use `view`"), "{hard}");
+	let soft = misuse_message("cat", hint, crate::mcp::HintMode::Soft);
+	assert!(soft.contains("the command ran anyway"), "{soft}");
+	assert!(soft.contains("is discouraged — use `view`"), "{soft}");
+}
+
+#[test]
+fn shell_description_carries_the_phrase_hard_mode_replaces() {
+	let server = include_str!("../server.rs");
+	assert!(server.contains(&format!("workdir {}", crate::mcp::server::SHELL_MISUSE_SOFT)));
 }
 
 #[tokio::test]
@@ -377,7 +393,12 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 	// Observed: an agent sent `php -v && git status && git log && find …` three
 	// times, permuting joiners, because the rejection named neither the offending
 	// program nor the fact that the legitimate parts never ran.
-	let msg = rejection("php -v && git log --oneline -3 && sleep 5").expect("sleep is blocked");
+	assert!(rejection("php -v && git log --oneline -3 && sleep 5").is_some());
+	let msg = misuse_message(
+		"sleep",
+		"Bare `sleep` is blocked — it wastes the call.",
+		crate::mcp::HintMode::Hard,
+	);
 	assert!(msg.contains("`sleep`"), "names the program: {msg}");
 	assert!(
 		msg.contains("no part of it ran"),
@@ -388,7 +409,7 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 #[test]
 fn a_read_in_a_compound_is_rejected_by_name() {
 	let msg = rejection("php -v && git log --oneline -3 && find . -name x").expect("find is blocked");
-	assert!(msg.contains("`find` is blocked"), "{msg}");
+	assert!(msg.contains("`find` in the shell is discouraged"), "{msg}");
 }
 
 #[test]
@@ -409,7 +430,7 @@ fn an_in_place_sed_is_blocked_as_an_edit() {
 		"sed -ni 's/a/b/p' src/x.c",
 	] {
 		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be blocked"));
-		assert!(msg.contains("`sed` is blocked"), "{msg}");
+		assert!(msg.contains("`sed` in the shell is discouraged"), "{msg}");
 		assert!(msg.contains("in place"), "{msg}");
 	}
 }

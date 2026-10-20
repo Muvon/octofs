@@ -44,5 +44,10 @@ pub enum Commands {
 		/// SSH connection timeout in seconds for remote filesystem access
 		#[arg(long, value_name = "SECS")]
 		ssh_timeout: Option<u64>,
+
+		/// Shell misuse enforcement: "soft" (default) runs the command and appends a
+		/// warning naming the dedicated tool, "hard" rejects the command unexecuted
+		#[arg(long, value_name = "MODE", default_value = "soft", value_parser = ["soft", "hard"])]
+		hint_mode: String,
 	},
 }
