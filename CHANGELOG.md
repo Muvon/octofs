@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.19.0] - 2026-10-21
+
+### 📋 Release Summary
+
+Shell misuse is now rejected by default, with soft and hard shell hint modes available. Tool-use guidance has also been revised.
+
+### 🚨 Breaking Changes
+
+- **shell**: reject shell misuse by default `e5d31a13`
+
+### ✨ New Features & Enhancements
+
+- **mcp**: support soft and hard shell hint modes `e48ed0e8`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: remove detailed tool-use recommendations `20744d08`
+- **mcp**: improve tool-use guidance `2f70fe2f`
+- format Rust code at 120 columns `0ee2acbe`
+
+### 📚 Documentation & Examples
+
+- **cli**: document model-specific hint modes `8f0295a7`
+
 ## [0.18.3] - 2026-10-18
 
 ### 🔧 Improvements & Optimizations
