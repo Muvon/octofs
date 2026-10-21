@@ -878,12 +878,7 @@ impl ServerHandler for OctofsServer {
 				 re-viewing files. Reuse returned content and ids; read complete relevant blocks, \
 				 then act on them. Each response costs a round trip: first decide what you need \
 				 next, then request every call that doesn't depend on another's result in that one \
-				 response. Edit in as few rounds as possible: gather every change a file needs and apply \
-				 them in ONE batch_edit (up to 50 inserts/replaces, targets from the same view); edits \
-				 to different files go out together as parallel calls in the same response — never a \
-				 round per hunk. Find several names with one `view` search using a regex alternation \
-				 (`foo|bar|baz`). Start a long build or test in `shell` and keep working on what doesn't \
-				 need its result; its exit arrives as a message."
+				 response."
 				.to_string(),
 		)
 	}
