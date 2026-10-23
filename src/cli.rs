@@ -33,9 +33,16 @@ pub enum Commands {
 		#[arg(long, value_name = "PATH")]
 		path: Option<PathBuf>,
 
-		/// Bind to HTTP server on host:port instead of using stdin/stdout (e.g., "0.0.0.0:12345")
+		/// Bind to HTTP server on host:port instead of using stdin/stdout (e.g., "127.0.0.1:12345").
+		/// A non-loopback address also needs --auth-token.
 		#[arg(long, value_name = "HOST:PORT")]
 		bind: Option<String>,
+
+		/// Bearer token HTTP clients must send as "Authorization: Bearer <TOKEN>"; required to bind
+		/// a non-loopback address. Prefer the OCTOFS_AUTH_TOKEN environment variable: command-line
+		/// arguments are visible to other local users.
+		#[arg(long, value_name = "TOKEN")]
+		auth_token: Option<String>,
 
 		/// Path to SSH private key for remote filesystem access
 		#[arg(long, value_name = "FILE")]

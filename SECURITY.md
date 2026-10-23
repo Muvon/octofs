@@ -29,13 +29,12 @@ We take security seriously. If you discover a security vulnerability, please rep
 
 ## Security Considerations
 
-Octofs is designed with security in mind:
+Octofs gives the connected MCP client the same access as the user running it. It is not a sandbox:
 
-- **Path Validation** — All paths are validated to prevent directory traversal
-- **Gitignore Awareness** — Respects `.gitignore` patterns
-- **Working Directory** — Operations are scoped to configured directories
-- **No Network** — Default stdio transport, no network exposure
-- **Shell Safety** — Commands are executed with user permissions only
+- **Trust model** — Every tool acts with the server user's permissions. `shell` runs arbitrary commands and the file tools accept absolute paths, so the session root (`--path`, `workdir`) is the default for relative paths, not a containment boundary. Connect only clients you trust, and use OS-level isolation (a container, VM, or dedicated user) when you need confinement.
+- **Remote paths** — `ssh://` and `sftp://` paths, including a `workdir` switched to one, connect with the operator's SSH key and agent.
+- **Network** — The default stdio transport opens no port. `--bind` serves HTTP: a non-loopback address is refused unless `--auth-token` (or `OCTOFS_AUTH_TOKEN`) is set, and clients must then send `Authorization: Bearer <token>`. A server without a token listens on loopback only and rejects requests that carry a browser `Origin` header.
+- **Stale-write detection** — Edits target hash-verified line ids, so an edit against a file that changed underneath fails instead of overwriting it.
 
 ## Best Practices
 
@@ -45,3 +44,4 @@ When using Octofs:
 - Review batch edits before applying
 - Use environment variables for sensitive data
 - Keep Octofs updated to the latest version
+- Keep `--bind` on `127.0.0.1`; when you must expose it, use a long random `OCTOFS_AUTH_TOKEN` and put the server behind TLS or an SSH tunnel, since it speaks plain HTTP
