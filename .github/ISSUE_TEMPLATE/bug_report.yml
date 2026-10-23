@@ -45,8 +45,8 @@ body:
       description: Your environment details
       value: |
         - OS: [e.g., macOS 14.0, Ubuntu 22.04]
-        - Rust Version: [e.g., 1.92.0]
-        - Octofs Version: [e.g., 0.2.0]
+        - Rust Version: [e.g., 1.95.0]
+        - Octofs Version: [output of octofs --version, e.g., 0.19.0]
         - AI Client: [e.g., Cursor, Claude Desktop]
     validations:
       required: true

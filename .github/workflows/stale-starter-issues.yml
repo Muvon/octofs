@@ -1,0 +1,17 @@
+name: Stale starter issues
+on: { schedule: [{ cron: "30 1 * * *" }] }
+permissions: { actions: write, issues: write, pull-requests: write }
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v11
+        with:
+          any-of-issue-labels: "good first issue,help wanted"
+          include-only-assigned: true
+          days-before-issue-stale: 14
+          days-before-issue-close: -1
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: "stale-assignment"
+          stale-issue-message: "No activity for 14 days. Still working on this? Comment to keep it, or say so and we'll free it up."
