@@ -17,6 +17,7 @@ use clap::Parser;
 use tracing::Level;
 
 mod cli;
+mod http_auth;
 pub mod mcp;
 pub mod utils;
 
@@ -34,6 +35,7 @@ async fn main() -> Result<()> {
 		Commands::Mcp {
 			path,
 			bind,
+			auth_token,
 			ssh_key,
 			ssh_timeout,
 			hint_mode,
@@ -67,7 +69,8 @@ async fn main() -> Result<()> {
 			match bind {
 				Some(addr) => {
 					// HTTP mode with Streamable HTTP transport
-					run_http_server(&addr).await?;
+					let auth_token = http_auth::resolve_auth_token(auth_token);
+					run_http_server(&addr, auth_token.as_deref()).await?;
 				}
 				None => {
 					// STDIO mode (default)
@@ -125,10 +128,16 @@ async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
 }
 
 /// Run the MCP server over HTTP with Streamable HTTP transport
-async fn run_http_server(bind_addr: &str) -> Result<()> {
+async fn run_http_server(bind_addr: &str, auth_token: Option<&str>) -> Result<()> {
 	use rmcp::transport::streamable_http_server::{
 		session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 	};
+
+	let addr = bind_addr
+		.parse::<std::net::SocketAddr>()
+		.map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind_addr, e))?;
+	// Checked before anything listens: an unauthenticated non-loopback bind is remote shell access.
+	http_auth::check_bind_policy(&addr, auth_token)?;
 
 	let ct = tokio_util::sync::CancellationToken::new();
 
@@ -137,19 +146,30 @@ async fn run_http_server(bind_addr: &str) -> Result<()> {
 	let service = StreamableHttpService::new(
 		|| Ok(mcp::server::OctofsServer::new()),
 		LocalSessionManager::default().into(),
-		StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+		http_auth::transport_config(
+			StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+			auth_token,
+		),
 	);
 
-	let router = axum::Router::new().nest_service("/mcp", service);
-	let addr = bind_addr
-		.parse::<std::net::SocketAddr>()
-		.map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind_addr, e))?;
+	let mut router = axum::Router::new().nest_service("/mcp", service);
+	if let Some(token) = auth_token {
+		router = http_auth::with_bearer_auth(router, token);
+	}
 
 	let tcp_listener = tokio::net::TcpListener::bind(&addr)
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
 
-	tracing::info!("MCP HTTP server listening on {}", addr);
+	tracing::info!(
+		"MCP HTTP server listening on {} (bearer auth: {})",
+		addr,
+		if auth_token.is_some() {
+			"on"
+		} else {
+			"off, loopback only"
+		}
+	);
 
 	let _ = axum::serve(tcp_listener, router)
 		.with_graceful_shutdown(async move {

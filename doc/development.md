@@ -6,7 +6,7 @@ working notes for agents live in `.agents/` (see below).
 ## Build & test
 
 - Build: `cargo build` · Release: `cargo build --release`
-- Dev run: `cargo run -- mcp` (stdio; add `--bind 0.0.0.0:12345` for HTTP;
+- Dev run: `cargo run -- mcp` (stdio; add `--bind 127.0.0.1:12345` for HTTP;
   `RUST_LOG=debug` for logs)
 - Format: `cargo fmt` — hard tabs (`rustfmt.toml`), default 100-col width
 - Lint: `cargo clippy --all-features -- -D warnings`

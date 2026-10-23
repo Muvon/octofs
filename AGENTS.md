@@ -3,7 +3,7 @@
 Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit, extract_lines, shell, workdir) over MCP — stdio or streamable HTTP — with native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum.
 
 ## Commands
-- Build: `cargo build` · Release: `cargo build --release` · Dev run: `cargo run -- mcp` (stdio; add `--bind 0.0.0.0:12345` for HTTP; `RUST_LOG=debug` for logs)
+- Build: `cargo build` · Release: `cargo build --release` · Dev run: `cargo run -- mcp` (stdio; add `--bind 127.0.0.1:12345` for HTTP; `RUST_LOG=debug` for logs)
 - Format: `cargo fmt` · Lint: `cargo clippy --all-features -- -D warnings` · Test: `cargo test --all-features` (one suite: `cargo test --all-features <name>`)
 - Coverage: `make coverage` (needs cargo-llvm-cov + llvm-tools-preview; excludes `*_tests.rs`)
 - This checkout auto-syncs to the dev server — run build/test/clippy there (`ssh dev`), not on this machine.
@@ -22,7 +22,7 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 | Line ids (`N:hh`) / stale-id verification | `src/utils/line_hash.rs` |
 | Truncation / token budgets | `src/utils/truncation.rs` |
 | Hints appended to tool responses | `src/mcp/request_ctx.rs` (`push_hint` → `append_hints`) |
-| Startup, transports, shutdown cleanup | `src/main.rs`, `src/cli.rs` |
+| Startup, transports, shutdown cleanup | `src/main.rs`, `src/cli.rs`; HTTP access control in `src/http_auth.rs` |
 
 ## Conventions
 - Hard tabs (`rustfmt.toml`), default 100-col width — `cargo fmt` before done.
@@ -44,6 +44,7 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 - RSA SSH keys are unsupported by design (RUSTSEC-2023-0071) and russh uses the `ring` backend because Alpine/musl builds have no cmake — do not "fix" either.
 - Outer `std::sync::Mutex` in `FILE_LOCKS` is never held across `.await`; `resolve_path` does not canonicalize (files may not exist yet) — canonicalize only for lock keys.
 - Register every spawned shell child via `register_child` so SIGTERM/EOF cleanup kills its process group; job output reads are tail-capped (`MAX_TAIL_BYTES`).
+- HTTP access control (`src/http_auth.rs`) is the only boundary in front of `shell` over `--bind`: a non-loopback bind without a token must stay refused, the token check must stay constant-time, and token-less servers keep rmcp's loopback Host allowlist plus enforced Origin validation. Don't weaken any of the three.
 
 ## Never
 - Use `std::fs` inside `async fn` — `tokio::fs` exclusively

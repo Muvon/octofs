@@ -269,13 +269,17 @@ octofs mcp
 
 #### HTTP
 
-Streamable HTTP transport for remote access or multi-client scenarios.
+Streamable HTTP transport for remote access or multi-client scenarios. Every tool, `shell` included, is reachable by whoever can connect, so access is gated:
 
 ```bash
-octofs mcp --bind 0.0.0.0:12345
+# Loopback, no token: requests carrying a browser Origin header are rejected
+octofs mcp --bind 127.0.0.1:12345
+
+# Any other address requires a bearer token; octofs refuses to start without one
+OCTOFS_AUTH_TOKEN="$(openssl rand -hex 32)" octofs mcp --bind 0.0.0.0:12345
 ```
 
-Connect clients to `http://localhost:12345/mcp`.
+Connect clients to `http://localhost:12345/mcp`; with a token they send `Authorization: Bearer <token>`. The server speaks plain HTTP, so put it behind TLS or an SSH tunnel when the token crosses a network. `--auth-token <TOKEN>` works too, but command-line arguments are visible to other local users.
 
 ### Working Directory
 

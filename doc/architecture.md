@@ -10,7 +10,8 @@ For per-tool behavior see [tools.md](tools.md); for remote files
 ```
 src/
   main.rs              — CLI dispatch (`octofs mcp`), stdio/HTTP startup, SIGTERM/EOF shutdown + child cleanup
-  cli.rs               — clap CLI: `octofs mcp [--path PATH] [--bind HOST:PORT] [--ssh-key FILE] [--ssh-timeout SECS]`
+  cli.rs               — clap CLI: `octofs mcp [--path PATH] [--bind HOST:PORT] [--auth-token TOKEN] [--ssh-key FILE] [--ssh-timeout SECS]`
+  http_auth.rs         — HTTP access control: bind policy, bearer-token layer, Host/Origin config
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
     server.rs          — OctofsServer: #[tool_router] methods (view, text_editor, batch_edit, extract_lines, shell,
@@ -105,7 +106,10 @@ HTTP ctrl-c.
   clean exit on stdin EOF or SIGTERM.
 - **HTTP** (`--bind`): axum + rmcp streamable HTTP; fresh
   `OctofsServer::with_root()` per HTTP session; session workdirs come from the
-  client capabilities as in stdio mode.
+  client capabilities as in stdio mode. `http_auth.rs` gates access: a
+  non-loopback bind needs `--auth-token`/`OCTOFS_AUTH_TOKEN` (bearer check,
+  Host allowlist lifted); without a token the server is loopback-only and
+  rejects any request carrying an `Origin` header.
 
 ## Error handling shape
 
