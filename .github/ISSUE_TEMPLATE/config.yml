@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Muvon/octofs/security/policy
+    about: Please report security issues privately as described in SECURITY.md, not in a public issue.
