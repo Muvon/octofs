@@ -80,3 +80,7 @@ pub fn drain_hints() -> Vec<String> {
 	})
 	.unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "request_ctx_tests.rs"]
+mod request_ctx_tests;
