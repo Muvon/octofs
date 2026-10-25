@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.20.0] - 2026-10-25
+
+### 📋 Release Summary
+
+Remote HTTP binds now require authentication. Contributor and issue policies are now documented.
+
+### 🚨 Breaking Changes
+
+- **http**: require authentication for remote HTTP binds `730803d8`
+
+### 🔧 Improvements & Optimizations
+
+- **workflows**: update Rust toolchain to 1.99.1 `42e56327`
+- **mcp**: simplify request context tests `f6ecf3fb`
+- **request_ctx**: cover hint dedupe, scoping and view cache access `2ef77eb5`
+
+### 📚 Documentation & Examples
+
+- **community**: document contributor and issue policies `f45b2710`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.19.0] - 2026-10-21
 
 ### 📋 Release Summary
