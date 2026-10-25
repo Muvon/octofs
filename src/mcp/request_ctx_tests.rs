@@ -16,6 +16,8 @@
 
 use std::sync::Arc;
 
+use tokio::sync::oneshot;
+
 use super::{drain_hints, push_hint, with_request_context, with_view_cache};
 use crate::mcp::fs::delta::ViewCache;
 
@@ -39,8 +41,6 @@ fn outside_scope_drain_hints_is_noop() {
 
 #[tokio::test]
 async fn concurrent_scopes_dont_leak_hints() {
-	use tokio::sync::oneshot;
-
 	let (right_pushed_tx, right_pushed_rx) = oneshot::channel::<()>();
 	let (left_drained_tx, left_drained_rx) = oneshot::channel::<()>();
 
@@ -59,8 +59,8 @@ async fn concurrent_scopes_dont_leak_hints() {
 	});
 
 	let (left_hints, right_hints) = tokio::join!(left, right);
-	assert_eq!(left_hints, vec!["left".to_string()]);
-	assert_eq!(right_hints, vec!["right".to_string()]);
+	assert_eq!(left_hints, vec!["left"]);
+	assert_eq!(right_hints, vec!["right"]);
 }
 
 #[tokio::test]
