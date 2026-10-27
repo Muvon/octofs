@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.20.2] - 2026-10-27
+
+### 📋 Release Summary
+
+Clarified the usage guidance for MCP tools.
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: clarify tool usage guidance `25073960`
+
 ## [0.20.1] - 2026-10-27
 
 ### 📋 Release Summary
