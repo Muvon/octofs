@@ -603,11 +603,12 @@ impl OctofsServer {
 			the output. Large recognized test/build output is digested with its full output path appended. \
 			A command still running after ~10s moves to the background and returns a \
 			job resource showing a progress tail while running; on exit you receive the exit code \
-			and the same output as a foreground command. Do \
-			NOT poll, sleep, re-run or `ps` it, or start a variant of it (other flags or filters) — \
-			the result arrives on its own. Do only work that doesn't need it; to wait for it, reply \
-			with a brief status and no tool call; resume dependent work when its completion \
-			notification arrives. \
+			and the same output as a foreground command. Its result then arrives on its own as a \
+			message — do NOT poll, sleep, re-run or `ps` it, check its status with another tool call, \
+			or start a variant of it (other flags or filters). While it runs, keep working on anything \
+			that does not need its result: read or review related code, write or update tests, prepare \
+			the next edit. Only when nothing like that is left, reply with a brief status and no tool \
+			call to wait; resume dependent work when its completion notification arrives. \
 			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]

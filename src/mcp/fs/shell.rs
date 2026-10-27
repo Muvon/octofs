@@ -805,12 +805,13 @@ async fn execute_with_timeout(
 			return Ok(ShellOutcome {
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
-					 (PID {}). Output keeps streaming to the linked resource; you will be \
-					 notified on exit with the exit code and output. Do not poll, sleep, re-run \
-					 it or start a variant of it — do only work that doesn't need its result; to wait \
-					 for it, reply with a brief status and no tool call; resume dependent work when its \
-					 completion notification arrives.{} Stop early: \
-					 kill -- -{}",
+					 (PID {}). Output keeps streaming to the linked resource; its result arrives on its own \
+					 as a message when it exits (exit code and output). Do not poll it (`ps`, `tail`, sleep, \
+					 viewing the linked resource), re-run it or start a variant of it. While it runs, keep \
+					 working on anything that does not need its result \
+					 (read or review related code, write or update tests, prepare the next edit); only when \
+					 nothing like that is left, reply with a brief status and no tool call to wait.{} \
+					 Stop early: kill -- -{}",
 					job_id, job_pid, stash_note, job_pid
 				),
 				resource_uri: Some(uri),
