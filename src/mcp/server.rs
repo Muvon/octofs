@@ -609,11 +609,12 @@ impl OctofsServer {
 			A command still running after ~10s moves to the background and returns a \
 			job resource showing a progress tail while running; on exit you receive the exit code \
 			and the same output as a foreground command. Its result then arrives on its own as a \
-			message — do NOT poll, sleep, re-run or `ps` it, check its status with another tool call, \
-			or start a variant of it (other flags or filters). While it runs, keep working on anything \
-			that does not need its result: read or review related code, write or update tests, prepare \
-			the next edit. Only when nothing like that is left, reply with a brief status and no tool \
-			call to wait; resume dependent work when its completion notification arrives. \
+			message. Do not poll it (`ps`, `tail`, sleep, viewing the linked resource, any other \
+			status check), re-run it or start a variant of it (other flags or filters). While it \
+			runs, keep working on anything that does not need its result (read or review related \
+			code, write or update tests, prepare the next edit); only when nothing like that is \
+			left, reply with a brief status and no tool call to wait. Resume dependent work when \
+			its completion notification arrives. \
 			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]
@@ -1347,7 +1348,7 @@ pub struct ShellParams {
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
 	/// Directory to switch into, absolute or relative to the current workdir; omit it (without
-	/// `reset`) to get the current one back, rarely needed since it is already known. Not `"."`
+	/// `reset`) to get the current workdir back, rarely needed since it is already known. Not `"."`
 	/// (a no-op). Remote: ssh://user@host:port/path; `ssh://host` or `ssh://host/~/dir` is the
 	/// login home.
 	#[serde(default)]

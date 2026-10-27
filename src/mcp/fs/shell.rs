@@ -128,11 +128,11 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". To feed a program, redirect its stdin instead: `psql < dump.sql`, `python3 - <<'EOF'`. Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed.",
+		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". To feed a program, redirect its stdin instead: `psql < dump.sql`, `python3 - <<'EOF'`. Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed; this covers every command in a chain (`cd x && cat y`), not only the first.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed.",
+		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && cat y`), not only the first.",
 	),
 	(
 		&["find", "ls"],
@@ -798,7 +798,7 @@ async fn execute_with_timeout(
 			// stashed state.
 			let stash_note = if stashes_changes(&command) {
 				" It stashed working-tree changes, which stay off disk until it exits: don't \
-				 edit files or finish the task before then (read its resource to check)."
+				 edit files (tests included) or finish the task before its exit message arrives."
 			} else {
 				""
 			};
@@ -807,7 +807,8 @@ async fn execute_with_timeout(
 					"Still running after the foreground limit — moved to background job `{}` \
 					 (PID {}). Output keeps streaming to the linked resource; its result arrives on its own \
 					 as a message when it exits (exit code and output). Do not poll it (`ps`, `tail`, sleep, \
-					 viewing the linked resource), re-run it or start a variant of it. While it runs, keep \
+					 viewing the linked resource, any other status check), re-run it or start a variant of it \
+					 (other flags or filters). While it runs, keep \
 					 working on anything that does not need its result \
 					 (read or review related code, write or update tests, prepare the next edit); only when \
 					 nothing like that is left, reply with a brief status and no tool call to wait.{} \
