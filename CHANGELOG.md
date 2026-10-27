@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.20.3] - 2026-10-27
+
+### 📋 Release Summary
+
+Refined the verification guidance for MCP filesystem tools.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: upgrade Tokio and rmcp dependencies `04d7b0cb`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: refine verification guidance `843f890b`
+
 ## [0.20.2] - 2026-10-27
 
 ### 📋 Release Summary
