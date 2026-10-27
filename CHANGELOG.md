@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.20.4] - 2026-10-27
+
+### 📋 Release Summary
+
+Relocation messages now start on a new line. Command execution restrictions are stated more clearly.
+
+### 🐛 Bug Fixes & Stability
+
+- **line-hash**: start relocation messages on a new line `9d02c695`
+- **mcp**: clarify command execution restrictions `f69f23d8`
+
 ## [0.20.3] - 2026-10-27
 
 ### 📋 Release Summary
