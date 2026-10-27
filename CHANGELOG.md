@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.20.1] - 2026-10-27
+
+### 📋 Release Summary
+
+Background command wait guidance is now clearer.
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: clarify background command wait guidance `bfad1f37`
+
 ## [0.20.0] - 2026-10-25
 
 ### 📋 Release Summary
