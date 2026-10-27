@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.20.5] - 2026-10-27
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: upgrade russh to 0.65 `f93e174b`
+
 ## [0.20.4] - 2026-10-27
 
 ### 📋 Release Summary
