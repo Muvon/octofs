@@ -602,6 +602,10 @@ impl OctofsServer {
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
+			Verify narrow first: start with the smallest check that exercises your change — one test, \
+			target, package or sample input, in the mode it targets — then broaden only as far as the \
+			change can reach; a change everything depends on (a shared header, a build flag) ends with \
+			the full run. Repeat a full run only after a change that could alter its result. \
 			A command still running after ~10s moves to the background and returns a \
 			job resource showing a progress tail while running; on exit you receive the exit code \
 			and the same output as a foreground command. Its result then arrives on its own as a \
