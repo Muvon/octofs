@@ -74,6 +74,14 @@ fn test_verify_line_id_beyond_eof() {
 }
 
 #[test]
+fn test_verify_line_id_beyond_eof_relocation_on_own_line() {
+	let lines = vec!["only line"];
+	let hash = line_hash("only line");
+	let err = verify_line_id(9, &hash, &lines).unwrap_err();
+	assert!(err.contains("1 lines.\nHash "), "relocation starts its own line: {err}");
+}
+
+#[test]
 fn test_parse_endpoint_numbers() {
 	use serde_json::json;
 	assert_eq!(parse_endpoint(&json!(42)).unwrap(), Endpoint::Number(42));

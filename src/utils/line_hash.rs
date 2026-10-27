@@ -105,6 +105,10 @@ fn push_relocation(msg: &mut String, expected_hash: &str, expected_line: usize, 
 	}
 	candidates.sort_by_key(|&n| n.abs_diff(expected_line));
 	let shown: Vec<String> = candidates.iter().take(3).map(|&n| line_id_at(lines, n)).collect();
+	// The out-of-range message ends mid-line; the stale-id one ends after its context block.
+	if !msg.ends_with('\n') {
+		msg.push('\n');
+	}
 	msg.push_str(&format!(
 		"Hash {expected_hash} now matches {} (content moved, or hash paired with the wrong line).",
 		shown.join(", ")
