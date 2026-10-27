@@ -36,7 +36,7 @@ opt-level = "s"         # Optimize for size, but keep loop vectorization ("z" di
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "process", "fs", "sync", "signal", "io-std", "io-util", "net"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "process", "fs", "sync", "signal", "io-std", "io-util", "net"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 anyhow = "1.0.104"
@@ -47,7 +47,7 @@ tracing = { version = "0.1", features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }
 
 # MCP SDK
-rmcp = { version = "3.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3.8.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 # RFC 3339 task timestamps (SEP-2663); already in the tree through rmcp.
@@ -68,7 +68,7 @@ tempfile = "3.27.0"
 serial_test = "3.5.0"
 # Client feature for the in-process delivery tests in `server_tests.rs`;
 # feature unification applies it to test builds only, never the shipped bin.
-rmcp = { version = "3.7.0", features = ["client"] }
+rmcp = { version = "3.8.0", features = ["client"] }
 
 [profile.dev]
 opt-level = 1
