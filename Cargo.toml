@@ -58,7 +58,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # release with the RUSTSEC-2023-0071 (Marvin) fix, so RSA keys are unsupported —
 # use ed25519/ecdsa keys and host keys instead. The `ring` crypto backend (not
 # aws-lc-rs) is chosen because the Alpine/musl release builds have no cmake.
-russh = { version = "0.63", default-features = false, features = ["flate2", "ring"] }
+russh = { version = "0.65", default-features = false, features = ["flate2", "ring"] }
 russh-sftp = "3.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
