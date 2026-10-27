@@ -490,8 +490,9 @@ impl OctofsServer {
 		),
 		description = "File operations. create: new file only — fails if it exists, parent \
 			directories are made. str_replace: raw file text (real newlines, no `N:hh|` \
-			prefixes); old_text must match exactly once, or set replace_all: true — on no or \
-			multiple matches the error lists candidate line ids for batch_edit. delete: remove a \
+			prefixes); old_text must match exactly once, or set replace_all: true — on multiple \
+			matches the error lists their line ids, on none the closest matches, for batch_edit. \
+			delete: remove a \
 			file (not a directory). undo_edit: revert the last edit to `path` (10 levels, delete \
 			included). Prefer batch_edit when you already hold line ids."
 	)]
@@ -594,9 +595,9 @@ impl OctofsServer {
 		),
 		description = "Run a shell command: builds, tests, git, project CLIs. `sh -c` (`cmd /C` \
 			on Windows) in the current workdir, local machine only, no stdin or TTY — never run \
-			interactive commands or prefix `cd` to the workdir (`cd <other> && …` is fine one-off; \
+			interactive commands or prefix `cd <workdir> &&` (`cd <other> && …` is fine one-off; \
 			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
-			read, list and search files (cat/grep/ls except as a later pipe stage, `sed -i` and \
+			read, list and search files (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i` and \
 			echo/cat writes into the workdir are rejected). Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
@@ -1326,8 +1327,8 @@ pub struct ExtractLinesParams {
 	pub from_end: Option<serde_json::Value>,
 	/// Target file the lines are appended to (ssh://user@host:port/path for remote).
 	pub append_path: String,
-	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N, or a line
-	/// id (verified against the target).
+	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N (5 → the block starts at
+	/// line 6), or a line id (verified against the target).
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub append_line: serde_json::Value,
 }
@@ -1341,9 +1342,10 @@ pub struct ShellParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
-	/// Directory to switch into, absolute or relative to the current workdir; required unless
-	/// `reset`. Not `"."` (a no-op). Remote: ssh://user@host:port/path; `ssh://host` or
-	/// `ssh://host/~/dir` is the login home.
+	/// Directory to switch into, absolute or relative to the current workdir; omit it (without
+	/// `reset`) to get the current one back, rarely needed since it is already known. Not `"."`
+	/// (a no-op). Remote: ssh://user@host:port/path; `ssh://host` or `ssh://host/~/dir` is the
+	/// login home.
 	#[serde(default)]
 	pub path: Option<String>,
 	/// Revert to the session root.

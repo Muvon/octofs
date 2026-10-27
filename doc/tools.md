@@ -68,8 +68,8 @@ A multi-command tool (`command` + operands):
 
 - **create** — new file only; fails if it exists, parent directories are made.
 - **str_replace** — raw file text (real newlines, no `N:hh|` prefixes);
-  `old_text` must match exactly once, or set `replace_all: true`. No/multiple
-  matches return an error listing candidate line ids for `batch_edit`.
+  `old_text` must match exactly once, or set `replace_all: true`. Multiple
+  matches return an error listing their line ids, no match the closest matches, for `batch_edit`.
   Matching is progressive (fuzzy-anchored) and happens in LF space; the file's
   dominant line ending is recorded and CRLF is restored on write.
 - **delete** — remove a file (not a directory).
@@ -142,7 +142,7 @@ re-run or `ps` — start the next independent step or end the turn.
 contract when touching it:
 
 - misuse: `sed -i`, content writes into the workdir (`cat >`, `echo >`,
-  `tee`), a read program (cat/grep/find/ls) starting any command — alone, in a
+  `tee`), a read program (cat/head/tail/less/more/grep/egrep/fgrep/rg/find/ls) starting any command — alone, in a
   chain or as a pipeline head — file reads belong to `view`. `--hint-mode hard`
   (default) rejects the whole command unexecuted; `--hint-mode soft` runs it and
   appends the guidance as a warning. Hard suits models that follow tool steering:
