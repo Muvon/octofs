@@ -514,14 +514,18 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 		}
 	};
 
-	// Validate and extract append_line parameter: 0 (start), -1 (end), N (after line N),
-	// or a line id. Id verification is deferred until after the target file is read.
+	// Validate and extract append_line parameter: 0 (start), -1 (end), or a line id.
+	// A plain line number is a write position nothing verifies, so only reads take one.
+	// Id verification is deferred until after the target file is read.
 	let append_line_ep = match call.parameters.get("append_line") {
 		Some(v) if !v.is_null() => line_hash::parse_endpoint(v).map_err(|e| anyhow!("Invalid 'append_line': {e}"))?,
 		_ => {
-			bail!("Missing required parameter 'append_line' (0 = start, -1 = end, N, or a line id)")
+			bail!("Missing required parameter 'append_line' (0 = start, -1 = end, or a line id)")
 		}
 	};
+	if let Endpoint::Number(n @ (..=-2 | 1..)) = append_line_ep {
+		bail!("Invalid append_line {n}: use a line id like \"12:a3\" from view output, or 0 (beginning) / -1 (end)");
+	}
 
 	// Read source file
 	let from_source = resolve_path_source(&from_path, &call.workdir);
@@ -620,14 +624,9 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 
 	let target_lines: Vec<&str> = target_content.lines().collect();
 
-	// Resolve append_line: line id → verified line number, or keep integer as-is (0/-1/N).
+	// Resolve append_line: line id → verified line number, or keep the 0/-1 anchor.
 	let append_line: i64 = match append_line_ep {
-		Endpoint::Number(n) => {
-			if n < -1 {
-				bail!("Invalid append_line {n}: use 0 (beginning), -1 (end), N (after line N), or a line id");
-			}
-			n
-		}
+		Endpoint::Number(n) => n,
 		Endpoint::Id { line, hash } => {
 			if target_content.is_empty() {
 				bail!("Cannot use a line id for append_line on an empty or non-existent target file");
@@ -643,12 +642,6 @@ pub async fn execute_extract_lines(call: &McpToolCall) -> Result<String> {
 	} else {
 		append_line as usize
 	};
-	if insert_after > target_lines.len() {
-		bail!(
-			"Insert position {insert_after} exceeds target file length ({} lines) in '{append_path}'",
-			target_lines.len()
-		);
-	}
 	let trailing_newline = if target_content.is_empty() || append_line == -1 {
 		extracted_content.ends_with('\n')
 	} else {

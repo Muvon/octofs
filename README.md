@@ -497,10 +497,11 @@ can retarget without a re-view. The result is a diff with fresh ids.
 }
 ```
 
-`from_end` is optional (omit to copy a single line). `from_start`, `from_end`, and
-`append_line` each accept a line number or a line id (`"12:a3"`, verified against
-the file). `append_line` positions the copy in the target: `0` = beginning,
-`-1` = end, `N` = after line N.
+`from_end` is optional (omit to copy a single line). `from_start` and `from_end`
+each accept a line number or a line id (`"12:a3"`, verified against the file).
+`append_line` positions the copy in the target: a line id to insert after
+(verified against the target), `0` = beginning, or `-1` = end. Like every edit
+target it takes no other plain line number.
 
 ---
 

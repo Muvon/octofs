@@ -866,22 +866,33 @@ fn batch_edit_rejects_operations_naming_different_files() {
 	assert!(err.to_string().contains("single file"), "got: {err}");
 }
 
-/// A replace end is only ever a line id; a start may still be an insert anchor 0/-1.
+/// Only reads take plain line numbers: a replace end is only ever a line id, and edit
+/// positions (op `start`, `append_line`) offer no integers but the anchors 0/-1.
 #[test]
-fn batch_edit_schema_allows_integers_only_where_positions_are_valid() {
-	let schema = serde_json::to_value(schemars::schema_for!(super::BatchEditOperation)).expect("schema json");
+fn edit_schemas_allow_integers_only_as_anchors() {
+	let anchors = serde_json::json!([0, -1]);
+	let extract = serde_json::to_value(rmcp::schemars::schema_for!(super::ExtractLinesParams)).expect("schema json");
+	let append_line = &extract["properties"]["append_line"];
+	assert!(
+		append_line["anyOf"]
+			.as_array()
+			.expect("append_line anyOf")
+			.iter()
+			.any(|variant| variant["enum"] == anchors),
+		"append_line: {append_line}"
+	);
+
+	let schema = serde_json::to_value(rmcp::schemars::schema_for!(super::BatchEditOperation)).expect("schema json");
 	let properties = &schema["properties"];
 	assert_eq!(properties["end"]["type"], "string", "end: {}", properties["end"]);
 	assert!(properties["end"].get("anyOf").is_none(), "end: {}", properties["end"]);
-	assert!(
-		properties["start"]["anyOf"]
-			.as_array()
-			.expect("start anyOf")
-			.iter()
-			.any(|variant| variant["type"] == "integer"),
-		"start: {}",
-		properties["start"]
-	);
+	let integer_start = properties["start"]["anyOf"]
+		.as_array()
+		.expect("start anyOf")
+		.iter()
+		.find(|variant| variant["type"] == "integer")
+		.expect("start keeps an integer variant");
+	assert_eq!(integer_start["enum"], anchors, "start: {}", properties["start"]);
 }
 
 #[test]

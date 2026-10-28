@@ -1157,33 +1157,43 @@ pub struct ViewParams {
 	pub full: Option<bool>,
 }
 
-/// JSON schema for a line endpoint that may be a position (`start`/`end`/`append_line`/op `start`).
+/// JSON schema for a read position (view `start`/`end`, extract `from_start`/`from_end`).
 ///
-/// A line id string "N:hh" copied from view output (verified
-/// against the file before edits), or a plain integer line number where positions are
-/// allowed (view ranges, insert anchors 0/-1). `anyOf` (not `oneOf`) is used because
-/// it has strictly wider cross-stack support.
-fn line_endpoint_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-	let schema = serde_json::json!({
+/// A line id string "N:hh" copied from view output, or a plain integer line number:
+/// only reads take plain numbers. `anyOf` (not `oneOf`) is used because it has strictly
+/// wider cross-stack support.
+fn line_endpoint_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	schemars::json_schema!({
 		"description": "Line id \"N:hh\" from view/edit output, or an integer line number (negative counts from the end). Edit targets require ids.",
 		"anyOf": [
 			{ "type": "string" },
 			{ "type": "integer", "format": "int64" }
 		],
 		"examples": ["12:a3", -1]
-	});
-	serde_json::from_value(schema).expect("static schema is valid JSON")
+	})
 }
 
-/// JSON schema for an endpoint that only a line id can name: a replace range end.
-/// Advertising integers here invited calls the edit validator always rejects.
-fn line_id_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-	let schema = serde_json::json!({
+/// JSON schema for an edit target only a line id can name: a replace range end.
+fn line_id_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	schemars::json_schema!({
 		"description": "Line id \"N:hh\" from view/edit output.",
 		"type": "string",
 		"examples": ["12:a3"]
-	});
-	serde_json::from_value(schema).expect("static schema is valid JSON")
+	})
+}
+
+/// JSON schema for an edit position (op `start`, `append_line`): a line id, or the
+/// anchors 0 (file start) / -1 (end). Edits reject every other plain number, so the
+/// schema does not offer them.
+fn edit_anchor_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	schemars::json_schema!({
+		"description": "Line id \"N:hh\" from view/edit output, or 0 (file start) / -1 (end) where an insert position is allowed.",
+		"anyOf": [
+			{ "type": "string" },
+			{ "type": "integer", "enum": [0, -1] }
+		],
+		"examples": ["12:a3", -1]
+	})
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -1228,7 +1238,7 @@ pub struct BatchEditOperation {
 	pub operation: BatchEditOperationType,
 	/// Line id in the ORIGINAL file: first line to replace, or the anchor to insert after
 	/// (for `insert` also the integers 0 = file start, -1 = after the last line).
-	#[schemars(schema_with = "line_endpoint_schema")]
+	#[schemars(schema_with = "edit_anchor_schema")]
 	pub start: serde_json::Value,
 	/// `replace` only: last line to replace (inclusive), as a line id. Default: `start`.
 	#[serde(default)]
@@ -1345,9 +1355,9 @@ pub struct ExtractLinesParams {
 	pub from_end: Option<serde_json::Value>,
 	/// Target file the lines are appended to (ssh://user@host:port/path for remote).
 	pub append_path: String,
-	/// Where to append in the target: 0 = beginning, -1 = end, N = after line N (5 → the block starts at
-	/// line 6), or a line id (verified against the target).
-	#[schemars(schema_with = "line_endpoint_schema")]
+	/// Where to append in the target: a line id to insert after (verified against the
+	/// target), or 0 = beginning, -1 = end.
+	#[schemars(schema_with = "edit_anchor_schema")]
 	pub append_line: serde_json::Value,
 }
 

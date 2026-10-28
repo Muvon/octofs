@@ -1434,7 +1434,7 @@ mod tests {
 		source_content: &str,
 		from_range: (usize, usize),
 		target_content: &str,
-		append_line: i64,
+		append_line: impl Into<serde_json::Value>,
 		expected_target: &str,
 	) {
 		let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1449,6 +1449,7 @@ mod tests {
 			fs::write(&target_path, target_content).await.unwrap();
 		}
 
+		let append_line: serde_json::Value = append_line.into();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
@@ -1512,7 +1513,7 @@ mod tests {
 			"inserted 1\ninserted 2\n",
 			(1, 2),
 			"line 1\nline 2\nline 3\n",
-			2,
+			lid("line 1\nline 2\nline 3\n", 2),
 			"line 1\nline 2\ninserted 1\ninserted 2\nline 3\n",
 		)
 		.await;
@@ -1628,7 +1629,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_extract_lines_error_invalid_append_position() {
+	async fn test_extract_lines_rejects_a_plain_append_line_number() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let source_path = temp_dir.path().join("source.txt");
 		let target_path = temp_dir.path().join("target.txt");
@@ -1644,14 +1645,14 @@ mod tests {
 				"from_path": source_path.to_string_lossy(),
 				"from_start": 1, "from_end": 1,
 				"append_path": target_path.to_string_lossy(),
-				"append_line": 5 // Position beyond file length
+				"append_line": 1 // A write position by number: nothing verifies it
 			}),
 		};
 
 		let err = execute_extract_lines(&call).await.unwrap_err();
 		assert!(
-			err.to_string().contains("exceeds target file length"),
-			"Should fail with invalid append position: {}",
+			err.to_string().contains("Invalid append_line 1"),
+			"Should reject a plain append_line number: {}",
 			err
 		);
 	}
@@ -5963,7 +5964,7 @@ mod tests {
 				"from_start": 1,
 				"from_end": 2,
 				"append_path": target.to_string_lossy(),
-				"append_line": 2
+				"append_line": lid("alpha\nbeta\ngamma\n", 2)
 			}),
 		};
 		execute_extract_lines(&call).await.unwrap();
