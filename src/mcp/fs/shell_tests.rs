@@ -381,6 +381,9 @@ fn scratch_writes_outside_the_workdir_run_with_a_hint() {
 	// A relative target after `cd` to a scratch dir lands outside the workdir too
 	assert!(hint("cd /tmp/schema-test && printf 'Build a profile' > prompt.txt").is_some());
 	assert!(rejection("cd /tmp/x && cd /work && echo data > f").is_some());
+	// A subshell's `cd` doesn't move the commands after it; `..` resolves back into the workdir
+	assert!(rejection("(cd /tmp/x && make); echo hi > f").is_some());
+	assert!(rejection("cd /tmp && cd ../work && echo hi > f").is_some());
 }
 
 #[test]

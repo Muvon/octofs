@@ -19,7 +19,7 @@ use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -310,6 +310,10 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 				.split_whitespace()
 				.nth(1)
 				.map(|tok| tok.trim_matches(|c| c == '"' || c == '\''));
+			// A `cd` inside `( … )` moves only the subshell, not the commands after it.
+			if segment.starts_with('(') || dir.is_some_and(|dir| dir.ends_with(')')) {
+				continue;
+			}
 			cwd = match (cwd, dir) {
 				(Some(cur), Some(dir)) if dir != "-" && !dir.contains(['~', '$']) => Some(cur.join(dir)),
 				_ => workdir.map(Path::to_path_buf),
@@ -373,10 +377,20 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 }
 
 /// True for a redirect target resolving outside the workdir from the shell's
-/// current directory `cwd`, e.g. /tmp/x, or `x` after `cd /tmp`.
+/// current directory `cwd`, e.g. /tmp/x, or `x` after `cd /tmp`. `..` is resolved
+/// lexically so `cd /tmp && cd ../work` still lands in /work.
 fn outside_workdir(target: &str, cwd: &Path, workdir: &Path) -> bool {
-	!cwd.join(target.trim_matches(|c| c == '"' || c == '\''))
-		.starts_with(workdir)
+	let mut resolved = PathBuf::new();
+	for part in cwd.join(target.trim_matches(|c| c == '"' || c == '\'')).components() {
+		match part {
+			Component::CurDir => {}
+			Component::ParentDir => {
+				resolved.pop();
+			}
+			other => resolved.push(other),
+		}
+	}
+	!resolved.starts_with(workdir)
 }
 
 /// True if `command` runs a `git stash` that stashes changes (bare, `push`, `save`,

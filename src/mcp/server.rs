@@ -598,9 +598,9 @@ impl OctofsServer {
 			on Windows) in the current workdir, local machine only, no stdin or TTY — never run \
 			interactive commands or prefix `cd <workdir> &&` (`cd <other> && …` is fine one-off; \
 			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
-			read, list and search files (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i`, \
-			echo/printf/cat redirects and standalone `tee` into the workdir are rejected). Writes outside it \
-			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. Output is terminal-clean \
+			read, list and search files (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i` and \
+			standalone `tee` anywhere, and echo/printf/cat redirects into the workdir are rejected). Local writes \
+			outside it (`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
