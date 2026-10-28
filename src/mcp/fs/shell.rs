@@ -132,11 +132,11 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && cat y`), not only the first.",
+		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && grep y`), not only the first.",
 	),
 	(
 		&["find", "ls"],
-		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\".",
+		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && ls y`), not only the first.",
 	),
 	(
 		&["sleep"],
@@ -158,12 +158,12 @@ enum Misuse {
 
 // Only in-place `sed` edits a file; `sed`/`awk` streaming to stdout is text
 // processing (line-length checks, previews) that no dedicated tool covers.
-static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_editor` str_replace or `batch_edit` (atomic, tracked, remote-capable).";
+static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_editor` str_replace or `batch_edit` (atomic, tracked, remote-capable). `sed` to stdout stays allowed.";
 
 // Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
 // breaks on quoting/escaping and bypasses tracked edits. Redirecting other
 // programs' OUTPUT to a file stays allowed — only content-authoring is blocked.
-static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat/tee redirects is blocked — quoting corrupts content and the write is untracked. Use text_editor command=\"create\" or str_replace. Redirecting a program's output (e.g. `cargo test > out.log`) stays allowed.";
+static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat redirects or a standalone `tee` is blocked — quoting corrupts content and the write is untracked. Use text_editor command=\"create\" or str_replace. `printf … | prog`, `| tee f` and redirecting a program's output (e.g. `cargo test > out.log`) stay allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + no controlling terminal already makes input physically impossible;

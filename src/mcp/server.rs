@@ -527,11 +527,12 @@ impl OctofsServer {
 		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
 			are line ids (\"12:a3\") from view or edit output, verified before anything is written; \
 			a stale id fails with the current content. All targets refer to the original file and \
-			must not overlap. The result diff carries fresh ids for follow-up edits — no re-view \
-			needed; removed lines, and the middle of a long added block, show as an id range, and \
-			a trailing `shift:` line says how later \
-			original line numbers moved. Insert anchors 0 (file start) and -1 (end) are plain \
-			integers. Content is raw text without id prefixes."
+			must not overlap. Put every edit you already know for a file into one call: separate \
+			edit calls to the same file, even parallel ones, invalidate each other's ids. The result \
+			diff carries fresh ids for follow-up edits — no re-view needed; removed lines, and the \
+			middle of a long added block, show as an id range, and a trailing `shift:` line says \
+			how later original line numbers moved. Insert anchors 0 (file start) and -1 (end) are \
+			plain integers. Content is raw text without id prefixes."
 	)]
 	async fn batch_edit(
 		&self,
@@ -597,8 +598,9 @@ impl OctofsServer {
 			on Windows) in the current workdir, local machine only, no stdin or TTY — never run \
 			interactive commands or prefix `cd <workdir> &&` (`cd <other> && …` is fine one-off; \
 			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
-			read, list and search files (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i` and \
-			echo/cat writes into the workdir are rejected). Output is terminal-clean \
+			read, list and search files (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i`, \
+			echo/printf/cat redirects and standalone `tee` into the workdir are rejected). Writes outside it \
+			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
@@ -1155,9 +1157,9 @@ pub struct ViewParams {
 	pub full: Option<bool>,
 }
 
-/// JSON schema for a single line endpoint (`start`/`end`/`append_line`/op `start`/`end`).
+/// JSON schema for a line endpoint that may be a position (`start`/`end`/`append_line`/op `start`).
 ///
-/// One shape everywhere: a line id string "N:hh" copied from view output (verified
+/// A line id string "N:hh" copied from view output (verified
 /// against the file before edits), or a plain integer line number where positions are
 /// allowed (view ranges, insert anchors 0/-1). `anyOf` (not `oneOf`) is used because
 /// it has strictly wider cross-stack support.
@@ -1169,6 +1171,17 @@ fn line_endpoint_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schem
 			{ "type": "integer", "format": "int64" }
 		],
 		"examples": ["12:a3", -1]
+	});
+	serde_json::from_value(schema).expect("static schema is valid JSON")
+}
+
+/// JSON schema for an endpoint that only a line id can name: a replace range end.
+/// Advertising integers here invited calls the edit validator always rejects.
+fn line_id_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	let schema = serde_json::json!({
+		"description": "Line id \"N:hh\" from view/edit output.",
+		"type": "string",
+		"examples": ["12:a3"]
 	});
 	serde_json::from_value(schema).expect("static schema is valid JSON")
 }
@@ -1219,7 +1232,7 @@ pub struct BatchEditOperation {
 	pub start: serde_json::Value,
 	/// `replace` only: last line to replace (inclusive), as a line id. Default: `start`.
 	#[serde(default)]
-	#[schemars(schema_with = "line_endpoint_schema")]
+	#[schemars(schema_with = "line_id_schema")]
 	pub end: Option<serde_json::Value>,
 	/// Raw text to insert or replace with, no line-id prefixes.
 	#[serde(deserialize_with = "string_or_lines")]

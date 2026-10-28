@@ -866,6 +866,24 @@ fn batch_edit_rejects_operations_naming_different_files() {
 	assert!(err.to_string().contains("single file"), "got: {err}");
 }
 
+/// A replace end is only ever a line id; a start may still be an insert anchor 0/-1.
+#[test]
+fn batch_edit_schema_allows_integers_only_where_positions_are_valid() {
+	let schema = serde_json::to_value(schemars::schema_for!(super::BatchEditOperation)).expect("schema json");
+	let properties = &schema["properties"];
+	assert_eq!(properties["end"]["type"], "string", "end: {}", properties["end"]);
+	assert!(properties["end"].get("anyOf").is_none(), "end: {}", properties["end"]);
+	assert!(
+		properties["start"]["anyOf"]
+			.as_array()
+			.expect("start anyOf")
+			.iter()
+			.any(|variant| variant["type"] == "integer"),
+		"start: {}",
+		properties["start"]
+	);
+}
+
 #[test]
 fn generator_noise_is_stripped_but_parameters_named_like_it_survive() {
 	let serde_json::Value::Object(mut schema) = serde_json::json!({
