@@ -130,9 +130,34 @@ cargo build --release
 
 ## Quick Start
 
+### Pair with Octocode
+
+The shared-ID workflow requires the next Octocode release or a build of the updated source. OctoFS’s existing line-ID format is unchanged.
+
+Use [Octocode](https://github.com/muvon/octocode) to find definitions, usages, and code relationships, then use OctoFS to read or edit the matching files. Octocode's MCP `structural_search` emits the same `N:hh|content` source line IDs that OctoFS accepts for `batch_edit`, using their shared Octolib utility. You do not need another `view` just to obtain IDs for lines already returned.
+
+Run both servers against the same checkout. IDs describe that source snapshot: changed targets are verified at edit time, and an error supplies current context rather than guessing where to write. Exact-name lookups return complete small definitions; previews of larger matches name the ranges you can read with OctoFS.
+
 ### 1. Configure Your AI Assistant
 
 The CLI uses a `mcp` subcommand — your config must pass `["mcp"]` as args.
+
+**Claude Code (CLI):**
+
+```bash
+claude mcp add octofs -- octofs mcp --path /path/to/your/project
+claude mcp add octocode -- octocode mcp --path /path/to/your/project
+```
+
+**Codex CLI:**
+
+```bash
+codex mcp add octofs -- octofs mcp --path /path/to/your/project
+codex mcp add octocode -- octocode mcp --path /path/to/your/project
+codex mcp list
+```
+
+The Octocode registration is optional. Install the servers you use and replace the paths with the same absolute checkout path. See the [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
 
 **Cursor** (`~/.cursor/mcp.json`):
 ```json
@@ -223,7 +248,7 @@ Ask your AI assistant to:
 ### Line Identifiers
 
 Every line is addressed by a composite id `N:hh` — its 1-indexed position plus a
-2-character hex hash (FNV-1a) of its content. `view` renders lines as `N:hh|content`:
+2-character hex hash (FNV-1a) of its content. Octocode structural-search source output uses the same shared utility and IDs. `view` renders lines as `N:hh|content`:
 
 ```
 1:a3|fn main() {

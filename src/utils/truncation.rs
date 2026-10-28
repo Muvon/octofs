@@ -14,7 +14,7 @@
 
 // Shared truncation utilities for smart content display across MCP tools
 
-use super::line_hash::line_id;
+use octolib::utils::line_hash::format_line as render_line;
 
 /// Source code averages ~3.5 chars per token: indentation and punctuation
 /// tokenize densely, so the prose figure of 4 undercounts by ~20%.
@@ -35,11 +35,6 @@ pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 /// A byte size as the model reads it in an oversized-result error, e.g. "85.2 MB".
 pub fn format_megabytes(bytes: usize) -> String {
 	format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-}
-
-/// Render one line as "N:hh|content" — the single line-id format all tools share.
-fn render_line(line_1idx: usize, content: &str) -> String {
-	format!("{}|{}", line_id(line_1idx, content), content)
 }
 
 /// Format content with composite line ids. A ranged view renders exactly the
