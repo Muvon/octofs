@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.21.0] - 2026-10-28
+
+### 📋 Release Summary
+
+Append operations accept only valid positions, and batch-edit end positions are restricted to line IDs. Shell checks now handle subshells, parent paths, and redirect paths after directory changes, with shared line identifiers used across utilities.
+
+### 🚨 Breaking Changes
+
+- **mcp**: restrict append positions to valid values `710f8006`
+- **mcp**: restrict batch-edit end positions to line IDs `6e66f259`
+
+### 🔧 Improvements & Optimizations
+
+- **utils**: use shared line identifiers `65da2d41`
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: handle subshells and parent paths in shell checks `9194cb64`
+- **shell**: track redirect paths after directory changes `d0344ab9`
+
 ## [0.20.5] - 2026-10-27
 
 ### 🔧 Improvements & Optimizations
