@@ -348,7 +348,9 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("printf '%s\\n' hi >> notes.txt").is_some());
 	assert!(rejection("echo hi > /work/notes.txt").is_some());
 	assert!(rejection("tee out.txt").is_some());
-	assert!(rejection("cd /x && echo data > f").is_some());
+	// A `cd` inside the workdir, or one we can't resolve, keeps the target tracked
+	assert!(rejection("cd src && echo data > f").is_some());
+	assert!(rejection("cd ~ && echo data > f").is_some());
 	// A redirect that also writes into the workdir is still a tracked-file write
 	assert!(rejection("echo hi > /tmp/a > src/b").is_some());
 	assert!(rejection("echo hi >/tmp/a>src/b").is_some());
@@ -376,6 +378,9 @@ fn scratch_writes_outside_the_workdir_run_with_a_hint() {
 		hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js").expect("a /tmp heredoc runs");
 	assert!(scratch.contains("text_editor"), "{scratch}");
 	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
+	// A relative target after `cd` to a scratch dir lands outside the workdir too
+	assert!(hint("cd /tmp/schema-test && printf 'Build a profile' > prompt.txt").is_some());
+	assert!(rejection("cd /tmp/x && cd /work && echo data > f").is_some());
 }
 
 #[test]

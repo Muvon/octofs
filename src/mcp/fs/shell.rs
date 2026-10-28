@@ -19,7 +19,7 @@ use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -260,8 +260,9 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 // the caller permuting joiners and re-sending the same command.
 //
 // `workdir` is where tracked edits live: content written by echo/printf/cat
-// redirects outside it (scratch files under /tmp) runs with a hint. `None`
-// (remote commands) treats every write target as tracked.
+// redirects resolving outside it (scratch files under /tmp, also relative ones
+// after `cd /tmp/x &&`) runs with a hint. `None` (remote commands) treats every
+// write target as tracked.
 fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> {
 	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
 	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
@@ -273,6 +274,9 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
 	let segments = split_shell_segments(command);
 	let mut hint = None;
+	// The shell's directory as `cd` segments move it; a `cd` we can't resolve
+	// (`cd`, `cd -`, `cd ~`, `cd $X`) falls back to the workdir, i.e. tracked.
+	let mut cwd: Option<PathBuf> = workdir.map(Path::to_path_buf);
 	for segment in segments {
 		let segment = segment.trim();
 		// Skip leading env assignments (FOO=bar cmd ...) and group openers
@@ -301,6 +305,18 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 			_ => {}
 		}
 
+		if prog == "cd" {
+			let dir = segment
+				.split_whitespace()
+				.nth(1)
+				.map(|tok| tok.trim_matches(|c| c == '"' || c == '\''));
+			cwd = match (cwd, dir) {
+				(Some(cur), Some(dir)) if dir != "-" && !dir.contains(['~', '$']) => Some(cur.join(dir)),
+				_ => workdir.map(Path::to_path_buf),
+			};
+			continue;
+		}
+
 		// A remote command obeys the same rules as a local one — `ssh host
 		// 'grep …'` must not dodge the gate that view/text_editor already
 		// cover via ssh:// paths.
@@ -326,7 +342,10 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 		if matches!(prog, "echo" | "printf" | "cat") {
 			let targets = redirect_targets(segment);
 			if !targets.is_empty() {
-				let untracked = workdir.is_some_and(|dir| targets.iter().all(|t| outside_workdir(t, dir)));
+				let untracked = cwd
+					.as_deref()
+					.zip(workdir)
+					.is_some_and(|(cur, root)| targets.iter().all(|t| outside_workdir(t, cur, root)));
 				if !untracked {
 					return Some(Misuse::Reject(blocked_message(prog, REDIRECT_WRITE_HINT)));
 				}
@@ -353,10 +372,11 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 	hint.map(Misuse::Hint)
 }
 
-/// True for an absolute redirect target outside the workdir, e.g. /tmp/x.
-fn outside_workdir(target: &str, workdir: &Path) -> bool {
-	let path = Path::new(target.trim_matches(|c| c == '"' || c == '\''));
-	path.is_absolute() && !path.starts_with(workdir)
+/// True for a redirect target resolving outside the workdir from the shell's
+/// current directory `cwd`, e.g. /tmp/x, or `x` after `cd /tmp`.
+fn outside_workdir(target: &str, cwd: &Path, workdir: &Path) -> bool {
+	!cwd.join(target.trim_matches(|c| c == '"' || c == '\''))
+		.starts_with(workdir)
 }
 
 /// True if `command` runs a `git stash` that stashes changes (bare, `push`, `save`,
