@@ -28,6 +28,7 @@ use std::path::Path;
 pub(crate) const MAX_VIEW_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// An image file served by `view` as an MCP image block instead of text.
+#[derive(Debug)]
 pub struct ImageView {
 	pub base64: String,
 	pub mime: &'static str,
