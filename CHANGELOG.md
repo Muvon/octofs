@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.0] - 2026-11-01
+
+### 📋 Release Summary
+
+The view tool now returns supported images.
+
+### ✨ New Features & Enhancements
+
+- **mcp**: return supported images from view `5320f3c5`
+
+### 🔧 Improvements & Optimizations
+
+- **release**: pin Rust toolchain action `2d831711`
+
 ## [0.21.0] - 2026-10-28
 
 ### 📋 Release Summary
