@@ -30,7 +30,7 @@ pub mod workdir;
 mod fs_tests;
 
 // Re-export main functionality
-pub use core::{execute_batch_edit, execute_extract_lines, execute_text_editor, execute_view};
+pub use core::{execute_batch_edit, execute_extract_lines, execute_text_editor, execute_view, execute_view_image};
 
 pub use remote::{parse_path_source, PathSource};
 pub use shell::execute_shell_command;

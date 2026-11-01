@@ -16,7 +16,7 @@
 
 #[cfg(test)]
 mod tests {
-	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view};
+	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view, execute_view_image};
 
 	use crate::mcp::fs::remote::PathSource;
 	use crate::mcp::McpToolCall;
@@ -28,6 +28,23 @@ mod tests {
 		let temp_file = NamedTempFile::new().unwrap();
 		fs::write(temp_file.path(), content).await.unwrap();
 		temp_file
+	}
+
+	#[tokio::test]
+	async fn view_image_path_is_served_as_an_image_and_never_as_text() {
+		let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+		let file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+		fs::write(file.path(), png).await.unwrap();
+		let call = McpToolCall::test_call("view", json!({ "path": file.path().to_string_lossy() }));
+		let image = execute_view_image(&call).await.unwrap().expect("image block");
+		assert_eq!(image.mime, "image/png");
+		// The text path is what the server falls back to: on image bytes it must fail,
+		// never render base64 or garbage as lines.
+		assert!(execute_view(&call).await.is_err());
+
+		let text = create_test_file("plain\n").await;
+		let call = McpToolCall::test_call("view", json!({ "path": text.path().to_string_lossy() }));
+		assert!(execute_view_image(&call).await.unwrap().is_none());
 	}
 
 	#[tokio::test]

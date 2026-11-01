@@ -454,6 +454,8 @@ impl OctofsServer {
 		description = "Read files, list directories, search content. Lines render as \
 			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target. Listings \
 			are recursive and gitignore-aware, one `path\tNL\t~Nt` (lines, ~tokens) per file. \
+			An image file (png, jpg, gif, webp by extension) comes back as the image itself; \
+			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
 			unchanged marker); ranged reads always return the requested lines. Reuse returned \
 			content: read a complete block in one call, combine adjacent windows, never re-read \
@@ -464,7 +466,7 @@ impl OctofsServer {
 		&self,
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ViewParams>,
-	) -> Result<String, String> {
+	) -> Result<CallToolResponse, String> {
 		let session = self.session(&context);
 		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
@@ -474,8 +476,18 @@ impl OctofsServer {
 			workdir,
 		};
 		request_ctx::with_request_context(session.view_cache.clone(), async move {
+			if let Some(image) = fs::execute_view_image(&call).await.map_err(|e| e.to_string())? {
+				let mut content = vec![ContentBlock::image(image.base64, image.mime)];
+				let hints = append_hints(String::new());
+				if !hints.is_empty() {
+					content.push(ContentBlock::text(hints));
+				}
+				return Ok(CallToolResult::success(content).into());
+			}
 			let result = fs::execute_view(&call).await.map_err(|e| e.to_string())?;
-			Ok(append_hints(result))
+			Ok::<CallToolResponse, String>(
+				CallToolResult::success(vec![ContentBlock::text(append_hints(result))]).into(),
+			)
 		})
 		.await
 	}

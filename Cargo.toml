@@ -36,10 +36,12 @@ opt-level = "s"         # Optimize for size, but keep loop vectorization ("z" di
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-octolib = { version = "0.47.0", default-features = false }
+octolib = { version = "0.48.0", default-features = false }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "process", "fs", "sync", "signal", "io-std", "io-util", "net"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Image bytes `view` returns as an MCP image block.
+base64 = "0.22.1"
 anyhow = "1.0.104"
 ignore = "0.4.33"
 regex = "1.13.1"

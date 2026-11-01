@@ -30,6 +30,10 @@ One tool, three read modes, selected by the parameters:
   line id edit tools target (see [Line ids](architecture.md#line-ids)). Ranged
   reads (`start`/`end`, negative counts from EOF) always return the requested
   lines.
+- **Image read** (a `path` ending in `png`, `jpg`/`jpeg`, `gif` or `webp`) — the file
+  comes back as an MCP image block, base64 with its MIME type, up to 5 MB. The
+  leading bytes must match the extension or the call fails; `start`/`end` and
+  `content` are not applied.
 - **Directory listing** (a directory `path`) — recursive and gitignore-aware,
   one `path\tNL\t~Nt` (lines, ~tokens) entry per file.
 - **Content search** (`content`, optionally `regex: true`, with `context` lines

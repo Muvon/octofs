@@ -149,3 +149,73 @@ async fn create_existing_file_is_rejected_with_edit_guidance() {
 	assert!(err.contains("already exists"), "error was: {err}");
 	assert!(err.contains("str_replace"), "error was: {err}");
 }
+
+const PNG_HEADER: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
+fn image_file(suffix: &str, bytes: &[u8]) -> tempfile::NamedTempFile {
+	let file = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();
+	std::fs::write(file.path(), bytes).unwrap();
+	file
+}
+
+#[tokio::test]
+async fn view_image_serves_a_png_as_base64_with_its_mime() {
+	let file = image_file(".PNG", PNG_HEADER);
+	let path = file.path().to_string_lossy().into_owned();
+	let image = view_image_spec(&source(file.path()), &path).await.unwrap().unwrap();
+	assert_eq!(image.mime, "image/png");
+	assert_eq!(BASE64.decode(image.base64).unwrap(), PNG_HEADER);
+}
+
+#[tokio::test]
+async fn view_image_ignores_paths_without_an_image_extension() {
+	let file = image_file(".txt", PNG_HEADER);
+	let path = file.path().to_string_lossy().into_owned();
+	assert!(view_image_spec(&source(file.path()), &path).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn view_image_leaves_missing_and_directory_paths_to_the_text_view() {
+	let dir = tempfile::tempdir().unwrap();
+	let missing = dir.path().join("absent.png");
+	let path = missing.to_string_lossy().into_owned();
+	assert!(view_image_spec(&source(&missing), &path).await.unwrap().is_none());
+	let folder = dir.path().join("shots.png");
+	std::fs::create_dir(&folder).unwrap();
+	let path = folder.to_string_lossy().into_owned();
+	assert!(view_image_spec(&source(&folder), &path).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn view_image_rejects_bytes_that_are_not_the_named_format() {
+	let file = image_file(".jpg", b"just text");
+	let path = file.path().to_string_lossy().into_owned();
+	let err = view_image_spec(&source(file.path()), &path)
+		.await
+		.unwrap_err()
+		.to_string();
+	assert!(err.contains("image/jpeg"), "error was: {err}");
+}
+
+#[tokio::test]
+async fn view_image_refuses_oversized_files_before_reading() {
+	let mut bytes = PNG_HEADER.to_vec();
+	bytes.resize((MAX_VIEW_FILE_BYTES + 1) as usize, 0);
+	let file = image_file(".png", &bytes);
+	let path = file.path().to_string_lossy().into_owned();
+	let err = view_image_spec(&source(file.path()), &path)
+		.await
+		.unwrap_err()
+		.to_string();
+	assert!(err.contains("too large"), "error was: {err}");
+}
+
+#[test]
+fn sniff_image_recognises_the_four_served_formats() {
+	assert_eq!(sniff_image(PNG_HEADER), Some("image/png"));
+	assert_eq!(sniff_image(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+	assert_eq!(sniff_image(b"GIF89a\0"), Some("image/gif"));
+	assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
+	assert_eq!(sniff_image(b"RIFF\0\0\0\0WAVE"), None);
+	assert_eq!(sniff_image(b""), None);
+}

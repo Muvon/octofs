@@ -434,15 +434,27 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	Ok(result)
 }
 
-async fn render_view(call: &McpToolCall) -> Result<String> {
-	// Single path (the common case). An array is rejected with a pointer to parallel calls.
-	let path = match call.parameters.get("path") {
-		Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
+/// The single `path` parameter of a view. An array is rejected with a pointer to
+/// parallel calls.
+fn view_path(call: &McpToolCall) -> Result<String> {
+	match call.parameters.get("path") {
+		Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.clone()),
 		Some(Value::Array(_)) => bail!(
 			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
 		),
 		_ => bail!("Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."),
-	};
+	}
+}
+
+/// The image block `view` returns for an image path. Checked before any text
+/// rendering: a `.png` read as text is an invalid-UTF-8 error, not a picture.
+pub async fn execute_view_image(call: &McpToolCall) -> Result<Option<file_ops::ImageView>> {
+	let path = view_path(call)?;
+	file_ops::view_image_spec(&resolve_path_source(&path, &call.workdir), &path).await
+}
+
+async fn render_view(call: &McpToolCall) -> Result<String> {
+	let path = view_path(call)?;
 
 	// A background job's resource link reads like a file. Models try `view` on it
 	// first, and a client's generic resource reader may sit behind tool search

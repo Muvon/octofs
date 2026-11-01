@@ -370,6 +370,10 @@ Do not re-read overlapping ranges or repeatedly narrow a range just to pick edit
 Re-read when the file may have changed, output was truncated, or prior context is unavailable.
 Empty files return `[empty file, 0 lines]` on an initial or forced full read.
 
+**Images:** a path with a `png`, `jpg`/`jpeg`, `gif` or `webp` extension returns the
+image itself as an MCP image block (up to 5 MB; the bytes must match the extension).
+`start`/`end` and `content` do not apply to it.
+
 **Delta views:** a whole-file view of a file the session already served returns
 only the hunks changed since — the same `...`/`-`/`+` style as edit results, with
 removed lines collapsed to their old id range — or

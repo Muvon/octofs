@@ -21,9 +21,75 @@ use super::search;
 use crate::utils::line_hash::line_id_at;
 use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, bail, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use std::path::Path;
 
 /// Refuse to load files larger than this into memory for viewing.
 pub(crate) const MAX_VIEW_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// An image file served by `view` as an MCP image block instead of text.
+pub struct ImageView {
+	pub base64: String,
+	pub mime: &'static str,
+}
+
+/// The image formats `view` serves as an image block, chosen by extension so a
+/// text view never has to read the bytes first. Every major provider accepts
+/// these four.
+fn image_mime_by_extension(path: &str) -> Option<&'static str> {
+	let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+	match extension.as_str() {
+		"png" => Some("image/png"),
+		"jpg" | "jpeg" => Some("image/jpeg"),
+		"gif" => Some("image/gif"),
+		"webp" => Some("image/webp"),
+		_ => None,
+	}
+}
+
+/// The format the leading bytes declare. The extension alone is not trusted:
+/// a provider rejects an image block whose data is not the declared type.
+fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+	if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+		Some("image/png")
+	} else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+		Some("image/jpeg")
+	} else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+		Some("image/gif")
+	} else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+		Some("image/webp")
+	} else {
+		None
+	}
+}
+
+/// Serve an image file as an image block. None when `path` does not name an image
+/// by extension or is not a regular file (the text path then reports it); an
+/// image-named file whose bytes are not that format is an error, not a text view.
+pub async fn view_image_spec(source: &PathSource, path: &str) -> Result<Option<ImageView>> {
+	let Some(mime) = image_mime_by_extension(path) else {
+		return Ok(None);
+	};
+	if !io_exists(source).await? || !io_is_file(source).await? {
+		return Ok(None);
+	}
+	let metadata = io_metadata(source)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	if metadata.size > MAX_VIEW_FILE_BYTES {
+		bail!("Image is too large (>5MB)");
+	}
+	let bytes = io_read(source)
+		.await
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	if sniff_image(&bytes) != Some(mime) {
+		bail!("{path} is named as {mime} but its bytes are not that format");
+	}
+	Ok(Some(ImageView {
+		base64: BASE64.encode(&bytes),
+		mime,
+	}))
+}
 
 // Helper function to format file content with line numbers (or hashes) and smart truncation.
 fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i64)>) -> String {
