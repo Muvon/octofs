@@ -1386,7 +1386,7 @@ pub struct WorkdirParams {
 	/// `reset`) to get the current workdir back, rarely needed since it is already known. Not `"."`
 	/// (a no-op). Remote: ssh://user@host:port/path; `ssh://host` or `ssh://host/~/dir` is the
 	/// login home.
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub path: Option<String>,
 	/// Revert to the session root.
 	#[serde(default)]
