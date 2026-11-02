@@ -127,7 +127,91 @@ async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
 	Ok(())
 }
 
-/// Run the MCP server over HTTP with Streamable HTTP transport
+/// Unix HTTP shutdown must also observe SIGTERM. A supervisor stops the
+/// process with SIGTERM; waiting only for Ctrl-C lets it die before the
+/// cleanup that follows `axum::serve`.
+fn http_shutdown_includes_sigterm() -> bool {
+	cfg!(unix)
+}
+
+/// Resolves when the first shutdown source this platform listens for fires.
+/// `interrupt` is SIGINT / Ctrl-C. `terminate` is SIGTERM and is polled only
+/// when [`http_shutdown_includes_sigterm`] is true.
+async fn await_http_shutdown_signal(
+	interrupt: impl std::future::Future<Output = ()>,
+	terminate: impl std::future::Future<Output = ()>,
+) {
+	if http_shutdown_includes_sigterm() {
+		tokio::select! {
+			_ = interrupt => {}
+			_ = terminate => {}
+		}
+	} else {
+		drop(terminate);
+		interrupt.await;
+	}
+}
+
+/// Block until HTTP graceful shutdown should start.
+///
+/// On Unix this is SIGINT or SIGTERM. Elsewhere it is Ctrl-C. Registration
+/// failure waits forever instead of exiting, so a handler error cannot skip
+/// the cleanup that runs only after `axum::serve` returns.
+async fn wait_for_http_shutdown() {
+	#[cfg(unix)]
+	{
+		use tokio::signal::unix::{signal, SignalKind};
+
+		let interrupt = async {
+			match signal(SignalKind::interrupt()) {
+				Ok(mut sig) => {
+					let _ = sig.recv().await;
+				}
+				Err(err) => {
+					tracing::error!("failed to register SIGINT handler: {err}");
+					std::future::pending::<()>().await;
+				}
+			}
+		};
+		let terminate = async {
+			match signal(SignalKind::terminate()) {
+				Ok(mut sig) => {
+					let _ = sig.recv().await;
+				}
+				Err(err) => {
+					tracing::error!("failed to register SIGTERM handler: {err}");
+					std::future::pending::<()>().await;
+				}
+			}
+		};
+		await_http_shutdown_signal(interrupt, terminate).await;
+	}
+	#[cfg(not(unix))]
+	{
+		let interrupt = async {
+			if let Err(err) = tokio::signal::ctrl_c().await {
+				tracing::error!("failed to wait for ctrl-c: {err}");
+				std::future::pending::<()>().await;
+			}
+		};
+		await_http_shutdown_signal(interrupt, std::future::pending()).await;
+	}
+}
+
+/// Wait for shutdown, then cancel the token `axum::serve` is bound to so the
+/// caller can run the existing shell and background cleanup.
+async fn cancel_http_after_shutdown(
+	shutdown: impl std::future::Future<Output = ()>,
+	ct: &tokio_util::sync::CancellationToken,
+) {
+	shutdown.await;
+	ct.cancel();
+}
+
+/// Run the MCP server over HTTP with Streamable HTTP transport.
+///
+/// On Unix, SIGINT and SIGTERM cancel the server token so `axum::serve`
+/// returns and the same shell and background cleanup as STDIO can run.
 async fn run_http_server(bind_addr: &str, auth_token: Option<&str>) -> Result<()> {
 	use rmcp::transport::streamable_http_server::{
 		session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -173,8 +257,7 @@ async fn run_http_server(bind_addr: &str, auth_token: Option<&str>) -> Result<()
 
 	let _ = axum::serve(tcp_listener, router)
 		.with_graceful_shutdown(async move {
-			tokio::signal::ctrl_c().await.unwrap();
-			ct.cancel();
+			cancel_http_after_shutdown(wait_for_http_shutdown(), &ct).await;
 		})
 		.await;
 
