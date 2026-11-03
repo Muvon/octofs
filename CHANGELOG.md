@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.1] - 2026-11-03
+
+### 📋 Release Summary
+
+Shell read-command misuse hints are clearer.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib to 0.50.0 `b8da77e7`
+
+### 🐛 Bug Fixes & Stability
+
+- **shell**: clarify shell read-command misuse hints `eec1ffba`
+
 ## [0.22.0] - 2026-11-01
 
 ### 📋 Release Summary
