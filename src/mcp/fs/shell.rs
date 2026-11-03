@@ -128,11 +128,11 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". To feed a program, redirect its stdin instead: `psql < dump.sql`, `python3 - <<'EOF'`. Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed; this covers every command in a chain (`cd x && cat y`), not only the first.",
+		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". To feed a program, redirect its stdin instead: `psql < dump.sql`, `python3 - <<'EOF'`. Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed; this covers every command in a chain (`cd x && cat y`), not only the first. Another read program (cat/head/tail/grep/rg) starting a command gets the same treatment, including reading a file the same command just wrote (`cmd > f; tail f`), also inside `ssh host '…'`. Instead pipe it (`cmd 2>&1 | tee f | tail -1`) or run `cmd > f 2>&1` alone, then `view` f.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && grep y`), not only the first.",
+		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && grep y`), not only the first. Another read program (cat/head/tail/grep/rg) starting a command gets the same treatment, including reading a file the same command just wrote (`cmd > f; tail f`), also inside `ssh host '…'`. Instead pipe it (`cmd 2>&1 | tee f | tail -1`) or run `cmd > f 2>&1` alone, then `view` f.",
 	),
 	(
 		&["find", "ls"],
