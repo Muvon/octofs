@@ -508,8 +508,7 @@ impl OctofsServer {
 			matches the error lists their line ids, on none the closest matches, for batch_edit. \
 			delete: remove a \
 			file (not a directory). undo_edit: revert the last edit to `path` (10 levels, delete \
-			included). Prefer batch_edit when you already hold line ids. \
-            apply_patch: patch accepts Codex *** Begin Patch format."
+            included). Prefer batch_edit when you already hold line ids."
 	)]
 	async fn text_editor(
 		&self,
@@ -1225,7 +1224,6 @@ pub struct TextReplacement {
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextEditorCommand {
-	ApplyPatch,
 	Create,
 	StrReplace,
 	Delete,
@@ -1237,8 +1235,6 @@ pub struct TextEditorParams {
 	/// Ordered exact replacements; each old_text must match once unless replace_all.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub edits: Option<Vec<TextReplacement>>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub patch: Option<String>,
 	/// Operation to perform.
 	pub command: TextEditorCommand,
 	/// File path (ssh://user@host:port/path for remote).

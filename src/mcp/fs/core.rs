@@ -194,7 +194,6 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 		"str_replace" if call.parameters.get("edits").is_some_and(|v| !v.is_null()) => {
 			super::multi_edit::execute_edits(call).await
 		}
-		"apply_patch" => super::multi_edit::execute_patch(call).await,
 		"str_replace" => {
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),

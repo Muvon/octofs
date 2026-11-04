@@ -143,57 +143,6 @@ async fn malformed_edits_fail_before_any_write() {
 }
 
 #[tokio::test]
-async fn patch_add_update_delete_move_and_undo() {
-	let root = tempfile::tempdir().unwrap();
-	write(&root, "a", "fn one\nold\nfn two\nold\n").await;
-	write(&root, "gone", "restore me\n").await;
-	let patch = "*** Begin Patch\n*** Add File: nested/new\n+new\n*** Update File: a\n*** Move to: moved\n@@ fn two\n-old\n+updated\n*** Delete File: gone\n*** End Patch";
-	run(&root, json!({"command":"apply_patch", "patch":patch}))
-		.await
-		.unwrap();
-	assert_eq!(read(&root, "nested/new").await, "new\n");
-	assert_eq!(read(&root, "moved").await, "fn one\nold\nfn two\nupdated\n");
-	assert!(!root.path().join("a").exists());
-	assert!(!root.path().join("gone").exists());
-	for path in ["a", "moved", "gone", "nested/new"] {
-		undo_edit(&PathSource::Local(root.path().join(path))).await.unwrap();
-	}
-	assert_eq!(read(&root, "a").await, "fn one\nold\nfn two\nold\n");
-	assert_eq!(read(&root, "gone").await, "restore me\n");
-	assert!(!root.path().join("nested/new").exists());
-	assert!(!root.path().join("moved").exists());
-}
-
-#[tokio::test]
-async fn patch_fuzzy_context_preserves_original_whitespace_and_line_endings() {
-	let root = tempfile::tempdir().unwrap();
-	write(&root, "a", "  context  \r\nold\r\n  tail\n").await;
-	run(
-		&root,
-		json!({"command":"apply_patch", "patch":
-			"*** Begin Patch\n*** Update File: a\n@@\n context\n-old\n+new\n tail\n*** End Patch"
-		}),
-	)
-	.await
-	.unwrap();
-	assert_eq!(read(&root, "a").await, "  context  \r\nnew\r\n  tail\n");
-}
-
-#[tokio::test]
-async fn patch_failure_rolls_back_add_delete_and_update() {
-	let root = tempfile::tempdir().unwrap();
-	write(&root, "a", "original\n").await;
-	write(&root, "b", "still here\n").await;
-	let patch = "*** Begin Patch\n*** Add File: new\n+new\n*** Delete File: b\n*** Update File: a\n@@\n-missing\n+no\n*** End Patch";
-	assert!(run(&root, json!({"command":"apply_patch", "patch":patch}))
-		.await
-		.is_err());
-	assert_eq!(read(&root, "a").await, "original\n");
-	assert_eq!(read(&root, "b").await, "still here\n");
-	assert!(!root.path().join("new").exists());
-}
-
-#[tokio::test]
 async fn commit_io_failure_restores_previously_written_files() {
 	let root = tempfile::tempdir().unwrap();
 	write(&root, "a", "original\n").await;
@@ -201,73 +150,45 @@ async fn commit_io_failure_restores_previously_written_files() {
 	tokio::fs::create_dir(root.path().join(".octofs_tmp_z.tmp"))
 		.await
 		.unwrap();
-	let patch =
-		"*** Begin Patch\n*** Update File: a\n@@\n-original\n+changed\n*** Add File: created/child\n+new\n*** Update File: z\n@@\n-original z\n+changed z\n*** End Patch";
-	assert!(run(&root, json!({"command":"apply_patch", "patch":patch}))
-		.await
-		.is_err());
+	assert!(run(
+		&root,
+		json!({"command":"str_replace", "edits":[
+			{"path":"a", "old_text":"original", "new_text":"changed"},
+			{"path":"z", "old_text":"original z", "new_text":"changed z"}
+		]})
+	)
+	.await
+	.is_err());
 	assert_eq!(read(&root, "a").await, "original\n");
-	assert!(!root.path().join("created").exists());
+	assert_eq!(read(&root, "z").await, "original z\n");
 	assert!(undo_edit(&PathSource::Local(root.path().join("a"))).await.is_err());
 }
 
 #[tokio::test]
-async fn invalid_patch_grammar_never_writes() {
+async fn missing_file_fails_before_any_write() {
 	let root = tempfile::tempdir().unwrap();
-	for patch in [
-		"bad",
-		"*** Begin Patch\n*** Add File: a\n+new",
-		"*** Begin Patch\n*** Update File: a\n@@\ninvalid\n*** End Patch",
-		"*** Begin Patch\n*** Unknown: a\n*** End Patch",
-	] {
-		let error = run(&root, json!({"command":"apply_patch", "patch":patch}))
-			.await
-			.unwrap_err();
-		assert!(error.to_string().contains("invalid"));
-		assert!(!root.path().join("a").exists());
-	}
+	write(&root, "a", "alpha\n").await;
+	let error = run(
+		&root,
+		json!({"command":"str_replace", "edits":[
+			{"path":"a", "old_text":"alpha", "new_text":"changed"},
+			{"path":"missing", "old_text":"x", "new_text":"y"}
+		]}),
+	)
+	.await
+	.unwrap_err();
+	assert!(format!("{error:#}").contains("File not found"));
+	assert_eq!(read(&root, "a").await, "alpha\n");
+	assert!(!root.path().join("missing").exists());
 }
 
 #[test]
-fn patch_and_edits_use_remote_workdir_resolution() {
+fn edits_use_remote_workdir_resolution() {
 	let mut call = McpToolCall::test_call("text_editor", json!({}));
 	call.workdir = std::path::PathBuf::from("ssh://dev@example.test:2222/repo");
 	let source = resolve("src/a.rs", &call).unwrap();
 	assert!(matches!(source, PathSource::Remote { .. }));
 	assert!(source.display().contains("/repo/src/a.rs"));
-	let hunks =
-		parse_patch("*** Begin Patch\n*** Add File: ssh://dev@example.test:2222/repo/a\n+x\n*** End Patch").unwrap();
-	let Hunk::AddFile { path, .. } = &hunks[0] else {
-		panic!("add")
-	};
-	assert_eq!(path, "ssh://dev@example.test:2222/repo/a");
-}
-
-#[tokio::test]
-async fn patch_multiple_chunks_eof_and_repeated_file_sections_apply_in_order() {
-	let root = tempfile::tempdir().unwrap();
-	write(&root, "a", "head\nfirst\nmiddle\nlast\n").await;
-	run(&root, json!({"command":"apply_patch", "patch":
-        "*** Begin Patch\n*** Update File: a\n@@ head\n-first\n+one\n@@ middle\n-last\n+two\n*** End of File\n*** Update File: a\n@@\n-one\n+final\n*** End Patch"
-    })).await.unwrap();
-	assert_eq!(read(&root, "a").await, "head\nfinal\nmiddle\ntwo\n");
-}
-
-#[tokio::test]
-async fn patch_add_and_move_refuse_to_overwrite_existing_files() {
-	let root = tempfile::tempdir().unwrap();
-	write(&root, "a", "original\n").await;
-	write(&root, "b", "keep\n").await;
-	for patch in [
-		"*** Begin Patch\n*** Add File: a\n+overwrite\n*** End Patch",
-		"*** Begin Patch\n*** Update File: a\n*** Move to: b\n@@\n-original\n+overwrite\n*** End Patch",
-	] {
-		assert!(run(&root, json!({"command":"apply_patch", "patch":patch}))
-			.await
-			.is_err());
-		assert_eq!(read(&root, "a").await, "original\n");
-		assert_eq!(read(&root, "b").await, "keep\n");
-	}
 }
 
 #[tokio::test]

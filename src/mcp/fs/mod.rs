@@ -37,4 +37,3 @@ pub use shell::execute_shell_command;
 pub use workdir::{execute_workdir_command, WorkdirResult};
 
 mod multi_edit;
-mod patch;
