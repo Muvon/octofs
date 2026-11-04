@@ -149,6 +149,15 @@ pub fn render_whole_file(source: &PathSource, content: &str, full: bool) -> Stri
 /// old id range since the model already saw them. `None` when the change is
 /// too large for a delta to pay off.
 pub fn render_delta(old: &[&str], new: &[&str]) -> Option<String> {
+	render_diff(old, new, false)
+}
+
+/// Edit results use the same hunks and fresh IDs as delta views.
+pub(crate) fn render_edit_diff(old: &[&str], new: &[&str]) -> Option<String> {
+	render_diff(old, new, true)
+}
+
+fn render_diff(old: &[&str], new: &[&str], edit: bool) -> Option<String> {
 	let ops = diff_lines(old, new, MAX_EDIT_DISTANCE)?;
 
 	// Hunks are op-index ranges around each change, merged when their context touches.
@@ -166,7 +175,8 @@ pub fn render_delta(old: &[&str], new: &[&str]) -> Option<String> {
 	}
 
 	let mut out = vec![format!(
-		"[changed since your last view: {} hunk(s), {} lines now]",
+		"[{}: {} hunk(s), {} lines now]",
+		if edit { "edited" } else { "changed since your last view" },
 		hunks.len(),
 		new.len()
 	)];
@@ -178,6 +188,15 @@ pub fn render_delta(old: &[&str], new: &[&str]) -> Option<String> {
 		while i <= end {
 			match ops[i] {
 				DiffOp::Equal(_, j) => out.push(format!("{}|{}", line_id_at(new, j + 1), new[j])),
+				DiffOp::Insert(first) if edit => {
+					let mut last = first;
+					while i < end {
+						let DiffOp::Insert(next) = ops[i + 1] else { break };
+						last = next;
+						i += 1;
+					}
+					super::text_editing::push_added_lines(&mut out, first + 1, &new[first..=last]);
+				}
 				DiffOp::Insert(j) => out.push(format!("+{}|{}", line_id_at(new, j + 1), new[j])),
 				DiffOp::Delete(first) => {
 					let mut last = first;
@@ -194,6 +213,31 @@ pub fn render_delta(old: &[&str], new: &[&str]) -> Option<String> {
 	}
 	if hunks.last().is_some_and(|&(_, end)| end + 1 < ops.len()) {
 		out.push("...".to_string());
+	}
+	if edit {
+		let mut regions = Vec::new();
+		let mut old_end = 0;
+		let mut delta = 0;
+		for op in &ops {
+			match op {
+				DiffOp::Equal(i, _) => {
+					if delta != 0 {
+						regions.push((old_end, delta));
+						delta = 0;
+					}
+					old_end = i + 1;
+				}
+				DiffOp::Delete(i) => {
+					old_end = i + 1;
+					delta -= 1;
+				}
+				DiffOp::Insert(_) => delta += 1,
+			}
+		}
+		if delta != 0 {
+			regions.push((old_end, delta));
+		}
+		out.extend(super::text_editing::shift_note(old, &regions));
 	}
 	Some(out.join("\n"))
 }

@@ -35,3 +35,6 @@ pub use core::{execute_batch_edit, execute_extract_lines, execute_text_editor, e
 pub use remote::{parse_path_source, PathSource};
 pub use shell::execute_shell_command;
 pub use workdir::{execute_workdir_command, WorkdirResult};
+
+mod multi_edit;
+mod patch;

@@ -1139,3 +1139,17 @@ fn batch_edit_rejects_non_string_list_content_and_missing_path() {
 	.expect_err("unknown operation");
 	assert!(!err.to_string().is_empty());
 }
+
+#[tokio::test]
+async fn text_editor_lists_edits_first_and_always_offers_apply_patch() {
+	let (client, _server_task, _unsolicited) = connect().await;
+	let tools = client.list_tools(None).await.unwrap();
+	let tool = tools.tools.iter().find(|t| t.name == "text_editor").unwrap();
+	let schema = serde_json::to_string(&tool.input_schema).unwrap();
+	assert!(schema.contains("apply_patch"));
+	assert!(tool.input_schema["properties"].get("patch").is_some());
+	assert!(tool.input_schema["properties"].get("edits").is_some());
+	let description = tool.description.as_ref().unwrap();
+	assert!(description.starts_with("str_replace: edits"));
+	assert!(description.contains("apply_patch:"));
+}

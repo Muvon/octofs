@@ -497,9 +497,10 @@ pub async fn atomic_write(source: &PathSource, content: &str) -> Result<()> {
 				Err(e) => return Err(anyhow!("Failed to read metadata for '{}': {}", path.display(), e)),
 			};
 
-			tokio::fs::write(&tmp_path, content)
-				.await
-				.map_err(|e| anyhow!("Failed to write temp file for '{}': {}", path.display(), e))?;
+			if let Err(error) = tokio::fs::write(&tmp_path, content).await {
+				let _ = tokio::fs::remove_file(&tmp_path).await;
+				bail!("Failed to write temp file for '{}': {}", path.display(), error);
+			}
 
 			if let Some(perms) = original_perms {
 				if let Err(e) = tokio::fs::set_permissions(&tmp_path, perms).await {
@@ -576,7 +577,7 @@ impl EditableContent {
 		}
 	}
 
-	fn normalized(&self) -> String {
+	pub(crate) fn normalized(&self) -> String {
 		let mut content = String::new();
 		for line in &self.lines {
 			content.push_str(&line.text);
@@ -630,7 +631,7 @@ impl EditableContent {
 		Ok(())
 	}
 
-	fn replace_normalized_range(&mut self, start: usize, end: usize, replacement: &str) -> Result<()> {
+	pub(crate) fn replace_normalized_range(&mut self, start: usize, end: usize, replacement: &str) -> Result<()> {
 		let content = self.normalized();
 		if start > end || end > content.len() || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
 			bail!("Invalid internal replacement range {start}..{end}");
@@ -694,7 +695,7 @@ impl EditableContent {
 		Ok(())
 	}
 
-	fn preserve_trailing_newline(&mut self) {
+	pub(crate) fn preserve_trailing_newline(&mut self) {
 		if self.lines.is_empty() {
 			if self.had_trailing_newline {
 				self.lines.push(EditableLine {
@@ -751,7 +752,7 @@ fn incoming_content_lines(content: &str) -> Vec<&str> {
 	content.lines().map(|line| line.trim_end_matches('\r')).collect()
 }
 
-fn sanitize_incoming_content(content: &str) -> String {
+pub(crate) fn sanitize_incoming_content(content: &str) -> String {
 	content
 		.split('\n')
 		.map(|line| line.trim_end_matches('\r'))
@@ -1004,8 +1005,11 @@ pub async fn str_replace_spec(
 		}
 	}
 
-	// === Stage 3: No match — provide rich diagnostics ===
-	let candidates = find_closest_matches(&content, old_text, 3);
+	bail!("{}", replacement_diagnostic(&content, old_text));
+}
+
+pub(crate) fn replacement_diagnostic(content: &str, old_text: &str) -> String {
+	let candidates = find_closest_matches(content, old_text, 3);
 
 	let mut msg = String::from("No exact match found (pass raw text, no \\n/\\t escapes).\n");
 
@@ -1038,7 +1042,7 @@ pub async fn str_replace_spec(
 		msg.push_str("\nFix old_text, or use batch_edit with these ids.");
 	}
 
-	bail!("{}", msg);
+	msg
 }
 
 // Returns true for lines that are pure structural punctuation (e.g. `}`, `]`, `}`).
@@ -1431,7 +1435,7 @@ const ECHO_WHOLE_MAX: usize = 3;
 // Added lines of an edit result. The model just sent this content, so a longer block
 // shows its first and last line (placement and boundaries) and collapses the middle to
 // its fresh id range, like removed lines; short blocks are shown whole.
-fn push_added_lines(diff: &mut Vec<String>, first_1idx: usize, content_lines: &[&str]) {
+pub(crate) fn push_added_lines(diff: &mut Vec<String>, first_1idx: usize, content_lines: &[&str]) {
 	let id = |i: usize| crate::utils::line_hash::line_id(first_1idx + i, content_lines[i]);
 	let n = content_lines.len();
 	if n <= ECHO_WHOLE_MAX {

@@ -1093,6 +1093,16 @@ mod sftp {
 			.map_err(|e| anyhow!("SFTP remove failed for {path}: {e}"))
 	}
 
+	/// Remove an empty directory created by a failed edit transaction.
+	pub async fn remote_remove_dir(source: &super::PathSource) -> Result<()> {
+		let path = source.sftp_path();
+		remote_session(source)
+			.await?
+			.remove_dir(path)
+			.await
+			.map_err(|e| anyhow!("SFTP remove directory failed for {path}: {e}"))
+	}
+
 	/// List a remote directory. Returns (name, metadata) for each entry, sorted by name.
 	pub async fn remote_list_dir(source: &super::PathSource) -> Result<Vec<(String, RemoteMetadata)>> {
 		let path = source.sftp_path();
@@ -1245,6 +1255,14 @@ pub async fn io_remove_file(source: &PathSource) -> Result<()> {
 			.await
 			.map_err(|e| anyhow!("Failed to remove '{}': {}", source.display(), e)),
 		PathSource::Remote { .. } => sftp::remote_remove_file(source).await,
+	}
+}
+
+/// Remove an empty directory during transaction rollback.
+pub(crate) async fn io_remove_dir(source: &PathSource) -> Result<()> {
+	match source {
+		PathSource::Local(path) => Ok(tokio::fs::remove_dir(path).await?),
+		PathSource::Remote { .. } => sftp::remote_remove_dir(source).await,
 	}
 }
 

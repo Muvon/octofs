@@ -500,13 +500,16 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "File operations. create: new file only — fails if it exists, parent \
+		description = "str_replace: edits [{path?, old_text, new_text, replace_all?}] apply in order, \
+            atomically across files; path defaults to the call's path. Put every replacement you \
+            already know into one call, across files if needed. File operations. create: new file only — fails if it exists, parent \
 			directories are made. str_replace: raw file text (real newlines, no `N:hh|` \
 			prefixes); old_text must match exactly once, or set replace_all: true — on multiple \
 			matches the error lists their line ids, on none the closest matches, for batch_edit. \
 			delete: remove a \
 			file (not a directory). undo_edit: revert the last edit to `path` (10 levels, delete \
-			included). Prefer batch_edit when you already hold line ids."
+			included). Prefer batch_edit when you already hold line ids. \
+            apply_patch: patch accepts Codex *** Begin Patch format."
 	)]
 	async fn text_editor(
 		&self,
@@ -522,7 +525,7 @@ impl OctofsServer {
 			workdir,
 		};
 		request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_text_editor(&call).await.map_err(|e| e.to_string())?;
+			let result = fs::execute_text_editor(&call).await.map_err(|e| format!("{e:#}"))?;
 			Ok(append_hints(result))
 		})
 		.await
@@ -1209,8 +1212,20 @@ fn edit_anchor_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextReplacement {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub path: Option<String>,
+	pub old_text: String,
+	pub new_text: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub replace_all: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextEditorCommand {
+	ApplyPatch,
 	Create,
 	StrReplace,
 	Delete,
@@ -1219,17 +1234,23 @@ pub enum TextEditorCommand {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct TextEditorParams {
+	/// Ordered exact replacements; each old_text must match once unless replace_all.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub edits: Option<Vec<TextReplacement>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub patch: Option<String>,
 	/// Operation to perform.
 	pub command: TextEditorCommand,
 	/// File path (ssh://user@host:port/path for remote).
-	pub path: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub path: Option<String>,
 	/// Content for `create`.
 	#[serde(default)]
 	pub content: Option<String>,
-	/// `str_replace`: exact text to find (required).
+	/// `str_replace`: exact text to find (single edit).
 	#[serde(default)]
 	pub old_text: Option<String>,
-	/// `str_replace`: replacement text (required).
+	/// `str_replace`: replacement text (single edit).
 	#[serde(default)]
 	pub new_text: Option<String>,
 	/// `str_replace`: replace every occurrence (rename-style). Default: false.

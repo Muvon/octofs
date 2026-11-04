@@ -51,7 +51,7 @@ const MAX_HISTORY_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 struct HistoryStore {
-	files: HashMap<String, Vec<String>>,
+	files: HashMap<String, Vec<Option<String>>>,
 	// One entry per snapshot push, oldest first. May reference paths whose oldest
 	// snapshot is already gone (undo pops, per-file cap) — eviction skips those.
 	order: std::collections::VecDeque<String>,
@@ -59,12 +59,12 @@ struct HistoryStore {
 }
 
 impl HistoryStore {
-	fn push(&mut self, key: String, content: String, byte_cap: usize) {
-		self.total_bytes += content.len();
+	fn push(&mut self, key: String, content: Option<String>, byte_cap: usize) {
+		self.total_bytes += content.as_ref().map_or(0, String::len);
 		let history = self.files.entry(key.clone()).or_default();
 		if history.len() >= MAX_HISTORY_PER_FILE {
 			let removed = history.remove(0);
-			self.total_bytes -= removed.len();
+			self.total_bytes -= removed.as_ref().map_or(0, String::len);
 		}
 		history.push(content);
 		self.order.push_back(key);
@@ -84,17 +84,17 @@ impl HistoryStore {
 				continue;
 			}
 			let removed = history.remove(0);
-			self.total_bytes -= removed.len();
+			self.total_bytes -= removed.as_ref().map_or(0, String::len);
 			if history.is_empty() {
 				self.files.remove(&oldest);
 			}
 		}
 	}
 
-	fn pop(&mut self, key: &str) -> Option<String> {
+	fn pop(&mut self, key: &str) -> Option<Option<String>> {
 		let history = self.files.get_mut(key)?;
 		let content = history.pop()?;
-		self.total_bytes -= content.len();
+		self.total_bytes -= content.as_ref().map_or(0, String::len);
 		if history.is_empty() {
 			self.files.remove(key);
 		}
@@ -118,9 +118,17 @@ pub async fn save_file_history(source: &PathSource) -> Result<()> {
 		file_history()
 			.lock()
 			.map_err(|_| anyhow!("Failed to acquire lock on file history"))?
-			.push(path_str, content, MAX_HISTORY_TOTAL_BYTES);
+			.push(path_str, Some(content), MAX_HISTORY_TOTAL_BYTES);
 	}
 	Ok(())
+}
+
+/// Publish snapshots only after the whole transaction has committed.
+pub(crate) fn record_transaction_history(snapshots: Vec<(String, Option<String>)>) {
+	let mut history = file_history().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	for (key, content) in snapshots {
+		history.push(key, content, MAX_HISTORY_TOTAL_BYTES);
+	}
 }
 
 // Undo the last edit to a file
@@ -137,7 +145,10 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 		.pop(&path_str);
 
 	if let Some(prev_content) = previous_content {
-		text_editing::atomic_write(source, &prev_content).await?;
+		match prev_content {
+			Some(content) => text_editing::atomic_write(source, &content).await?,
+			None => super::remote::io_remove_file(source).await?,
+		}
 		// The restored content is not what the model last saw as a whole.
 		delta::forget(source);
 
@@ -180,6 +191,10 @@ pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
 			let source = resolve_path_source(&path, &call.workdir);
 			file_ops::create_file_spec(&source, &content).await
 		}
+		"str_replace" if call.parameters.get("edits").is_some_and(|v| !v.is_null()) => {
+			super::multi_edit::execute_edits(call).await
+		}
+		"apply_patch" => super::multi_edit::execute_patch(call).await,
 		"str_replace" => {
 			let path = match call.parameters.get("path") {
 				Some(Value::String(p)) => p.clone(),

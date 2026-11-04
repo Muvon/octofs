@@ -1,0 +1,12 @@
+Derived from OpenAI Codex (https://github.com/openai/codex), Apache-2.0.
+Copyright OpenAI.
+
+parser.rs: revision 22e84c49d0c1eb749f75de07ec3b3a9ce0edb1cb
+file_update.rs, seek_sequence.rs: revision 71a4c070369fb761e51fd71009107f398d9f0f81
+
+Modifications by Muvon Un Limited, 2026: retain only in-memory parsing and
+matching; remove shell invocation, streaming, environment selection, filesystem
+executors and unified-diff dependencies. Paths remain strings for ssh:// support.
+Use strict patch boundaries and std error formatting; backport context indices
+so fuzzy-matched context retains its bytes. Split tests into sibling files.
+All file I/O, locking, line endings, rendering and undo are handled by octofs.

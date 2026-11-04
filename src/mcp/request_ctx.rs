@@ -60,6 +60,11 @@ where
 	.await
 }
 
+/// Carry the cache into a commit task that must finish even if its caller cancels.
+pub(crate) fn view_cache() -> Option<Arc<ViewCache>> {
+	CTX.try_with(|ctx| ctx.view_cache.clone()).ok().flatten()
+}
+
 /// Run `f` against the session's view cache. `None` outside a request scope or
 /// when the session has no view cache.
 pub fn with_view_cache<R>(f: impl FnOnce(&ViewCache) -> R) -> Option<R> {
