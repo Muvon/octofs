@@ -452,15 +452,15 @@ impl OctofsServer {
 			open_world_hint = false
 		),
 		description = "Read files, list directories, search content. Lines render as \
-			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target. Listings \
-			are recursive and gitignore-aware, one `path\tNL\t~Nt` (lines, ~tokens) per file. \
+			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target; content sent \
+			to edit tools is raw text without `N:hh|` prefixes. Listings are gitignore-aware, \
+			one `path\tNL\t~Nt` (lines, ~tokens) per file; `max_depth` \
+			controls recursion, with bare remote listings limited to root entries by default. \
 			An image file (png, jpg, gif, webp by extension) comes back as the image itself; \
 			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
-			unchanged marker); ranged reads always return the requested lines. Reuse returned \
-			content: read a complete block in one call, combine adjacent windows, never re-read \
-			overlapping ranges or narrow one just to pick edit targets; re-read only when the file \
-			may have changed or output was truncated."
+			unchanged marker); `full: true` requests complete content. Ranged reads return the \
+			requested lines. Returned line ids can be used directly in edit calls."
 	)]
 	async fn view(
 		&self,
@@ -501,14 +501,14 @@ impl OctofsServer {
 			open_world_hint = false
 		),
 		description = "str_replace: edits [{path?, old_text, new_text, replace_all?}] apply in order, \
-            atomically across files; path defaults to the call's path. Put every replacement you \
-            already know into one call, across files if needed. File operations. create: new file only — fails if it exists, parent \
-			directories are made. str_replace: raw file text (real newlines, no `N:hh|` \
-			prefixes); old_text must match exactly once, or set replace_all: true — on multiple \
-			matches the error lists their line ids, on none the closest matches, for batch_edit. \
-			delete: remove a \
-			file (not a directory). undo_edit: revert the last edit to `path` (10 levels, delete \
-            included). Prefer batch_edit when you already hold line ids."
+			atomically across files; each path defaults to the call's path. A single replacement \
+			can instead use path, old_text, new_text, and optional replace_all at the call level. \
+			Text is raw file text (real newlines, no `N:hh|` prefixes); old_text must match exactly \
+			once, or set replace_all: true. On multiple matches the error lists their line ids; \
+			on none it lists the closest matches, for batch_edit. create: new file only — fails \
+			if it exists; parent directories are made. delete: remove a file (not a directory). \
+			undo_edit: revert the last edit to path (10 levels, delete included). Use batch_edit \
+			for replacements or insertions addressed by line ids."
 	)]
 	async fn text_editor(
 		&self,
@@ -541,12 +541,12 @@ impl OctofsServer {
 		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
 			are line ids (\"12:a3\") from view or edit output, verified before anything is written; \
 			a stale id fails with the current content. All targets refer to the original file and \
-			must not overlap. Put every edit you already know for a file into one call: separate \
-			edit calls to the same file, even parallel ones, invalidate each other's ids. The result \
-			diff carries fresh ids for follow-up edits — no re-view needed; removed lines, and the \
-			middle of a long added block, show as an id range, and a trailing `shift:` line says \
+			must not overlap. Group edits that use the same original-file ids in one call; earlier \
+			calls can change target positions or content. The result diff carries fresh ids for \
+			follow-up edits; removed lines and the middle of a long added block show as an id range. \
+			A trailing `shift:` line says \
 			how later original line numbers moved. Insert anchors 0 (file start) and -1 (end) are \
-			plain integers. Content is raw text without id prefixes."
+			plain integers. Content is raw text without `N:hh|` prefixes."
 	)]
 	async fn batch_edit(
 		&self,
@@ -576,9 +576,9 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Copy a line range from one file and append it into another without \
-			retyping it — moving code between files, splitting modules. The source is left \
-			untouched; to move, follow with a batch_edit that removes the range."
+		description = "Copy a line range from one file into another at append_line without \
+			retyping the content. The source is left untouched. A move requires a separate \
+			batch_edit to remove the source range; the two calls are not one atomic operation."
 	)]
 	async fn extract_lines(
 		&self,
@@ -609,28 +609,21 @@ impl OctofsServer {
 			open_world_hint = true
 		),
 		description = "Run a shell command: builds, tests, git, project CLIs. `sh -c` (`cmd /C` \
-			on Windows) in the current workdir, local machine only, no stdin or TTY — never run \
-			interactive commands or prefix `cd <workdir> &&` (`cd <other> && …` is fine one-off; \
-			`workdir` switches permanently; a remote ssh:// workdir disables shell). Use `view` to \
-			read, list and search files (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i` and \
+			on Windows) on the local machine in the session's workdir, with no stdin or TTY. \
+			Commands must support non-interactive execution. `cd <other> && …` changes directory \
+			for that call; `workdir` changes it for later calls. A remote (ssh://) workdir \
+			disables shell. Use `view` to read, list and search files, and `text_editor` or \
+			`batch_edit` to edit content (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i` and \
 			standalone `tee` anywhere, and echo/printf/cat redirects into the workdir are rejected). Local writes \
 			outside it (`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
-			Verify narrow first: start with the smallest check that exercises your change — one test, \
-			target, package or sample input, in the mode it targets — then broaden only as far as the \
-			change can reach; a change everything depends on (a shared header, a build flag) ends with \
-			the full run. Repeat a full run only after a change that could alter its result. \
-			A command still running after ~10s moves to the background and returns a \
-			job resource showing a progress tail while running; on exit you receive the exit code \
-			and the same output as a foreground command. Its result then arrives on its own as a \
-			message. Do not poll it (`ps`, `tail`, sleep, viewing the linked resource, any other \
-			status check), re-run it or start a variant of it (other flags or filters). While it \
-			runs, keep working on anything that does not need its result (read or review related \
-			code, write or update tests, prepare the next edit); only when nothing like that is \
-			left, reply with a brief status and no tool call to wait. Resume dependent work when \
-			its completion notification arrives. \
+			A command still running after ~10s continues as a background job. Depending on client \
+			capabilities, the call returns a task or a linked job resource. The resource exposes \
+			status and an output tail while running, then the exit code and foreground-style \
+			output when finished. Automatic result delivery depends on the client's task or \
+			notification integration; the linked resource can be read for status and output. \
 			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]
@@ -738,9 +731,10 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Switch the working directory for later calls (`path`) or revert to the \
-			session root (`reset: true`). Every tool resolves relative paths against it; do not \
-			call it just to check the directory. A remote (ssh://) workdir disables `shell`."
+		description = "Get or change the session's working directory. Set `path` to switch \
+			directories, or `reset: true` to revert to the session root. Omit both to query the \
+			current directory. Subsequent calls resolve relative paths against it. \
+			A remote (ssh://) workdir disables `shell`."
 	)]
 	async fn workdir(
 		&self,
@@ -896,10 +890,11 @@ impl ServerHandler for OctofsServer {
 		.with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
-			"Filesystem tools. File lines render as `N:hh|content`; `N:hh` is the line id edit \
-				 tools target, and edit results are diffs with fresh ids, so edits chain without \
-				 re-viewing files. Reuse returned content and ids; read complete relevant blocks, \
-				 then act on them."
+			"Tools for file reading, search, editing, copying, shell execution, and the session \
+				 working directory. File lines render as `N:hh|content`; copy `N:hh` verbatim \
+				 for line-addressed edits; content sent to edit tools is raw text without `N:hh|` \
+				 prefixes. Edit results include fresh ids and line shifts for \
+				 follow-up edits. Relative paths resolve against the session's workdir."
 				.to_string(),
 		)
 	}
@@ -1125,8 +1120,8 @@ fn append_hints(mut result: String) -> String {
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
 	/// File or directory. `a|b` searches several roots with `content` (max 32); several
-	/// files take parallel view calls. Remote: ssh://[user@]host[:port]/path (host may be an
-	/// ~/.ssh/config alias; `ssh://host` or `ssh://host/~/dir` is the login home).
+	/// files require separate view calls. Remote: ssh://[user@]host[:port]/path (host may be an
+	/// ~/.ssh/config alias); `ssh://host` is the login home, `ssh://host/~/dir` is relative to it.
 	pub path: String,
 	/// First line (inclusive): line id or integer (negative counts from the end, -1 = last).
 	/// Default: line 1.
@@ -1153,7 +1148,7 @@ pub struct ViewParams {
 	#[serde(default)]
 	pub regex: Option<bool>,
 	/// Directory depth bound. Default: unlimited, except a bare remote listing (no
-	/// `pattern`/`content`) stops at the root entries. Searches walk the whole tree.
+	/// `pattern`/`content`) stops at the root entries. Searches walk the whole tree unless set.
 	#[serde(default)]
 	pub max_depth: Option<usize>,
 	/// Include dotfiles and dot-directories.
@@ -1162,7 +1157,7 @@ pub struct ViewParams {
 	/// Lines around each `content` match. Default: 0.
 	#[serde(default)]
 	pub context: Option<usize>,
-	/// Force the complete file when re-viewing a whole file (normally only changed hunks),
+	/// Force the complete file when re-viewing a whole file (which may return only changed hunks),
 	/// e.g. after losing earlier context. No effect on ranges or searches; output limits
 	/// unchanged.
 	#[serde(default)]
@@ -1390,17 +1385,16 @@ pub struct ExtractLinesParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ShellParams {
-	/// Command line for `sh -c`; use non-interactive flags (`-y`, `--no-pager`, `CI=1`) for
-	/// anything that might prompt.
+	/// Command line for `sh -c` (`cmd /C` on Windows). No stdin or TTY is available;
+	/// commands requiring input need their non-interactive options.
 	pub command: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
-	/// Directory to switch into, absolute or relative to the current workdir; omit it (without
-	/// `reset`) to get the current workdir back, rarely needed since it is already known. Not `"."`
-	/// (a no-op). Remote: ssh://user@host:port/path; `ssh://host` or `ssh://host/~/dir` is the
-	/// login home.
+	/// Directory to switch into, absolute or relative to the current workdir. Omit it with
+	/// `reset` omitted or false to query the current directory. Remote: ssh://user@host:port/path;
+	/// `ssh://host` is the login home, `ssh://host/~/dir` is relative to it.
 	#[serde(default)]
 	pub path: Option<String>,
 	/// Revert to the session root.

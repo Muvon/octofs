@@ -121,9 +121,9 @@ pub(super) async fn prepare(command: &str, working_dir: &Path) -> Result<Prepare
 			j.working_dir.as_path() == working_dir && j.command == command && j.status() == JobStatus::Running
 		}) {
 		return Err(anyhow!(
-			"`{}` is already running as background job {}. Wait for its completion \
-			 notification instead of starting it again or a variant of it; unrelated commands \
-			 may run concurrently.",
+			"`{}` is already running as background job {}. Its resource provides status and output. \
+			 An identical command in the same directory is rejected while that job runs; \
+			 unrelated commands may run concurrently.",
 			running.command,
 			resource_uri(&running.id)
 		));

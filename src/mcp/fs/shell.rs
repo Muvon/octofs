@@ -128,23 +128,23 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with the shell is blocked — use `view` for any path, local or remote: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". To feed a program, redirect its stdin instead: `psql < dump.sql`, `python3 - <<'EOF'`. Only a later pipeline stage (`cargo test 2>&1 | tail -20`) stays allowed; this covers every command in a chain (`cd x && cat y`), not only the first. Another read program (cat/head/tail/grep/rg) starting a command gets the same treatment, including reading a file the same command just wrote (`cmd > f; tail f`), also inside `ssh host '…'`. Instead pipe it (`cmd 2>&1 | tee f | tail -1`) or run `cmd > f 2>&1` alone, then `view` f.",
+		"Reading files with the shell is blocked — use `view` for local or remote files: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". Read programs are allowed as later pipeline stages (`cargo test 2>&1 | tail -20`), but not as command heads, including in chains and SSH command bodies. Program input redirects (`psql < dump.sql`) are supported. Captured output files can be read with `view`.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching with the shell is blocked — use `view` with content= for any path, local or remote: view path=\"src/\" content=\"TODO\" regex=true. Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && grep y`), not only the first. Another read program (cat/head/tail/grep/rg) starting a command gets the same treatment, including reading a file the same command just wrote (`cmd > f; tail f`), also inside `ssh host '…'`. Instead pipe it (`cmd 2>&1 | tee f | tail -1`) or run `cmd > f 2>&1` alone, then `view` f.",
+		"Searching with the shell is blocked — use `view` with content= for local or remote paths: view path=\"src/\" content=\"TODO\" regex=true. Search programs are allowed as later pipeline stages (`cargo build 2>&1 | grep error`), but not as command heads, including in chains and SSH command bodies. Captured output files can be searched with `view`.",
 	),
 	(
 		&["find", "ls"],
-		"Listing with the shell is blocked — use `view` for any path, local or remote: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". Only a later pipeline stage (`cargo build 2>&1 | grep error`) stays allowed; this covers every command in a chain (`cd x && ls y`), not only the first.",
+		"Listing with the shell is blocked — use `view` for local or remote directories: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". Listing programs are allowed as later pipeline stages, but not as command heads, including in chains and SSH command bodies.",
 	),
 	(
 		&["sleep"],
-		"Bare `sleep` is blocked — it wastes the call. Commands you start move to the background automatically and notify you on exit, so never sleep or chain short sleeps to wait for them.",
+		"Bare `sleep` in the shell is blocked — background-job status and output are available through the job resource; automatic completion delivery depends on the client integration. A sleep inside a shell loop body is supported.",
 	),
 	(
 		&["watch", "top", "htop"],
-		"This program never exits, so it would never complete or notify you. Run the underlying command once; long runs move to the background automatically.",
+		"This monitoring program in the shell is blocked — this tool has no interactive terminal. No flag makes it non-interactive; another non-interactive command can capture a snapshot. Longer commands continue as background jobs.",
 	),
 ];
 
@@ -158,12 +158,12 @@ enum Misuse {
 
 // Only in-place `sed` edits a file; `sed`/`awk` streaming to stdout is text
 // processing (line-length checks, previews) that no dedicated tool covers.
-static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_editor` str_replace or `batch_edit` (atomic, tracked, remote-capable). `sed` to stdout stays allowed.";
+static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_editor` str_replace or `batch_edit` for tracked local or remote edits. `sed` to stdout stays allowed.";
 
 // Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
 // breaks on quoting/escaping and bypasses tracked edits. Redirecting other
 // programs' OUTPUT to a file stays allowed — only content-authoring is blocked.
-static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat redirects or a standalone `tee` is blocked — quoting corrupts content and the write is untracked. Use text_editor command=\"create\" or str_replace. `printf … | prog`, `| tee f` and redirecting a program's output (e.g. `cargo test > out.log`) stay allowed.";
+static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat redirects or standalone `tee` in the shell is blocked — use `text_editor` create or str_replace, or `batch_edit`, for writes tracked by undo history and view caching. `echo` without a redirect, `printf … | prog`, `| tee f` and redirecting a program's output (e.g. `cargo test > out.log`) stay allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + no controlling terminal already makes input physically impossible;
@@ -445,11 +445,11 @@ fn blocked_message(prog: &str, hint: &str) -> String {
 
 fn misuse_message(prog: &str, hint: &str, mode: crate::mcp::HintMode) -> String {
 	match mode {
-		crate::mcp::HintMode::Hard => format!(
-			"`{prog}` is blocked, so the whole command was rejected and no part of it ran — re-send the rest as its own call. {hint}"
-		),
+		crate::mcp::HintMode::Hard => {
+			format!("`{prog}` is blocked in the shell, so the whole command was rejected and no part of it ran. {hint}")
+		}
 		crate::mcp::HintMode::Soft => format!(
-			"`{prog}` in the shell is discouraged here; the command ran anyway. {}",
+			"`{prog}` in the shell is discouraged; the command ran anyway. {}",
 			hint.replace(" is blocked — ", " is discouraged — ")
 		),
 	}
@@ -827,27 +827,22 @@ async fn execute_with_timeout(
 			let uri = super::background::resource_uri(&job_id);
 			let notify = on_background.unwrap_or_else(|| Box::new(|_: String| {}));
 			super::background::promote(job, child, notify);
-			// A stash in flight means the tree is missing the caller's changes until the
-			// command pops them: editing or finishing now works on (or hands back) the
-			// stashed state.
+			// Command text identifies a possible stash, not whether it has executed
+			// or whether a later command will restore it.
 			let stash_note = if stashes_changes(&command) {
-				" It stashed working-tree changes, which stay off disk until it exits: don't \
-				 edit files (tests included) or finish the task before its exit message arrives."
+				" This command includes git stash; stashed working-tree changes remain off disk \
+				 until restored. Concurrent edits can conflict with restoration."
 			} else {
 				""
 			};
 			return Ok(ShellOutcome {
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
-					 (PID {}). Output keeps streaming to the linked resource; its result arrives on its own \
-					 as a message when it exits (exit code and output). Do not poll it (`ps`, `tail`, sleep, \
-					 viewing the linked resource, any other status check), re-run it or start a variant of it \
-					 (other flags or filters). While it runs, keep \
-					 working on anything that does not need its result \
-					 (read or review related code, write or update tests, prepare the next edit); only when \
-					 nothing like that is left, reply with a brief status and no tool call to wait.{} \
-					 Stop early: kill -- -{}",
-					job_id, job_pid, stash_note, job_pid
+					 (PID {}). The same process continues; the linked resource provides status and an \
+					 output tail while running, then the exit code and result when finished. Automatic \
+					 completion delivery depends on the client integration.{} \
+					 Stop early: on Unix, `kill -- -{job_pid}`; on Windows, `taskkill /PID {job_pid} /T /F`.",
+					job_id, job_pid, stash_note
 				),
 				resource_uri: Some(uri),
 			});

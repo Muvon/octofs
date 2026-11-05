@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Shell execution, background promotion, and misuse-policy tests.
+
 use super::*;
 
 #[tokio::test]
@@ -405,7 +407,7 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 	assert!(rejection("php -v && git log --oneline -3 && sleep 5").is_some());
 	let msg = misuse_message(
 		"sleep",
-		"Bare `sleep` is blocked — it wastes the call.",
+		"Bare `sleep` in the shell is blocked — job status is available through its resource.",
 		crate::mcp::HintMode::Hard,
 	);
 	assert!(msg.contains("`sleep`"), "names the program: {msg}");
