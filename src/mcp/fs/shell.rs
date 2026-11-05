@@ -144,7 +144,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["watch", "top", "htop"],
-		"This monitoring program in the shell is blocked — this tool has no interactive terminal. No flag makes it non-interactive; another non-interactive command can capture a snapshot. Longer commands continue as background jobs.",
+		"This monitoring program in the shell is blocked — this tool has no interactive terminal. It is blocked with any flags, including `top -b`; another non-interactive command can capture a snapshot. Longer commands continue as background jobs.",
 	),
 ];
 

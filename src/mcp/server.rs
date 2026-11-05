@@ -460,7 +460,7 @@ impl OctofsServer {
 			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
 			unchanged marker); `full: true` requests complete content. Ranged reads return the \
-			requested lines. Returned line ids can be used directly in edit calls."
+			requested lines. Returned line ids go directly into `batch_edit` calls."
 	)]
 	async fn view(
 		&self,
@@ -1266,7 +1266,7 @@ pub struct BatchEditOperation {
 	#[serde(default)]
 	#[schemars(schema_with = "line_id_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Raw text to insert or replace with, no line-id prefixes.
+	/// Raw text to insert or replace with, no `N:hh|` prefixes.
 	#[serde(deserialize_with = "string_or_lines")]
 	pub content: String,
 }
