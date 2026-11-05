@@ -23,6 +23,7 @@ use ignore::{overrides::Override, overrides::OverrideBuilder, WalkBuilder};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
@@ -499,6 +500,23 @@ fn render_content_matches(rel_path: &str, bytes: &[u8], matcher: &Matcher, conte
 	Some(format!("{}:\n{}", rel_path, rendered_blocks.join("\n")))
 }
 
+// An empty content-search body is indistinguishable from "no matches". Oversized
+// files are not read (loading them is an OOM hazard), so a non-zero skip count
+// has to say the scan is incomplete.
+fn with_oversized_skip_notice(body: String, skipped: usize) -> String {
+	if skipped == 0 {
+		return body;
+	}
+	let noun = if skipped == 1 { "file" } else { "files" };
+	let cap_mb = super::file_ops::MAX_VIEW_FILE_BYTES / (1024 * 1024);
+	let notice = format!("Search incomplete: {skipped} {noun} skipped because they exceed the {cap_mb}MB size cap.");
+	if body.is_empty() {
+		notice
+	} else {
+		format!("{body}\n\n{notice}")
+	}
+}
+
 // Annotation suffix for a remote file, from metadata ONLY — downloading each
 // file for line/token counts made listing a large tree take minutes.
 fn annotation_suffix_remote(meta: &IoMetadata) -> String {
@@ -549,7 +567,12 @@ async fn list_directory_remote(
 
 		// Read and match concurrently; each task returns only its rendered
 		// hits, so memory is bounded by matches, not tree size. Index keeps
-		// the sorted file order in the output.
+		// the sorted file order in the output. Files over the view cap are
+		// counted, not downloaded — same OOM bound as the local scan.
+		let skipped = files
+			.iter()
+			.filter(|(_, meta)| meta.size > super::file_ops::MAX_VIEW_FILE_BYTES)
+			.count();
 		let reads: Vec<_> = files
 			.iter()
 			.enumerate()
@@ -574,7 +597,8 @@ async fn list_directory_remote(
 			.collect();
 		hits.sort_by_key(|(i, _)| *i);
 
-		Ok(hits.into_iter().map(|(_, h)| h).collect::<Vec<_>>().join("\n\n"))
+		let hits: Vec<String> = hits.into_iter().map(|(_, h)| h).collect();
+		Ok(with_oversized_skip_notice(hits.join("\n\n"), skipped))
 	} else {
 		let mut lines: Vec<String> = Vec::new();
 		for (rel_path, meta) in &files {
@@ -669,17 +693,19 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			// Parallel per-file scan. Each thread reads + searches independently;
 			// results carry the original index so the final output preserves
 			// the deterministic alphabetic order of `files`.
+			let skipped = AtomicUsize::new(0);
 			let mut indexed: Vec<(usize, String)> = files
 				.par_iter()
 				.enumerate()
 				.filter_map(|(i, rel_path)| {
 					let full_path = working_dir.join(rel_path);
 
-					// ponytail: files over the view cap are skipped like binaries — loading
-					// a multi-GB artifact into memory (twice, with the lossy copy) is an OOM
-					// hazard, and no real source file is that large.
+					// Files over the view cap are not loaded — a multi-GB artifact
+					// (twice, with the lossy copy) is an OOM hazard. The skip is
+					// counted so the result cannot look like a clean miss.
 					let meta = std::fs::metadata(&full_path).ok()?;
 					if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES {
+						skipped.fetch_add(1, Ordering::Relaxed);
 						return None;
 					}
 
@@ -721,7 +747,10 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 
 			indexed.sort_by_key(|(i, _)| *i);
 			let file_results: Vec<String> = indexed.into_iter().map(|(_, s)| s).collect();
-			Ok(file_results.join("\n\n"))
+			Ok(with_oversized_skip_notice(
+				file_results.join("\n\n"),
+				skipped.load(Ordering::Relaxed),
+			))
 		})
 		.await;
 

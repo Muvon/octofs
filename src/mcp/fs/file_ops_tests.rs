@@ -82,7 +82,7 @@ async fn content_search_directory_is_rejected() {
 }
 
 #[tokio::test]
-async fn content_search_oversized_file_points_at_grep() {
+async fn content_search_oversized_file_refuses_in_memory_search() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	let zeros = vec![0u8; (MAX_VIEW_FILE_BYTES + 1) as usize];
 	fs::write(file.path(), zeros).await.unwrap();
@@ -90,7 +90,15 @@ async fn content_search_oversized_file_points_at_grep() {
 		.await
 		.unwrap_err()
 		.to_string();
-	assert!(err.contains("grep"), "error was: {err}");
+	assert_eq!(err, "File is too large to search in memory (>5MB).");
+	let lower = err.to_ascii_lowercase();
+	assert!(!lower.contains("grep"), "error was: {err}");
+	assert!(
+		!lower
+			.split(|c: char| !c.is_ascii_alphanumeric())
+			.any(|word| word == "rg"),
+		"error was: {err}"
+	);
 }
 
 #[tokio::test]

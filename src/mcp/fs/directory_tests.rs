@@ -497,3 +497,92 @@ async fn test_list_files_whitespace_content_should_list_files() {
 
 	assert!(result.contains("config.json"));
 }
+
+async fn write_over_view_cap(path: &std::path::Path) {
+	let file = tokio::fs::File::create(path).await.unwrap();
+	file.set_len(super::super::file_ops::MAX_VIEW_FILE_BYTES + 1)
+		.await
+		.unwrap();
+}
+
+fn assert_oversized_skip_notice(result: &str, count: usize) {
+	assert!(
+		result.contains("Search incomplete"),
+		"oversized skip must mark the search incomplete: {result}"
+	);
+	assert!(
+		result.contains(&format!("{count} file")),
+		"notice must count skipped files: {result}"
+	);
+	assert!(
+		result.contains("size cap"),
+		"notice must say files were skipped for the size cap: {result}"
+	);
+	assert!(!result.is_empty(), "skip must not look like a silent empty success");
+}
+
+#[tokio::test]
+async fn test_content_search_only_oversized_file_is_not_silent_empty() {
+	use tempfile::TempDir;
+
+	let temp_dir = TempDir::new().unwrap();
+	let temp_path = temp_dir.path();
+	write_over_view_cap(&temp_path.join("huge.bin")).await;
+
+	let call = McpToolCall {
+		tool_name: "view".to_string(),
+		parameters: json!({ "content": "needle" }),
+		tool_id: "test-call-id".to_string(),
+		workdir: temp_path.to_path_buf(),
+	};
+
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
+	assert_oversized_skip_notice(&result, 1);
+	assert!(
+		!result.contains("huge.bin:"),
+		"oversized file must not be presented as a searched match: {result}"
+	);
+
+	let listing = McpToolCall {
+		tool_name: "view".to_string(),
+		parameters: json!({}),
+		tool_id: "test-call-id".to_string(),
+		workdir: temp_path.to_path_buf(),
+	};
+	let listed = list_directory(&listing, temp_path.to_str().unwrap()).await.unwrap();
+	assert!(
+		listed.contains("(large:"),
+		"listing still annotates oversized files: {listed}"
+	);
+	assert!(
+		!listed.contains("Search incomplete"),
+		"listing mode must not gain the content-search skip notice: {listed}"
+	);
+}
+
+#[tokio::test]
+async fn test_content_search_match_plus_oversized_skip_notice() {
+	use tempfile::TempDir;
+
+	let temp_dir = TempDir::new().unwrap();
+	let temp_path = temp_dir.path();
+	tokio::fs::write(temp_path.join("small.txt"), "needle here\n")
+		.await
+		.unwrap();
+	write_over_view_cap(&temp_path.join("huge.bin")).await;
+
+	let call = McpToolCall {
+		tool_name: "view".to_string(),
+		parameters: json!({ "content": "needle" }),
+		tool_id: "test-call-id".to_string(),
+		workdir: temp_path.to_path_buf(),
+	};
+
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
+	assert!(result.contains("small.txt"), "match must still be shown: {result}");
+	assert!(
+		result.contains("needle here"),
+		"match text must still be shown: {result}"
+	);
+	assert_oversized_skip_notice(&result, 1);
+}

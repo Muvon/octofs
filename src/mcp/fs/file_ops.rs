@@ -161,7 +161,7 @@ pub async fn view_file_with_content_search(
 		.await
 		.map_err(|e| anyhow!("Cannot read file: {}", e))?;
 	if metadata.size > MAX_VIEW_FILE_BYTES {
-		bail!("File is too large to search (>5MB). Use the shell tool (`grep -n ...`) for files this size.");
+		bail!("File is too large to search in memory (>5MB).");
 	}
 
 	// Lossy UTF-8 read so non-UTF-8 files (UTF-16 BOM, Latin-1, etc.) still match.
