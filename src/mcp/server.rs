@@ -899,9 +899,7 @@ impl ServerHandler for OctofsServer {
 			"Filesystem tools. File lines render as `N:hh|content`; `N:hh` is the line id edit \
 				 tools target, and edit results are diffs with fresh ids, so edits chain without \
 				 re-viewing files. Reuse returned content and ids; read complete relevant blocks, \
-				 then act on them. Each response costs a round trip: first decide what you need \
-				 next, then request every call that doesn't depend on another's result in that one \
-				 response."
+				 then act on them."
 				.to_string(),
 		)
 	}
