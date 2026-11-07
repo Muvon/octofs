@@ -25,6 +25,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
 	CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams, ClientCapabilities,
 	ClientConfig, ContentBlock, DetailedTask, ErrorCode, GetTaskParams, Implementation, InputResponses,
@@ -632,7 +633,7 @@ async fn results_carry_cache_hints_on_2026_07_28() {
 
 	let tools = client.list_tools(None).await.expect("list tools");
 	assert_eq!(tools.ttl_ms, Some(0));
-	assert_eq!(tools.cache_scope, Some(CacheScope::Public));
+	assert_eq!(tools.cache_scope, Some(CacheScope::Private));
 
 	let uri = start_job(&client).await;
 	let resources = client.list_resources(None).await.expect("list resources");
@@ -1222,4 +1223,120 @@ async fn text_editor_lists_edits_first_and_has_no_apply_patch() {
 	let description = tool.description.as_ref().unwrap();
 	assert!(description.starts_with("str_replace: edits"));
 	assert!(!description.contains("apply_patch"));
+}
+
+/// Request context whose `experimental.session` carries the given `shell` value (omitted for `None`).
+fn shell_context(
+	peer: &rmcp::Peer<rmcp::RoleServer>,
+	shell: Option<serde_json::Value>,
+) -> rmcp::service::RequestContext<rmcp::RoleServer> {
+	let mut session = json!({ "session_id": "s" });
+	if let Some(shell) = shell {
+		session["shell"] = shell;
+	}
+	let mut context = rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
+	let capabilities: ClientCapabilities =
+		serde_json::from_value(json!({ "experimental": { "session": session } })).expect("session capabilities");
+	context.meta.set_client_capabilities(capabilities);
+	context
+}
+
+#[tokio::test]
+async fn shell_is_granted_unless_the_session_says_false() {
+	let root = tempfile::tempdir().expect("server root");
+	let server = OctofsServer::with_root(root.path().to_path_buf());
+	let (transport, _client) = tokio::io::duplex(4096);
+	let service = rmcp::service::serve_directly(server, transport, None);
+	let peer = service.peer();
+
+	for (shell, granted) in [
+		(None, true),
+		(Some(json!(true)), true),
+		(Some(json!(false)), false),
+		(Some(json!("no")), true),
+	] {
+		assert_eq!(
+			OctofsServer::shell_granted(&shell_context(peer, shell.clone())),
+			granted,
+			"{shell:?}"
+		);
+	}
+	let anonymous = rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(2), peer.clone());
+	assert!(
+		OctofsServer::shell_granted(&anonymous),
+		"no session context keeps `check`"
+	);
+}
+
+/// `check` is advertised only to sessions that may use `shell`.
+#[tokio::test]
+async fn edit_tools_advertise_check_only_when_shell_is_granted() {
+	let root = tempfile::tempdir().expect("server root");
+	let server = OctofsServer::with_root(root.path().to_path_buf());
+	let (transport, _client) = tokio::io::duplex(4096);
+	let service = rmcp::service::serve_directly(server.clone(), transport, None);
+	let peer = service.peer();
+	let sentence = "Optional `check`";
+
+	for (shell, granted) in [(None, true), (Some(json!(true)), true), (Some(json!(false)), false)] {
+		let result = server
+			.list_tools(None, shell_context(peer, shell.clone()))
+			.await
+			.expect("list tools");
+		assert_ne!(
+			result.cache_scope,
+			Some(CacheScope::Public),
+			"the list depends on the session"
+		);
+		for name in ["text_editor", "batch_edit"] {
+			let tool = result.tools.iter().find(|tool| tool.name == name).expect("edit tool");
+			let has_property = tool.input_schema["properties"].get("check").is_some();
+			let has_sentence = tool.description.as_ref().expect("description").contains(sentence);
+			assert_eq!(has_property, granted, "{name} property with shell {shell:?}");
+			assert_eq!(has_sentence, granted, "{name} sentence with shell {shell:?}");
+			if let Some(required) = tool.input_schema.get("required").and_then(|r| r.as_array()) {
+				assert!(
+					granted || !required.iter().any(|n| n == "check"),
+					"{name} requires check"
+				);
+			}
+		}
+	}
+}
+
+/// Without `shell`, an edit that names `check` fails before anything is written.
+#[tokio::test]
+async fn edit_with_check_is_refused_when_shell_is_not_granted() {
+	use rmcp::handler::server::wrapper::Parameters;
+
+	let root = tempfile::tempdir().expect("server root");
+	let file = root.path().join("f.txt");
+	std::fs::write(&file, "one\n").expect("seed file");
+	let server = OctofsServer::with_root(root.path().to_path_buf());
+	let (transport, _client) = tokio::io::duplex(4096);
+	let service = rmcp::service::serve_directly(server.clone(), transport, None);
+	let peer = service.peer();
+	let denied = || shell_context(peer, Some(json!(false)));
+
+	let text_editor: super::TextEditorParams = serde_json::from_value(
+		json!({ "command": "str_replace", "path": "f.txt", "old_text": "one", "new_text": "two", "check": "true" }),
+	)
+	.expect("text_editor params");
+	let error = server
+		.text_editor(denied(), Parameters(text_editor))
+		.await
+		.expect_err("check refused");
+	assert!(error.contains("`check` needs the `shell` tool"), "{error}");
+	assert_eq!(std::fs::read_to_string(&file).expect("read"), "one\n");
+
+	let batch_edit: super::BatchEditParams = serde_json::from_value(
+		json!({ "path": "f.txt", "operations": [{ "operation": "insert", "start": 0, "content": "x\n" }], "check": "true" }),
+	)
+	.expect("batch_edit params");
+	let error = server
+		.batch_edit(denied(), Parameters(batch_edit))
+		.await
+		.expect_err("check refused");
+	assert!(error.contains("`check` needs the `shell` tool"), "{error}");
+	assert_eq!(std::fs::read_to_string(&file).expect("read"), "one\n");
 }

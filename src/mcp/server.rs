@@ -427,6 +427,22 @@ impl OctofsServer {
 		self.sessions.get(id, root, context_epoch)
 	}
 
+	/// Whether the client lets this session use `shell`: `experimental.session.shell`
+	/// is `false` when the client filters `shell` out of the session's tools. `check`
+	/// runs a shell command, so without this an edit tool would bypass that filter.
+	/// Only an explicit `false` denies; clients that send no session context or no
+	/// `shell` field keep the full tool set.
+	///
+	/// Resolved on every request, never cached in the session state: the client's
+	/// grant can change between requests.
+	fn shell_granted(context: &RequestContext<RoleServer>) -> bool {
+		let session = context
+			.client_capabilities()
+			.and_then(|capabilities| capabilities.experimental)
+			.and_then(|mut experimental| experimental.remove("session"));
+		session.and_then(|session| session.get("shell").and_then(|v| v.as_bool())) != Some(false)
+	}
+
 	/// Run `params.command` exactly as the `shell` tool runs it. `preface` (the result of
 	/// an edit whose `check` this command is) leads the command's output; when the command
 	/// becomes a task, it follows the output in the task's result instead.
@@ -573,6 +589,22 @@ use std::path::{Path, PathBuf};
 pub(crate) const SHELL_MISUSE_SOFT: &str = "are discouraged and come back with a warning)";
 pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected)";
 
+// The `check` sentence of the edit tools lives here, not in their `#[tool]`
+// descriptions: list_tools appends it only for sessions that may use `shell`.
+pub(crate) const EDIT_CHECK_DESCRIPTION: &str = "Optional `check` (most edits omit it; on a related set, only the last edit): a shell command (such as the test that covers the change) run after the edit is written, exactly as `shell` runs it; its output follows the edit result. It does not run when the edit fails; a failing or refused check leaves the edit in place, so fix the cause instead of redoing the edit.";
+const CHECK_NEEDS_SHELL: &str =
+	"`check` needs the `shell` tool, which this session does not grant; remove `check` and run the edit alone";
+
+/// Drop the `check` parameter from an edit tool's input schema.
+fn remove_check_property(schema: &mut JsonObject) {
+	if let Some(properties) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) {
+		properties.remove("check");
+	}
+	if let Some(required) = schema.get_mut("required").and_then(|r| r.as_array_mut()) {
+		required.retain(|name| name.as_str() != Some("check"));
+	}
+}
+
 #[tool_router]
 impl OctofsServer {
 	#[tool(
@@ -640,11 +672,7 @@ impl OctofsServer {
 			on none it lists the closest matches, for batch_edit. create: new file only — fails \
 			if it exists; parent directories are made. delete: remove a file (not a directory). \
 			undo_edit: revert the last edit to path (10 levels, delete included). Use batch_edit \
-			for replacements or insertions addressed by line ids. Optional `check` (most edits omit it; \
-			on a related set, only the last edit): a shell command (such as the test that covers the \
-			change) run after the edit is written, exactly as `shell` runs it; its output follows the \
-			edit result. It does not run when the edit fails; a failing or refused check leaves the \
-			edit in place, so fix the cause instead of redoing the edit."
+			for replacements or insertions addressed by line ids."
 	)]
 	async fn text_editor(
 		&self,
@@ -652,6 +680,9 @@ impl OctofsServer {
 		Parameters(mut params): Parameters<TextEditorParams>,
 	) -> Result<CallToolResponse, String> {
 		let check = params.check.take();
+		if check.is_some() && !Self::shell_granted(&context) {
+			return Err(CHECK_NEEDS_SHELL.to_string());
+		}
 		let session = self.session(&context);
 		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
@@ -684,11 +715,7 @@ impl OctofsServer {
 			follow-up edits; removed lines and the middle of a long added block show as an id range. \
 			A trailing `shift:` line says \
 			how later original line numbers moved. Insert anchors 0 (file start) and -1 (end) are \
-			plain integers. Content is raw text without `N:hh|` prefixes. Optional `check` (most edits \
-			omit it; on a related set, only the last edit): a shell command (such as the test that \
-			covers the change) run after the edit is written, exactly as `shell` runs it; its output \
-			follows the edit result. It does not run when the edit fails; a failing or refused check \
-			leaves the edit in place, so fix the cause instead of redoing the edit."
+			plain integers. Content is raw text without `N:hh|` prefixes."
 	)]
 	async fn batch_edit(
 		&self,
@@ -696,6 +723,9 @@ impl OctofsServer {
 		Parameters(mut params): Parameters<BatchEditParams>,
 	) -> Result<CallToolResponse, String> {
 		let check = params.check.take();
+		if check.is_some() && !Self::shell_granted(&context) {
+			return Err(CHECK_NEEDS_SHELL.to_string());
+		}
 		let session = self.session(&context);
 		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
@@ -960,6 +990,7 @@ impl ServerHandler for OctofsServer {
 		_request: Option<PaginatedRequestParams>,
 		context: RequestContext<RoleServer>,
 	) -> Result<ListToolsResult, ErrorData> {
+		let shell_granted = Self::shell_granted(&context);
 		let tools = Self::tool_router()
 			.list_all()
 			.into_iter()
@@ -969,6 +1000,15 @@ impl ServerHandler for OctofsServer {
 					strip_null_variants(value);
 				}
 				strip_generator_noise(&mut schema);
+				if tool.name == "text_editor" || tool.name == "batch_edit" {
+					if shell_granted {
+						if let Some(description) = tool.description.as_mut() {
+							*description = format!("{description} {EDIT_CHECK_DESCRIPTION}").into();
+						}
+					} else {
+						remove_check_property(&mut schema);
+					}
+				}
 				tool.input_schema = Arc::new(schema);
 				// The shell description is written for the default hard mode.
 				if tool.name == "shell" && crate::mcp::get_hint_mode() == crate::mcp::HintMode::Soft {
@@ -983,8 +1023,9 @@ impl ServerHandler for OctofsServer {
 		if !supports_cache_hints(&context) {
 			return Ok(result);
 		}
-		// ttl 0 matches rmcp's generated handler; the list is identical for every caller.
-		Ok(result.with_ttl_ms(0).with_cache_scope(CacheScope::Public))
+		// ttl 0 matches rmcp's generated handler. The list depends on the session's
+		// `shell` grant, so a cache must never share it between sessions.
+		Ok(result.with_ttl_ms(0).with_cache_scope(CacheScope::Private))
 	}
 
 	// Background shell jobs are surfaced as resources: each promoted command is

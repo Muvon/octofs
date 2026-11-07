@@ -479,6 +479,8 @@ line ids. CRLF files are matched in LF space and keep their line endings on writ
 {"command": "undo_edit", "path": "src/main.rs"}
 ```
 
+**Check after the edit:** `text_editor` and `batch_edit` accept an optional `check`, a shell command (for example the test that covers the change) that runs after the edit is written and whose output follows the edit result. It needs the `shell` tool: a client that filters `shell` out of a session's tools sets `experimental.session.shell` to `false` in its client capabilities, and octofs then hides `check` from the edit tools and rejects it before writing anything. A missing field or any other value keeps `check` available.
+
 ---
 
 ### `batch_edit` — Atomic multi-operation edits
