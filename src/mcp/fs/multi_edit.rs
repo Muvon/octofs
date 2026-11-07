@@ -38,6 +38,9 @@ struct Edit {
 struct File {
 	first_edit: usize,
 	source: PathSource,
+	// Path as the caller named it: canonicalizing can rewrite it (Windows `\\?\` prefix,
+	// expanded 8.3 names, macOS `/private`), which callers would not recognize.
+	display: String,
 	before: String,
 	after: String,
 	permissions: Option<std::fs::Permissions>,
@@ -116,6 +119,7 @@ async fn load_file(source: PathSource, first_edit: usize) -> Result<File> {
 	let before = io_read_to_string(&source)
 		.await
 		.with_context(|| format!("Cannot read {}", source.display()))?;
+	let display = source.display().to_string();
 	// Canonical targets keep aliases under one lock and preserve existing symlinks.
 	let source = match source {
 		PathSource::Local(path) => PathSource::Local(tokio::fs::canonicalize(path).await?),
@@ -128,6 +132,7 @@ async fn load_file(source: PathSource, first_edit: usize) -> Result<File> {
 	Ok(File {
 		first_edit,
 		source,
+		display,
 		after: before.clone(),
 		before,
 		permissions,
@@ -146,7 +151,7 @@ async fn commit(files: BTreeMap<String, File>) -> Result<()> {
 			for key in attempted.into_iter().rev() {
 				let file = &files[key];
 				if let Err(rollback) = restore(file).await {
-					failures.push(format!("{}: {rollback:#}", file.source.display()));
+					failures.push(format!("{}: {rollback:#}", file.display));
 				}
 			}
 			if failures.is_empty() {
@@ -237,7 +242,7 @@ fn render(files: &BTreeMap<String, File>) -> Result<String> {
 			);
 			lines.join("\n")
 		});
-		output.push(format!("{}\n{}", file.source.display(), diff));
+		output.push(format!("{}\n{}", file.display, diff));
 	}
 	let result = output.join("\n\n");
 	if result.len() > MAX_RESULT_BYTES {
