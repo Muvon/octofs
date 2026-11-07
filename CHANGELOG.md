@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.23.0] - 2026-11-07
+
+### 📋 Release Summary
+
+Editing now uses atomic edits instead of the previous patch engine. Filesystem tools support transactional multi-file edits and patches, edit checks can be gated on shell grants, and optional checks can run after editor changes; shell and edit guidance is clearer.
+
+### 🚨 Breaking Changes
+
+- **mcp/fs**: replace patch engine with atomic edits `dd413c15`
+
+### ✨ New Features & Enhancements
+
+- **mcp**: gate edit checks on shell grants `7c7023bf`
+- **mcp**: run optional checks after editor changes `f6a27a68`
+- **fs**: support transactional multi-file edits and patches `864ce388`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: keep edit description module-private `8ae42201`
+- **mcp**: clarify shell and file-tool guidance `c9a3bfa0`
+- **mcp**: remove call-batching guidance `d1b37a84`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: clarify shell and edit guidance `79cc89f0`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.22.1] - 2026-11-03
 
 ### 📋 Release Summary
