@@ -824,6 +824,76 @@ async fn tool_handlers_text_editor_batch_edit_extract_lines_round_trip() {
 	assert_eq!(stale.is_error, Some(true), "stale id must error");
 }
 
+/// `check` runs as `shell` after the edit lands and its output follows the edit result;
+/// a failed edit never runs it.
+#[tokio::test(flavor = "multi_thread")]
+async fn edit_check_runs_after_a_written_edit_only() {
+	let (client, _server_task, _unsolicited) = connect().await;
+	let call = |tool: &'static str, arguments: serde_json::Value| {
+		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments.as_object().unwrap().clone()))
+	};
+	let text = |result: &rmcp::model::CallToolResult| {
+		result
+			.content
+			.iter()
+			.filter_map(|block| match block {
+				ContentBlock::Text(text) => Some(text.text.clone()),
+				_ => None,
+			})
+			.collect::<String>()
+	};
+
+	call(
+		"text_editor",
+		json!({ "command": "create", "path": "checked.txt", "content": "one\n" }),
+	)
+	.await
+	.expect("create");
+	let edited = call(
+		"text_editor",
+		json!({ "command": "str_replace", "path": "checked.txt", "old_text": "one", "new_text": "one\ntwo", "check": "wc -l checked.txt" }),
+	)
+	.await
+	.expect("edit with check");
+	assert_ne!(edited.is_error, Some(true), "{:?}", edited.content);
+	let output = text(&edited);
+	let check_at = output
+		.find("2 checked.txt")
+		.unwrap_or_else(|| panic!("check output missing: {output}"));
+	assert!(check_at > 0, "the edit result leads the check output: {output}");
+
+	let red = call(
+		"text_editor",
+		json!({ "command": "str_replace", "path": "checked.txt", "old_text": "two", "new_text": "three", "check": "false" }),
+	)
+	.await
+	.expect("edit with failing check");
+	assert_ne!(
+		red.is_error,
+		Some(true),
+		"the edit landed, so the call succeeds: {:?}",
+		red.content
+	);
+	let output = text(&red);
+	assert!(output.contains("Check: Command failed with exit code 1"), "{output}");
+
+	let failed = call(
+		"batch_edit",
+		json!({
+			"path": "checked.txt",
+			"operations": [{ "operation": "replace", "start": "99:zz", "content": "x" }],
+			"check": "touch check-ran.txt"
+		}),
+	)
+	.await
+	.expect("failed edit returns a response");
+	assert_eq!(failed.is_error, Some(true), "stale id must error");
+	let probe = call("view", json!({ "path": "check-ran.txt" }))
+		.await
+		.expect("view probe");
+	assert_eq!(probe.is_error, Some(true), "the check must not run after a failed edit");
+}
+
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]

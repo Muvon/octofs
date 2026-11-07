@@ -426,6 +426,138 @@ impl OctofsServer {
 		let context_epoch = session.get("context_epoch").and_then(|v| v.as_u64());
 		self.sessions.get(id, root, context_epoch)
 	}
+
+	/// Run `params.command` exactly as the `shell` tool runs it. `preface` (the result of
+	/// an edit whose `check` this command is) leads the command's output; when the command
+	/// becomes a task, it follows the output in the task's result instead.
+	async fn run_shell(
+		&self,
+		context: RequestContext<RoleServer>,
+		params: ShellParams,
+		preface: String,
+	) -> Result<CallToolResponse, String> {
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
+		let call = McpToolCall {
+			tool_name: "shell".to_string(),
+			parameters: serde_json::to_value(&params).unwrap_or_default(),
+			tool_id: String::new(),
+			workdir,
+		};
+		let edit_tail = if preface.is_empty() {
+			String::new()
+		} else {
+			format!("\n\n{preface}")
+		};
+		let lead = move |text: String| {
+			if preface.is_empty() {
+				text
+			} else {
+				format!("{preface}\n\n{text}")
+			}
+		};
+		// Heartbeat while a command is inside the foreground window, so the MCP
+		// idle timeout does not cancel a call that is silent by nature. Anything
+		// still running at the boundary is returned as a background resource or a
+		// task, so there is no held-open call after promotion.
+		let progress_token = context.meta.get_progress_token();
+		let peer = context.peer.clone();
+		// A background job outlives this call; when it exits, emit
+		// `resources/updated` for its resource URI so the client can read the
+		// output. Two delivery paths, by what the client set up: 2026-07-28
+		// clients that opened a `subscriptions/listen` stream get the
+		// notification on it (tagged with their subscription id by the sink);
+		// everyone else gets the unsolicited push the pre-2026-07-28 spec
+		// allowed. On pre-2026-07-28 connections the exit also goes out as a Claude
+		// Code channel message, the only push that reaches its model. A client that
+		// takes the job as a task polls for its exit instead, so it gets only the
+		// pushes it subscribed to. The peer and registry handles are captured here
+		// and hidden behind an opaque callback so the fs layer stays protocol-free.
+		let completion_peer = context.peer.clone();
+		let subscriptions = self.subscriptions.clone();
+		let as_task = client_supports_tasks(&context);
+		let push_channel = !as_task && allows_unsolicited_notifications(&context);
+		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
+			tokio::spawn(async move {
+				if !notify_subscriptions(&subscriptions, &uri).await && !as_task {
+					notify_peer_resource_updated(&completion_peer, &uri).await;
+				}
+				if push_channel {
+					notify_claude_channel(&completion_peer, &uri).await;
+				}
+			});
+		});
+		let name = job_label(&params.command);
+		let task_hints = self.task_hints.clone();
+		let exec = request_ctx::with_request_context(session.view_cache.clone(), async move {
+			let outcome = fs::execute_shell_command(&call, Some(notifier))
+				.await
+				.map_err(|e| e.to_string())?;
+			let Some(uri) = outcome.resource_uri else {
+				let text = ContentBlock::text(lead(append_hints(outcome.text)));
+				return Ok(CallToolResult::success(vec![text]).into());
+			};
+			if as_task {
+				if let Some(id) = fs::background::job_id_from_uri(&uri) {
+					if let Some(view) = fs::background::read(id) {
+						let hints = append_hints(String::new()) + &edit_tail;
+						if !hints.is_empty() {
+							if let Ok(mut task_hints) = task_hints.lock() {
+								task_hints.insert(id.to_string(), hints);
+							}
+						}
+						return Ok(CreateTaskResult::new(job_task(id, &view, false)).into());
+					}
+				}
+			}
+			// A ResourceLink is the protocol-native "watch this" signal: the
+			// client follows it generically, with no octofs-specific
+			// knowledge, so shell can be served by any MCP server.
+			let content = vec![
+				ContentBlock::text(lead(append_hints(outcome.text))),
+				ContentBlock::resource_link(Resource::new(uri, name)),
+			];
+			Ok::<CallToolResponse, String>(CallToolResult::success(content).into())
+		});
+		tokio::pin!(exec);
+		let mut beats = 0.0_f64;
+		loop {
+			tokio::select! {
+				biased;
+				done = &mut exec => return done,
+				_ = tokio::time::sleep(SHELL_HEARTBEAT_INTERVAL) => {
+					let Some(token) = progress_token.clone() else { continue };
+					beats += 1.0;
+					let _ = peer
+						.notify_progress(
+							rmcp::model::ProgressNotificationParam::new(token, beats)
+								.with_message("command still running"),
+						)
+						.await;
+				}
+			}
+		}
+	}
+
+	/// An edit tool's response: its result alone, or with `check` the result followed by
+	/// that command run through [`Self::run_shell`]. The edit is already written, so a
+	/// check that fails or is refused still returns the edit result, followed by the
+	/// failure (`shell` reports a non-zero exit as an error).
+	async fn edit_response(
+		&self,
+		context: RequestContext<RoleServer>,
+		result: String,
+		check: Option<String>,
+	) -> Result<CallToolResponse, String> {
+		let Some(command) = check else {
+			return Ok(CallToolResult::success(vec![ContentBlock::text(result)]).into());
+		};
+		let edited = format!("{result}\n\nCheck: ");
+		match self.run_shell(context, ShellParams { command }, result).await {
+			Ok(response) => Ok(response),
+			Err(error) => Ok(CallToolResult::success(vec![ContentBlock::text(edited + &error)]).into()),
+		}
+	}
 }
 
 impl Default for OctofsServer {
@@ -508,13 +640,18 @@ impl OctofsServer {
 			on none it lists the closest matches, for batch_edit. create: new file only — fails \
 			if it exists; parent directories are made. delete: remove a file (not a directory). \
 			undo_edit: revert the last edit to path (10 levels, delete included). Use batch_edit \
-			for replacements or insertions addressed by line ids."
+			for replacements or insertions addressed by line ids. Optional `check` (most edits omit it; \
+			on a related set, only the last edit): a shell command (such as the test that covers the \
+			change) run after the edit is written, exactly as `shell` runs it; its output follows the \
+			edit result. It does not run when the edit fails; a failing or refused check leaves the \
+			edit in place, so fix the cause instead of redoing the edit."
 	)]
 	async fn text_editor(
 		&self,
 		context: RequestContext<RoleServer>,
-		Parameters(params): Parameters<TextEditorParams>,
-	) -> Result<String, String> {
+		Parameters(mut params): Parameters<TextEditorParams>,
+	) -> Result<CallToolResponse, String> {
+		let check = params.check.take();
 		let session = self.session(&context);
 		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
@@ -523,11 +660,12 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(session.view_cache.clone(), async move {
+		let result = request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let result = fs::execute_text_editor(&call).await.map_err(|e| format!("{e:#}"))?;
-			Ok(append_hints(result))
+			Ok::<String, String>(append_hints(result))
 		})
-		.await
+		.await?;
+		self.edit_response(context, result, check).await
 	}
 
 	#[tool(
@@ -546,13 +684,18 @@ impl OctofsServer {
 			follow-up edits; removed lines and the middle of a long added block show as an id range. \
 			A trailing `shift:` line says \
 			how later original line numbers moved. Insert anchors 0 (file start) and -1 (end) are \
-			plain integers. Content is raw text without `N:hh|` prefixes."
+			plain integers. Content is raw text without `N:hh|` prefixes. Optional `check` (most edits \
+			omit it; on a related set, only the last edit): a shell command (such as the test that \
+			covers the change) run after the edit is written, exactly as `shell` runs it; its output \
+			follows the edit result. It does not run when the edit fails; a failing or refused check \
+			leaves the edit in place, so fix the cause instead of redoing the edit."
 	)]
 	async fn batch_edit(
 		&self,
 		context: RequestContext<RoleServer>,
-		Parameters(params): Parameters<BatchEditParams>,
-	) -> Result<String, String> {
+		Parameters(mut params): Parameters<BatchEditParams>,
+	) -> Result<CallToolResponse, String> {
+		let check = params.check.take();
 		let session = self.session(&context);
 		let workdir = session.workdir.get_current();
 		let call = McpToolCall {
@@ -561,11 +704,12 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(session.view_cache.clone(), async move {
+		let result = request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let result = fs::execute_batch_edit(&call).await.map_err(|e| e.to_string())?;
-			Ok(append_hints(result))
+			Ok::<String, String>(append_hints(result))
 		})
-		.await
+		.await?;
+		self.edit_response(context, result, check).await
 	}
 
 	#[tool(
@@ -632,95 +776,7 @@ impl OctofsServer {
 		context: RequestContext<RoleServer>,
 		Parameters(params): Parameters<ShellParams>,
 	) -> Result<CallToolResponse, String> {
-		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
-		let call = McpToolCall {
-			tool_name: "shell".to_string(),
-			parameters: serde_json::to_value(&params).unwrap_or_default(),
-			tool_id: String::new(),
-			workdir,
-		};
-		// Heartbeat while a command is inside the foreground window, so the MCP
-		// idle timeout does not cancel a call that is silent by nature. Anything
-		// still running at the boundary is returned as a background resource or a
-		// task, so there is no held-open call after promotion.
-		let progress_token = context.meta.get_progress_token();
-		let peer = context.peer.clone();
-		// A background job outlives this call; when it exits, emit
-		// `resources/updated` for its resource URI so the client can read the
-		// output. Two delivery paths, by what the client set up: 2026-07-28
-		// clients that opened a `subscriptions/listen` stream get the
-		// notification on it (tagged with their subscription id by the sink);
-		// everyone else gets the unsolicited push the pre-2026-07-28 spec
-		// allowed. On pre-2026-07-28 connections the exit also goes out as a Claude
-		// Code channel message, the only push that reaches its model. A client that
-		// takes the job as a task polls for its exit instead, so it gets only the
-		// pushes it subscribed to. The peer and registry handles are captured here
-		// and hidden behind an opaque callback so the fs layer stays protocol-free.
-		let completion_peer = context.peer.clone();
-		let subscriptions = self.subscriptions.clone();
-		let as_task = client_supports_tasks(&context);
-		let push_channel = !as_task && allows_unsolicited_notifications(&context);
-		let notifier: fs::shell::BackgroundNotify = Box::new(move |uri| {
-			tokio::spawn(async move {
-				if !notify_subscriptions(&subscriptions, &uri).await && !as_task {
-					notify_peer_resource_updated(&completion_peer, &uri).await;
-				}
-				if push_channel {
-					notify_claude_channel(&completion_peer, &uri).await;
-				}
-			});
-		});
-		let name = job_label(&params.command);
-		let task_hints = self.task_hints.clone();
-		let exec = request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let outcome = fs::execute_shell_command(&call, Some(notifier))
-				.await
-				.map_err(|e| e.to_string())?;
-			let Some(uri) = outcome.resource_uri else {
-				let text = ContentBlock::text(append_hints(outcome.text));
-				return Ok(CallToolResult::success(vec![text]).into());
-			};
-			if as_task {
-				if let Some(id) = fs::background::job_id_from_uri(&uri) {
-					if let Some(view) = fs::background::read(id) {
-						let hints = append_hints(String::new());
-						if !hints.is_empty() {
-							if let Ok(mut task_hints) = task_hints.lock() {
-								task_hints.insert(id.to_string(), hints);
-							}
-						}
-						return Ok(CreateTaskResult::new(job_task(id, &view, false)).into());
-					}
-				}
-			}
-			// A ResourceLink is the protocol-native "watch this" signal: the
-			// client follows it generically, with no octofs-specific
-			// knowledge, so shell can be served by any MCP server.
-			let content = vec![
-				ContentBlock::text(append_hints(outcome.text)),
-				ContentBlock::resource_link(Resource::new(uri, name)),
-			];
-			Ok::<CallToolResponse, String>(CallToolResult::success(content).into())
-		});
-		tokio::pin!(exec);
-		let mut beats = 0.0_f64;
-		loop {
-			tokio::select! {
-				biased;
-				done = &mut exec => return done,
-				_ = tokio::time::sleep(SHELL_HEARTBEAT_INTERVAL) => {
-					let Some(token) = progress_token.clone() else { continue };
-					beats += 1.0;
-					let _ = peer
-						.notify_progress(
-							rmcp::model::ProgressNotificationParam::new(token, beats)
-								.with_message("command still running"),
-						)
-						.await;
-				}
-			}
-		}
+		self.run_shell(context, params, String::new()).await
 	}
 
 	#[tool(
@@ -1245,6 +1301,12 @@ pub struct TextEditorParams {
 	/// `str_replace`: replace every occurrence (rename-style). Default: false.
 	#[serde(default)]
 	pub replace_all: Option<bool>,
+	/// Optional shell command, such as the test covering the change, run after a successful edit
+	/// exactly as `shell` runs it; its output follows the edit result. Most edits omit it; on a
+	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
+	/// the cause instead of redoing the edit.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub check: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -1303,6 +1365,12 @@ pub struct BatchEditParams {
 	/// Operations on this one file (max 50).
 	#[schemars(length(max = 50))]
 	pub operations: Vec<BatchEditOperation>,
+	/// Optional shell command, such as the test covering the change, run after a successful edit
+	/// exactly as `shell` runs it; its output follows the edit result. Most edits omit it; on a
+	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
+	/// the cause instead of redoing the edit.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub check: Option<String>,
 }
 
 /// The tool edits one file, so callers sometimes carry `path` on each operation
@@ -1319,6 +1387,8 @@ impl<'de> Deserialize<'de> for BatchEditParams {
 			#[serde(default)]
 			path: Option<String>,
 			operations: Vec<serde_json::Value>,
+			#[serde(default)]
+			check: Option<String>,
 		}
 
 		let mut raw = Raw::deserialize(deserializer)?;
@@ -1360,7 +1430,11 @@ impl<'de> Deserialize<'de> for BatchEditParams {
 			.collect::<Result<Vec<_>, _>>()
 			.map_err(serde::de::Error::custom)?;
 
-		Ok(BatchEditParams { path, operations })
+		Ok(BatchEditParams {
+			path,
+			operations,
+			check: raw.check,
+		})
 	}
 }
 
