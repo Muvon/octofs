@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.23.1] - 2026-11-07
+
+### 📋 Release Summary
+
+Multi-edit output now preserves the paths supplied by callers.
+
+### 🐛 Bug Fixes & Stability
+
+- **multi-edit**: preserve caller paths in edit output `f5da27d8`
+
 ## [0.23.0] - 2026-11-07
 
 ### 📋 Release Summary
