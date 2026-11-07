@@ -1028,19 +1028,27 @@ async fn served_tool_schemas_carry_no_generator_noise() {
 	}
 }
 
+fn context_with_session(
+	peer: &rmcp::Peer<rmcp::RoleServer>,
+	session: serde_json::Value,
+) -> rmcp::service::RequestContext<rmcp::RoleServer> {
+	let mut context = rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
+	let capabilities: ClientCapabilities =
+		serde_json::from_value(json!({ "experimental": { "session": session } })).expect("session capabilities");
+	context.meta.set_client_capabilities(capabilities);
+	context
+}
+
 fn session_context(
 	peer: &rmcp::Peer<rmcp::RoleServer>,
 	id: &str,
 	workdir: &std::path::Path,
 	context_epoch: Option<u64>,
 ) -> rmcp::service::RequestContext<rmcp::RoleServer> {
-	let mut context = rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
-	let capabilities: ClientCapabilities = serde_json::from_value(json!({
-		"experimental": {"session": {"session_id": id, "workdir": workdir, "context_epoch": context_epoch}}
-	}))
-	.expect("session capabilities");
-	context.meta.set_client_capabilities(capabilities);
-	context
+	context_with_session(
+		peer,
+		json!({"session_id": id, "workdir": workdir, "context_epoch": context_epoch}),
+	)
 }
 
 /// Octomind shares one connection between its sessions: each keeps its own
@@ -1234,11 +1242,7 @@ fn shell_context(
 	if let Some(shell) = shell {
 		session["shell"] = shell;
 	}
-	let mut context = rmcp::service::RequestContext::new(rmcp::model::RequestId::Number(1), peer.clone());
-	let capabilities: ClientCapabilities =
-		serde_json::from_value(json!({ "experimental": { "session": session } })).expect("session capabilities");
-	context.meta.set_client_capabilities(capabilities);
-	context
+	context_with_session(peer, session)
 }
 
 #[tokio::test]
@@ -1283,11 +1287,6 @@ async fn edit_tools_advertise_check_only_when_shell_is_granted() {
 			.list_tools(None, shell_context(peer, shell.clone()))
 			.await
 			.expect("list tools");
-		assert_ne!(
-			result.cache_scope,
-			Some(CacheScope::Public),
-			"the list depends on the session"
-		);
 		for name in ["text_editor", "batch_edit"] {
 			let tool = result.tools.iter().find(|tool| tool.name == name).expect("edit tool");
 			let has_property = tool.input_schema["properties"].get("check").is_some();

@@ -589,9 +589,9 @@ use std::path::{Path, PathBuf};
 pub(crate) const SHELL_MISUSE_SOFT: &str = "are discouraged and come back with a warning)";
 pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected)";
 
-// The `check` sentence of the edit tools lives here, not in their `#[tool]`
-// descriptions: list_tools appends it only for sessions that may use `shell`.
-pub(crate) const EDIT_CHECK_DESCRIPTION: &str = "Optional `check` (most edits omit it; on a related set, only the last edit): a shell command (such as the test that covers the change) run after the edit is written, exactly as `shell` runs it; its output follows the edit result. It does not run when the edit fails; a failing or refused check leaves the edit in place, so fix the cause instead of redoing the edit.";
+/// The `check` sentence of the edit tools lives here, not in their `#[tool]`
+/// descriptions: list_tools appends it only for sessions that may use `shell`.
+const EDIT_CHECK_DESCRIPTION: &str = "Optional `check` (most edits omit it; on a related set, only the last edit): a shell command (such as the test that covers the change) run after the edit is written, exactly as `shell` runs it; its output follows the edit result. It does not run when the edit fails; a failing or refused check leaves the edit in place, so fix the cause instead of redoing the edit.";
 const CHECK_NEEDS_SHELL: &str =
 	"`check` needs the `shell` tool, which this session does not grant; remove `check` and run the edit alone";
 
