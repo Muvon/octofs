@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.23.3] - 2026-11-08
+
+### 📋 Release Summary
+
+Shutdown handling, filesystem search omissions and oversized-search results were corrected, and HTTP SIGTERM cleanup was fixed.
+
+### 🐛 Bug Fixes & Stability
+
+- handle shutdown and filesystem search omissions `09435182`
+- HTTP SIGTERM cleanup and clearer oversized-search results `b1b4de1a`
+
 ## [0.23.2] - 2026-11-08
 
 ### 📋 Release Summary
