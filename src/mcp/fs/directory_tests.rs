@@ -21,6 +21,18 @@ fn filter_by_pattern(files: &mut Vec<String>, pattern: &str) -> Result<(), Strin
 	Ok(())
 }
 
+// A listing walked into /proc read every pagemap whole (reported size 0) and
+// grew to tens of GB; the capped read leaves such a file unannotated.
+#[cfg(target_os = "linux")]
+#[test]
+fn listing_annotation_skips_a_virtual_file_larger_than_its_reported_size() {
+	let pagemap = Path::new("/proc/self/pagemap");
+	assert!(read_capped(pagemap).is_none());
+	assert!(annotation_suffix(pagemap, None, 0).is_none());
+	let status = Path::new("/proc/self/status");
+	assert!(annotation_suffix(status, None, 0).is_some_and(|suffix| suffix.ends_with('t')));
+}
+
 #[test]
 fn test_pattern_uses_ripgrep_glob_semantics() {
 	let all = vec![

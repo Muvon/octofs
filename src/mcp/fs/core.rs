@@ -16,7 +16,8 @@
 
 use super::super::McpToolCall;
 use super::remote::{
-	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_to_string, resolve_path_source, PathSource,
+	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_capped, io_read_to_string, resolve_path_source,
+	PathSource,
 };
 use crate::mcp::fs::{delta, directory, file_ops, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
@@ -287,7 +288,11 @@ async fn resolve_view_range(
 		}
 	}
 
-	let total_lines = io_read_to_string(source).await.map(|c| c.lines().count()).unwrap_or(0);
+	let total_lines = match io_read_capped(source, file_ops::MAX_VIEW_FILE_BYTES).await {
+		Ok(Some(bytes)) => String::from_utf8(bytes).map(|c| c.lines().count()).unwrap_or(0),
+		Ok(None) => bail!("File is too large (>5MB)"),
+		Err(_) => 0,
+	};
 
 	if total_lines == 0 {
 		// Empty/unreadable file: there is nothing to clamp a range against, so render the

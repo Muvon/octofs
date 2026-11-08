@@ -1168,6 +1168,30 @@ pub async fn io_read(source: &PathSource) -> Result<Vec<u8>> {
 	}
 }
 
+/// Read a file to show it, at most `limit` bytes: `None` when it holds more.
+/// The size a filesystem reports cannot refuse a file on its own: procfs and
+/// sysfs report 0 bytes for files that read out gigabytes (`/proc/<pid>/pagemap`).
+pub async fn io_read_capped(source: &PathSource, limit: u64) -> Result<Option<Vec<u8>>> {
+	let bytes = match source {
+		PathSource::Local(p) => {
+			use tokio::io::AsyncReadExt;
+			let read = async {
+				let mut bytes = Vec::new();
+				tokio::fs::File::open(p)
+					.await?
+					.take(limit + 1)
+					.read_to_end(&mut bytes)
+					.await?;
+				Ok::<_, std::io::Error>(bytes)
+			};
+			read.await
+				.map_err(|e| anyhow!("Failed to read '{}': {}", source.display(), e))?
+		}
+		PathSource::Remote { .. } => sftp::remote_read(source).await?,
+	};
+	Ok((bytes.len() as u64 <= limit).then_some(bytes))
+}
+
 /// Write content to a file (creates or truncates).
 pub async fn io_write(source: &PathSource, content: &[u8]) -> Result<()> {
 	match source {

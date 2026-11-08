@@ -43,6 +43,21 @@ fn annotation_cache() -> &'static Mutex<AnnotationCache> {
 fn bytecount_newlines(bytes: &[u8]) -> usize {
 	bytes.iter().filter(|&&b| b == b'\n').count()
 }
+
+/// Read a listed file, at most the view cap: `None` when it holds more or cannot be
+/// read. procfs and sysfs report 0 bytes for files that read out gigabytes
+/// (`/proc/<pid>/pagemap`), so the reported size alone cannot bound a walk of `/`.
+fn read_capped(path: &Path) -> Option<Vec<u8>> {
+	use std::io::Read;
+	let limit = super::file_ops::MAX_VIEW_FILE_BYTES;
+	let mut bytes = Vec::new();
+	std::fs::File::open(path)
+		.ok()?
+		.take(limit + 1)
+		.read_to_end(&mut bytes)
+		.ok()?;
+	(bytes.len() as u64 <= limit).then_some(bytes)
+}
 fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> Option<String> {
 	if let Some(mt) = mtime {
 		if let Some((c_mt, c_len, suffix)) = annotation_cache()
@@ -56,7 +71,7 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 		}
 	}
 
-	let bytes = std::fs::read(full_path).ok()?;
+	let bytes = read_capped(full_path)?;
 	// Skip likely binary files: NUL-density check on a leading sample.
 	let sample_size = bytes.len().min(512);
 	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
@@ -683,7 +698,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 						return None;
 					}
 
-					let bytes = std::fs::read(&full_path).ok()?;
+					let bytes = read_capped(&full_path)?;
 
 					// Skip likely binary files: NUL-density check on a leading sample.
 					let sample_size = bytes.len().min(512);

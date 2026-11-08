@@ -14,9 +14,7 @@
 
 // File operations module - handling file viewing, creation, and basic manipulation
 
-use super::remote::{
-	io_create_dir_all, io_exists, io_is_file, io_metadata, io_read, io_read_to_string, io_write, PathSource,
-};
+use super::remote::{io_create_dir_all, io_exists, io_is_file, io_metadata, io_read_capped, io_write, PathSource};
 use super::search;
 use crate::utils::line_hash::line_id_at;
 use crate::utils::truncation::format_content_with_line_numbers;
@@ -80,9 +78,10 @@ pub async fn view_image_spec(source: &PathSource, path: &str) -> Result<Option<I
 	if metadata.size > MAX_VIEW_FILE_BYTES {
 		bail!("Image is too large (>5MB)");
 	}
-	let bytes = io_read(source)
+	let bytes = io_read_capped(source, MAX_VIEW_FILE_BYTES)
 		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?
+		.ok_or_else(|| anyhow!("Image is too large (>5MB)"))?;
 	if sniff_image(&bytes) != Some(mime) {
 		bail!("{path} is named as {mime} but its bytes are not that format");
 	}
@@ -118,9 +117,11 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 	}
 
 	// Read the file content
-	let content = io_read_to_string(source)
+	let bytes = io_read_capped(source, MAX_VIEW_FILE_BYTES)
 		.await
-		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?
+		.ok_or_else(|| anyhow!("File is too large (>5MB)"))?;
+	let content = String::from_utf8(bytes).map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
 
 	// Whole-file views go through the session delta cache; ranged views render
 	// exactly what was asked and leave the cache alone.
@@ -165,7 +166,12 @@ pub async fn view_file_with_content_search(
 	}
 
 	// Lossy UTF-8 read so non-UTF-8 files (UTF-16 BOM, Latin-1, etc.) still match.
-	let bytes = io_read(source).await.map_err(|e| anyhow!("Cannot read file: {}", e))?;
+	let bytes = io_read_capped(source, MAX_VIEW_FILE_BYTES)
+		.await
+		.map_err(|e| anyhow!("Cannot read file: {}", e))?
+		.ok_or_else(|| {
+			anyhow!("File is too large to search (>5MB). Use the shell tool (`grep -n ...`) for files this size.")
+		})?;
 	let content = String::from_utf8_lossy(&bytes).into_owned();
 	let file_lines: Vec<&str> = content.lines().collect();
 	let total = file_lines.len();

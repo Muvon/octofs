@@ -51,6 +51,25 @@ async fn view_oversized_file_is_refused_before_reading() {
 	assert!(err.contains("too large"), "error was: {err}");
 }
 
+// procfs reports 0 bytes for pagemap, which reads out 8 bytes per page of the
+// address space: a size check alone loaded gigabytes before failing. The capped
+// read stops at the cap — either as "too large" or, because pagemap accepts only
+// 8-byte-aligned reads, as the kernel's EINVAL on the odd-sized final chunk.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn view_refuses_a_virtual_file_larger_than_its_reported_size() {
+	let pagemap = source(std::path::Path::new("/proc/self/pagemap"));
+	assert_eq!(fs::metadata("/proc/self/pagemap").await.unwrap().len(), 0);
+	let refused = |err: String| err.contains("too large") || err.contains("Invalid argument");
+	let err = view_file_spec(&pagemap, None, false).await.unwrap_err().to_string();
+	assert!(refused(err.clone()), "error was: {err}");
+	let err = view_file_with_content_search(&pagemap, "x", 0, false)
+		.await
+		.unwrap_err()
+		.to_string();
+	assert!(refused(err.clone()), "error was: {err}");
+}
+
 #[tokio::test]
 async fn view_ranged_read_renders_only_the_requested_lines() {
 	let file = tempfile::NamedTempFile::new().unwrap();
