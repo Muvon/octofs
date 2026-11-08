@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.23.2] - 2026-11-08
+
+### 📋 Release Summary
+
+Filesystem reads are now capped at 5 MB.
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: cap filesystem reads at 5 MB `325ea9b5`
+
 ## [0.23.1] - 2026-11-07
 
 ### 📋 Release Summary
