@@ -1510,7 +1510,7 @@ pub struct WorkdirParams {
 	/// Directory to switch into, absolute or relative to the current workdir. Omit it with
 	/// `reset` omitted or false to query the current directory. Remote: ssh://user@host:port/path;
 	/// `ssh://host` is the login home, `ssh://host/~/dir` is relative to it.
-	#[serde(default)]
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub path: Option<String>,
 	/// Revert to the session root.
 	#[serde(default)]

@@ -169,9 +169,7 @@ pub async fn view_file_with_content_search(
 	let bytes = io_read_capped(source, MAX_VIEW_FILE_BYTES)
 		.await
 		.map_err(|e| anyhow!("Cannot read file: {}", e))?
-		.ok_or_else(|| {
-			anyhow!("File is too large to search (>5MB). Use the shell tool (`grep -n ...`) for files this size.")
-		})?;
+		.ok_or_else(|| anyhow!("File is too large to search in memory (>5MB)."))?;
 	let content = String::from_utf8_lossy(&bytes).into_owned();
 	let file_lines: Vec<&str> = content.lines().collect();
 	let total = file_lines.len();

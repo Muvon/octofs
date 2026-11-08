@@ -510,27 +510,42 @@ async fn test_list_files_whitespace_content_should_list_files() {
 	assert!(result.contains("config.json"));
 }
 
-async fn write_over_view_cap(path: &std::path::Path) {
-	let file = tokio::fs::File::create(path).await.unwrap();
+async fn extend_past_view_cap(path: &std::path::Path) {
+	let file = tokio::fs::OpenOptions::new().write(true).open(path).await.unwrap();
 	file.set_len(super::super::file_ops::MAX_VIEW_FILE_BYTES + 1)
 		.await
 		.unwrap();
 }
 
-fn assert_oversized_skip_notice(result: &str, count: usize) {
+async fn write_text_over_view_cap(path: &std::path::Path) {
+	tokio::fs::write(path, "text line\n".repeat(64)).await.unwrap();
+	extend_past_view_cap(path).await;
+}
+
+async fn write_binary_over_view_cap(path: &std::path::Path) {
+	tokio::fs::write(path, b"").await.unwrap();
+	extend_past_view_cap(path).await;
+}
+
+fn assert_oversized_skip_notice(result: &str, names: &[&str]) {
 	assert!(
 		result.contains("Search incomplete"),
 		"oversized skip must mark the search incomplete: {result}"
 	);
 	assert!(
-		result.contains(&format!("{count} file")),
+		result.contains(&format!("{} file", names.len())),
 		"notice must count skipped files: {result}"
 	);
 	assert!(
 		result.contains("size cap"),
 		"notice must say files were skipped for the size cap: {result}"
 	);
-	assert!(!result.is_empty(), "skip must not look like a silent empty success");
+	for name in names {
+		assert!(
+			result.lines().any(|line| line == *name),
+			"notice must name {name}: {result}"
+		);
+	}
 }
 
 #[tokio::test]
@@ -539,7 +554,7 @@ async fn test_content_search_only_oversized_file_is_not_silent_empty() {
 
 	let temp_dir = TempDir::new().unwrap();
 	let temp_path = temp_dir.path();
-	write_over_view_cap(&temp_path.join("huge.bin")).await;
+	write_text_over_view_cap(&temp_path.join("huge.log")).await;
 
 	let call = McpToolCall {
 		tool_name: "view".to_string(),
@@ -549,9 +564,9 @@ async fn test_content_search_only_oversized_file_is_not_silent_empty() {
 	};
 
 	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
-	assert_oversized_skip_notice(&result, 1);
+	assert_oversized_skip_notice(&result, &["huge.log"]);
 	assert!(
-		!result.contains("huge.bin:"),
+		!result.contains("huge.log:"),
 		"oversized file must not be presented as a searched match: {result}"
 	);
 
@@ -581,7 +596,7 @@ async fn test_content_search_match_plus_oversized_skip_notice() {
 	tokio::fs::write(temp_path.join("small.txt"), "needle here\n")
 		.await
 		.unwrap();
-	write_over_view_cap(&temp_path.join("huge.bin")).await;
+	write_text_over_view_cap(&temp_path.join("huge.log")).await;
 
 	let call = McpToolCall {
 		tool_name: "view".to_string(),
@@ -596,5 +611,45 @@ async fn test_content_search_match_plus_oversized_skip_notice() {
 		result.contains("needle here"),
 		"match text must still be shown: {result}"
 	);
-	assert_oversized_skip_notice(&result, 1);
+	assert_oversized_skip_notice(&result, &["huge.log"]);
+}
+
+#[tokio::test]
+async fn test_content_search_notice_leaves_out_oversized_binaries() {
+	use tempfile::TempDir;
+
+	let temp_dir = TempDir::new().unwrap();
+	let temp_path = temp_dir.path();
+	write_text_over_view_cap(&temp_path.join("huge.log")).await;
+	write_binary_over_view_cap(&temp_path.join("huge.bin")).await;
+
+	let call = McpToolCall {
+		tool_name: "view".to_string(),
+		parameters: json!({ "content": "needle" }),
+		tool_id: "test-call-id".to_string(),
+		workdir: temp_path.to_path_buf(),
+	};
+
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
+	assert_oversized_skip_notice(&result, &["huge.log"]);
+	assert!(!result.contains("huge.bin"), "binary must not be reported: {result}");
+}
+
+#[tokio::test]
+async fn test_content_search_only_oversized_binary_adds_no_notice() {
+	use tempfile::TempDir;
+
+	let temp_dir = TempDir::new().unwrap();
+	let temp_path = temp_dir.path();
+	write_binary_over_view_cap(&temp_path.join("huge.bin")).await;
+
+	let call = McpToolCall {
+		tool_name: "view".to_string(),
+		parameters: json!({ "content": "needle" }),
+		tool_id: "test-call-id".to_string(),
+		workdir: temp_path.to_path_buf(),
+	};
+
+	let result = list_directory(&call, temp_path.to_str().unwrap()).await.unwrap();
+	assert!(result.is_empty(), "a binary alone is a clean miss: {result}");
 }

@@ -895,6 +895,57 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	assert_eq!(probe.is_error, Some(true), "the check must not run after a failed edit");
 }
 
+/// An omitted `path` is re-serialized as JSON null and rejected as an invalid
+/// path. Drive the query through the MCP connection, then set and reset, so the
+/// session workdir follows.
+#[tokio::test(flavor = "multi_thread")]
+async fn workdir_empty_arguments_query_gets_current_directory() {
+	let (client, _server_task, _unsolicited) = connect().await;
+	let call = |arguments: serde_json::Value| {
+		client.call_tool(CallToolRequestParams::new("workdir").with_arguments(arguments.as_object().unwrap().clone()))
+	};
+	let body = |result: CallToolResult| {
+		assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+		let text = result
+			.content
+			.iter()
+			.find_map(|block| match block {
+				ContentBlock::Text(text) => Some(text.text.as_str()),
+				_ => None,
+			})
+			.expect("workdir response text");
+		serde_json::from_str::<serde_json::Value>(text).expect("workdir response JSON")
+	};
+
+	let initial = body(call(json!({})).await.expect("query workdir"));
+	assert_eq!(initial["action"], "get");
+	let original = initial["working_directory"].as_str().expect("initial workdir");
+	assert!(std::path::Path::new(original).is_absolute());
+
+	let other = tempfile::tempdir().expect("other workdir");
+	let path = other.path().canonicalize().expect("canonical workdir");
+	let switched = body(call(json!({ "path": path })).await.expect("set workdir"));
+	assert_eq!(switched["action"], "set");
+	let queried = body(call(json!({})).await.expect("query changed workdir"));
+	assert_eq!(queried["action"], "get");
+	assert_eq!(queried["working_directory"], path.to_string_lossy().as_ref());
+
+	let reset = body(call(json!({ "reset": true })).await.expect("reset workdir"));
+	assert_eq!(reset["action"], "reset");
+	let restored = body(call(json!({})).await.expect("query reset workdir"));
+	assert_eq!(restored["action"], "get");
+	assert_eq!(restored["working_directory"], original);
+
+	let blank = call(json!({ "path": "   " })).await.expect("blank path response");
+	assert_eq!(blank.is_error, Some(true), "blank paths must still be rejected");
+	let numeric = call(json!({ "path": 42 })).await.expect("invalid type response");
+	assert_eq!(
+		numeric.is_error,
+		Some(true),
+		"invalid parameter types must still be rejected"
+	);
+}
+
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]

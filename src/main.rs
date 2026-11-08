@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use tracing::Level;
 
@@ -127,85 +127,29 @@ async fn run_stdio_server(server: mcp::server::OctofsServer) -> Result<()> {
 	Ok(())
 }
 
-/// Unix HTTP shutdown must also observe SIGTERM. A supervisor stops the
-/// process with SIGTERM; waiting only for Ctrl-C lets it die before the
-/// cleanup that follows `axum::serve`.
-fn http_shutdown_includes_sigterm() -> bool {
-	cfg!(unix)
-}
+/// Registers the signals that stop the HTTP server; the returned future resolves when one
+/// fires. Unix also stops on SIGTERM because that is how a supervisor ends a process, and
+/// the cleanup after `axum::serve` only runs when the signal is handled.
+#[cfg(unix)]
+fn http_shutdown_signal() -> Result<impl std::future::Future<Output = ()>> {
+	use tokio::signal::unix::{signal, SignalKind};
 
-/// Resolves when the first shutdown source this platform listens for fires.
-/// `interrupt` is SIGINT / Ctrl-C. `terminate` is SIGTERM and is polled only
-/// when [`http_shutdown_includes_sigterm`] is true.
-async fn await_http_shutdown_signal(
-	interrupt: impl std::future::Future<Output = ()>,
-	terminate: impl std::future::Future<Output = ()>,
-) {
-	if http_shutdown_includes_sigterm() {
+	let mut interrupt = signal(SignalKind::interrupt()).context("failed to register SIGINT handler")?;
+	let mut terminate = signal(SignalKind::terminate()).context("failed to register SIGTERM handler")?;
+	Ok(async move {
 		tokio::select! {
-			_ = interrupt => {}
-			_ = terminate => {}
+			_ = interrupt.recv() => {}
+			_ = terminate.recv() => {}
 		}
-	} else {
-		drop(terminate);
-		interrupt.await;
-	}
+	})
 }
 
-/// Block until HTTP graceful shutdown should start.
-///
-/// On Unix this is SIGINT or SIGTERM. Elsewhere it is Ctrl-C. Registration
-/// failure waits forever instead of exiting, so a handler error cannot skip
-/// the cleanup that runs only after `axum::serve` returns.
-async fn wait_for_http_shutdown() {
-	#[cfg(unix)]
-	{
-		use tokio::signal::unix::{signal, SignalKind};
-
-		let interrupt = async {
-			match signal(SignalKind::interrupt()) {
-				Ok(mut sig) => {
-					let _ = sig.recv().await;
-				}
-				Err(err) => {
-					tracing::error!("failed to register SIGINT handler: {err}");
-					std::future::pending::<()>().await;
-				}
-			}
-		};
-		let terminate = async {
-			match signal(SignalKind::terminate()) {
-				Ok(mut sig) => {
-					let _ = sig.recv().await;
-				}
-				Err(err) => {
-					tracing::error!("failed to register SIGTERM handler: {err}");
-					std::future::pending::<()>().await;
-				}
-			}
-		};
-		await_http_shutdown_signal(interrupt, terminate).await;
-	}
-	#[cfg(not(unix))]
-	{
-		let interrupt = async {
-			if let Err(err) = tokio::signal::ctrl_c().await {
-				tracing::error!("failed to wait for ctrl-c: {err}");
-				std::future::pending::<()>().await;
-			}
-		};
-		await_http_shutdown_signal(interrupt, std::future::pending()).await;
-	}
-}
-
-/// Wait for shutdown, then cancel the token `axum::serve` is bound to so the
-/// caller can run the existing shell and background cleanup.
-async fn cancel_http_after_shutdown(
-	shutdown: impl std::future::Future<Output = ()>,
-	ct: &tokio_util::sync::CancellationToken,
-) {
-	shutdown.await;
-	ct.cancel();
+#[cfg(not(unix))]
+fn http_shutdown_signal() -> Result<impl std::future::Future<Output = ()>> {
+	let mut ctrl_c = tokio::signal::windows::ctrl_c().context("failed to register Ctrl-C handler")?;
+	Ok(async move {
+		ctrl_c.recv().await;
+	})
 }
 
 /// Run the MCP server over HTTP with Streamable HTTP transport.
@@ -241,6 +185,8 @@ async fn run_http_server(bind_addr: &str, auth_token: Option<&str>) -> Result<()
 		router = http_auth::with_bearer_auth(router, token);
 	}
 
+	// Registered before the port opens so a signal right after startup still reaches cleanup.
+	let shutdown = http_shutdown_signal()?;
 	let tcp_listener = tokio::net::TcpListener::bind(&addr)
 		.await
 		.map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
@@ -257,7 +203,8 @@ async fn run_http_server(bind_addr: &str, auth_token: Option<&str>) -> Result<()
 
 	let _ = axum::serve(tcp_listener, router)
 		.with_graceful_shutdown(async move {
-			cancel_http_after_shutdown(wait_for_http_shutdown(), &ct).await;
+			shutdown.await;
+			ct.cancel();
 		})
 		.await;
 

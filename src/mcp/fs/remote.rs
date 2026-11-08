@@ -1016,6 +1016,23 @@ mod sftp {
 			.map_err(|e| anyhow!("SFTP read failed for {path}: {e}"))
 	}
 
+	/// Read at most the first `limit` bytes of a remote file.
+	pub async fn remote_read_head(source: &super::PathSource, limit: u64) -> Result<Vec<u8>> {
+		use tokio::io::AsyncReadExt;
+		let path = source.sftp_path();
+		let sftp = remote_session(source).await?;
+		let file = sftp
+			.open(path)
+			.await
+			.map_err(|e| anyhow!("SFTP open failed for {path}: {e}"))?;
+		let mut bytes = Vec::new();
+		file.take(limit)
+			.read_to_end(&mut bytes)
+			.await
+			.map_err(|e| anyhow!("SFTP read failed for {path}: {e}"))?;
+		Ok(bytes)
+	}
+
 	/// Read a remote file as a string. Strict UTF-8, matching local
 	/// `read_to_string` — a lossy read here would let an edit write
 	/// replacement characters back and silently corrupt the file.
@@ -1138,6 +1155,8 @@ pub use sftp::{
 // ── Unified I/O dispatch layer ─────────────────────────────────────────
 // These functions accept &PathSource and dispatch to tokio::fs for local
 // paths or SFTP for remote paths.
+
+pub(super) use sftp::remote_read_head;
 
 /// Unified metadata mirroring the fields we need from std::fs::Metadata.
 #[derive(Debug, Clone)]

@@ -15,15 +15,17 @@
 // Directory operations module — file listing and content search using ignore + pure-Rust matching.
 
 use super::super::McpToolCall;
-use super::remote::{io_list_dir, io_read, io_read_to_string, resolve_path_source, IoMetadata, PathSource};
+use super::remote::{
+	io_list_dir, io_read, io_read_to_string, remote_read_head, resolve_path_source, IoMetadata, PathSource,
+};
 use super::search::{self, Matcher};
 use crate::utils::line_hash::line_id_at;
 use anyhow::{bail, Result};
 use ignore::{overrides::Override, overrides::OverrideBuilder, WalkBuilder};
+use rayon::iter::Either;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
@@ -33,6 +35,10 @@ use std::time::SystemTime;
 type AnnotationCache = HashMap<PathBuf, (SystemTime, u64, String)>;
 static ANNOTATIONS: OnceLock<Mutex<AnnotationCache>> = OnceLock::new();
 const ANNOTATION_CACHE_MAX: usize = 100_000;
+
+// A file counts as binary when more than 1/10 of its first 512 bytes are NUL.
+const BINARY_SAMPLE_BYTES: usize = 512;
+const BINARY_NUL_DENSITY_DIVISOR: usize = 10;
 
 fn annotation_cache() -> &'static Mutex<AnnotationCache> {
 	ANNOTATIONS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -59,6 +65,24 @@ fn read_capped(path: &Path) -> Option<Vec<u8>> {
 		.ok()?;
 	(bytes.len() as u64 <= limit).then_some(bytes)
 }
+
+/// First bytes of a file, enough for `looks_binary`. `None` when it cannot be read.
+fn read_binary_sample(path: &Path) -> Option<Vec<u8>> {
+	use std::io::Read;
+	let mut bytes = Vec::new();
+	std::fs::File::open(path)
+		.ok()?
+		.take(BINARY_SAMPLE_BYTES as u64)
+		.read_to_end(&mut bytes)
+		.ok()?;
+	Some(bytes)
+}
+
+/// NUL-density check on a leading sample.
+fn looks_binary(bytes: &[u8]) -> bool {
+	let sample = &bytes[..bytes.len().min(BINARY_SAMPLE_BYTES)];
+	sample.iter().filter(|&&b| b == 0).count() > sample.len() / BINARY_NUL_DENSITY_DIVISOR
+}
 fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> Option<String> {
 	if let Some(mt) = mtime {
 		if let Some((c_mt, c_len, suffix)) = annotation_cache()
@@ -73,10 +97,7 @@ fn annotation_suffix(full_path: &Path, mtime: Option<SystemTime>, len: u64) -> O
 	}
 
 	let bytes = read_capped(full_path)?;
-	// Skip likely binary files: NUL-density check on a leading sample.
-	let sample_size = bytes.len().min(512);
-	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
-	let suffix = if null_count > sample_size / 10 {
+	let suffix = if looks_binary(&bytes) {
 		"(binary)".to_string()
 	} else {
 		// Count newlines on the raw bytes: identical to `lines().count()` for both
@@ -489,9 +510,7 @@ async fn collect_remote_files(
 // Render content-search hits for one remote file, or None when it is binary,
 // unreadable or has no match.
 fn render_content_matches(rel_path: &str, bytes: &[u8], matcher: &Matcher, context_lines: usize) -> Option<String> {
-	let sample_size = bytes.len().min(512);
-	let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
-	if null_count > sample_size / 10 {
+	if looks_binary(bytes) {
 		return None;
 	}
 
@@ -516,15 +535,19 @@ fn render_content_matches(rel_path: &str, bytes: &[u8], matcher: &Matcher, conte
 }
 
 // An empty content-search body is indistinguishable from "no matches". Oversized
-// files are not read (loading them is an OOM hazard), so a non-zero skip count
-// has to say the scan is incomplete.
-fn with_oversized_skip_notice(body: String, skipped: usize) -> String {
-	if skipped == 0 {
+// files are not read (loading them is an OOM hazard), so any that might have held
+// a match are named: the caller can see the scan is incomplete and what it missed.
+fn with_oversized_skip_notice(body: String, skipped: &[String]) -> String {
+	if skipped.is_empty() {
 		return body;
 	}
-	let noun = if skipped == 1 { "file" } else { "files" };
+	let noun = if skipped.len() == 1 { "file" } else { "files" };
 	let cap_mb = super::file_ops::MAX_VIEW_FILE_BYTES / (1024 * 1024);
-	let notice = format!("Search incomplete: {skipped} {noun} skipped because they exceed the {cap_mb}MB size cap.");
+	let notice = format!(
+		"Search incomplete: {} {noun} over the {cap_mb}MB size cap not searched:\n{}",
+		skipped.len(),
+		skipped.join("\n")
+	);
 	if body.is_empty() {
 		notice
 	} else {
@@ -583,11 +606,23 @@ async fn list_directory_remote(
 		// Read and match concurrently; each task returns only its rendered
 		// hits, so memory is bounded by matches, not tree size. Index keeps
 		// the sorted file order in the output. Files over the view cap are
-		// counted, not downloaded — same OOM bound as the local scan.
-		let skipped = files
+		// not downloaded — same OOM bound as the local scan. Only a sample of
+		// each is read, to leave out binaries a search would skip anyway.
+		let oversized: Vec<_> = files
 			.iter()
 			.filter(|(_, meta)| meta.size > super::file_ops::MAX_VIEW_FILE_BYTES)
-			.count();
+			.map(|(rel_path, _)| {
+				let file_source = remote_child(source, rel_path);
+				let rel_path = rel_path.clone();
+				async move {
+					let binary = remote_read_head(&file_source, BINARY_SAMPLE_BYTES as u64)
+						.await
+						.is_ok_and(|sample| looks_binary(&sample));
+					(!binary).then_some(rel_path)
+				}
+			})
+			.collect();
+		let skipped: Vec<String> = join_bounded(oversized).await?.into_iter().flatten().collect();
 		let reads: Vec<_> = files
 			.iter()
 			.enumerate()
@@ -613,7 +648,7 @@ async fn list_directory_remote(
 		hits.sort_by_key(|(i, _)| *i);
 
 		let hits: Vec<String> = hits.into_iter().map(|(_, h)| h).collect();
-		Ok(with_oversized_skip_notice(hits.join("\n\n"), skipped))
+		Ok(with_oversized_skip_notice(hits.join("\n\n"), &skipped))
 	} else {
 		let mut lines: Vec<String> = Vec::new();
 		for (rel_path, meta) in &files {
@@ -708,28 +743,25 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 			// Parallel per-file scan. Each thread reads + searches independently;
 			// results carry the original index so the final output preserves
 			// the deterministic alphabetic order of `files`.
-			let skipped = AtomicUsize::new(0);
-			let mut indexed: Vec<(usize, String)> = files
+			let (mut indexed, mut skipped): (Vec<(usize, String)>, Vec<String>) = files
 				.par_iter()
 				.enumerate()
 				.filter_map(|(i, rel_path)| {
 					let full_path = working_dir.join(rel_path);
 
 					// Files over the view cap are not loaded — a multi-GB artifact
-					// (twice, with the lossy copy) is an OOM hazard. The skip is
-					// counted so the result cannot look like a clean miss.
+					// (twice, with the lossy copy) is an OOM hazard. Text-looking ones are
+					// reported so the result cannot look like a clean miss; binaries would
+					// be skipped below anyway.
 					let meta = std::fs::metadata(&full_path).ok()?;
 					if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES {
-						skipped.fetch_add(1, Ordering::Relaxed);
-						return None;
+						let binary = read_binary_sample(&full_path).is_some_and(|sample| looks_binary(&sample));
+						return (!binary).then(|| Either::Right(rel_path.clone()));
 					}
 
 					let bytes = read_capped(&full_path)?;
 
-					// Skip likely binary files: NUL-density check on a leading sample.
-					let sample_size = bytes.len().min(512);
-					let null_count = bytes[..sample_size].iter().filter(|&&b| b == 0).count();
-					if null_count > sample_size / 10 {
+					if looks_binary(&bytes) {
 						return None;
 					}
 
@@ -756,16 +788,17 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 						rendered_blocks.push(rendered.join("\n"));
 					}
 
-					Some((i, format!("{}:\n{}", rel_path, rendered_blocks.join("\n"))))
+					Some(Either::Left((
+						i,
+						format!("{}:\n{}", rel_path, rendered_blocks.join("\n")),
+					)))
 				})
-				.collect();
+				.partition_map(|outcome| outcome);
 
 			indexed.sort_by_key(|(i, _)| *i);
+			skipped.sort();
 			let file_results: Vec<String> = indexed.into_iter().map(|(_, s)| s).collect();
-			Ok(with_oversized_skip_notice(
-				file_results.join("\n\n"),
-				skipped.load(Ordering::Relaxed),
-			))
+			Ok(with_oversized_skip_notice(file_results.join("\n\n"), &skipped))
 		})
 		.await;
 
