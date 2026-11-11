@@ -162,6 +162,7 @@ pub enum Endpoint {
 /// - JSON integer → [`Endpoint::Number`].
 /// - String "N:hh" (line + 2 hex chars, as rendered in view output) → [`Endpoint::Id`].
 /// - Numeric string → [`Endpoint::Number`] (tolerates clients that stringify integers).
+/// - A line copied whole from view output ("N:hh|content") → its id.
 pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 	match value {
 		serde_json::Value::Number(n) => n
@@ -169,7 +170,8 @@ pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 			.map(Endpoint::Number)
 			.ok_or_else(|| "line number must be an integer".to_string()),
 		serde_json::Value::String(s) => {
-			let s = s.trim();
+			// The id ends at the `|` that view output puts before the line's content.
+			let s = s.split_once('|').map_or(s.as_str(), |(id, _)| id).trim();
 			if s.is_empty() {
 				return Err("line value is empty".to_string());
 			}

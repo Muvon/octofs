@@ -319,6 +319,40 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn test_view_missing_path_names_what_exists_nearby() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::create_dir_all(dir.path().join("src/core")).unwrap();
+		std::fs::write(dir.path().join("src/core/state.rs"), "x\n").unwrap();
+
+		let view = |path: &str| McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": path }),
+		};
+
+		let wrong_dir = execute_view(&view("src/util/state.rs")).await.unwrap_err().to_string();
+		assert!(
+			wrong_dir.starts_with("Path not found: src/util/state.rs (resolved to "),
+			"got: {wrong_dir}"
+		);
+		assert!(
+			wrong_dir.contains("nearest existing directory: src"),
+			"got: {wrong_dir}"
+		);
+		assert!(
+			wrong_dir.contains("same name elsewhere: src/core/state.rs"),
+			"got: {wrong_dir}"
+		);
+
+		let no_such_name = execute_view(&view("missing.rs")).await.unwrap_err().to_string();
+		assert!(
+			no_such_name.ends_with("; nearest existing directory: ."),
+			"got: {no_such_name}"
+		);
+	}
+
+	#[tokio::test]
 	async fn test_batch_edit_reports_both_stale_endpoints_at_once() {
 		// A replace whose start AND end ids are both wrong must report both in one
 		// error; reporting only the first costs the caller a second failed round.

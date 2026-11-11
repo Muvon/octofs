@@ -310,6 +310,48 @@ fn build_walker(directory: &str, max_depth: Option<usize>, include_hidden: bool)
 	builder
 }
 
+const MISSING_PATH_SUGGESTIONS: usize = 3;
+// Bounds the walk on a huge workdir: the hint is a convenience on an error path.
+const MISSING_PATH_WALK_ENTRIES: usize = 20_000;
+
+/// What exists near a missing local path: its deepest existing directory, and
+/// entries with the same name elsewhere under the workdir. A wrong path costs a
+/// round trip to list the tree; naming these lets the caller correct it at once.
+/// Empty when nothing is known.
+pub(super) async fn missing_path_hint(missing: PathBuf, workdir: PathBuf) -> String {
+	tokio::task::spawn_blocking(move || {
+		let relative = |path: &Path| match path.strip_prefix(&workdir) {
+			Ok(inside) if inside.as_os_str().is_empty() => ".".to_string(),
+			Ok(inside) => inside.display().to_string(),
+			Err(_) => path.display().to_string(),
+		};
+		let mut known = Vec::new();
+		if let Some(directory) = missing.ancestors().skip(1).find(|ancestor| ancestor.is_dir()) {
+			known.push(format!("nearest existing directory: {}", relative(directory)));
+		}
+		if let Some(name) = missing.file_name() {
+			let same_name: Vec<String> = build_walker(&workdir.to_string_lossy(), None, false)
+				.build()
+				.flatten()
+				.take(MISSING_PATH_WALK_ENTRIES)
+				.filter(|entry| entry.file_name() == name)
+				.take(MISSING_PATH_SUGGESTIONS)
+				.map(|entry| relative(entry.path()))
+				.collect();
+			if !same_name.is_empty() {
+				known.push(format!("same name elsewhere: {}", same_name.join(", ")));
+			}
+		}
+		if known.is_empty() {
+			String::new()
+		} else {
+			format!("; {}", known.join("; "))
+		}
+	})
+	.await
+	.unwrap_or_default()
+}
+
 // Collect file paths from walker, relative to working_dir
 fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<String> {
 	let walker = builder.build();

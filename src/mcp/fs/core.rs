@@ -531,7 +531,11 @@ async fn render_view(call: &McpToolCall) -> Result<String> {
 
 	// Name the path and where it resolved to — a bare "File not found" hides
 	// workdir mismatches (relative path resolved against an unexpected root).
-	bail!("Path not found: {} (resolved to {})", path, source.display())
+	let nearby = match &source {
+		PathSource::Local(missing) => directory::missing_path_hint(missing.clone(), call.workdir.clone()).await,
+		PathSource::Remote { .. } => String::new(),
+	};
+	bail!("Path not found: {} (resolved to {}){nearby}", path, source.display())
 }
 
 // Execute extract_lines command - MCP compliant implementation
