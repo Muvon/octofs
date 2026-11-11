@@ -586,8 +586,8 @@ use std::path::{Path, PathBuf};
 
 // The shell description states the hard (default) misuse policy; list_tools
 // swaps it for the soft one under --hint-mode soft.
-pub(crate) const SHELL_MISUSE_SOFT: &str = "are discouraged and come back with a warning)";
-pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected)";
+pub(crate) const SHELL_MISUSE_SOFT: &str = "are discouraged and come back with a warning";
+pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected and nothing in the call runs";
 
 /// The `check` sentence of the edit tools lives here, not in their `#[tool]`
 /// descriptions: list_tools appends it only for sessions that may use `shell`.
@@ -784,22 +784,28 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs. `sh -c` (`cmd /C` \
-			on Windows) on the local machine in the session's workdir, with no stdin or TTY. \
-			Commands must support non-interactive execution. `cd <other> && …` changes directory \
-			for that call; `workdir` changes it for later calls. A remote (ssh://) workdir \
-			disables shell. Use `view` to read, list and search files, and `text_editor` or \
-			`batch_edit` to edit content (cat/head/tail/grep/rg/find/ls except as a later pipe stage, `sed -i` and \
-			standalone `tee` anywhere, and echo/printf/cat redirects into the workdir are rejected). Local writes \
-			outside it (`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. Output is terminal-clean \
+		description = "Run a shell command: builds, tests, git, project CLIs. Reading, searching \
+			and listing files belongs to `view`: cat, head, tail, grep, rg, find and ls at the start \
+			of a command — alone, after `cd dir &&` or `;`, as a pipeline head, or inside \
+			`ssh host '…'` — are rejected and nothing in the call runs. That covers `cd src && ls` \
+			and `git status; grep -rn TODO .`, not `cargo test 2>&1 | tail -20`, where the reader \
+			is a later pipe stage. `view` takes local and ssh:// paths, and its `flags` give \
+			`grep -c/-l/-o/-v` and `ls -l` output. The same applies to bare `sleep` and to writing \
+			files: `sed -i`, standalone `tee` and echo/printf/cat redirects into the workdir \
+			belong to `text_editor` and `batch_edit`. Local writes outside the workdir \
+			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. \
+			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
+			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
+			changes directory for that call; `workdir` changes it for later calls. A remote \
+			(ssh://) workdir disables shell. Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
-			A command still running after ~10s continues as a background job. Depending on client \
-			capabilities, the call returns a task or a linked job resource. The resource exposes \
-			status and an output tail while running, then the exit code and foreground-style \
-			output when finished. Automatic result delivery depends on the client's task or \
-			notification integration; the linked resource can be read for status and output. \
+			A command still running after ~10s continues as a background job: keep working, and \
+			read its status and output so far at any time with `view path=\"octofs://jobs/<id>\"`. \
+			Depending on client capabilities, the call returns a task or a linked job resource, \
+			which holds the exit code and foreground-style output when finished. Automatic result \
+			delivery depends on the client's task or notification integration. \
 			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]

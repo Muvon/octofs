@@ -40,7 +40,7 @@ fn hard_and_soft_misuse_messages_say_what_happened() {
 #[test]
 fn shell_description_carries_the_phrase_hard_mode_replaces() {
 	let server = include_str!("../server.rs");
-	assert!(server.contains(&format!("workdir {}", crate::mcp::server::SHELL_MISUSE_HARD)));
+	assert!(server.contains(&format!("`ssh host '…'` — {}.", crate::mcp::server::SHELL_MISUSE_HARD)));
 }
 
 #[tokio::test]

@@ -132,15 +132,15 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
-		"Searching with the shell is blocked — use `view` with content= for local or remote paths: view path=\"src/\" content=\"TODO\" regex=true. Search programs are allowed as later pipeline stages (`cargo build 2>&1 | grep error`), but not as command heads, including in chains and SSH command bodies. Captured output files can be searched with `view`.",
+		"Searching with the shell is blocked — use `view` with content= for local or remote paths: view path=\"src/\" content=\"TODO\" regex=true. `flags` gives the grep output modes: \"c\" counts, \"l\" file paths, \"o\" matched text, \"v\" non-matching lines. Search programs are allowed as later pipeline stages (`cargo build 2>&1 | grep error`), but not as command heads, including in chains and SSH command bodies. Captured output files can be searched with `view`.",
 	),
 	(
 		&["find", "ls"],
-		"Listing with the shell is blocked — use `view` for local or remote directories: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". Listing programs are allowed as later pipeline stages, but not as command heads, including in chains and SSH command bodies.",
+		"Listing with the shell is blocked — use `view` for local or remote directories: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". flags=\"l\" adds size and modification time, also for a single file. Listing programs are allowed as later pipeline stages, but not as command heads, including in chains and SSH command bodies.",
 	),
 	(
 		&["sleep"],
-		"Bare `sleep` in the shell is blocked — background-job status and output are available through the job resource; automatic completion delivery depends on the client integration. A sleep inside a shell loop body is supported.",
+		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and view path=\"octofs://jobs/<id>\" returns its status and output so far at any time; automatic completion delivery depends on the client integration. A sleep inside a shell loop body is supported.",
 	),
 	(
 		&["watch", "top", "htop"],
@@ -838,11 +838,11 @@ async fn execute_with_timeout(
 			return Ok(ShellOutcome {
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
-					 (PID {}). The same process continues; the linked resource provides status and an \
-					 output tail while running, then the exit code and result when finished. Automatic \
+					 (PID {}). The same process continues; view path=\"{}\" returns its status and an \
+					 output tail while it runs, then the exit code and result. Automatic \
 					 completion delivery depends on the client integration.{} \
 					 Stop early: on Unix, `kill -- -{job_pid}`; on Windows, `taskkill /PID {job_pid} /T /F`.",
-					job_id, job_pid, stash_note
+					job_id, job_pid, uri, stash_note
 				),
 				resource_uri: Some(uri),
 			});
