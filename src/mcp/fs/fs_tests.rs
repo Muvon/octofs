@@ -5158,6 +5158,155 @@ mod tests {
 		assert!(!output.contains("-delta"), "no rg dash prefix on context: {output}");
 	}
 
+	fn view_call(workdir: &std::path::Path, parameters: serde_json::Value) -> McpToolCall {
+		McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: workdir.to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters,
+		}
+	}
+
+	fn flags_fixture() -> tempfile::TempDir {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("a.txt"), "TODO one\nplain\nTODO two\n").unwrap();
+		std::fs::write(dir.path().join("b.txt"), "plain\nTODO three\n").unwrap();
+		std::fs::write(dir.path().join("c.txt"), "nothing here\n").unwrap();
+		dir
+	}
+
+	#[tokio::test]
+	async fn test_view_flags_count_and_files_only_over_a_directory() {
+		let dir = flags_fixture();
+
+		let counts = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": ".", "content": "TODO", "flags": "c" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(counts, "a.txt\t2\nb.txt\t1");
+
+		let files = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": ".", "content": "TODO", "flags": "l" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(files, "a.txt\nb.txt");
+
+		let without = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": ".", "content": "TODO", "flags": "vl" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(without, "a.txt\nb.txt\nc.txt", "every file has a line without TODO");
+	}
+
+	#[tokio::test]
+	async fn test_view_flags_on_a_single_file() {
+		let dir = flags_fixture();
+
+		let count = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": "a.txt", "content": "TODO", "flags": "c" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(count, "a.txt\t2");
+
+		let zero = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": "c.txt", "content": "TODO", "flags": "c" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(zero, "c.txt\t0");
+
+		let only = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": "a.txt", "content": "TODO \\w+", "regex": true, "flags": "o" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(only, "1|TODO one\n3|TODO two");
+
+		let inverted = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": "a.txt", "content": "TODO", "flags": "v" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(inverted, idl(2, "plain"));
+	}
+
+	#[tokio::test]
+	async fn test_view_flags_compact_rows_across_search_roots() {
+		let dir = flags_fixture();
+		let out = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": "a.txt|b.txt", "content": "TODO", "flags": "c" }),
+		))
+		.await
+		.unwrap();
+		assert_eq!(out, "a.txt\t2\nb.txt\t1");
+	}
+
+	#[tokio::test]
+	async fn test_view_flag_l_adds_size_and_mtime_to_listing_and_file() {
+		let dir = flags_fixture();
+
+		let listing = execute_view(&view_call(dir.path(), json!({ "path": ".", "flags": "l" })))
+			.await
+			.unwrap();
+		let row: Vec<&str> = listing.lines().next().unwrap().split('\t').collect();
+		assert_eq!(&row[..4], ["a.txt", "3L", "~7t", "24"], "got: {listing}");
+		assert!(row[4].ends_with('Z') && row[4].contains('T'), "mtime is UTC: {listing}");
+
+		let plain = execute_view(&view_call(dir.path(), json!({ "path": "." })))
+			.await
+			.unwrap();
+		assert_eq!(
+			plain.lines().next().unwrap(),
+			"a.txt\t3L\t~7t",
+			"default listing is unchanged"
+		);
+
+		let file = execute_view(&view_call(dir.path(), json!({ "path": "b.txt", "flags": "l" })))
+			.await
+			.unwrap();
+		let row: Vec<&str> = file.split('\t').collect();
+		assert_eq!(&row[..2], ["b.txt", "17"], "got: {file}");
+		assert!(!file.contains("TODO"), "the file is not read: {file}");
+	}
+
+	#[tokio::test]
+	async fn test_view_flags_errors_name_the_misuse() {
+		let dir = flags_fixture();
+
+		let unknown = execute_view(&view_call(
+			dir.path(),
+			json!({ "path": ".", "content": "TODO", "flags": "n" }),
+		))
+		.await
+		.unwrap_err()
+		.to_string();
+		assert!(unknown.contains("Unknown view flag 'n'"), "got: {unknown}");
+
+		let listing = execute_view(&view_call(dir.path(), json!({ "path": ".", "flags": "c" })))
+			.await
+			.unwrap_err()
+			.to_string();
+		assert!(listing.contains("apply to a `content` search"), "got: {listing}");
+
+		let file = execute_view(&view_call(dir.path(), json!({ "path": "a.txt", "flags": "v" })))
+			.await
+			.unwrap_err()
+			.to_string();
+		assert!(file.contains("apply to a `content` search"), "got: {file}");
+	}
+
 	#[tokio::test]
 	async fn test_view_file_content_search_multiple_matches_separated() {
 		let temp_file = create_test_file("alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\n").await;

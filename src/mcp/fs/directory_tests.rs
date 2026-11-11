@@ -164,7 +164,7 @@ fn test_content_search_with_special_chars() {
 	// Verify that special regex characters in patterns are treated as literals
 	let content = "line1\nbackward_step()\nline3\n";
 	let matcher = search::Matcher::new("backward_step()", false).unwrap();
-	let blocks = search::search_lines(content, &matcher, 0);
+	let blocks = search::search_lines(content, &matcher, 0, false);
 	assert_eq!(blocks.len(), 1);
 	assert_eq!(blocks[0].line_numbers, vec![2]);
 }

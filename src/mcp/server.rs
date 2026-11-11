@@ -620,6 +620,8 @@ impl OctofsServer {
 			to edit tools is raw text without `N:hh|` prefixes. Listings are gitignore-aware, \
 			one `path\tNL\t~Nt` (lines, ~tokens) per file; `max_depth` \
 			controls recursion, with bare remote listings limited to root entries by default. \
+			`flags` gives what `grep -c/-l/-o/-v` and `ls -l` give: match counts, matching \
+			file paths, matched text, non-matching lines, file size and modification time. \
 			An image file (png, jpg, gif, webp by extension) comes back as the image itself; \
 			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
@@ -1254,6 +1256,12 @@ pub struct ViewParams {
 	/// Lines around each `content` match. Default: 0.
 	#[serde(default)]
 	pub context: Option<usize>,
+	/// Letters as in grep and ls. With `content`: `c` count of matching lines per file, `l`
+	/// paths of matching files only, `o` matched text only (as `N|text`), `v` non-matching
+	/// lines (also `vc`, `vl`). Without `content`: `l` adds size in bytes and modification
+	/// time (UTC) to each listed file, or returns them for `path` itself when it is a file.
+	#[serde(default)]
+	pub flags: Option<String>,
 	/// Force the complete file when re-viewing a whole file (which may return only changed hunks),
 	/// e.g. after losing earlier context. No effect on ranges or searches; output limits
 	/// unchanged.

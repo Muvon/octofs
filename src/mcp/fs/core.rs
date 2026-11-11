@@ -19,6 +19,7 @@ use super::remote::{
 	io_create_dir_all, io_exists, io_is_dir, io_metadata, io_read_capped, io_read_to_string, resolve_path_source,
 	PathSource,
 };
+use crate::mcp::fs::search::ViewFlags;
 use crate::mcp::fs::{delta, directory, file_ops, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::{format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES};
@@ -328,13 +329,30 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		return directory::list_directory(call, path).await;
 	}
 
+	let flags_param = call.parameters.get("flags").and_then(|v| v.as_str());
+
 	// File + content: search the file for a literal/regex pattern and render with the same hash/number format
 	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {
 		if !content_pattern.trim().is_empty() {
 			let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 			let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
-			return file_ops::view_file_with_content_search(source, content_pattern, context_lines, regex_flag).await;
+			let flags = ViewFlags::parse(flags_param, true)?;
+			return file_ops::view_file_with_content_search(
+				source,
+				path,
+				content_pattern,
+				context_lines,
+				regex_flag,
+				flags,
+			)
+			.await;
 		}
+	}
+
+	// File + `l`: its size and modification time, without reading it.
+	if ViewFlags::parse(flags_param, false)?.long {
+		let meta = io_metadata(source).await?;
+		return Ok(format!("{path}\t{}", directory::long_suffix(meta.size, meta.modified)));
 	}
 
 	// File: optional start/end line range (both omitted → whole file).
@@ -360,6 +378,8 @@ fn path_error_preview(path: &str) -> String {
 }
 
 async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
+	// Checked before any root is searched, like the roots themselves.
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true)?;
 	if path.len() > MAX_SEARCH_PATH_BYTES {
 		bail!(
 			"Invalid content-search path alternatives: {} bytes exceeds the {MAX_SEARCH_PATH_BYTES}-byte limit. Split the search into separate `view` calls.",
@@ -429,14 +449,15 @@ async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<Stri
 		if result.is_empty() {
 			continue;
 		}
-		if is_directory {
+		// A directory result and a one-row file result already name their files.
+		if is_directory || flags.output.is_compact() {
 			results.push(result);
 		} else {
 			results.push(format!("{root}:\n{result}"));
 		}
 	}
 
-	Ok(results.join("\n\n"))
+	Ok(results.join(flags.output.separator()))
 }
 
 // Execute view command - unified read-only tool for a single file, directory, or content search.

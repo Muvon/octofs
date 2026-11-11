@@ -18,8 +18,7 @@ use super::super::McpToolCall;
 use super::remote::{
 	io_list_dir, io_read, io_read_to_string, remote_read_head, resolve_path_source, IoMetadata, PathSource,
 };
-use super::search::{self, Matcher};
-use crate::utils::line_hash::line_id_at;
+use super::search::{self, Matcher, ViewFlags};
 use anyhow::{bail, Result};
 use ignore::{overrides::Override, overrides::OverrideBuilder, WalkBuilder};
 use rayon::iter::Either;
@@ -507,31 +506,36 @@ async fn collect_remote_files(
 	Ok(files)
 }
 
-// Render content-search hits for one remote file, or None when it is binary,
-// unreadable or has no match.
-fn render_content_matches(rel_path: &str, bytes: &[u8], matcher: &Matcher, context_lines: usize) -> Option<String> {
+// Render content-search hits for one file under its path, or None when it is
+// binary or has nothing to report.
+fn render_content_matches(
+	rel_path: &str,
+	bytes: &[u8],
+	matcher: &Matcher,
+	context_lines: usize,
+	flags: ViewFlags,
+) -> Option<String> {
 	if looks_binary(bytes) {
 		return None;
 	}
 
+	// Lossy UTF-8 conversion lets us search Latin-1, mixed encodings,
+	// and BOM-prefixed UTF-8 files without panicking. Invalid byte
+	// sequences become U+FFFD; line structure is preserved.
 	let file_content = String::from_utf8_lossy(bytes);
-	let blocks = search::search_lines(&file_content, matcher, context_lines);
-	if blocks.is_empty() {
-		return None;
-	}
+	let body = search::render_file_matches(&file_content, matcher, context_lines, flags)?;
+	Some(flags.output.label(rel_path, &body))
+}
 
-	let file_lines: Vec<&str> = file_content.lines().collect();
-	let mut rendered_blocks: Vec<String> = Vec::new();
-	for block in &blocks {
-		let mut rendered = Vec::new();
-		for &n in &block.line_numbers {
-			if n <= file_lines.len() {
-				rendered.push(format!("{}|{}", line_id_at(&file_lines, n), file_lines[n - 1]));
-			}
-		}
-		rendered_blocks.push(rendered.join("\n"));
+/// Size in bytes and modification time (UTC, to the minute) for a long listing row.
+pub(super) fn long_suffix(size: u64, modified: Option<SystemTime>) -> String {
+	match modified {
+		Some(time) => format!(
+			"{size}\t{}",
+			chrono::DateTime::<chrono::Utc>::from(time).format("%Y-%m-%dT%H:%MZ")
+		),
+		None => format!("{size}\t-"),
 	}
-	Some(format!("{}:\n{}", rel_path, rendered_blocks.join("\n")))
 }
 
 // An empty content-search body is indistinguishable from "no matches". Oversized
@@ -573,13 +577,12 @@ fn annotation_suffix_remote(meta: &IoMetadata) -> String {
 async fn list_directory_remote(
 	source: &PathSource,
 	pattern: Option<String>,
-	content: Option<String>,
+	content_matcher: Option<Matcher>,
 	max_depth: Option<usize>,
 	include_hidden: bool,
 	context_lines: usize,
-	regex_flag: bool,
+	flags: ViewFlags,
 ) -> Result<String> {
-	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
 	let pattern_matcher = pattern
 		.as_deref()
 		.map(build_pattern_matcher)
@@ -599,10 +602,8 @@ async fn list_directory_remote(
 		files.retain(|(n, _)| keep.contains(n));
 	}
 
-	if has_content {
-		let content_pattern = content.unwrap();
-		let matcher = Arc::new(Matcher::new(&content_pattern, regex_flag)?);
-
+	if let Some(matcher) = content_matcher {
+		let matcher = Arc::new(matcher);
 		// Read and match concurrently; each task returns only its rendered
 		// hits, so memory is bounded by matches, not tree size. Index keeps
 		// the sorted file order in the output. Files over the view cap are
@@ -633,7 +634,7 @@ async fn list_directory_remote(
 				let matcher = matcher.clone();
 				async move {
 					let hit = match io_read(&file_source).await {
-						Ok(bytes) => render_content_matches(&rel_path, &bytes, &matcher, context_lines),
+						Ok(bytes) => render_content_matches(&rel_path, &bytes, &matcher, context_lines, flags),
 						Err(_) => None,
 					};
 					(i, hit)
@@ -648,11 +649,19 @@ async fn list_directory_remote(
 		hits.sort_by_key(|(i, _)| *i);
 
 		let hits: Vec<String> = hits.into_iter().map(|(_, h)| h).collect();
-		Ok(with_oversized_skip_notice(hits.join("\n\n"), &skipped))
+		Ok(with_oversized_skip_notice(
+			hits.join(flags.output.separator()),
+			&skipped,
+		))
 	} else {
 		let mut lines: Vec<String> = Vec::new();
 		for (rel_path, meta) in &files {
-			lines.push(format!("{}\t{}", rel_path, annotation_suffix_remote(meta)));
+			let mut line = format!("{}\t{}", rel_path, annotation_suffix_remote(meta));
+			if flags.long {
+				line.push('\t');
+				line.push_str(&long_suffix(meta.size, meta.modified));
+			}
+			lines.push(line);
 		}
 		Ok(lines.join("\n"))
 	}
@@ -681,16 +690,25 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.and_then(|v| v.as_bool())
 		.unwrap_or(false);
 	let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), has_content)?;
+	// Compile the matcher up front so an invalid regex fails before any tree is walked.
+	let content_matcher = match content {
+		Some(content_pattern) if has_content => {
+			let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
+			Some(Matcher::new(&content_pattern, regex_flag)?)
+		}
+		_ => None,
+	};
 
 	let working_dir = call.workdir.clone();
 
 	// Remote paths (ssh://, sftp://) dispatch to the SFTP listing path.
 	let source = resolve_path_source(directory, &working_dir);
 	if source.is_remote() {
-		let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
 		// A bare listing stops at the root; pattern/content searches walk the
 		// whole tree like rg, since a depth cap would silently drop matches.
-		let is_search = pattern.is_some() || content.as_ref().is_some_and(|c| !c.trim().is_empty());
+		let is_search = pattern.is_some() || has_content;
 		let max_depth = if is_search {
 			max_depth
 		} else {
@@ -699,11 +717,11 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		return list_directory_remote(
 			&source,
 			pattern,
-			content,
+			content_matcher,
 			max_depth,
 			include_hidden,
 			context_lines,
-			regex_flag,
+			flags,
 		)
 		.await;
 	}
@@ -715,16 +733,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 	};
 	let abs_dir_str = abs_dir.to_string_lossy().to_string();
 
-	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
-
-	if has_content {
-		// Content search mode
-		let content_pattern = content.unwrap();
-		let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
-
-		// Compile matcher up front so invalid regex fails fast with a clear error.
-		let matcher = Matcher::new(&content_pattern, regex_flag)?;
-
+	if let Some(matcher) = content_matcher {
 		let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
 			let pattern_matcher = pattern.as_deref().map(build_pattern_matcher).transpose()?;
 			let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
@@ -760,45 +769,18 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 					}
 
 					let bytes = read_capped(&full_path)?;
-
-					if looks_binary(&bytes) {
-						return None;
-					}
-
-					// Lossy UTF-8 conversion lets us search Latin-1, mixed encodings,
-					// and BOM-prefixed UTF-8 files without panicking. Invalid byte
-					// sequences become U+FFFD; line structure is preserved.
-					let file_content = String::from_utf8_lossy(&bytes);
-
-					let blocks = search::search_lines(&file_content, &matcher, context_lines);
-					if blocks.is_empty() {
-						return None;
-					}
-
-					let file_lines: Vec<&str> = file_content.lines().collect();
-
-					let mut rendered_blocks: Vec<String> = Vec::new();
-					for block in &blocks {
-						let mut rendered = Vec::new();
-						for &n in &block.line_numbers {
-							if n <= file_lines.len() {
-								rendered.push(format!("{}|{}", line_id_at(&file_lines, n), file_lines[n - 1]));
-							}
-						}
-						rendered_blocks.push(rendered.join("\n"));
-					}
-
-					Some(Either::Left((
-						i,
-						format!("{}:\n{}", rel_path, rendered_blocks.join("\n")),
-					)))
+					render_content_matches(rel_path, &bytes, &matcher, context_lines, flags)
+						.map(|hit| Either::Left((i, hit)))
 				})
 				.partition_map(|outcome| outcome);
 
 			indexed.sort_by_key(|(i, _)| *i);
 			skipped.sort();
 			let file_results: Vec<String> = indexed.into_iter().map(|(_, s)| s).collect();
-			Ok(with_oversized_skip_notice(file_results.join("\n\n"), &skipped))
+			Ok(with_oversized_skip_notice(
+				file_results.join(flags.output.separator()),
+				&skipped,
+			))
 		})
 		.await;
 
@@ -831,18 +813,23 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 				.enumerate()
 				.map(|(i, rel_path)| {
 					let full_path = working_dir.join(rel_path);
-					let line = match std::fs::metadata(&full_path) {
-						// Annotate oversized files from metadata alone — reading a huge
-						// artifact just to count its lines wastes I/O and memory.
-						Ok(meta) if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES => {
-							format!("{}\t(large: {}MB)", rel_path, meta.len() / (1024 * 1024))
-						}
-						Ok(meta) => match annotation_suffix(&full_path, meta.modified().ok(), meta.len()) {
+					let Ok(meta) = std::fs::metadata(&full_path) else {
+						return (i, rel_path.clone());
+					};
+					// Annotate oversized files from metadata alone — reading a huge
+					// artifact just to count its lines wastes I/O and memory.
+					let mut line = if meta.len() > super::file_ops::MAX_VIEW_FILE_BYTES {
+						format!("{}\t(large: {}MB)", rel_path, meta.len() / (1024 * 1024))
+					} else {
+						match annotation_suffix(&full_path, meta.modified().ok(), meta.len()) {
 							Some(suffix) => format!("{}\t{}", rel_path, suffix),
 							None => rel_path.clone(),
-						},
-						Err(_) => rel_path.clone(),
+						}
 					};
+					if flags.long {
+						line.push('\t');
+						line.push_str(&long_suffix(meta.len(), meta.modified().ok()));
+					}
 					(i, line)
 				})
 				.collect();

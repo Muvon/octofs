@@ -63,7 +63,7 @@ async fn view_refuses_a_virtual_file_larger_than_its_reported_size() {
 	let refused = |err: String| err.contains("too large") || err.contains("Invalid argument");
 	let err = view_file_spec(&pagemap, None, false).await.unwrap_err().to_string();
 	assert!(refused(err.clone()), "error was: {err}");
-	let err = view_file_with_content_search(&pagemap, "x", 0, false)
+	let err = view_file_with_content_search(&pagemap, "f", "x", 0, false, ViewFlags::default())
 		.await
 		.unwrap_err()
 		.to_string();
@@ -83,7 +83,7 @@ async fn view_ranged_read_renders_only_the_requested_lines() {
 #[tokio::test]
 async fn content_search_missing_file_is_an_error() {
 	let src = source(std::path::Path::new("/nonexistent/octofs/search.txt"));
-	let err = view_file_with_content_search(&src, "x", 0, false)
+	let err = view_file_with_content_search(&src, "f", "x", 0, false, ViewFlags::default())
 		.await
 		.unwrap_err()
 		.to_string();
@@ -93,7 +93,7 @@ async fn content_search_missing_file_is_an_error() {
 #[tokio::test]
 async fn content_search_directory_is_rejected() {
 	let dir = tempfile::tempdir().unwrap();
-	let err = view_file_with_content_search(&source(dir.path()), "x", 0, false)
+	let err = view_file_with_content_search(&source(dir.path()), "f", "x", 0, false, ViewFlags::default())
 		.await
 		.unwrap_err()
 		.to_string();
@@ -105,7 +105,7 @@ async fn content_search_oversized_file_refuses_in_memory_search() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	let zeros = vec![0u8; (MAX_VIEW_FILE_BYTES + 1) as usize];
 	fs::write(file.path(), zeros).await.unwrap();
-	let err = view_file_with_content_search(&source(file.path()), "x", 0, false)
+	let err = view_file_with_content_search(&source(file.path()), "f", "x", 0, false, ViewFlags::default())
 		.await
 		.unwrap_err()
 		.to_string();
@@ -124,7 +124,7 @@ async fn content_search_oversized_file_refuses_in_memory_search() {
 async fn content_search_empty_file_says_so_without_matching() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	fs::write(file.path(), "").await.unwrap();
-	let out = view_file_with_content_search(&source(file.path()), "x", 0, false)
+	let out = view_file_with_content_search(&source(file.path()), "f", "x", 0, false, ViewFlags::default())
 		.await
 		.unwrap();
 	assert!(out.contains("File is empty"), "out was: {out}");
@@ -134,7 +134,7 @@ async fn content_search_empty_file_says_so_without_matching() {
 async fn content_search_no_match_names_the_pattern() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	fs::write(file.path(), "hello\nworld\n").await.unwrap();
-	let out = view_file_with_content_search(&source(file.path()), "zzz", 0, false)
+	let out = view_file_with_content_search(&source(file.path()), "f", "zzz", 0, false, ViewFlags::default())
 		.await
 		.unwrap();
 	assert!(out.contains("No matches"), "out was: {out}");
@@ -145,7 +145,7 @@ async fn content_search_no_match_names_the_pattern() {
 async fn content_search_renders_matches_with_context_and_line_ids() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	fs::write(file.path(), "a\nb\nneedle\nc\nd\n").await.unwrap();
-	let out = view_file_with_content_search(&source(file.path()), "needle", 1, false)
+	let out = view_file_with_content_search(&source(file.path()), "f", "needle", 1, false, ViewFlags::default())
 		.await
 		.unwrap();
 	let lines: Vec<&str> = out.split('\n').collect();

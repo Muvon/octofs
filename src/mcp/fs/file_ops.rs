@@ -15,8 +15,7 @@
 // File operations module - handling file viewing, creation, and basic manipulation
 
 use super::remote::{io_create_dir_all, io_exists, io_is_file, io_metadata, io_read_capped, io_write, PathSource};
-use super::search;
-use crate::utils::line_hash::line_id_at;
+use super::search::{self, SearchOutput, ViewFlags};
 use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -144,11 +143,15 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 
 // Search a single file for a pattern and render results using the same
 // hash/number format as view. No external tools — pure Rust string matching.
+// `label` is the path as the caller wrote it: count and files-only results are
+// one row that names the file.
 pub async fn view_file_with_content_search(
 	source: &PathSource,
+	label: &str,
 	pattern: &str,
 	context_lines: usize,
 	regex: bool,
+	flags: ViewFlags,
 ) -> Result<String> {
 	if !io_exists(source).await? {
 		bail!("File not found");
@@ -171,32 +174,26 @@ pub async fn view_file_with_content_search(
 		.map_err(|e| anyhow!("Cannot read file: {}", e))?
 		.ok_or_else(|| anyhow!("File is too large to search in memory (>5MB)."))?;
 	let content = String::from_utf8_lossy(&bytes).into_owned();
-	let file_lines: Vec<&str> = content.lines().collect();
-	let total = file_lines.len();
-
-	if total == 0 {
+	if content.lines().next().is_none() {
 		return Ok(format!("File is empty — no content to match pattern \"{pattern}\"."));
 	}
 
 	let matcher = search::Matcher::new(pattern, regex)?;
-	let blocks = search::search_lines(&content, &matcher, context_lines);
-	if blocks.is_empty() {
-		return Ok(format!("No matches for pattern \"{pattern}\" in this file."));
-	}
+	let Some(body) = search::render_file_matches(&content, &matcher, context_lines, flags) else {
+		return Ok(match flags.output {
+			SearchOutput::Count => flags.output.label(label, "0"),
+			SearchOutput::FilesOnly => format!("No matches for pattern \"{pattern}\" in {label}."),
+			SearchOutput::Lines | SearchOutput::OnlyMatching => {
+				format!("No matches for pattern \"{pattern}\" in this file.")
+			}
+		});
+	};
 
-	// Render each block. Blocks follow each other directly: every line carries its
-	// number, so a jump in numbering already marks a gap, and a separator line would
-	// cost 2 tokens per gap.
-	let mut parts: Vec<String> = Vec::new();
-	for block in &blocks {
-		let mut rendered = Vec::new();
-		for &n in &block.line_numbers {
-			rendered.push(format!("{}|{}", line_id_at(&file_lines, n), file_lines[n - 1]));
-		}
-		parts.push(rendered.join("\n"));
-	}
-
-	Ok(parts.join("\n"))
+	Ok(if flags.output.is_compact() {
+		flags.output.label(label, &body)
+	} else {
+		body
+	})
 }
 
 // Create a new file.
