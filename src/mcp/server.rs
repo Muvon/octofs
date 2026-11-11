@@ -802,11 +802,13 @@ impl OctofsServer {
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
-			A command still running after ~10s continues as a background job: keep working, and \
-			read its status and output so far at any time with `view path=\"octofs://jobs/<id>\"`. \
-			Depending on client capabilities, the call returns a task or a linked job resource, \
-			which holds the exit code and foreground-style output when finished. Automatic result \
-			delivery depends on the client's task or notification integration. \
+			A command still running after ~10s continues as a background job: carry on with other \
+			work, its exit code and foreground-style output are delivered when it finishes where \
+			the client's task or notification integration supports that. Depending on client \
+			capabilities, the call returns a task or a linked job resource. \
+			`view path=\"octofs://jobs/<id>\"` is a single look at status and output so far (a \
+			server's startup log, a long build's progress); it returns at once and is not a way \
+			to wait, so calling it in a loop only costs requests. \
 			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]

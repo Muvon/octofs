@@ -394,7 +394,8 @@ pub fn read(id: &str) -> Option<JobView> {
 pub fn resource_text(id: &str) -> Option<String> {
 	let view = read(id)?;
 	let status = match view.status {
-		JobStatus::Running => "running".to_string(),
+		// A reader that wants the result tends to read again; say that reading does not wait.
+		JobStatus::Running => "running (another read returns at once and does not wait for the exit)".to_string(),
 		JobStatus::Exited(code) => format!("exited with code {code}"),
 	};
 	let truncated = if view.truncated {

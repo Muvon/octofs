@@ -140,7 +140,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["sleep"],
-		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and view path=\"octofs://jobs/<id>\" returns its status and output so far at any time; automatic completion delivery depends on the client integration. A sleep inside a shell loop body is supported.",
+		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and its result is delivered when it exits where the client integration supports that, so there is nothing to wait for. view path=\"octofs://jobs/<id>\" is a single look at its status and output so far; it returns at once and is not a way to wait. A sleep inside a shell loop body is supported.",
 	),
 	(
 		&["watch", "top", "htop"],
@@ -838,9 +838,10 @@ async fn execute_with_timeout(
 			return Ok(ShellOutcome {
 				text: format!(
 					"Still running after the foreground limit — moved to background job `{}` \
-					 (PID {}). The same process continues; view path=\"{}\" returns its status and an \
-					 output tail while it runs, then the exit code and result. Automatic \
-					 completion delivery depends on the client integration.{} \
+					 (PID {}). The same process continues; carry on with other work, its exit code and \
+					 result are delivered when it finishes where the client integration supports that. \
+					 view path=\"{}\" is a single look at status and output so far: it returns at once \
+					 and does not wait, so repeating it only costs requests.{} \
 					 Stop early: on Unix, `kill -- -{job_pid}`; on Windows, `taskkill /PID {job_pid} /T /F`.",
 					job_id, job_pid, uri, stash_note
 				),
