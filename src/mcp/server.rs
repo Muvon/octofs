@@ -711,7 +711,8 @@ impl OctofsServer {
 		),
 		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
 			are line ids (\"12:a3\") from view or edit output, verified before anything is written; \
-			a stale id fails with the current content. All targets refer to the original file and \
+			a stale id fails with the current content, while an id whose line only moved because of an \
+			earlier edit above it still resolves. All targets refer to the original file and \
 			must not overlap. Group edits that use the same original-file ids in one call; earlier \
 			calls can change target positions or content. The result diff carries fresh ids for \
 			follow-up edits; removed lines and the middle of a long added block show as an id range. \

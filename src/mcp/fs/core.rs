@@ -133,6 +133,18 @@ pub(crate) fn record_transaction_history(snapshots: Vec<(String, Option<String>)
 	}
 }
 
+/// Earlier contents of a file, newest first: what its line ids named before each
+/// recorded edit.
+pub(crate) fn file_snapshots(source: &PathSource) -> Vec<String> {
+	let key = text_editing::lock_key_for_source(source);
+	let history = file_history().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	history
+		.files
+		.get(&key)
+		.map(|snapshots| snapshots.iter().rev().flatten().cloned().collect())
+		.unwrap_or_default()
+}
+
 // Undo the last edit to a file
 pub async fn undo_edit(source: &PathSource) -> Result<String> {
 	// Serialize with other writers on the same file — without this, an undo racing a

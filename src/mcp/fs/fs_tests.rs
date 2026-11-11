@@ -198,6 +198,126 @@ mod tests {
 		assert!(err.contains(&lid(shifted, 3)), "moved location shown: {err}");
 	}
 
+	fn batch_edit_call(path: &str, operations: serde_json::Value) -> McpToolCall {
+		McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({ "path": path, "operations": operations }),
+		}
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_id_from_before_an_earlier_edit_above_still_resolves() {
+		// Two edits sent with ids from the same view: the first inserts above the
+		// second's target, so the second's id is one line off but names unchanged content.
+		let original = "alpha\nbeta\ngamma\ndelta\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		execute_batch_edit(&batch_edit_call(
+			&path,
+			json!([{ "operation": "insert", "start": lid(original, 1), "content": "NEW" }]),
+		))
+		.await
+		.unwrap();
+
+		execute_batch_edit(&batch_edit_call(
+			&path,
+			json!([{ "operation": "replace", "start": lid(original, 3), "end": lid(original, 4), "content": "TAIL" }]),
+		))
+		.await
+		.unwrap();
+
+		let content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(content, "alpha\nNEW\nbeta\nTAIL\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_id_from_two_edits_back_still_resolves() {
+		let original = "alpha\nbeta\ngamma\ndelta\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		for content in ["ONE", "TWO"] {
+			execute_batch_edit(&batch_edit_call(
+				&path,
+				json!([{ "operation": "insert", "start": 0, "content": content }]),
+			))
+			.await
+			.unwrap();
+		}
+
+		execute_batch_edit(&batch_edit_call(
+			&path,
+			json!([{ "operation": "insert", "start": lid(original, 4), "content": "END" }]),
+		))
+		.await
+		.unwrap();
+
+		let content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(content, "TWO\nONE\nalpha\nbeta\ngamma\ndelta\nEND\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_id_of_a_line_an_earlier_edit_changed_stays_stale() {
+		let original = "alpha\nbeta\ngamma\ndelta\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		execute_batch_edit(&batch_edit_call(
+			&path,
+			json!([{ "operation": "replace", "start": lid(original, 3), "content": "CHANGED\nMORE" }]),
+		))
+		.await
+		.unwrap();
+
+		// "gamma" is gone, and a range reaching into the change is not what the caller saw.
+		for (start, end) in [(3, 3), (2, 4), (3, 4)] {
+			let err = execute_batch_edit(&batch_edit_call(
+				&path,
+				json!([{ "operation": "replace", "start": lid(original, start), "end": lid(original, end), "content": "X" }]),
+			))
+			.await
+			.unwrap_err()
+			.to_string();
+			assert!(err.contains("stale or invalid targets"), "{start}..{end}: {err}");
+		}
+
+		let content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(content, "alpha\nbeta\nCHANGED\nMORE\ndelta\n");
+	}
+
+	#[tokio::test]
+	async fn test_batch_edit_id_two_versions_place_differently_stays_stale() {
+		// Line 3 is "dup" in both earlier versions, but a different "dup" each time:
+		// the id cannot say which one the caller meant.
+		let original = "a\ndup\ndup\nz\n";
+		let temp_file = create_test_file(original).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+
+		for content in ["top", "top2"] {
+			execute_batch_edit(&batch_edit_call(
+				&path,
+				json!([{ "operation": "insert", "start": 0, "content": content }]),
+			))
+			.await
+			.unwrap();
+		}
+
+		let err = execute_batch_edit(&batch_edit_call(
+			&path,
+			json!([{ "operation": "replace", "start": lid(original, 3), "content": "X" }]),
+		))
+		.await
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("stale or invalid targets"), "got: {err}");
+
+		let content = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(content, "top2\ntop\na\ndup\ndup\nz\n");
+	}
+
 	#[tokio::test]
 	async fn test_batch_edit_reports_both_stale_endpoints_at_once() {
 		// A replace whose start AND end ids are both wrong must report both in one

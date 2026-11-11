@@ -210,6 +210,60 @@ fn resolve_unresolved_line_range(
 	}
 }
 
+// Resolve a range whose ids no longer verify by reading them against earlier
+// versions of the file (undo snapshots, newest first). An edit moves every line
+// below it by the same amount, so a line in the tail an earlier version shares
+// with the current file is the same line at a new position: the id still names
+// content the caller saw. Lines above the first change keep their position and
+// never get here. A target inside changed content, or one that two versions place
+// at different lines, stays stale.
+fn resolve_through_history(
+	unresolved: &UnresolvedLineRange,
+	snapshots: &[String],
+	lines: &[&str],
+) -> Option<LineRange> {
+	use crate::utils::line_hash::line_hash;
+
+	let (first, last) = match unresolved {
+		UnresolvedLineRange::Anchor(_) => return None,
+		UnresolvedLineRange::IdAnchor { line, hash } => ((*line, hash), (*line, hash)),
+		UnresolvedLineRange::IdRange { start, end } => ((start.0, &start.1), (end.0, &end.1)),
+	};
+	if first.0 == 0 || first.0 > last.0 {
+		return None;
+	}
+
+	let mut moved_first: Option<usize> = None;
+	for snapshot in snapshots {
+		let old: Vec<&str> = snapshot.lines().collect();
+		if last.0 > old.len() || line_hash(old[first.0 - 1]) != *first.1 || line_hash(old[last.0 - 1]) != *last.1 {
+			continue;
+		}
+		let shared_tail = old
+			.iter()
+			.rev()
+			.zip(lines.iter().rev())
+			.take_while(|(before, now)| before == now)
+			.count();
+		let lines_below = old.len() - first.0;
+		// This version has the target, but above its shared tail: the content changed since.
+		if lines_below >= shared_tail {
+			return None;
+		}
+		let moved = lines.len() - lines_below;
+		if moved_first.is_some_and(|earlier| earlier != moved) {
+			return None;
+		}
+		moved_first = Some(moved);
+	}
+
+	let start = moved_first?;
+	Some(match unresolved {
+		UnresolvedLineRange::IdRange { .. } => LineRange::Range(start, start + last.0 - first.0),
+		_ => LineRange::Single(start),
+	})
+}
+
 /// Normalize a string for whitespace-insensitive comparison.
 /// Trims each line and collapses runs of whitespace into a single space.
 fn normalize_whitespace(s: &str) -> String {
@@ -1587,9 +1641,16 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let original_lines: Vec<&str> = original_content.lines().collect();
 	let mut batch_operations = Vec::new();
 	let mut resolve_failures: Vec<String> = Vec::new();
+	// Read only when an id fails: the common call verifies against the current file.
+	let mut snapshots: Option<Vec<String>> = None;
 
 	for unresolved_op in unresolved_operations {
-		match resolve_unresolved_line_range(&unresolved_op.line_range, total_lines, &original_lines) {
+		let resolved =
+			resolve_unresolved_line_range(&unresolved_op.line_range, total_lines, &original_lines).or_else(|err| {
+				let snapshots = snapshots.get_or_insert_with(|| super::core::file_snapshots(&source));
+				resolve_through_history(&unresolved_op.line_range, snapshots, &original_lines).ok_or(err)
+			});
+		match resolved {
 			Ok(resolved_range) => {
 				batch_operations.push(BatchOperation {
 					operation_type: unresolved_op.operation_type,
