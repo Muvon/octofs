@@ -30,6 +30,14 @@ mod tests {
 		temp_file
 	}
 
+	async fn create_test_rs_file(content: &str) -> NamedTempFile {
+		// The outline mode dispatches on the extension, so outline tests need a
+		// real .rs suffix — NamedTempFile::new() has a random one.
+		let temp_file = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+		fs::write(temp_file.path(), content).await.unwrap();
+		temp_file
+	}
+
 	#[tokio::test]
 	async fn view_image_path_is_served_as_an_image_and_never_as_text() {
 		let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
@@ -7049,6 +7057,161 @@ mod tests {
 			let source = parse_path_source(&format!("{prefix}/auth_check.txt"));
 			crate::mcp::fs::remote::io_write(&source, b"ok").await.unwrap();
 			assert_eq!(io_read_to_string(&source).await.unwrap(), "ok");
+		})
+	}
+
+	// ── Structural outline (`view` with flags: "s") ──────────────────────
+
+	#[tokio::test]
+	async fn view_outline_single_file_renders_view_line_ids() {
+		let src = "mod foo {\n\tfn bar() {}\n}\nstruct Baz;\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call("view", json!({ "path": path, "flags": "s" }));
+		let result = execute_view(&call).await.unwrap();
+		let lines: Vec<&str> = result.lines().collect();
+		assert_eq!(lines[0], format!("{path}\t4"));
+		assert_eq!(lines[1], format!("{}|mod foo {{", lid(src, 1)));
+		assert_eq!(lines[2], format!("{}|\tfn bar() {{}}", lid(src, 2)));
+		// The mod's body opens on its own line, so its signature is one line;
+		// line 3 (the closing brace) is body and never appears.
+		assert_eq!(lines[3], format!("{}|struct Baz;", lid(src, 4)));
+		assert_eq!(lines.len(), 4);
+	}
+
+	#[tokio::test]
+	async fn view_outline_does_not_register_a_whole_file_view() {
+		let src = "fn main() {\n\tprintln!(\"body\");\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let cache = std::sync::Arc::new(crate::mcp::fs::delta::ViewCache::default());
+		let outline_call = McpToolCall::test_call("view", json!({ "path": path, "flags": "s" }));
+		let outline = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), execute_view(&outline_call))
+			.await
+			.unwrap();
+		assert!(outline.contains("fn main()"));
+		// A whole-file view after the outline must still return the full content:
+		// had the outline registered as a view, this would return only changed
+		// hunks (nothing) instead of the body the outline elided.
+		let full_call = McpToolCall::test_call("view", json!({ "path": path }));
+		let full = crate::mcp::request_ctx::with_request_context(Some(cache), execute_view(&full_call))
+			.await
+			.unwrap();
+		assert!(full.contains("println!(\"body\");"), "full view: {full}");
+	}
+
+	#[tokio::test]
+	async fn view_outline_rejects_content_ranges_and_other_flags() {
+		let file = create_test_file("fn a() {}\n").await;
+		let path = file.path().to_string_lossy().to_string();
+
+		let with_content = McpToolCall::test_call("view", json!({ "path": path, "flags": "s", "content": "fn" }));
+		let err = execute_view(&with_content).await.unwrap_err().to_string();
+		assert!(err.contains("drop `content`"), "got: {err}");
+
+		let with_range = McpToolCall::test_call("view", json!({ "path": path, "flags": "s", "start": 1 }));
+		let err = execute_view(&with_range).await.unwrap_err().to_string();
+		assert!(err.contains("`start`/`end`"), "got: {err}");
+
+		let with_end = McpToolCall::test_call("view", json!({ "path": path, "flags": "s", "end": 2 }));
+		assert!(execute_view(&with_end).await.is_err());
+
+		let with_letters = McpToolCall::test_call("view", json!({ "path": path, "flags": "sl" }));
+		let err = execute_view(&with_letters).await.unwrap_err().to_string();
+		assert!(err.contains("s cannot be combined"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn view_outline_unsupported_extension_names_it_and_lists_languages() {
+		let file = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+		fs::write(file.path(), "plain text\n").await.unwrap();
+		let call = McpToolCall::test_call("view", json!({ "path": file.path().to_string_lossy(), "flags": "s" }));
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.contains("'txt'"), "got: {err}");
+		assert!(err.contains("Supported languages"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn view_outline_empty_and_broken_files() {
+		let empty = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+		let call = McpToolCall::test_call("view", json!({ "path": empty.path().to_string_lossy(), "flags": "s" }));
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("No declarations found."), "got: {result}");
+
+		let broken = create_test_rs_file("fn good() {}\nfn broken( {\n").await;
+		let call = McpToolCall::test_call("view", json!({ "path": broken.path().to_string_lossy(), "flags": "s" }));
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("fn good() {}"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_outline_directory_honours_pattern_max_depth_and_gitignore() {
+		let root = tempfile::tempdir().unwrap();
+		fs::write(root.path().join(".gitignore"), "ignored.rs\n").await.unwrap();
+		fs::write(root.path().join("a.rs"), "fn a() {}\n").await.unwrap();
+		fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("d.md"), "# Title\n").await.unwrap();
+		fs::create_dir(root.path().join("sub")).await.unwrap();
+		fs::write(root.path().join("sub/b.rs"), "fn b() {}\n").await.unwrap();
+		fs::write(root.path().join("sub/c.txt"), "hello\n").await.unwrap();
+
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "flags": "s" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(result.contains("d.md:"), "got: {result}");
+		assert!(result.contains("sub/b.rs:"), "got: {result}");
+		assert!(!result.contains("ignored.rs"), "gitignored file listed: {result}");
+		assert!(!result.contains("c.txt"), "unsupported file listed: {result}");
+
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "flags": "s", "pattern": "**/*.rs" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(!result.contains("d.md:"), "pattern ignored: {result}");
+
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "flags": "s", "max_depth": 1 }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(!result.contains("sub/b.rs"), "max_depth ignored: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_outline_directory_with_no_supported_files_says_so() {
+		let root = tempfile::tempdir().unwrap();
+		fs::write(root.path().join("c.txt"), "hello\n").await.unwrap();
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "flags": "s" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			result.starts_with("No supported files with declarations found"),
+			"got: {result}"
+		);
+	}
+
+	#[test]
+	fn remote_view_outline_single_file() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/outline.rs");
+			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+			crate::mcp::fs::remote::io_write(&source, b"fn foo() {}\nfn bar() {}\n")
+				.await
+				.unwrap();
+
+			let call = McpToolCall::test_call("view", json!({ "path": file_path, "flags": "s" }));
+			let result = execute_view(&call).await.unwrap();
+			assert!(result.starts_with(&format!("{file_path}\t2")), "got: {result}");
+			assert!(result.contains("fn foo() {}"), "got: {result}");
+			assert!(result.contains("fn bar() {}"), "got: {result}");
+
+			cleanup_remote_dir(&dir).await;
 		})
 	}
 }

@@ -53,7 +53,7 @@ fn bytecount_newlines(bytes: &[u8]) -> usize {
 /// Read a listed file, at most the view cap: `None` when it holds more or cannot be
 /// read. procfs and sysfs report 0 bytes for files that read out gigabytes
 /// (`/proc/<pid>/pagemap`), so the reported size alone cannot bound a walk of `/`.
-fn read_capped(path: &Path) -> Option<Vec<u8>> {
+pub(super) fn read_capped(path: &Path) -> Option<Vec<u8>> {
 	use std::io::Read;
 	let limit = super::file_ops::MAX_VIEW_FILE_BYTES;
 	let mut bytes = Vec::new();
@@ -276,7 +276,7 @@ fn validate_glob_structure(glob: &str) -> Result<(), String> {
 
 // Compile before traversal so malformed or adversarial patterns fail without walking a tree.
 // Positive globs include, leading-! globs exclude, and later alternatives take precedence.
-fn build_pattern_matcher(pattern: &str) -> Result<Override, String> {
+pub(super) fn build_pattern_matcher(pattern: &str) -> Result<Override, String> {
 	let alternatives = split_pattern_alternatives(pattern)?;
 	let mut builder = OverrideBuilder::new("");
 	for glob in alternatives {
@@ -290,12 +290,12 @@ fn build_pattern_matcher(pattern: &str) -> Result<Override, String> {
 		.map_err(|e| format!("Invalid `pattern` glob {pattern:?}: {e}"))
 }
 
-fn apply_pattern(files: &mut Vec<String>, matcher: &Override) {
+pub(super) fn apply_pattern(files: &mut Vec<String>, matcher: &Override) {
 	files.retain(|file| !matcher.matched(file, false).is_ignore());
 }
 
 // Build an ignore::WalkBuilder with the given options
-fn build_walker(directory: &str, max_depth: Option<usize>, include_hidden: bool) -> WalkBuilder {
+pub(super) fn build_walker(directory: &str, max_depth: Option<usize>, include_hidden: bool) -> WalkBuilder {
 	let mut builder = WalkBuilder::new(directory);
 	builder
 		.git_ignore(true)
@@ -354,7 +354,7 @@ pub(super) async fn missing_path_hint(missing: PathBuf, workdir: PathBuf) -> Str
 }
 
 // Collect file paths from walker, relative to working_dir
-fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<String> {
+pub(super) fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<String> {
 	let walker = builder.build();
 	let mut files: Vec<String> = Vec::new();
 	for entry in walker.flatten() {
@@ -383,7 +383,7 @@ fn collect_file_paths(builder: &mut WalkBuilder, working_dir: &Path) -> Vec<Stri
 // --- Remote directory listing (SFTP) ---
 
 // Construct a child PathSource for a remote directory entry.
-fn remote_child(source: &PathSource, name: &str) -> PathSource {
+pub(super) fn remote_child(source: &PathSource, name: &str) -> PathSource {
 	match source {
 		PathSource::Remote {
 			host,
@@ -424,7 +424,7 @@ const REMOTE_CONCURRENCY: usize = 32;
 
 // Drive futures with at most REMOTE_CONCURRENCY in flight. Results come back
 // in completion order; callers sort.
-async fn join_bounded<F, T>(futures: Vec<F>) -> Result<Vec<T>>
+pub(super) async fn join_bounded<F, T>(futures: Vec<F>) -> Result<Vec<T>>
 where
 	F: std::future::Future<Output = T> + Send + 'static,
 	T: Send + 'static,
@@ -468,7 +468,7 @@ struct RemoteDir {
 // Only the metadata read_dir already returns is used — nothing per file.
 // Each directory's .gitignore prunes its subtree before it is descended, so
 // target/ and node_modules/ under nested checkouts are skipped like rg does.
-async fn collect_remote_files(
+pub(super) async fn collect_remote_files(
 	root: &PathSource,
 	max_depth: Option<usize>,
 	include_hidden: bool,

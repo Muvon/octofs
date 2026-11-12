@@ -20,7 +20,7 @@ use super::remote::{
 	PathSource,
 };
 use crate::mcp::fs::search::ViewFlags;
-use crate::mcp::fs::{delta, directory, file_ops, text_editing};
+use crate::mcp::fs::{delta, directory, file_ops, structure, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::{format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
@@ -336,12 +336,29 @@ async fn resolve_view_range(
 }
 
 async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource) -> Result<String> {
+	let flags_param = call.parameters.get("flags").and_then(|v| v.as_str());
+
+	// Structural outline (`s`): exclusive of content search, listings and
+	// ranges, so it is dispatched before every other mode.
+	let has_content = call
+		.parameters
+		.get("content")
+		.and_then(|v| v.as_str())
+		.is_some_and(|c| !c.trim().is_empty());
+	if ViewFlags::parse(flags_param, has_content)?.structure {
+		let has_range = ["start", "end"]
+			.iter()
+			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
+		if has_range {
+			bail!("View flag s cannot be combined with `start`/`end`: an outline is not a line range — drop them.");
+		}
+		return structure::view_outline(call, path, source).await;
+	}
+
 	// Directory: dispatch directly with the path string
 	if io_is_dir(source).await? {
 		return directory::list_directory(call, path).await;
 	}
-
-	let flags_param = call.parameters.get("flags").and_then(|v| v.as_str());
 
 	// File + content: search the file for a literal/regex pattern and render with the same hash/number format
 	if let Some(content_pattern) = call.parameters.get("content").and_then(|v| v.as_str()) {

@@ -23,6 +23,7 @@ pub mod file_ops;
 pub mod remote;
 pub mod search;
 pub mod shell;
+pub mod structure;
 pub mod text_editing;
 pub mod workdir;
 

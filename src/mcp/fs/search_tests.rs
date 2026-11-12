@@ -151,6 +151,31 @@ fn test_flags_reject_unknown_conflicting_and_search_only_letters() {
 }
 
 #[test]
+fn test_flag_s_parses_alone_and_rejects_every_combination() {
+	let flags = ViewFlags::parse(Some("s"), false).unwrap();
+	assert!(flags.structure);
+	assert!(!flags.long && !flags.invert);
+	assert_eq!(flags.output, SearchOutput::Lines);
+
+	// A leading dash is accepted like for the other letters.
+	assert!(ViewFlags::parse(Some("-s"), false).unwrap().structure);
+
+	// Every other letter conflicts with s, in either order.
+	for letters in ["sl", "ls", "sv", "vs", "sc", "cs", "so", "os", "svo"] {
+		let err = ViewFlags::parse(Some(letters), false).unwrap_err().to_string();
+		assert!(err.contains("s cannot be combined"), "{letters}: {err}");
+	}
+
+	// s with a content search is rejected with what to drop.
+	let with_content = ViewFlags::parse(Some("s"), true).unwrap_err().to_string();
+	assert!(with_content.contains("drop `content`"), "got: {with_content}");
+
+	// The unknown-letter message lists s.
+	let unknown = ViewFlags::parse(Some("x"), false).unwrap_err().to_string();
+	assert!(unknown.contains("l, c, o, s and v"), "got: {unknown}");
+}
+
+#[test]
 fn test_render_count_and_files_only() {
 	let content = "a TODO\nb\nc TODO TODO\n";
 	assert_eq!(render(content, "TODO", false, "c").as_deref(), Some("2"));

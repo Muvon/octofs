@@ -63,6 +63,27 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # aws-lc-rs) is chosen because the Alpine/musl release builds have no cmake.
 russh = { version = "0.65", default-features = false, features = ["flate2", "ring"] }
 russh-sftp = "3.0"
+
+# Tree-sitter grammars for the `view` structural outline (`flags: "s"`), always
+# compiled in — the ceiling is binary size and build time, not correctness.
+# Versions mirror the octocode pins, which are known to work together.
+tree-sitter = "0.27.1"
+tree-sitter-bash = "0.25.1"
+tree-sitter-css = "0.25.0"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-elixir = "0.3.5"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-lua = "0.5.0"
+tree-sitter-php = "0.25.1"
+tree-sitter-python = "0.25.0"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-rust = "0.24.2"
+tree-sitter-svelte-ng = "1.0.2"
+tree-sitter-swift = "0.7.4"
+tree-sitter-typescript = "0.23.2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

@@ -66,11 +66,14 @@ pub struct ViewFlags {
 	pub output: SearchOutput,
 	/// Report the lines that do not match (`v`).
 	pub invert: bool,
+	/// Structural outline (`s`): signature/declaration lines with bodies elided.
+	pub structure: bool,
 }
 
 impl ViewFlags {
 	/// Parse the letters. `l` means files-only for a search and a long row for a listing,
 	/// as it does for `grep` and `ls`. A leading `-` is accepted because callers type it.
+	/// `s` is exclusive: it cannot be combined with the other letters or with `content`.
 	pub fn parse(flags: Option<&str>, has_content: bool) -> Result<Self> {
 		let mut parsed = ViewFlags::default();
 		for flag in flags.unwrap_or_default().chars() {
@@ -80,6 +83,10 @@ impl ViewFlags {
 					parsed.invert = true;
 					continue;
 				}
+				's' => {
+					parsed.structure = true;
+					continue;
+				}
 				'l' if !has_content => {
 					parsed.long = true;
 					continue;
@@ -87,12 +94,18 @@ impl ViewFlags {
 				'l' => SearchOutput::FilesOnly,
 				'c' => SearchOutput::Count,
 				'o' => SearchOutput::OnlyMatching,
-				other => bail!("Unknown view flag {other:?}: the flags are l, c, o and v."),
+				other => bail!("Unknown view flag {other:?}: the flags are l, c, o, s and v."),
 			};
 			if parsed.output != SearchOutput::Lines && parsed.output != output {
 				bail!("View flags l, c and o are alternatives: pass one of them.");
 			}
 			parsed.output = output;
+		}
+		if parsed.structure && (parsed.long || parsed.invert || parsed.output != SearchOutput::Lines) {
+			bail!("View flag s cannot be combined with l, c, o or v: an outline is its own output — drop the other letters.");
+		}
+		if parsed.structure && has_content {
+			bail!("View flag s cannot be combined with `content`: drop `content` to get the outline.");
 		}
 		if !has_content && (parsed.invert || parsed.output != SearchOutput::Lines) {
 			bail!("View flags c, o and v apply to a `content` search; without `content` only l (size and modification time) applies.");

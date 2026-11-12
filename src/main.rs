@@ -19,6 +19,7 @@ use tracing::Level;
 mod cli;
 mod http_auth;
 pub mod mcp;
+pub mod structural;
 pub mod utils;
 
 #[cfg(test)]
