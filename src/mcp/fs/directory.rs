@@ -322,8 +322,9 @@ pub(super) async fn missing_path_hint(missing: PathBuf, workdir: PathBuf) -> Str
 	tokio::task::spawn_blocking(move || {
 		let relative = |path: &Path| match path.strip_prefix(&workdir) {
 			Ok(inside) if inside.as_os_str().is_empty() => ".".to_string(),
-			Ok(inside) => inside.display().to_string(),
-			Err(_) => path.display().to_string(),
+			// Model-facing paths use `/` throughout; `display()` yields `\` on Windows.
+			Ok(inside) => inside.display().to_string().replace('\\', "/"),
+			Err(_) => path.display().to_string().replace('\\', "/"),
 		};
 		let mut known = Vec::new();
 		if let Some(directory) = missing.ancestors().skip(1).find(|ancestor| ancestor.is_dir()) {
