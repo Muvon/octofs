@@ -140,7 +140,7 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 	(
 		&["sleep"],
-		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and its result is delivered when it exits where the client integration supports that, so there is nothing to wait for. view path=\"octofs://jobs/<id>\" is a single look at its status and output so far; it returns at once and is not a way to wait. A sleep inside a shell loop body is supported.",
+		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and its result is delivered when it exits where the client integration supports that, so there is nothing to wait for. When the call that started it returned a job link, `view` on that link is a single look at its status and output so far; it returns at once and is not a way to wait. A sleep inside a shell loop body is supported.",
 	),
 	(
 		&["watch", "top", "htop"],
@@ -456,7 +456,8 @@ fn misuse_message(prog: &str, hint: &str, mode: crate::mcp::HintMode) -> String 
 }
 
 /// Targets of the segment's unquoted `>` / `>>` file redirects.
-/// Fd duplications (`>&2`, `2>&1`) are not file writes and don't count.
+/// Fd duplications (`>&2`, `2>&1`) are not file writes and don't count, and neither
+/// do device sinks (`2>/dev/null`): discarding output authors no file content.
 fn redirect_targets(segment: &str) -> Vec<&str> {
 	let bytes = segment.as_bytes();
 	let mut in_single = false;
@@ -480,7 +481,9 @@ fn redirect_targets(segment: &str) -> Vec<&str> {
 					let end = segment[j..]
 						.find(|c: char| c.is_whitespace() || matches!(c, '|' | '<' | '>' | '&' | ';'))
 						.map_or(bytes.len(), |k| j + k);
-					targets.push(&segment[j..end]);
+					if !segment[j..end].starts_with("/dev/") {
+						targets.push(&segment[j..end]);
+					}
 					i = end;
 					continue;
 				}

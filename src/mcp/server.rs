@@ -806,9 +806,9 @@ impl OctofsServer {
 			work, its exit code and foreground-style output are delivered when it finishes where \
 			the client's task or notification integration supports that. Depending on client \
 			capabilities, the call returns a task or a linked job resource. \
-			`view path=\"octofs://jobs/<id>\"` is a single look at status and output so far (a \
-			server's startup log, a long build's progress); it returns at once and is not a way \
-			to wait, so calling it in a loop only costs requests. \
+			When the call returns a job link, `view` on that link is a single look at status and \
+			output so far (a server's startup log, a long build's progress); it returns at once \
+			and is not a way to wait, so calling it in a loop only costs requests. \
 			Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]

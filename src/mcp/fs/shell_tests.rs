@@ -468,6 +468,8 @@ fn redirect_targets_respect_quotes_and_skip_fd_dups() {
 	assert_eq!(redirect_targets("echo x > 'out file.txt'"), vec!["'out"]);
 	assert_eq!(redirect_targets("cmd 2>&1 > \"a b\""), vec!["\"a"]);
 	assert!(redirect_targets("cmd >&2").is_empty());
+	assert!(redirect_targets("printf '%s\\n' a/* 2>/dev/null | head").is_empty());
+	assert_eq!(redirect_targets("echo x > out.txt 2>/dev/null"), vec!["out.txt"]);
 	// >> appends to the same target; escaped > is literal text.
 	assert_eq!(redirect_targets("cmd >> log.txt"), vec!["log.txt"]);
 	assert!(redirect_targets("echo a\\>b").is_empty());
