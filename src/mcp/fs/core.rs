@@ -20,7 +20,7 @@ use super::remote::{
 	PathSource,
 };
 use crate::mcp::fs::search::ViewFlags;
-use crate::mcp::fs::{delta, directory, file_ops, structure, text_editing};
+use crate::mcp::fs::{delta, directory, file_ops, structure, symbols, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::{format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
@@ -337,15 +337,35 @@ async fn resolve_view_range(
 
 async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource) -> Result<String> {
 	let flags_param = call.parameters.get("flags").and_then(|v| v.as_str());
-
-	// Structural outline (`s`): exclusive of content search, listings and
-	// ranges, so it is dispatched before every other mode.
 	let has_content = call
 		.parameters
 		.get("content")
 		.and_then(|v| v.as_str())
 		.is_some_and(|c| !c.trim().is_empty());
-	if ViewFlags::parse(flags_param, has_content)?.structure {
+
+	// Symbol navigation (`symbol`): exclusive of content search, ranges and
+	// outlines, so it is dispatched before every other mode. Trimmed once at
+	// the boundary: the trimmed name reaches the matcher and every message
+	// alike.
+	if let Some(symbol) = call.parameters.get("symbol").and_then(|v| v.as_str()).map(str::trim) {
+		if symbol.is_empty() {
+			bail!("`symbol` must be a non-empty symbol name — drop it or pass a name (`*` wildcards allowed, e.g. \"handle_*\").");
+		}
+		if has_content {
+			bail!("`symbol` cannot be combined with `content`: a symbol search is structural — drop `content`.");
+		}
+		let has_range = ["start", "end"]
+			.iter()
+			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
+		if has_range {
+			bail!("`symbol` cannot be combined with `start`/`end`: a symbol search returns whole definitions or references — drop them.");
+		}
+		return symbols::view_symbols(call, path, source, symbol).await;
+	}
+
+	// Structural outline (`s`): exclusive of content search, listings and
+	// ranges, so it is dispatched before every other mode.
+	if ViewFlags::parse(flags_param, has_content, false)?.structure {
 		let has_range = ["start", "end"]
 			.iter()
 			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
@@ -365,7 +385,7 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		if !content_pattern.trim().is_empty() {
 			let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 			let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
-			let flags = ViewFlags::parse(flags_param, true)?;
+			let flags = ViewFlags::parse(flags_param, true, false)?;
 			return file_ops::view_file_with_content_search(
 				source,
 				path,
@@ -379,7 +399,7 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	}
 
 	// File + `l`: its size and modification time, without reading it.
-	if ViewFlags::parse(flags_param, false)?.long {
+	if ViewFlags::parse(flags_param, false, false)?.long {
 		let meta = io_metadata(source).await?;
 		return Ok(format!("{path}\t{}", directory::long_suffix(meta.size, meta.modified)));
 	}
@@ -408,7 +428,7 @@ fn path_error_preview(path: &str) -> String {
 
 async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
 	// Checked before any root is searched, like the roots themselves.
-	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true)?;
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true, false)?;
 	if path.len() > MAX_SEARCH_PATH_BYTES {
 		bail!(
 			"Invalid content-search path alternatives: {} bytes exceeds the {MAX_SEARCH_PATH_BYTES}-byte limit. Split the search into separate `view` calls.",

@@ -7214,4 +7214,382 @@ mod tests {
 			cleanup_remote_dir(&dir).await;
 		})
 	}
+
+	// ── Symbol navigation integration tests (`symbol` / flag `r`) ────────
+
+	#[tokio::test]
+	async fn view_symbol_definitions_single_file_renders_view_line_ids() {
+		let src = "pub struct Store {\n\tdata: Vec<u8>,\n}\n\nimpl Store {\n\tpub fn flush(&mut self) {\n\t\tself.data.clear();\n\t}\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush" }));
+		let result = execute_view(&call).await.unwrap();
+		// Exact name, definition ≤ 32 lines: the full body with the same ids a
+		// plain view renders, headed by the enclosing-symbol breadcrumb.
+		let expected = format!(
+			"[impl Store]\n{}|\tpub fn flush(&mut self) {{\n{}|\t\tself.data.clear();\n{}|\t}}",
+			lid(src, 6),
+			lid(src, 7),
+			lid(src, 8)
+		);
+		assert_eq!(result, expected);
+	}
+
+	#[tokio::test]
+	async fn view_symbol_references_group_and_tag_definition_sites() {
+		let src = "impl Store {\n\tpub fn flush(&mut self) {\n\t\tOk(())\n\t}\n\tfn drain(&mut self) {\n\t\tself.flush();\n\t}\n}\n\nfn main() {\n\tstore.flush();\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush", "flags": "r" }));
+		let result = execute_view(&call).await.unwrap();
+		let expected = format!(
+			"[impl Store › fn flush] [def]\n{}|\tpub fn flush(&mut self) {{\n\
+[impl Store › fn drain]\n{}|\t\tself.flush();\n\
+[fn main]\n{}|\tstore.flush();",
+			lid(src, 2),
+			lid(src, 6),
+			lid(src, 11)
+		);
+		assert_eq!(result, expected);
+	}
+
+	#[tokio::test]
+	async fn view_symbol_wildcard_previews_long_definitions() {
+		let src = "fn handle_request() {\n\t1\n\t2\n\t3\n\t4\n\t5\n\t6\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "handle_*" }));
+		let result = execute_view(&call).await.unwrap();
+		// Wildcards always preview: first 4 lines, the omitted marker, last line.
+		let expected = format!(
+			"{}|fn handle_request() {{\n{}|\t1\n{}|\t2\n{}|\t3\n… 3 lines omitted …\n{}|}}",
+			lid(src, 1),
+			lid(src, 2),
+			lid(src, 3),
+			lid(src, 4),
+			lid(src, 8)
+		);
+		assert_eq!(result, expected);
+	}
+
+	#[tokio::test]
+	async fn view_symbol_count_and_files_only_flags() {
+		let src = "fn a() {}\nfn b() {}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let count = McpToolCall::test_call("view", json!({ "path": path, "symbol": "*", "flags": "c" }));
+		let result = execute_view(&count).await.unwrap();
+		assert_eq!(result, format!("{path}\t2"));
+		let files_only = McpToolCall::test_call("view", json!({ "path": path, "symbol": "*", "flags": "l" }));
+		let result = execute_view(&files_only).await.unwrap();
+		assert_eq!(result, path);
+	}
+
+	#[tokio::test]
+	async fn view_symbol_rejects_every_invalid_combination() {
+		let file = create_test_rs_file("fn a() {}\n").await;
+		let path = file.path().to_string_lossy().to_string();
+		let cases: [(serde_json::Value, &str); 8] = [
+			(json!({ "path": path, "symbol": "a", "content": "a" }), "drop `content`"),
+			(json!({ "path": path, "symbol": "a", "start": 1 }), "`start`/`end`"),
+			(json!({ "path": path, "symbol": "a", "end": 2 }), "`start`/`end`"),
+			(
+				json!({ "path": path, "symbol": "a", "flags": "o" }),
+				"o and v cannot be combined with `symbol`",
+			),
+			(
+				json!({ "path": path, "symbol": "a", "flags": "v" }),
+				"o and v cannot be combined with `symbol`",
+			),
+			(
+				json!({ "path": path, "symbol": "a", "flags": "s" }),
+				"s cannot be combined with `symbol`",
+			),
+			(json!({ "path": path, "flags": "r" }), "requires `symbol`"),
+			(json!({ "path": path, "symbol": "  " }), "non-empty symbol name"),
+		];
+		for (args, needle) in cases {
+			let call = McpToolCall::test_call("view", args.clone());
+			let err = execute_view(&call).await.unwrap_err().to_string();
+			assert!(err.contains(needle), "case {args}: got {err}");
+		}
+	}
+
+	#[tokio::test]
+	async fn view_symbol_no_match_suggests_wildcard_and_content() {
+		let file = create_test_rs_file("fn a() {}\n").await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "missing" }));
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			result.starts_with(&format!("No definitions found for symbol \"missing\" in {path}.")),
+			"got: {result}"
+		);
+		assert!(result.contains("Try a `*` wildcard"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_symbol_directory_honours_pattern_max_depth_and_gitignore() {
+		let root = tempfile::tempdir().unwrap();
+		fs::create_dir(root.path().join("sub")).await.unwrap();
+		fs::write(root.path().join("a.rs"), "fn handle_a() {}\n").await.unwrap();
+		fs::write(root.path().join("sub/b.rs"), "fn handle_b() {}\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("c.txt"), "fn handle_c() {}\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("e.py"), "def handle_e():\n\tpass\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join(".gitignore"), "ignored.rs\n").await.unwrap();
+		fs::write(root.path().join("ignored.rs"), "fn handle_ignored() {}\n")
+			.await
+			.unwrap();
+
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "symbol": "handle_*" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(result.contains("sub/b.rs:"), "got: {result}");
+		assert!(result.contains("handle_a"), "got: {result}");
+		assert!(!result.contains("ignored.rs"), "gitignored file listed: {result}");
+		assert!(!result.contains("c.txt"), "unsupported file listed: {result}");
+
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "symbol": "handle_*", "max_depth": 1 }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(!result.contains("sub/b.rs"), "max_depth ignored: {result}");
+
+		let mut call = McpToolCall::test_call(
+			"view",
+			json!({ "path": ".", "symbol": "handle_*", "pattern": "**/*.rs" }),
+		);
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(!result.contains("e.py"), "pattern ignored: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_symbol_trims_surrounding_whitespace() {
+		let src = "pub struct Store {\n\tdata: Vec<u8>,\n}\n\nimpl Store {\n\tpub fn flush(&mut self) {\n\t\tself.data.clear();\n\t}\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let padded = McpToolCall::test_call("view", json!({ "path": path, "symbol": "  flush  " }));
+		let padded_result = execute_view(&padded).await.unwrap();
+		let plain = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush" }));
+		let plain_result = execute_view(&plain).await.unwrap();
+		assert_eq!(padded_result, plain_result);
+		assert!(padded_result.contains("pub fn flush"), "got: {padded_result}");
+	}
+
+	#[tokio::test]
+	async fn view_symbol_css_and_json_files_error_with_guidance() {
+		let css = tempfile::Builder::new().suffix(".css").tempfile().unwrap();
+		fs::write(css.path(), "body { color: red; }\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": css.path().to_string_lossy().to_string(), "symbol": "body" }),
+		);
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("symbol navigation is not supported for css files"),
+			"got: {err}"
+		);
+		assert!(err.contains("flags: \"s\""), "got: {err}");
+
+		let json = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+		fs::write(json.path(), "{\"a\": 1}\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": json.path().to_string_lossy().to_string(), "symbol": "a" }),
+		);
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("symbol navigation is not supported for json files"),
+			"got: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn view_symbol_directory_skips_css_and_json_silently() {
+		let root = tempfile::tempdir().unwrap();
+		fs::write(root.path().join("a.css"), "body { color: red; }\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("b.json"), "{\"a\": 1}\n").await.unwrap();
+		fs::write(root.path().join("c.rs"), "fn handle_c() {}\n").await.unwrap();
+
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "symbol": "handle_*" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("c.rs:"), "got: {result}");
+		assert!(result.contains("handle_c"), "got: {result}");
+		assert!(!result.contains("a.css"), "css file listed: {result}");
+		assert!(!result.contains("b.json"), "json file listed: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_symbol_works_on_markdown_and_svelte() {
+		let md = tempfile::Builder::new().suffix(".md").tempfile().unwrap();
+		fs::write(md.path(), "# Installation\n\n## Setup\n\nRun the installer.\n")
+			.await
+			.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": md.path().to_string_lossy().to_string(), "symbol": "Installation" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("# Installation"), "got: {result}");
+
+		let svelte = tempfile::Builder::new().suffix(".svelte").tempfile().unwrap();
+		fs::write(
+			svelte.path(),
+			"<script>\n\tfunction greet() {\n\t\treturn \"hi\";\n\t}\n</script>\n",
+		)
+		.await
+		.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": svelte.path().to_string_lossy().to_string(), "symbol": "greet" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("function greet"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_symbol_does_not_register_a_whole_file_view() {
+		let src = "fn main() {\n\tprintln!(\"body\");\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let cache = std::sync::Arc::new(crate::mcp::fs::delta::ViewCache::default());
+		let symbol_call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "main" }));
+		let symbol = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), execute_view(&symbol_call))
+			.await
+			.unwrap();
+		assert!(symbol.contains("fn main()"));
+		// A whole-file view after the symbol search must still return the full
+		// content: had the symbol search registered as a view, this would return
+		// only changed hunks (nothing) instead of the body the search elided.
+		let full_call = McpToolCall::test_call("view", json!({ "path": path }));
+		let full = crate::mcp::request_ctx::with_request_context(Some(cache), execute_view(&full_call))
+			.await
+			.unwrap();
+		assert!(full.contains("println!(\"body\");"), "full view: {full}");
+	}
+
+	#[tokio::test]
+	async fn view_content_search_renders_breadcrumbs_and_compact_modes_do_not() {
+		let src = "fn outer() {\n\tlet x = 1;\n}\n\nfn other() {\n\tlet y = 2;\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call("view", json!({ "path": path, "content": "let" }));
+		let result = execute_view(&call).await.unwrap();
+		let expected = format!(
+			"[fn outer]\n{}|\tlet x = 1;\n[fn other]\n{}|\tlet y = 2;",
+			lid(src, 2),
+			lid(src, 6)
+		);
+		assert_eq!(result, expected);
+
+		let count = McpToolCall::test_call("view", json!({ "path": path, "content": "let", "flags": "c" }));
+		let result = execute_view(&count).await.unwrap();
+		assert_eq!(result, format!("{path}\t2"));
+
+		// No grammar: exactly the pre-breadcrumb rendering.
+		let txt = create_test_file("fn outer() {\n\tlet x = 1;\n}\n").await;
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": txt.path().to_string_lossy(), "content": "let" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert_eq!(
+			result,
+			format!("{}|\tlet x = 1;", lid("fn outer() {\n\tlet x = 1;\n}\n", 2))
+		);
+	}
+
+	#[tokio::test]
+	async fn view_large_file_hint_on_whole_views_of_supported_files() {
+		// 401 lines of Rust: the hint fires on whole views only.
+		let big: String = "fn line() {}\n".repeat(401);
+		let file = create_test_rs_file(&big).await;
+		let path = file.path().to_string_lossy().to_string();
+		let cache = std::sync::Arc::new(crate::mcp::fs::delta::ViewCache::default());
+		let call = McpToolCall::test_call("view", json!({ "path": path }));
+		let (result, hints) = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), async {
+			let result = execute_view(&call).await.unwrap();
+			(result, crate::mcp::request_ctx::drain_hints())
+		})
+		.await;
+		assert!(result.contains("fn line()"));
+		assert_eq!(
+			hints,
+			vec![
+				"Large file: try flags: \"s\" for an outline, or `symbol: \"name\"` to jump to a definition."
+					.to_string()
+			]
+		);
+
+		// A ranged view of the same file: no hint.
+		let call = McpToolCall::test_call("view", json!({ "path": path, "start": 1, "end": 2 }));
+		let (_, hints) = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), async {
+			let result = execute_view(&call).await.unwrap();
+			(result, crate::mcp::request_ctx::drain_hints())
+		})
+		.await;
+		assert!(hints.is_empty(), "ranged view hinted: {hints:?}");
+
+		// A delta response (second whole view, unchanged): no hint.
+		let call = McpToolCall::test_call("view", json!({ "path": path }));
+		let (_, hints) = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), async {
+			let result = execute_view(&call).await.unwrap();
+			(result, crate::mcp::request_ctx::drain_hints())
+		})
+		.await;
+		assert!(hints.is_empty(), "delta view hinted: {hints:?}");
+
+		// A large file without a grammar: no hint.
+		let txt = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+		fs::write(txt.path(), &big).await.unwrap();
+		let call = McpToolCall::test_call("view", json!({ "path": txt.path().to_string_lossy() }));
+		let (_, hints) = crate::mcp::request_ctx::with_request_context(Some(cache), async {
+			let result = execute_view(&call).await.unwrap();
+			(result, crate::mcp::request_ctx::drain_hints())
+		})
+		.await;
+		assert!(hints.is_empty(), "unsupported file hinted: {hints:?}");
+	}
+
+	#[test]
+	fn remote_view_symbol_definitions_and_references() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/symbols.rs");
+			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+			crate::mcp::fs::remote::io_write(
+			&source,
+			b"impl Store {\n\tpub fn flush(&mut self) {\n\t\tOk(())\n\t}\n\tfn drain(&mut self) {\n\t\tself.flush();\n\t}\n}\n",
+		)
+		.await
+		.unwrap();
+
+			let call = McpToolCall::test_call("view", json!({ "path": file_path, "symbol": "flush" }));
+			let result = execute_view(&call).await.unwrap();
+			assert!(result.contains("[impl Store]"), "got: {result}");
+			assert!(result.contains("pub fn flush"), "got: {result}");
+
+			let call = McpToolCall::test_call("view", json!({ "path": file_path, "symbol": "flush", "flags": "r" }));
+			let result = execute_view(&call).await.unwrap();
+			assert!(result.contains("[def]"), "got: {result}");
+			assert!(result.contains("self.flush();"), "got: {result}");
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
 }

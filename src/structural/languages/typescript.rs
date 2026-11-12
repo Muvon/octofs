@@ -31,7 +31,8 @@ impl Language for TypeScript {
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		// Mirrors JavaScript plus the TypeScript-only declaration forms;
-		// import/export statements are dropped.
+		// import/export statements are dropped. internal_module/module are the
+		// namespace/module containers, so their members are attributable.
 		vec![
 			"function_declaration",
 			"method_definition",
@@ -40,6 +41,8 @@ impl Language for TypeScript {
 			"interface_declaration",
 			"type_alias_declaration",
 			"enum_declaration",
+			"internal_module",
+			"module",
 		]
 	}
 

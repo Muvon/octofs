@@ -20,9 +20,9 @@
 
 use tree_sitter::Parser;
 
-/// One `<script>` block: (language, script text, 0-based row the text starts
-/// at).
-pub(crate) fn script_sources(contents: &str) -> Vec<(&'static str, String, usize)> {
+/// One `<script>` block: (language, script text, 0-based row and column the
+/// text starts at).
+pub(crate) fn script_sources(contents: &str) -> Vec<(&'static str, String, usize, usize)> {
 	let mut parser = Parser::new();
 	if parser.set_language(&tree_sitter_svelte_ng::LANGUAGE.into()).is_err() {
 		return Vec::new();
@@ -47,7 +47,8 @@ pub(crate) fn script_sources(contents: &str) -> Vec<(&'static str, String, usize
 			for child in node.children(&mut node.walk()) {
 				if child.kind() == "raw_text" {
 					if let Ok(source) = child.utf8_text(contents.as_bytes()) {
-						sources.push((language, source.to_string(), child.start_position().row));
+						let start = child.start_position();
+						sources.push((language, source.to_string(), start.row, start.column));
 					}
 				}
 			}

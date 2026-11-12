@@ -107,3 +107,18 @@ fn items_past_the_files_end_render_what_exists() {
 	let out = render_file_outline("a.rs", "fn x() {}\n", &items, usize::MAX);
 	assert!(out.starts_with("a.rs\t1"), "got: {out}");
 }
+
+#[test]
+fn single_file_truncation_notice_names_symbol_and_ranged_view() {
+	let mut src = String::new();
+	for i in 0..40 {
+		src.push_str(&format!("fn f{i}() {{\n\t{i}\n}}\n"));
+	}
+	let out = render(&src, "a.rs", 600);
+	let last = out.lines().last().unwrap();
+	assert!(last.starts_with("[outline truncated: "), "got: {last}");
+	assert!(
+		last.ends_with("items omitted — narrow with `symbol` or a ranged view]"),
+		"got: {last}"
+	);
+}

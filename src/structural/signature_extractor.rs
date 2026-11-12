@@ -28,53 +28,47 @@ pub(super) fn extract_signatures(node: Node, contents: &str, lang: &dyn Language
 	// Sliced once: every item's signature span is resolved against it.
 	let lines: Vec<&str> = contents.lines().collect();
 
-	visit_node(node, contents, lang, &kinds, style, &lines, &mut items);
-
-	items.sort_by_key(|item| item.start_line);
-	items
-}
-
-fn visit_node(
-	node: Node,
-	contents: &str,
-	lang: &dyn Language,
-	kinds: &[&str],
-	style: BodyOpen,
-	lines: &[&str],
-	items: &mut Vec<OutlineItem>,
-) {
-	let node_kind = node.kind();
-
-	if kinds.contains(&node_kind) && lang.is_signature_node(node, contents) {
-		let start_row = node.start_position().row;
-		let end_row = node.end_position().row;
-
-		if let Some(name) = extract_name(node, contents, lang) {
-			let kind = lang
-				.extract_declaration_kind(node, contents)
-				.map(str::to_string)
-				.unwrap_or_else(|| map_node_kind_to_simple(node_kind));
-			let sig_lines = signature_line_span(lines, start_row, end_row, style);
-			items.push(OutlineItem {
-				kind,
-				name,
-				start_line: start_row + 1,
-				sig_lines,
-			});
-		}
-	}
-
-	// Recursively process children: a container item (class, module) and its
-	// nested items both appear, nesting conveyed by indentation.
+	// Iterative pre-order walk: a pathologically deep parse (10k nested
+	// blocks) is valid input for tree-sitter, and a recursive visitor would
+	// overflow the stack one level per nesting.
 	let mut cursor = node.walk();
-	if cursor.goto_first_child() {
+	'walk: loop {
+		let node = cursor.node();
+		let node_kind = node.kind();
+		if kinds.contains(&node_kind) && lang.is_signature_node(node, contents) {
+			let start_row = node.start_position().row;
+			let end_row = node.end_position().row;
+			if let Some(name) = extract_name(node, contents, lang) {
+				let kind = lang
+					.extract_declaration_kind(node, contents)
+					.map(str::to_string)
+					.unwrap_or_else(|| map_node_kind_to_simple(node_kind));
+				let sig_lines = signature_line_span(&lines, start_row, end_row, style);
+				items.push(OutlineItem {
+					kind,
+					name,
+					start_line: start_row + 1,
+					sig_lines,
+				});
+			}
+		}
+		// Children before the next sibling: a container item (class, module)
+		// and its nested items both appear, nesting conveyed by indentation.
+		if cursor.goto_first_child() {
+			continue 'walk;
+		}
 		loop {
-			visit_node(cursor.node(), contents, lang, kinds, style, lines, items);
-			if !cursor.goto_next_sibling() {
-				break;
+			if cursor.goto_next_sibling() {
+				continue 'walk;
+			}
+			if !cursor.goto_parent() {
+				break 'walk;
 			}
 		}
 	}
+
+	items.sort_by_key(|item| item.start_line);
+	items
 }
 
 /// Extract the name of a declaration node (function, class, etc.).
@@ -85,6 +79,10 @@ fn extract_name(node: Node, contents: &str, lang: &dyn Language) -> Option<Strin
 
 	// Look for identifier nodes among the direct children.
 	for child in node.children(&mut node.walk()) {
+		// Anonymous tokens (keywords) are never declaration names.
+		if !child.is_named() {
+			continue;
+		}
 		if child.kind() == "identifier" || child.kind().contains("name") || child.kind().contains("function_name") {
 			if let Ok(name) = child.utf8_text(contents.as_bytes()) {
 				if !name.is_empty() {
@@ -140,6 +138,9 @@ fn map_node_kind_to_simple(kind: &str) -> String {
 		k if k.contains("enum") => "enum".to_string(),
 		k if k.contains("interface") => "interface".to_string(),
 		k if k.contains("trait") => "trait".to_string(),
+		k if k.contains("impl") => "impl".to_string(),
+		// Before the mod/module arm: "internal_module" contains "module".
+		k if k.contains("internal_module") => "namespace".to_string(),
 		k if k.contains("mod") || k.contains("module") => "module".to_string(),
 		k if k.contains("namespace") => "namespace".to_string(),
 		k if k.contains("const") => "constant".to_string(),

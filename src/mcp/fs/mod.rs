@@ -24,6 +24,7 @@ pub mod remote;
 pub mod search;
 pub mod shell;
 pub mod structure;
+pub mod symbols;
 pub mod text_editing;
 pub mod workdir;
 

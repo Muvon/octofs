@@ -19,6 +19,7 @@
 
 mod languages;
 mod signature_extractor;
+pub mod symbols;
 
 use tree_sitter::Parser;
 
@@ -109,7 +110,7 @@ fn parse_outline(language: &str, contents: &str) -> Result<Vec<OutlineItem>, Str
 /// item lines are offset back to the file's coordinates.
 fn svelte_outline(contents: &str) -> Vec<OutlineItem> {
 	let mut items = Vec::new();
-	for (language, script, start_row) in languages::svelte::script_sources(contents) {
+	for (language, script, start_row, _) in languages::svelte::script_sources(contents) {
 		if let Ok(script_items) = parse_outline(language, &script) {
 			items.extend(script_items.into_iter().map(|mut item| {
 				// The script text is a contiguous slice of the file, so its
@@ -123,7 +124,7 @@ fn svelte_outline(contents: &str) -> Vec<OutlineItem> {
 	items
 }
 
-fn path_extension(path_label: &str) -> String {
+pub(crate) fn path_extension(path_label: &str) -> String {
 	// Only the last component matters, so URLs (ssh://host/x.rs) resolve the
 	// same as plain paths.
 	path_label
@@ -135,7 +136,7 @@ fn path_extension(path_label: &str) -> String {
 		.unwrap_or_default()
 }
 
-fn language_for_extension(extension: &str) -> Option<&'static str> {
+pub(crate) fn language_for_extension(extension: &str) -> Option<&'static str> {
 	Some(match extension {
 		"rs" => "rust",
 		"py" => "python",
@@ -158,7 +159,7 @@ fn language_for_extension(extension: &str) -> Option<&'static str> {
 	})
 }
 
-fn unsupported_message(extension: &str) -> String {
+pub(crate) fn unsupported_message(extension: &str) -> String {
 	if extension.is_empty() {
 		format!("No grammar: the path has no file extension. Supported languages: {SUPPORTED_LANGUAGES}.")
 	} else {

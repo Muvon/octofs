@@ -16,6 +16,7 @@
 
 use super::remote::{io_create_dir_all, io_exists, io_is_file, io_metadata, io_read_capped, io_write, PathSource};
 use super::search::{self, SearchOutput, ViewFlags};
+use crate::structural;
 use crate::utils::truncation::format_content_with_line_numbers;
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -23,6 +24,10 @@ use std::path::Path;
 
 /// Refuse to load files larger than this into memory for viewing.
 pub(crate) const MAX_VIEW_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Whole-file views of grammar files longer than this get a hint pointing at
+/// the outline and symbol navigation instead.
+const LARGE_FILE_HINT_LINES: usize = 400;
 
 /// An image file served by `view` as an MCP image block instead of text.
 #[derive(Debug)]
@@ -125,6 +130,15 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 	// Whole-file views go through the session delta cache; ranged views render
 	// exactly what was asked and leave the cache alone.
 	let Some(range) = line_range else {
+		// A delta or unchanged response is already compact — the outline hint
+		// only pays off when the full content is about to be served.
+		let served_full = full || !super::delta::has_previous_view(source);
+		if served_full && content.lines().count() > LARGE_FILE_HINT_LINES && structural::is_supported(&source.display())
+		{
+			crate::mcp::request_ctx::push_hint(
+				"Large file: try flags: \"s\" for an outline, or `symbol: \"name\"` to jump to a definition.",
+			);
+		}
 		return Ok(super::delta::render_whole_file(source, &content, full));
 	};
 	let lines: Vec<&str> = content.lines().collect();
@@ -179,7 +193,16 @@ pub async fn view_file_with_content_search(
 	}
 
 	let matcher = search::Matcher::new(pattern, regex)?;
-	let Some(body) = search::render_file_matches(&content, &matcher, context_lines, flags) else {
+	// Rendering now parses the file for breadcrumbs — CPU-bound, so it runs
+	// off the reactor; the content moves into the closure and back as hits.
+	let render_label = label.to_string();
+	let render_content = content;
+	let body = tokio::task::spawn_blocking(move || {
+		search::render_file_matches_with_breadcrumbs(&render_label, &render_content, &matcher, context_lines, flags)
+	})
+	.await
+	.map_err(|e| anyhow!("Failed to search file: {e}"))?;
+	let Some(body) = body else {
 		return Ok(match flags.output {
 			SearchOutput::Count => flags.output.label(label, "0"),
 			SearchOutput::FilesOnly => format!("No matches for pattern \"{pattern}\" in {label}."),

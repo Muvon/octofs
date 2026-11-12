@@ -47,6 +47,19 @@ impl Language for Cpp {
 			let declarator = node.child_by_field_name("declarator")?;
 			let text = declarator.utf8_text(contents.as_bytes()).ok()?;
 			let callable = text.split('(').next().unwrap_or(text);
+			let name_part = callable.rsplit("::").next().unwrap_or(callable).trim();
+			// Destructors keep their `~` and operators keep their operator
+			// token: the generic call-target trim would reduce `~Foo` to `Foo`
+			// (colliding with the constructor) and `operator+` to `operator`
+			// (colliding with every other operator).
+			if name_part.starts_with('~') {
+				return Some(name_part.to_string());
+			}
+			if let Some(rest) = name_part.strip_prefix("operator") {
+				if !rest.is_empty() && !rest.starts_with(|character: char| character.is_alphanumeric()) {
+					return Some(name_part.to_string());
+				}
+			}
 			return extract_call_target(callable);
 		}
 		// Bodyless specifiers are type REFERENCES (`struct stat st;`) or forward

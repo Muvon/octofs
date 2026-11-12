@@ -625,6 +625,8 @@ impl OctofsServer {
 			`flags: \"s\"` returns a structural outline instead: the signature/declaration lines \
 			of a file, or of every supported file under a directory, with bodies elided — far \
 			fewer tokens than full content. \
+			`symbol: \"name\"` finds definitions (references with `r`) by name, and content-search \
+			groups carry their enclosing symbol. \
 			An image file (png, jpg, gif, webp by extension) comes back as the image itself; \
 			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
@@ -1259,6 +1261,10 @@ pub struct ViewParams {
 	/// Treat `content` as a regex. Default: false.
 	#[serde(default)]
 	pub regex: Option<bool>,
+	/// Symbol name to navigate by: its definitions in a file or directory
+	/// (`*` wildcards allowed), or its references with flags: "r".
+	#[serde(default)]
+	pub symbol: Option<String>,
 	/// Directory depth bound. Default: unlimited, except a bare remote listing (no
 	/// `pattern`/`content`) stops at the root entries. Searches walk the whole tree unless set.
 	#[serde(default)]
@@ -1275,6 +1281,7 @@ pub struct ViewParams {
 	/// time (UTC) to each listed file, or returns them for `path` itself when it is a file.
 	/// `s` (alone, no `content`/`start`/`end`): a structural outline — the signature lines of
 	/// the file, or of every supported file under a directory, with bodies elided.
+	/// With `symbol`: `r` references instead of definitions; `c`/`l` per-file counts/paths.
 	#[serde(default)]
 	pub flags: Option<String>,
 	/// Force the complete file when re-viewing a whole file (which may return only changed hunks),

@@ -163,3 +163,40 @@ fn nameless_declarations_are_skipped() {
 	let src = "call(() => {});\n";
 	assert!(outline("a.js", src).unwrap().is_empty());
 }
+
+#[test]
+fn rust_outline_includes_impl_headers() {
+	// The impl header is an item: without it, methods of different impls are
+	// indistinguishable in an outline.
+	let src =
+		"impl Store {\n\tfn flush(&mut self) {\n\t}\n}\n\nimpl Flush for Store {\n\tfn flush(&mut self) {\n\t}\n}\n";
+	let items = outline("a.rs", src).unwrap();
+	let summary: Vec<(&str, &str)> = items.iter().map(|i| (i.kind.as_str(), i.name.as_str())).collect();
+	assert_eq!(
+		summary,
+		vec![
+			("impl", "Store"),
+			("function", "flush"),
+			("impl", "Flush for Store"),
+			("function", "flush"),
+		]
+	);
+}
+
+#[test]
+fn typescript_outline_includes_namespace_containers() {
+	let src = "namespace Util {\n\texport function load(): void {\n\t}\n}\n";
+	let items = outline("a.ts", src).unwrap();
+	let summary: Vec<(&str, &str)> = items.iter().map(|i| (i.kind.as_str(), i.name.as_str())).collect();
+	assert_eq!(summary, vec![("namespace", "Util"), ("function", "load")]);
+}
+
+#[test]
+fn swift_extensions_are_outline_containers() {
+	// class_declaration covers extensions in the Swift grammar; the outline
+	// must show the container so its methods are attributable.
+	let src = "extension Foo {\n\tfunc bar() {}\n}\n";
+	let items = outline("a.swift", src).unwrap();
+	let summary: Vec<(&str, &str)> = items.iter().map(|i| (i.kind.as_str(), i.name.as_str())).collect();
+	assert_eq!(summary, vec![("class", "Foo"), ("function", "bar")]);
+}

@@ -69,43 +69,42 @@ impl Language for Css {
 /// The first selector text of a `selectors` node: the first class, id, tag or
 /// universal selector, descending through pseudo selectors (`.card:hover`
 /// yields `:hover` first, as pseudo names are pushed before the decorated
-/// selector).
+/// selector). Iterative: a pathological parse can nest selectors arbitrarily
+/// deep, and the walk must not recurse.
 fn first_selector(node: Node, contents: &str) -> Option<String> {
-	let mut cursor = node.walk();
-	if !cursor.goto_first_child() {
-		return None;
-	}
-	loop {
-		let child = cursor.node();
-		match child.kind() {
+	let mut stack = vec![node];
+	while let Some(current) = stack.pop() {
+		match current.kind() {
 			"class_selector" | "id_selector" | "tag_name" | "universal_selector" => {
-				if let Ok(text) = child.utf8_text(contents.as_bytes()) {
+				if let Ok(text) = current.utf8_text(contents.as_bytes()) {
 					let selector = text.trim();
 					if !selector.is_empty() {
 						return Some(selector.to_string());
 					}
 				}
+				// Empty selector text: skip, like the sibling walk did.
+				continue;
 			}
 			"pseudo_class_selector" | "pseudo_element_selector" => {
-				for pseudo_child in child.children(&mut child.walk()) {
+				// Pseudo names are pushed before the decorated selector.
+				for pseudo_child in current.children(&mut current.walk()) {
 					if matches!(pseudo_child.kind(), "class_name" | "identifier") {
 						if let Ok(name) = pseudo_child.utf8_text(contents.as_bytes()) {
 							return Some(format!(":{}", name.trim()));
 						}
 					}
 				}
-				return first_selector(child, contents);
+				// No name child: descend into the decorated selector.
 			}
-			_ => {
-				if let Some(found) = first_selector(child, contents) {
-					return Some(found);
-				}
-			}
+			_ => {}
 		}
-		if !cursor.goto_next_sibling() {
-			return None;
-		}
+		// Children are pushed reversed so the LIFO stack pops them in sibling
+		// order, each subtree fully before the next — matching the recursive
+		// original.
+		let children: Vec<Node> = current.children(&mut current.walk()).collect();
+		stack.extend(children.into_iter().rev());
 	}
+	None
 }
 
 #[cfg(test)]

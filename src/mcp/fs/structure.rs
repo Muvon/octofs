@@ -24,7 +24,7 @@ use super::directory::{
 	read_capped, remote_child,
 };
 use super::file_ops::MAX_VIEW_FILE_BYTES;
-use super::remote::{io_is_dir, io_metadata, io_read, io_read_capped, PathSource};
+use super::remote::{io_is_dir, io_metadata, io_read, io_read_capped, IoMetadata, PathSource};
 use crate::mcp::McpToolCall;
 use crate::structural::{self, OutlineItem};
 use crate::utils::line_hash::line_id;
@@ -34,9 +34,9 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// Bytes kept free at the end of a truncated outline so the truncation notice
+/// Bytes kept free at the end of a truncated result so the truncation notice
 /// itself always fits.
-const TRUNCATION_NOTICE_RESERVE: usize = 256;
+pub(super) const TRUNCATION_NOTICE_RESERVE: usize = 256;
 
 /// Render the outline of a file, or of every supported file under a directory.
 /// Flag exclusivity (`s` alone, no `content`, no `start`/`end`) is validated
@@ -108,17 +108,16 @@ async fn outline_directory(call: &McpToolCall, path: &str, source: &PathSource) 
 	// The walk, read, parse and render are all CPU/IO-bound blocking work —
 	// one spawn_blocking, files in parallel like the tree content search.
 	let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
-		let pattern_matcher = pattern.as_deref().map(build_pattern_matcher).transpose()?;
-		let mut builder = build_walker(&abs_dir_str, max_depth, include_hidden);
-		let mut files = collect_file_paths(&mut builder, &working_dir);
-
-		if let Some(matcher) = pattern_matcher {
-			apply_pattern(&mut files, &matcher);
-			if files.is_empty() {
-				return Ok(format!("No files matched pattern \"{}\".", pattern.unwrap_or_default()));
-			}
-		}
-		files.retain(|file| structural::is_supported(file));
+		let files = match supported_files_under(
+			&abs_dir_str,
+			&working_dir,
+			pattern.as_deref(),
+			max_depth,
+			include_hidden,
+		)? {
+			Some(files) => files,
+			None => return Ok(format!("No files matched pattern \"{}\".", pattern.unwrap_or_default())),
+		};
 
 		let mut blocks: Vec<(usize, String)> = files
 			.par_iter()
@@ -158,24 +157,10 @@ async fn outline_directory_remote(
 	max_depth: Option<usize>,
 	include_hidden: bool,
 ) -> Result<String> {
-	let pattern_matcher = pattern
-		.as_deref()
-		.map(build_pattern_matcher)
-		.transpose()
-		.map_err(|e| anyhow!("{e}"))?;
-
-	let mut files = collect_remote_files(source, max_depth, include_hidden).await?;
-
-	if let Some(matcher) = pattern_matcher {
-		let mut names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
-		apply_pattern(&mut names, &matcher);
-		if names.is_empty() {
-			return Ok(format!("No files matched pattern \"{}\".", pattern.unwrap_or_default()));
-		}
-		let keep: HashSet<String> = names.into_iter().collect();
-		files.retain(|(name, _)| keep.contains(name));
-	}
-	files.retain(|(name, _)| structural::is_supported(name));
+	let files = match supported_remote_files(source, pattern.as_deref(), max_depth, include_hidden).await? {
+		Some(files) => files,
+		None => return Ok(format!("No files matched pattern \"{}\".", pattern.unwrap_or_default())),
+	};
 
 	// Read concurrently like the remote content search (oversized files are
 	// not downloaded); parse and render afterwards, off the reactor.
@@ -215,6 +200,72 @@ async fn outline_directory_remote(
 	Ok(output)
 }
 
+/// Grammar-supported files under a local directory, glob-filtered. `None`
+/// when the glob matched no file at all — callers report that distinctly from
+/// "matched, but nothing supported".
+pub(super) fn supported_files_under(
+	abs_dir_str: &str,
+	working_dir: &Path,
+	pattern: Option<&str>,
+	max_depth: Option<usize>,
+	include_hidden: bool,
+) -> Result<Option<Vec<String>>, String> {
+	let pattern_matcher = pattern.map(build_pattern_matcher).transpose()?;
+	let mut builder = build_walker(abs_dir_str, max_depth, include_hidden);
+	let mut files = collect_file_paths(&mut builder, working_dir);
+	if let Some(matcher) = pattern_matcher {
+		apply_pattern(&mut files, &matcher);
+		if files.is_empty() {
+			return Ok(None);
+		}
+	}
+	files.retain(|file| structural::is_supported(file));
+	Ok(Some(files))
+}
+
+/// Grammar-supported files under a remote directory, glob-filtered. `None`
+/// when the glob matched no file at all.
+pub(super) async fn supported_remote_files(
+	source: &PathSource,
+	pattern: Option<&str>,
+	max_depth: Option<usize>,
+	include_hidden: bool,
+) -> Result<Option<Vec<(String, IoMetadata)>>> {
+	let pattern_matcher = pattern
+		.map(build_pattern_matcher)
+		.transpose()
+		.map_err(|e| anyhow!("{e}"))?;
+	let mut files = collect_remote_files(source, max_depth, include_hidden).await?;
+	if let Some(matcher) = pattern_matcher {
+		let mut names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
+		apply_pattern(&mut names, &matcher);
+		if names.is_empty() {
+			return Ok(None);
+		}
+		let keep: HashSet<String> = names.into_iter().collect();
+		files.retain(|(name, _)| keep.contains(name));
+	}
+	files.retain(|(name, _)| structural::is_supported(name));
+	Ok(Some(files))
+}
+
+/// Join per-file blocks under the result budget, dropping whole files from
+/// the end when they do not fit. Returns the joined output and how many
+/// blocks were dropped; the caller appends its own truncation notice.
+pub(super) fn join_blocks_budgeted(blocks: &[String], budget: usize) -> (String, usize) {
+	let mut used = 0usize;
+	let mut kept: Vec<&String> = Vec::new();
+	for block in blocks {
+		if used + 2 + block.len() > budget.saturating_sub(TRUNCATION_NOTICE_RESERVE) {
+			break;
+		}
+		used += 2 + block.len();
+		kept.push(block);
+	}
+	let omitted = blocks.len() - kept.len();
+	(kept.into_iter().cloned().collect::<Vec<_>>().join("\n\n"), omitted)
+}
+
 /// Render one file's item lines under `budget`, stopping before the
 /// truncation notice reserve. Returns the rendered lines and how many items
 /// were dropped.
@@ -245,10 +296,20 @@ fn render_item_lines(contents: &str, items: &[OutlineItem], budget: usize) -> (S
 	(kept.join("\n"), omitted)
 }
 
-fn truncation_notice(omitted: usize) -> String {
-	format!(
-		"[outline truncated: {omitted} items omitted — read the remainder with a ranged view or a `content` search]"
-	)
+/// The outline truncation notices, built by one helper so the item and file
+/// variants cannot drift apart.
+fn outline_truncation_notice(omitted: usize, unit: &str, remedy: &str) -> String {
+	format!("[outline truncated: {omitted} {unit} omitted — {remedy}]")
+}
+
+/// Notice for items dropped from one file's outline.
+fn items_truncation_notice(omitted: usize) -> String {
+	outline_truncation_notice(omitted, "items", "narrow with `symbol` or a ranged view")
+}
+
+/// Notice for whole files dropped from a directory outline.
+fn files_truncation_notice(omitted: usize) -> String {
+	outline_truncation_notice(omitted, "files", "narrow `path`, `pattern` or `max_depth`")
 }
 
 /// Render one file's outline: a `path\tNL` header (the total line count bounds
@@ -269,7 +330,7 @@ pub(super) fn render_file_outline(path: &str, contents: &str, items: &[OutlineIt
 	}
 	if omitted > 0 {
 		out.push('\n');
-		out.push_str(&truncation_notice(omitted));
+		out.push_str(&items_truncation_notice(omitted));
 	}
 	out
 }
@@ -282,7 +343,7 @@ fn render_file_block(rel_path: &str, contents: &str, items: &[OutlineItem], budg
 	let mut out = format!("{rel_path}:\n{body}");
 	if omitted > 0 {
 		out.push('\n');
-		out.push_str(&truncation_notice(omitted));
+		out.push_str(&items_truncation_notice(omitted));
 	}
 	out
 }
@@ -294,24 +355,13 @@ fn join_file_blocks(path: &str, blocks: Vec<String>, budget: usize) -> String {
 	if blocks.is_empty() {
 		return format!("No supported files with declarations found under {path}.");
 	}
-	let mut used = 0usize;
-	let mut kept: Vec<&String> = Vec::new();
-	for block in &blocks {
-		if used + 2 + block.len() > budget.saturating_sub(TRUNCATION_NOTICE_RESERVE) {
-			break;
-		}
-		used += 2 + block.len();
-		kept.push(block);
+	let (mut out, omitted) = join_blocks_budgeted(&blocks, budget);
+	if out.is_empty() {
+		return files_truncation_notice(omitted);
 	}
-	let omitted = blocks.len() - kept.len();
-	if kept.is_empty() {
-		return format!("[outline truncated: {omitted} files omitted — narrow `path`, `pattern` or `max_depth`]");
-	}
-	let mut out = kept.into_iter().cloned().collect::<Vec<_>>().join("\n\n");
 	if omitted > 0 {
-		out.push_str(&format!(
-			"\n\n[outline truncated: {omitted} files omitted — narrow `path`, `pattern` or `max_depth`]"
-		));
+		out.push_str("\n\n");
+		out.push_str(&files_truncation_notice(omitted));
 	}
 	out
 }

@@ -41,3 +41,13 @@ fn bodyless_type_references_are_not_items() {
 	let src = "struct stat st;\n";
 	assert!(outline("a.cpp", src).unwrap().is_empty());
 }
+
+#[test]
+fn operator_and_destructor_definitions_keep_their_names() {
+	let src = "Foo::~Foo() {\n}\n\nFoo Foo::operator+(const Foo& other) {\n\treturn *this;\n}\n";
+	let items = outline("a.cpp", src).unwrap();
+	let summary: Vec<(&str, &str)> = items.iter().map(|i| (i.kind.as_str(), i.name.as_str())).collect();
+	// The generic call-target trim would reduce these to `Foo` and
+	// `operator`, colliding with the constructor and every other operator.
+	assert_eq!(summary, vec![("function", "~Foo"), ("function", "operator+")]);
+}

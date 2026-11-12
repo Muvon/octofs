@@ -106,6 +106,12 @@ pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
 /// is how "type_identifier" and "property_identifier" hit "identifier".
 pub(crate) fn extract_symbol_by_kinds(node: Node, contents: &str, target_kinds: &[&str]) -> Option<String> {
 	for child in node.children(&mut node.walk()) {
+		// Anonymous tokens (keywords such as TS's `namespace`) are never
+		// declaration names, and their kinds can contain a target kind
+		// ("namespace" contains "name").
+		if !child.is_named() {
+			continue;
+		}
 		if target_kinds.contains(&child.kind()) || target_kinds.iter().any(|k| child.kind().contains(k)) {
 			if let Ok(text) = child.utf8_text(contents.as_bytes()) {
 				return Some(text.to_string());

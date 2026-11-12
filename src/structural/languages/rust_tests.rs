@@ -35,12 +35,11 @@ fn functions_structs_enums_traits_and_consts_are_items() {
 }
 
 #[test]
-fn impl_methods_appear_indented_without_the_impl_header() {
+fn impl_headers_and_methods_are_items() {
 	let src = "impl Point {\n\tfn norm(&self) -> f64 {\n\t\t0.0\n\t}\n}\n";
 	let items = outline("a.rs", src).unwrap();
-	// impl_item is deliberately not an item; its methods are, and the
-	// renderer conveys the nesting through the original indentation.
-	assert_eq!(items.len(), 1);
-	assert_eq!(items[0].name, "norm");
-	assert_eq!(items[0].start_line, 2);
+	let summary: Vec<(&str, &str)> = items.iter().map(|i| (i.kind.as_str(), i.name.as_str())).collect();
+	// The impl header is an item too: methods of different impls are
+	// otherwise indistinguishable in an outline.
+	assert_eq!(summary, vec![("impl", "Point"), ("function", "norm")]);
 }

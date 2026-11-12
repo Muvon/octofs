@@ -68,13 +68,17 @@ pub struct ViewFlags {
 	pub invert: bool,
 	/// Structural outline (`s`): signature/declaration lines with bodies elided.
 	pub structure: bool,
+	/// Symbol references instead of definitions (`r`, requires `symbol`).
+	pub references: bool,
 }
 
 impl ViewFlags {
 	/// Parse the letters. `l` means files-only for a search and a long row for a listing,
 	/// as it does for `grep` and `ls`. A leading `-` is accepted because callers type it.
 	/// `s` is exclusive: it cannot be combined with the other letters or with `content`.
-	pub fn parse(flags: Option<&str>, has_content: bool) -> Result<Self> {
+	/// `r` needs `symbol`; with `symbol`, `c`/`l` keep their search meanings and `o`/`v`/`s`
+	/// are rejected.
+	pub fn parse(flags: Option<&str>, has_content: bool, has_symbol: bool) -> Result<Self> {
 		let mut parsed = ViewFlags::default();
 		for flag in flags.unwrap_or_default().chars() {
 			let output = match flag {
@@ -87,14 +91,21 @@ impl ViewFlags {
 					parsed.structure = true;
 					continue;
 				}
-				'l' if !has_content => {
+				'r' => {
+					if !has_symbol {
+						bail!("View flag r requires `symbol`: it switches a symbol search to references — add `symbol` or drop `r`.");
+					}
+					parsed.references = true;
+					continue;
+				}
+				'l' if !has_content && !has_symbol => {
 					parsed.long = true;
 					continue;
 				}
 				'l' => SearchOutput::FilesOnly,
 				'c' => SearchOutput::Count,
 				'o' => SearchOutput::OnlyMatching,
-				other => bail!("Unknown view flag {other:?}: the flags are l, c, o, s and v."),
+				other => bail!("Unknown view flag {other:?}: the flags are l, c, o, r, s and v."),
 			};
 			if parsed.output != SearchOutput::Lines && parsed.output != output {
 				bail!("View flags l, c and o are alternatives: pass one of them.");
@@ -107,8 +118,14 @@ impl ViewFlags {
 		if parsed.structure && has_content {
 			bail!("View flag s cannot be combined with `content`: drop `content` to get the outline.");
 		}
-		if !has_content && (parsed.invert || parsed.output != SearchOutput::Lines) {
+		if parsed.structure && has_symbol {
+			bail!("View flag s cannot be combined with `symbol`: drop one of them — `s` is an outline, `symbol` is a lookup.");
+		}
+		if !has_content && !has_symbol && (parsed.invert || parsed.output != SearchOutput::Lines) {
 			bail!("View flags c, o and v apply to a `content` search; without `content` only l (size and modification time) applies.");
+		}
+		if has_symbol && (parsed.invert || parsed.output == SearchOutput::OnlyMatching) {
+			bail!("View flags o and v cannot be combined with `symbol`: a symbol search returns whole lines — drop the other letter.");
 		}
 		if parsed.invert && parsed.output == SearchOutput::OnlyMatching {
 			bail!("View flags o and v cannot be combined: a non-matching line has no matched text.");
@@ -287,6 +304,55 @@ pub fn render_file_matches(content: &str, matcher: &Matcher, context_lines: usiz
 			(!rendered.is_empty()).then(|| rendered.join("\n"))
 		}
 	}
+}
+
+/// [`render_file_matches`] with enclosing-symbol breadcrumbs: in plain Lines
+/// mode (no `c`/`l`/`o`/`v`) on a file with a grammar, each match group is
+/// preceded by its enclosing symbol (e.g. `[impl Store › fn flush]`) once per
+/// symbol change. Every other shape — compact modes, inverted searches,
+/// grammar-less files — renders exactly as the plain search does.
+/// `path_label` only picks the language.
+pub fn render_file_matches_with_breadcrumbs(
+	path_label: &str,
+	content: &str,
+	matcher: &Matcher,
+	context_lines: usize,
+	flags: ViewFlags,
+) -> Option<String> {
+	if flags.output != SearchOutput::Lines || flags.invert || !crate::structural::is_supported(path_label) {
+		return render_file_matches(content, matcher, context_lines, flags);
+	}
+	let blocks = search_lines(content, matcher, context_lines, false);
+	if blocks.is_empty() {
+		return None;
+	}
+	let lines: Vec<&str> = content.lines().collect();
+	// Breadcrumbs are decoration: a file that cannot be parsed renders without
+	// them rather than failing the search.
+	let breadcrumbs = crate::structural::symbols::line_breadcrumbs(path_label, content);
+	let mut rendered: Vec<String> = Vec::new();
+	let mut last_group: Option<&str> = None;
+	for block in &blocks {
+		if let Some(per_line) = &breadcrumbs {
+			// The group's symbol is that of its first matching line, not of a
+			// context line the block pulled in.
+			let group = block
+				.line_numbers
+				.iter()
+				.find(|&&n| matcher.is_match(lines[n - 1]))
+				.and_then(|&n| per_line.get(n - 1).and_then(|b| b.as_deref()));
+			if let Some(breadcrumb) = group {
+				if last_group != Some(breadcrumb) {
+					rendered.push(format!("[{breadcrumb}]"));
+				}
+			}
+			last_group = group;
+		}
+		for &n in &block.line_numbers {
+			rendered.push(format!("{}|{}", line_id_at(&lines, n), lines[n - 1]));
+		}
+	}
+	Some(rendered.join("\n"))
 }
 
 #[cfg(test)]

@@ -566,7 +566,7 @@ fn render_content_matches(
 	// and BOM-prefixed UTF-8 files without panicking. Invalid byte
 	// sequences become U+FFFD; line structure is preserved.
 	let file_content = String::from_utf8_lossy(bytes);
-	let body = search::render_file_matches(&file_content, matcher, context_lines, flags)?;
+	let body = search::render_file_matches_with_breadcrumbs(rel_path, &file_content, matcher, context_lines, flags)?;
 	Some(flags.output.label(rel_path, &body))
 }
 
@@ -734,7 +734,11 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.unwrap_or(false);
 	let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
-	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), has_content)?;
+	let flags = ViewFlags::parse(
+		call.parameters.get("flags").and_then(|v| v.as_str()),
+		has_content,
+		false,
+	)?;
 	// Compile the matcher up front so an invalid regex fails before any tree is walked.
 	let content_matcher = match content {
 		Some(content_pattern) if has_content => {

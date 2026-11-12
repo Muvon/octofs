@@ -135,23 +135,40 @@ fn first_argument(node: Node) -> Option<Node> {
 }
 
 fn definition_head_name(node: Node, contents: &str) -> Option<String> {
-	match node.kind() {
-		"identifier" | "operator_identifier" => node_text(node, contents),
-		"call" => node
-			.child_by_field_name("target")
-			.and_then(|target| node_text(target, contents))
-			.and_then(|target| extract_call_target(&target)),
-		"binary_operator" => node
-			.child_by_field_name("left")
-			.and_then(|left| definition_head_name(left, contents)),
-		_ => {
-			let mut cursor = node.walk();
-			let found = node
-				.children(&mut cursor)
-				.find_map(|child| definition_head_name(child, contents));
-			found
+	// Iterative: a `def` head can nest arbitrarily deep (operator chains,
+	// nested calls), and the walk must not recurse.
+	let mut stack = vec![node];
+	while let Some(current) = stack.pop() {
+		match current.kind() {
+			"identifier" | "operator_identifier" => return node_text(current, contents),
+			"call" => {
+				// A call whose target is not a plain name has no head name —
+				// the recursive original returned None without scanning.
+				if let Some(name) = current
+					.child_by_field_name("target")
+					.and_then(|target| node_text(target, contents))
+					.and_then(|target| extract_call_target(&target))
+				{
+					return Some(name);
+				}
+			}
+			"binary_operator" => {
+				// Only the left side names a `def` head (`a when b` → a).
+				if let Some(left) = current.child_by_field_name("left") {
+					stack.push(left);
+				}
+				continue;
+			}
+			_ => {
+				// Children are pushed reversed so the LIFO stack pops them in
+				// sibling order, each subtree fully before the next — matching
+				// the recursive original.
+				let children: Vec<Node> = current.children(&mut current.walk()).collect();
+				stack.extend(children.into_iter().rev());
+			}
 		}
 	}
+	None
 }
 
 fn normalize_module_name(name: String) -> String {
@@ -186,22 +203,24 @@ fn implementation_type(node: Node, contents: &str) -> Option<String> {
 }
 
 fn find_for_option(node: Node, contents: &str) -> Option<String> {
-	if node.kind() == "pair" {
-		let key = node
-			.child_by_field_name("key")
-			.and_then(|child| node_text(child, contents));
-		if key.as_deref().is_some_and(|key| key.trim_end_matches(':') == "for") {
-			return node
-				.child_by_field_name("value")
-				.and_then(|child| node_text(child, contents))
-				.map(normalize_module_name);
+	// Iterative: `for:` can sit arbitrarily deep in nested arguments.
+	let mut stack = vec![node];
+	while let Some(current) = stack.pop() {
+		if current.kind() == "pair" {
+			let key = current
+				.child_by_field_name("key")
+				.and_then(|child| node_text(child, contents));
+			if key.as_deref().is_some_and(|key| key.trim_end_matches(':') == "for") {
+				return current
+					.child_by_field_name("value")
+					.and_then(|child| node_text(child, contents))
+					.map(normalize_module_name);
+			}
 		}
+		let children: Vec<Node> = current.children(&mut current.walk()).collect();
+		stack.extend(children.into_iter().rev());
 	}
-	let mut cursor = node.walk();
-	let found = node
-		.children(&mut cursor)
-		.find_map(|child| find_for_option(child, contents));
-	found
+	None
 }
 
 /// The enclosing `defmodule`/`defprotocol`/`defimpl` of a node, by name.

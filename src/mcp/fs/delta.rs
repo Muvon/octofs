@@ -112,6 +112,14 @@ pub fn forget(source: &PathSource) {
 	with_view_cache(|cache| cache.forget(&key));
 }
 
+/// Whether a whole-file view of `source` would be served as a delta or an
+/// unchanged marker — callers use it to tell a full-content response from a
+/// compact one without touching the cache themselves.
+pub fn has_previous_view(source: &PathSource) -> bool {
+	let key = lock_key_for_source(source);
+	with_view_cache(|cache| cache.get(&key)).flatten().is_some()
+}
+
 /// Render a whole-file view: the full file the first time (or when `full`),
 /// afterwards only the hunks changed since the model last saw it.
 pub fn render_whole_file(source: &PathSource, content: &str, full: bool) -> String {

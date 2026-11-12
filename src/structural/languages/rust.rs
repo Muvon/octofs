@@ -14,7 +14,8 @@
 
 //! Rust grammar: items, types, traits, modules, constants and macros.
 
-use super::Language;
+use super::{extract_symbol_by_kinds, simple_type_name, Language};
+use tree_sitter::Node;
 
 pub(crate) struct Rust {}
 
@@ -28,18 +29,38 @@ impl Language for Rust {
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
-		// `impl_item` is deliberately absent: methods inside it are captured
-		// individually as `function_item`, and the impl header itself is
-		// implied by the methods' indentation.
+		// impl_item is included: the impl header line is an item, so methods of
+		// different impls are distinguishable in an outline.
 		vec![
 			"function_item",
 			"struct_item",
 			"enum_item",
 			"trait_item",
+			"impl_item",
 			"mod_item",
 			"const_item",
 			"macro_definition",
 		]
+	}
+
+	fn extract_declaration_name(&self, node: Node, contents: &str) -> Option<String> {
+		if node.kind() == "impl_item" {
+			// `impl Trait for Type` names both sides; the type alone would
+			// collide with the inherent impl of the same type.
+			let type_name = node
+				.child_by_field_name("type")
+				.and_then(|child| child.utf8_text(contents.as_bytes()).ok())
+				.and_then(simple_type_name)?;
+			let trait_name = node
+				.child_by_field_name("trait")
+				.and_then(|child| child.utf8_text(contents.as_bytes()).ok())
+				.and_then(simple_type_name);
+			return Some(match trait_name {
+				Some(trait_name) => format!("{trait_name} for {type_name}"),
+				None => type_name,
+			});
+		}
+		extract_symbol_by_kinds(node, contents, &["identifier", "name", "type_identifier"])
 	}
 }
 
