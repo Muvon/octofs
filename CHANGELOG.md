@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.24.0] - 2026-11-12
+
+### 📋 Release Summary
+
+Filesystem views can now be flagged. Redirect targets ignore device sinks; pasted and shifted batch-edit line IDs are handled correctly, and missing paths receive hints. Shell restrictions, job access and polling behavior, and batch-edit line-ID rules are clearer.
+
+### ✨ New Features & Enhancements
+
+- **fs**: support flagged filesystem views `08816735`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: clarify batch edit line-id rules `617c25d0`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: ignore device sinks in redirect targets `d88e027e`
+- **mcp**: clarify background job polling behavior `1b48f1a8`
+- accept pasted line IDs and hint missing paths `0d01242b`
+- **fs**: resolve shifted batch-edit line IDs `0cbadafc`
+- **mcp**: clarify shell restrictions and job access `e4517d8a`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.23.3] - 2026-11-08
 
 ### 📋 Release Summary
