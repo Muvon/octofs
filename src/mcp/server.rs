@@ -710,15 +710,16 @@ impl OctofsServer {
 			open_world_hint = false
 		),
 		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
-			are line ids (\"12:a3\") from view or edit output, verified before anything is written; \
-			a stale id fails with the current content, while an id whose line only moved because of an \
-			earlier edit above it still resolves. All targets refer to the original file and \
-			must not overlap. Group edits that use the same original-file ids in one call; earlier \
-			calls can change target positions or content. The result diff carries fresh ids for \
-			follow-up edits; removed lines and the middle of a long added block show as an id range. \
-			A trailing `shift:` line says \
-			how later original line numbers moved. Insert anchors 0 (file start) and -1 (end) are \
-			plain integers. Content is raw text without `N:hh|` prefixes."
+			are line ids (\"12:a3\") copied exactly from view or edit output. An id you copied \
+			earlier still works after your other edits to the file while its line is unchanged: \
+			do not change its number or view the file again. A rejected id returns the current \
+			content with fresh ids; use those. All targets refer to the file before this call and \
+			must not overlap; do not adjust ids for earlier operations in this call. Group edits \
+			to the same file in one call. The result diff carries fresh ids for the lines it \
+			shows; removed lines and the middle of a long added block show as an id range. A \
+			trailing `shift:` line says how far the lines after each edit moved. Insert anchors \
+			0 (file start) and -1 (end) are plain integers. Content is raw text without `N:hh|` \
+			prefixes."
 	)]
 	async fn batch_edit(
 		&self,
@@ -1378,7 +1379,7 @@ pub enum BatchEditOperationType {
 pub struct BatchEditOperation {
 	/// `insert` (after `start`) or `replace` (`start`..`end`).
 	pub operation: BatchEditOperationType,
-	/// Line id in the ORIGINAL file: first line to replace, or the anchor to insert after
+	/// Line id in the file before this call: first line to replace, or the anchor to insert after
 	/// (for `insert` also the integers 0 = file start, -1 = after the last line).
 	#[schemars(schema_with = "edit_anchor_schema")]
 	pub start: serde_json::Value,
