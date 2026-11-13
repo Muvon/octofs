@@ -359,7 +359,13 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 {"path": "src/main.rs", "start": 80}             // line 80 → end of file
 {"path": "src/main.rs", "start": -20}            // last 20 lines
 {"path": "src/main.rs", "start": "12:a3", "end": "20:f1"}  // line ids from prior output
+{"path": "src/main.rs", "ranges": [{"start": 10, "end": 20}, {"start": 80, "end": 95}]}  // several spans in one read
 ```
+
+`ranges` reads several spans of one file in one call. Each span takes the same values
+as `start`/`end`, and both are required. Spans are sorted, overlapping or adjacent ones
+are merged, and each gap shows as `[... N lines omitted]`. `ranges` cannot be combined
+with `start`/`end` or `content`.
 
 Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
 that `batch_edit` and `extract_lines` take as targets.
@@ -383,8 +389,8 @@ removed lines collapsed to their old id range — or
 `[unchanged since you last viewed or edited it: N lines. Pass full: true to re-read.]`.
 Octofs' own edits keep the cache current, so a re-view after your own `batch_edit`
 costs one line. Ranged views and content search always render exactly what was asked.
-`full` has no effect on ranges or searches; omit `start`/`end` and content search to
-force a complete file read. It does not change output limits.
+`full` has no effect on ranges or searches; omit `start`/`end`/`ranges` and content search
+to force a complete file read. It does not change output limits.
 ```json
 {"path": "src/main.rs", "full": true}   // force the complete file (e.g. after context compaction)
 ```
@@ -440,7 +446,7 @@ enclosing symbol (e.g. `[impl Store › fn flush]`), once per symbol change. The
 compact modes (`c`, `l`, `o`), inverted searches and files without a grammar
 render without them.
 
-**Structural outline:** (`flags: "s"` — alone; no `content`, no `start`/`end`, no other flags)
+**Structural outline:** (`flags: "s"` — alone; no `content`, no `start`/`end`/`ranges`, no other flags)
 ```json
 {"path": "src/main.rs", "flags": "s"}
 {"path": "src/", "flags": "s", "pattern": "**/*.rs", "max_depth": 2}
@@ -466,7 +472,7 @@ whole definition when it is short enough; wildcard matches render a preview with
 the omitted range. Markdown files yield their headings, Svelte files the symbols
 of their `<script>` blocks. CSS and JSON files name no navigable symbol: a single
 file fails with that guidance, a directory skips them. `symbol` cannot be combined
-with `content` or `start`/`end`, and the `s`, `o` and `v` flags are rejected with
+with `content` or `start`/`end`/`ranges`, and the `s`, `o` and `v` flags are rejected with
 it; `r` needs `symbol`, and `c`/`l` keep their search meanings.
 
 **AST search:** (`ast: true` — `content` holds the ast-grep pattern)
@@ -479,7 +485,7 @@ node, `$$$ARGS` a sequence, `$_` any single node. The pattern must be complete, 
 code in the target language — a Python pattern needs its body
 (`def $F($$$A):\n    $$$B`). It works on a file or a directory, locally or over
 `ssh://`, and honours `pattern`, `max_depth`, `include_hidden`, `context` and the
-`c`/`l` flags. It cannot be combined with `regex`, `symbol`, `start`/`end` or the
+`c`/`l` flags. It cannot be combined with `regex`, `symbol`, `start`/`end`/`ranges` or the
 `s`/`v`/`o` flags. Zero matches return a diagnostic naming the parsed kind, the
 metavariables and the plain-text fallback. CSS, JSON and Markdown files are not
 AST-searchable.

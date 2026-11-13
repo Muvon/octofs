@@ -100,10 +100,8 @@ fn format_file_content_with_numbers(lines: &[&str], line_range: Option<(usize, i
 	format_content_with_line_numbers(lines, 1, line_range)
 }
 
-// View the content of a file with line identifiers and an optional line range.
-// Directories are dispatched to `directory::list_directory` upstream in `execute_view`,
-// so this only ever handles regular files.
-pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)>, full: bool) -> Result<String> {
+/// Read a regular file for a text view, refusing anything past `MAX_VIEW_FILE_BYTES`.
+pub(crate) async fn read_view_file(source: &PathSource) -> Result<String> {
 	if !io_exists(source).await? {
 		bail!("File not found");
 	}
@@ -120,13 +118,18 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 		bail!("File is too large (>5MB)");
 	}
 
-	// Read the file content
 	let bytes = io_read_capped(source, MAX_VIEW_FILE_BYTES)
 		.await
 		.map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?
 		.ok_or_else(|| anyhow!("File is too large (>5MB)"))?;
-	let content = String::from_utf8(bytes).map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))?;
+	String::from_utf8(bytes).map_err(|e| anyhow!("Permission denied. Cannot read file: {}", e))
+}
 
+// View the content of a file with line identifiers and an optional line range.
+// Directories are dispatched to `directory::list_directory` upstream in `execute_view`,
+// so this only ever handles regular files.
+pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)>, full: bool) -> Result<String> {
+	let content = read_view_file(source).await?;
 	// Whole-file views go through the session delta cache; ranged views render
 	// exactly what was asked and leave the cache alone.
 	let Some(range) = line_range else {

@@ -82,6 +82,32 @@ pub fn format_content_with_line_numbers(
 	}
 }
 
+/// Format several spans of one file with composite line ids. `spans` are 1-indexed,
+/// inclusive, sorted, non-adjacent and within `lines`. Each gap between two spans is one
+/// `[... N lines omitted]` marker; the trailing marker matches a single ranged view.
+pub fn format_line_spans(lines: &[&str], spans: &[(usize, usize)]) -> String {
+	let mut result_lines = Vec::new();
+	let mut previous_end = None;
+	for &(start, end) in spans {
+		if let Some(previous_end) = previous_end {
+			result_lines.push(format!("[... {} lines omitted]", start - previous_end - 1));
+		}
+		result_lines.extend((start..=end).map(|line| render_line(line, lines[line - 1])));
+		previous_end = Some(end);
+	}
+
+	let covers_whole_file = spans == [(1, lines.len())];
+	if !covers_whole_file {
+		let remaining = lines.len() - previous_end.unwrap_or(0);
+		result_lines.push(if remaining == 0 {
+			format!("[end of file, {} lines total]", lines.len())
+		} else {
+			format!("[... {remaining} more lines, {} total]", lines.len())
+		});
+	}
+	result_lines.join("\n")
+}
+
 /// Format extracted content with composite line ids and smart truncation.
 /// `start_line` is the 1-indexed position of `lines[0]` in the source file, so
 /// the ids match what a `view` of the source shows.

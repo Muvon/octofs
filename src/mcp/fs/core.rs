@@ -22,7 +22,7 @@ use super::remote::{
 use crate::mcp::fs::search::ViewFlags;
 use crate::mcp::fs::{ast, delta, directory, file_ops, structure, symbols, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
-use crate::utils::truncation::{format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES};
+use crate::utils::truncation::{format_extracted_content_smart, format_line_spans, format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -315,10 +315,16 @@ async fn resolve_view_range(
 
 	let start_ep = start_ep.unwrap_or(Endpoint::Number(1));
 	let end_ep = end_ep.unwrap_or(Endpoint::Number(-1));
+	let (start, end) = resolve_line_span(&start_ep, &end_ep, total_lines)?;
+	Ok(Some((start, end as i64)))
+}
 
+/// Resolve one span's endpoints to clamped 1-indexed lines, hinting when the span
+/// was transposed or clamped.
+fn resolve_line_span(start_ep: &Endpoint, end_ep: &Endpoint, total_lines: usize) -> Result<(usize, usize)> {
 	let mut clamped = false;
-	let mut start = resolve_endpoint_to_line(&start_ep, total_lines, &mut clamped)?;
-	let mut end = resolve_endpoint_to_line(&end_ep, total_lines, &mut clamped)?;
+	let mut start = resolve_endpoint_to_line(start_ep, total_lines, &mut clamped)?;
+	let mut end = resolve_endpoint_to_line(end_ep, total_lines, &mut clamped)?;
 	// Transposed endpoints name exactly one range, so serve it and say what was
 	// read. Erroring here costs a whole round-trip to be told the obvious.
 	if start > end {
@@ -332,7 +338,62 @@ async fn resolve_view_range(
 			"Range clamped to [{start}, {end}]: the file has {total_lines} lines (negative indices count from the end)."
 		));
 	}
-	Ok(Some((start, end as i64)))
+	Ok((start, end))
+}
+
+/// Parse `ranges` into endpoint pairs before the file is read, so a malformed span
+/// fails without I/O.
+fn parse_view_ranges(value: &Value) -> Result<Vec<(Endpoint, Endpoint)>> {
+	let Some(items) = value.as_array() else {
+		bail!("`ranges` must be an array of {{\"start\", \"end\"}} objects, e.g. [{{\"start\": 10, \"end\": 20}}].");
+	};
+	if items.is_empty() {
+		bail!("`ranges` must name at least one span — drop it to read the whole file.");
+	}
+	items
+		.iter()
+		.enumerate()
+		.map(|(index, item)| {
+			let endpoint = |key: &str| {
+				let name = format!("ranges[{index}].{key}");
+				parse_optional_endpoint(item.get(key), &name)?
+					.ok_or_else(|| anyhow!("`{name}` is missing: every span needs both `start` and `end`."))
+			};
+			Ok((endpoint("start")?, endpoint("end")?))
+		})
+		.collect()
+}
+
+/// Read several spans of one file in one view. Each span resolves like a single
+/// range; the spans are then sorted and merged so no line renders twice.
+async fn view_file_ranges(source: &PathSource, ranges: &[(Endpoint, Endpoint)]) -> Result<String> {
+	let content = file_ops::read_view_file(source).await?;
+	let lines: Vec<&str> = content.lines().collect();
+	if lines.is_empty() {
+		return Ok("[empty file, 0 lines]".to_string());
+	}
+
+	let mut spans = ranges
+		.iter()
+		.map(|(start_ep, end_ep)| resolve_line_span(start_ep, end_ep, lines.len()))
+		.collect::<Result<Vec<_>>>()?;
+	spans.sort_unstable();
+	let mut merged: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+	for (start, end) in spans {
+		match merged.last_mut() {
+			// Adjacent spans merge too: a gap marker for zero lines is noise.
+			Some(last) if start <= last.1 + 1 => last.1 = last.1.max(end),
+			_ => merged.push((start, end)),
+		}
+	}
+	Ok(format_line_spans(&lines, &merged))
+}
+
+/// Whether any line-range parameter (`start`, `end` or `ranges`) is set.
+fn has_line_range(call: &McpToolCall) -> bool {
+	["start", "end", "ranges"]
+		.iter()
+		.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()))
 }
 
 async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource) -> Result<String> {
@@ -364,11 +425,8 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		if call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false) {
 			bail!("`ast` cannot be combined with `regex`: an AST pattern matches the syntax tree, not text — drop `regex`.");
 		}
-		let has_range = ["start", "end"]
-			.iter()
-			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
-		if has_range {
-			bail!("`ast` cannot be combined with `start`/`end`: an AST search returns whole matches — drop them.");
+		if has_line_range(call) {
+			bail!("`ast` cannot be combined with `start`/`end`/`ranges`: an AST search returns whole matches — drop them.");
 		}
 		// `s`/`v`/`o` need ast-specific messages, so they are checked here
 		// rather than in `ViewFlags::parse`, whose `content`-mode messages
@@ -397,11 +455,8 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		if has_content {
 			bail!("`symbol` cannot be combined with `content`: a symbol search is structural — drop `content`.");
 		}
-		let has_range = ["start", "end"]
-			.iter()
-			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
-		if has_range {
-			bail!("`symbol` cannot be combined with `start`/`end`: a symbol search returns whole definitions or references — drop them.");
+		if has_line_range(call) {
+			bail!("`symbol` cannot be combined with `start`/`end`/`ranges`: a symbol search returns whole definitions or references — drop them.");
 		}
 		return symbols::view_symbols(call, path, source, symbol).await;
 	}
@@ -409,11 +464,8 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	// Structural outline (`s`): exclusive of content search, listings and
 	// ranges, so it is dispatched before every other mode.
 	if ViewFlags::parse(flags_param, has_content, false)?.structure {
-		let has_range = ["start", "end"]
-			.iter()
-			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
-		if has_range {
-			bail!("View flag s cannot be combined with `start`/`end`: an outline is not a line range — drop them.");
+		if has_line_range(call) {
+			bail!("View flag s cannot be combined with `start`/`end`/`ranges`: an outline is not a line range — drop them.");
 		}
 		return structure::view_outline(call, path, source).await;
 	}
@@ -421,6 +473,21 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	// Directory: dispatch directly with the path string
 	if io_is_dir(source).await? {
 		return directory::list_directory(call, path).await;
+	}
+
+	// File + `ranges`: several spans in one read. Dispatched before content search,
+	// which would otherwise drop the spans silently.
+	if let Some(ranges) = call.parameters.get("ranges").filter(|value| !value.is_null()) {
+		if has_content {
+			bail!("`ranges` cannot be combined with `content`: a content search covers the whole file — drop `ranges`, or set `context` for lines around each match.");
+		}
+		if ["start", "end"]
+			.iter()
+			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()))
+		{
+			bail!("`ranges` cannot be combined with `start`/`end`: put every span in `ranges`.");
+		}
+		return view_file_ranges(source, &parse_view_ranges(ranges)?).await;
 	}
 
 	// File + content: search the file for a literal/regex pattern and render with the same hash/number format

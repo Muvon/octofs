@@ -6448,6 +6448,113 @@ mod tests {
 		assert!(!out.contains("|a") && !out.contains("|e"), "range not honoured: {out}");
 	}
 
+	fn view_ranges_call(file: &std::path::Path, extra: serde_json::Value) -> McpToolCall {
+		let mut parameters = json!({ "path": file.to_string_lossy() });
+		if let (Some(target), Some(extra)) = (parameters.as_object_mut(), extra.as_object()) {
+			target.extend(extra.clone());
+		}
+		McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "view".to_string(),
+			parameters,
+		}
+	}
+
+	#[tokio::test]
+	async fn test_view_ranges_reads_several_spans_in_one_call() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("r.txt");
+		let body: String = (1..=20).map(|i| format!("L{i:02}\n")).collect();
+		fs::write(&file, &body).await.unwrap();
+
+		// Unsorted, with a line id endpoint: spans render in file order.
+		let call = view_ranges_call(
+			&file,
+			json!({ "ranges": [{ "start": 15, "end": 16 }, { "start": crate::utils::line_hash::line_id(3, "L03"), "end": 4 }] }),
+		);
+		let out = execute_view(&call).await.unwrap();
+		let expected = [
+			idl(3, "L03"),
+			idl(4, "L04"),
+			"[... 10 lines omitted]".to_string(),
+			idl(15, "L15"),
+			idl(16, "L16"),
+			"[... 4 more lines, 20 total]".to_string(),
+		]
+		.join("\n");
+		assert_eq!(out, expected);
+	}
+
+	#[tokio::test]
+	async fn test_view_ranges_merges_overlapping_and_adjacent_spans() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("r.txt");
+		fs::write(&file, "a\nb\nc\nd\ne\nf\n").await.unwrap();
+
+		let call = view_ranges_call(
+			&file,
+			json!({ "ranges": [{ "start": 1, "end": 2 }, { "start": 3, "end": 3 }, { "start": 2, "end": 4 }, { "start": -1, "end": -1 }] }),
+		);
+		let out = execute_view(&call).await.unwrap();
+		assert_eq!(out.matches("|b").count(), 1, "overlap must render once: {out}");
+		assert!(
+			out.contains(&format!("{}\n[... 1 lines omitted]\n{}", idl(4, "d"), idl(6, "f"))),
+			"{out}"
+		);
+		assert!(out.ends_with("[end of file, 6 lines total]"), "{out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_ranges_rejects_malformed_or_conflicting_input() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("r.txt");
+		fs::write(&file, "a\nb\nc\n").await.unwrap();
+
+		let cases = [
+			(json!({ "ranges": [] }), "at least one span"),
+			(json!({ "ranges": [{ "start": 1 }] }), "`ranges[0].end` is missing"),
+			(
+				json!({ "ranges": [{ "start": 1, "end": "x:zz" }] }),
+				"Invalid 'ranges[0].end'",
+			),
+			(json!({ "ranges": { "start": 1, "end": 2 } }), "must be an array"),
+			(
+				json!({ "ranges": [{ "start": 1, "end": 2 }], "start": 1 }),
+				"cannot be combined with `start`/`end`",
+			),
+			(
+				json!({ "ranges": [{ "start": 1, "end": 2 }], "content": "a" }),
+				"cannot be combined with `content`",
+			),
+			(
+				json!({ "ranges": [{ "start": 1, "end": 2 }], "flags": "s" }),
+				"`start`/`end`/`ranges`",
+			),
+			(
+				json!({ "ranges": [{ "start": 1, "end": 2 }], "symbol": "main" }),
+				"`start`/`end`/`ranges`",
+			),
+		];
+		for (extra, expected) in cases {
+			let err = execute_view(&view_ranges_call(&file, extra.clone()))
+				.await
+				.unwrap_err()
+				.to_string();
+			assert!(err.contains(expected), "{extra}: expected {expected:?} in {err}");
+		}
+	}
+
+	#[tokio::test]
+	async fn test_view_ranges_on_empty_file_is_graceful() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("empty.txt");
+		fs::write(&file, "").await.unwrap();
+
+		let call = view_ranges_call(&file, json!({ "ranges": [{ "start": 2, "end": 5 }] }));
+		assert_eq!(execute_view(&call).await.unwrap(), "[empty file, 0 lines]");
+	}
+
 	#[tokio::test]
 	async fn test_view_nonexistent_path_names_path_and_resolution() {
 		let temp_dir = tempfile::TempDir::new().unwrap();

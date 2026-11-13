@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Unit tests for truncation formatting: ranged views, boundary ranges and
-//! smart middle-elision of extracted content.
+//! Unit tests for truncation formatting: ranged and multi-span views, boundary
+//! ranges and smart middle-elision of extracted content.
 
 use super::*;
 
@@ -82,6 +82,33 @@ fn ranged_view_whole_file_range_emits_no_total_marker() {
 	let lines = vec!["a", "b"];
 	let out = format_content_with_line_numbers(&lines, 1, Some((1, 2)));
 	assert!(!out.contains("total"), "out was: {out}");
+}
+
+#[test]
+fn line_spans_mark_each_gap_and_the_lines_after_the_last_span() {
+	let lines = vec!["a", "b", "c", "d", "e", "f", "g"];
+	let out = format_line_spans(&lines, &[(2, 3), (6, 6)]);
+	let rendered: Vec<&str> = out.split('\n').collect();
+	assert_eq!(rendered.len(), 5, "out was: {out}");
+	assert!(rendered[0].starts_with("2:") && rendered[0].ends_with("|b"));
+	assert!(rendered[1].ends_with("|c"));
+	assert_eq!(rendered[2], "[... 2 lines omitted]");
+	assert!(rendered[3].starts_with("6:") && rendered[3].ends_with("|f"));
+	assert_eq!(rendered[4], "[... 1 more lines, 7 total]");
+}
+
+#[test]
+fn line_spans_ending_at_eof_close_with_the_total_marker() {
+	let lines = vec!["a", "b", "c", "d"];
+	let out = format_line_spans(&lines, &[(1, 1), (3, 4)]);
+	assert!(out.ends_with("|d\n[end of file, 4 lines total]"), "out was: {out}");
+}
+
+#[test]
+fn line_spans_covering_the_whole_file_emit_no_marker() {
+	let lines = vec!["a", "b"];
+	let out = format_line_spans(&lines, &[(1, 2)]);
+	assert!(!out.contains('['), "out was: {out}");
 }
 
 #[test]

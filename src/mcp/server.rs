@@ -631,7 +631,8 @@ impl OctofsServer {
 			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
 			unchanged marker); `full: true` requests complete content. Ranged reads return the \
-			requested lines. Returned line ids go directly into `batch_edit` calls."
+			requested lines; `ranges` reads several spans of one file in a single call. Returned \
+			line ids go directly into `batch_edit` calls."
 	)]
 	async fn view(
 		&self,
@@ -1247,6 +1248,12 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
+	/// Several line spans of one file in one read, e.g. `[{"start": 10, "end": 20},
+	/// {"start": "80:3f", "end": 95}]`. Each span takes `start`/`end` values as above, both
+	/// required. Spans are sorted and overlapping or adjacent ones merged; gaps show as
+	/// `[... N lines omitted]`. Not combined with `start`/`end` or `content`.
+	#[serde(default)]
+	pub ranges: Option<Vec<ViewRange>>,
 	/// Ripgrep -g globs bounding listings and searches: without `/` a name at any depth,
 	/// with `/` the relative path; `*`, `**`, `?`, `[abc]`, `{rs,toml}`, leading `!`; `|`
 	/// joins ordered globs (later wins), e.g. `**/*.rs|!target/**`. Applied after
@@ -1283,8 +1290,8 @@ pub struct ViewParams {
 	/// paths of matching files only, `o` matched text only (as `N|text`), `v` non-matching
 	/// lines (also `vc`, `vl`). Without `content`: `l` adds size in bytes and modification
 	/// time (UTC) to each listed file, or returns them for `path` itself when it is a file.
-	/// `s` (alone, no `content`/`start`/`end`): a structural outline — the signature lines of
-	/// the file, or of every supported file under a directory, with bodies elided.
+	/// `s` (alone, no `content`/`start`/`end`/`ranges`): a structural outline — the signature
+	/// lines of the file, or of every supported file under a directory, with bodies elided.
 	/// With `symbol`: `r` references instead of definitions; `c`/`l` per-file counts/paths.
 	#[serde(default)]
 	pub flags: Option<String>,
@@ -1293,6 +1300,18 @@ pub struct ViewParams {
 	/// unchanged.
 	#[serde(default)]
 	pub full: Option<bool>,
+}
+
+/// One span of a multi-range `view` read.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ViewRange {
+	/// First line (inclusive).
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub start: serde_json::Value,
+	/// Last line (inclusive).
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub end: serde_json::Value,
 }
 
 /// JSON schema for a read position (view `start`/`end`, extract `from_start`/`from_end`).

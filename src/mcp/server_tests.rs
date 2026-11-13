@@ -1068,6 +1068,7 @@ async fn served_tool_schemas_carry_no_generator_noise() {
 		"path",
 		"start",
 		"end",
+		"ranges",
 		"pattern",
 		"content",
 		"regex",
