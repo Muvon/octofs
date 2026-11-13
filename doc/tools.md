@@ -66,8 +66,9 @@ One tool, several read modes, selected by the parameters:
 - **AST search** (`ast: true`, with the ast-grep pattern in `content`) — the
   pattern is matched against the syntax tree instead of the text: `$NAME`
   matches one node, `$$$ARGS` a sequence, `$_` any single node. The pattern
-  must be complete, valid code in the target language (a Python pattern needs
-  its body). Works on a file or a directory, locally or over `ssh://`, and
+  must be complete, valid code in the target language (a Python pattern may
+  omit the body only together with the colon: `def $F($$$A):` without a body
+  matches nothing, `def $F($$$A)` matches). Works on a file or a directory, locally or over `ssh://`, and
   honours `pattern`, `max_depth`, `include_hidden`, `context` and the `c`/`l`
   flags. Rejected together with `regex`, `symbol`, `start`/`end` and the
   `s`/`v`/`o` flags. CSS, JSON and Markdown files are not AST-searchable.

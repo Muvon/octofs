@@ -29,10 +29,11 @@ use super::languages;
 
 /// Rewrite `$` metavariables to `expando` before parsing, mirroring
 /// ast-grep's own language configs: languages whose identifiers cannot start
-/// with `$` (rust, python, go, ruby, swift, php, elixir use `µ`, C/C++ `𐀀`)
-/// would otherwise parse `$NAME` into error nodes that match nothing. `$`s
-/// that are not metavariable-shaped — lowercase names, `$` inside literals —
-/// are left alone. With `expando == '$'` this is the identity rewrite.
+/// with `$` (rust, python, go, ruby, swift, php, elixir use `µ`, C and C++
+/// `𐀀`) would otherwise parse `$NAME` into error nodes that match nothing.
+/// `$`s that are not metavariable-shaped — lowercase names, `$` inside
+/// literals — are left alone. With `expando == '$'` this is the identity
+/// rewrite.
 fn expand_pattern(expando: char, query: &str) -> Cow<'_, str> {
 	let mut ret = Vec::with_capacity(query.len());
 	let mut dollar_count = 0;
@@ -102,6 +103,10 @@ define_ast_grep_lang!(AstPython, tree_sitter_python::LANGUAGE, 'µ');
 define_ast_grep_lang!(AstGo, tree_sitter_go::LANGUAGE, 'µ');
 define_ast_grep_lang!(AstJava, tree_sitter_java::LANGUAGE, '$');
 define_ast_grep_lang!(AstCpp, tree_sitter_cpp::LANGUAGE, '𐀀');
+// Plain C gets its own grammar: the C++ grammar parses .c files into
+// `declaration` nodes that ellipsis-body patterns never match, while the C
+// grammar yields `function_definition` like upstream ast-grep's `--lang c`.
+define_ast_grep_lang!(AstC, tree_sitter_c::LANGUAGE, '𐀀');
 // PHP patterns carry no `<?php` prologue, so they parse with the tagless
 // PHP-only grammar (ast-grep's own choice); a prologue in the file itself
 // recovers as an error node that matching simply walks past.
@@ -150,6 +155,11 @@ macro_rules! dispatch_lang {
 			"cpp" => {
 				#[allow(unused_variables)]
 				let $lang = AstCpp;
+				$body
+			}
+			"c" => {
+				#[allow(unused_variables)]
+				let $lang = AstC;
 				$body
 			}
 			"php" => {
@@ -209,9 +219,18 @@ pub struct PatternInfo {
 
 /// The language an AST-pattern search uses for a path label. None for files
 /// without a grammar and for css/json/markdown, where a syntax-tree pattern
-/// buys nothing over the outline, symbol and content modes.
+/// buys nothing over the outline, symbol and content modes. `.c`/`.h` use the
+/// C grammar — upstream ast-grep's own mapping; the C++ grammar mis-parses
+/// plain C so ellipsis-body patterns miss. The outline and symbol modes keep
+/// `language_for_extension`'s C++ mapping for `.c`/`.h`, which serves them
+/// correctly.
 pub fn ast_language(path_label: &str) -> Option<&'static str> {
-	let language = super::language_for_extension(&super::path_extension(path_label))?;
+	let extension = super::path_extension(path_label);
+	let language = super::language_for_extension(&extension)?;
+	let language = match extension.as_str() {
+		"c" | "h" => "c",
+		_ => language,
+	};
 	match language {
 		"css" | "json" | "markdown" => None,
 		language => Some(language),
@@ -252,13 +271,27 @@ fn search_svelte(source: &str, pattern: &str) -> Result<Vec<AstMatch>, String> {
 	Ok(matches)
 }
 
+/// Pattern parse errors quote the pre-processed pattern source, which carries
+/// the expando char instead of `$`. Swap that exact substring back for the
+/// user's pattern so every diagnostic echoes what was typed — a blanket char
+/// replace would corrupt user patterns that legitimately contain the char.
+fn demangle_pattern_error<L: AstGrepLanguage>(lang: &L, pattern: &str, error: PatternError) -> String {
+	let message = error.to_string();
+	let expanded = expand_pattern(lang.expando_char(), pattern);
+	if expanded.as_ref() != pattern {
+		return message.replacen(expanded.as_ref(), pattern, 1);
+	}
+	message
+}
+
 fn search_with_lang<L: LanguageExt + AstGrepLanguage + Clone>(
 	lang: L,
 	source: &str,
 	pattern_str: &str,
 ) -> Result<Vec<AstMatch>, String> {
 	let grep = lang.ast_grep(source);
-	let pattern = Pattern::try_new(pattern_str, lang).map_err(|e| e.to_string())?;
+	let pattern =
+		Pattern::try_new(pattern_str, lang.clone()).map_err(|e| demangle_pattern_error(&lang, pattern_str, e))?;
 	Ok(grep
 		.root()
 		.find_all(&pattern)
@@ -288,7 +321,8 @@ fn pattern_info_with_lang<L: LanguageExt + AstGrepLanguage + Clone>(
 	lang: L,
 	pattern_str: &str,
 ) -> Result<PatternInfo, String> {
-	let pattern = Pattern::try_new(pattern_str, lang.clone()).map_err(|e| e.to_string())?;
+	let pattern =
+		Pattern::try_new(pattern_str, lang.clone()).map_err(|e| demangle_pattern_error(&lang, pattern_str, e))?;
 	let has_error = pattern.has_error();
 	let root_kind = match &pattern.node {
 		PatternNode::Terminal { kind_id, .. } | PatternNode::Internal { kind_id, .. } => {

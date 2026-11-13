@@ -119,7 +119,7 @@ fn join_ast_blocks_reports_parse_errors_once_per_language() {
 		"src",
 		vec!["a.rs:\n1:ab|fn a() {}".to_string()],
 		"fn $F($$$A) {}",
-		Some("rust"),
+		&BTreeSet::from(["rust".to_string()]),
 		Some(&errors),
 		ViewFlags::default(),
 	);
@@ -133,14 +133,52 @@ fn join_ast_blocks_zero_matches_yields_the_miss_diagnostic() {
 		"src",
 		vec![],
 		"fn $F($$$A) {}",
-		Some("rust"),
+		&BTreeSet::from(["rust".to_string()]),
 		None,
 		ViewFlags::default(),
 	);
 	assert!(out.contains("No AST matches"), "got: {out}");
 	assert!(out.contains("kind=function_item"), "got: {out}");
-	let out = join_ast_blocks("src", vec![], "fn $F($$$A) {}", None, None, ViewFlags::default());
+	let out = join_ast_blocks(
+		"src",
+		vec![],
+		"fn $F($$$A) {}",
+		&BTreeSet::new(),
+		None,
+		ViewFlags::default(),
+	);
 	assert!(out.contains("No AST-searchable files found under src."), "got: {out}");
+}
+
+#[test]
+fn join_ast_blocks_zero_matches_diagnoses_every_searched_language() {
+	// Zero matches name every language the pattern did parse in — never an
+	// arbitrary first file's language; failed languages get the notes only.
+	let searched = BTreeSet::from(["python".to_string(), "rust".to_string()]);
+	let out = join_ast_blocks("src", vec![], "$A", &searched, None, ViewFlags::default());
+	assert!(out.contains("in rust."), "got: {out}");
+	assert!(out.contains("in python."), "got: {out}");
+	assert!(!out.contains("skipped"), "got: {out}");
+}
+
+#[test]
+fn join_ast_blocks_no_language_parses_yields_a_header_and_notes() {
+	let mut errors = BTreeMap::new();
+	errors.insert("python".to_string(), "Multiple AST nodes".to_string());
+	errors.insert("rust".to_string(), "Multiple AST nodes".to_string());
+	let out = join_ast_blocks(
+		"src",
+		vec![],
+		"$$$A",
+		&BTreeSet::new(),
+		Some(&errors),
+		ViewFlags::default(),
+	);
+	assert!(
+		out.contains("No AST matches for pattern \"$$$A\": it does not parse in any searched language (python, rust)."),
+		"got: {out}"
+	);
+	assert_eq!(out.matches("skipped").count(), 2, "got: {out}");
 }
 
 #[test]

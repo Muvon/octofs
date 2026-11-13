@@ -69,6 +69,7 @@ russh-sftp = "3.0"
 # Versions mirror the octocode pins, which are known to work together.
 tree-sitter = "0.27.1"
 tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.2"
 tree-sitter-css = "0.25.0"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-elixir = "0.3.5"

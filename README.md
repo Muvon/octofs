@@ -482,8 +482,9 @@ it; `r` needs `symbol`, and `c`/`l` keep their search meanings.
 ```
 Matches the pattern against the syntax tree instead of the text: `$NAME` matches one
 node, `$$$ARGS` a sequence, `$_` any single node. The pattern must be complete, valid
-code in the target language — a Python pattern needs its body
-(`def $F($$$A):\n    $$$B`). It works on a file or a directory, locally or over
+code in the target language — a Python pattern may omit the body together with
+the colon (`def $F($$$A)`); a trailing colon without a body (`def $F($$$A):`)
+matches nothing. It works on a file or a directory, locally or over
 `ssh://`, and honours `pattern`, `max_depth`, `include_hidden`, `context` and the
 `c`/`l` flags. It cannot be combined with `regex`, `symbol`, `start`/`end`/`ranges` or the
 `s`/`v`/`o` flags. Zero matches return a diagnostic naming the parsed kind, the

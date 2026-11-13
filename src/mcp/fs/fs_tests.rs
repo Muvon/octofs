@@ -7873,6 +7873,67 @@ mod tests {
 		assert_eq!(result.matches("skipped python files").count(), 1, "got: {result}");
 		assert!(result.contains("does not parse as python"), "got: {result}");
 	}
+	#[tokio::test]
+	async fn view_ast_directory_zero_matches_names_every_searched_language() {
+		let root = tempfile::tempdir().unwrap();
+		// The pattern parses in rust but not python: the diagnostic must name
+		// rust, and python may appear only in the skipped note — never in both.
+		fs::write(root.path().join("a.py"), "def h():\n    pass\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("b.rs"), "struct S;\n").await.unwrap();
+		let mut call = McpToolCall::test_call(
+			"view",
+			json!({ "path": ".", "ast": true, "content": "fn $NAME($$$ARGS) { $$$BODY }" }),
+		);
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			result.contains("No AST matches for pattern \"fn $NAME($$$ARGS) { $$$BODY }\" in rust."),
+			"got: {result}"
+		);
+		assert_eq!(result.matches("skipped python files").count(), 1, "got: {result}");
+		assert!(!result.contains("in python."), "got: {result}");
+		assert!(!result.contains('µ'), "expando leaked: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_directory_no_language_parses_yields_the_header() {
+		let root = tempfile::tempdir().unwrap();
+		fs::write(root.path().join("a.py"), "def h():\n    pass\n")
+			.await
+			.unwrap();
+		let mut call = McpToolCall::test_call(
+			"view",
+			json!({ "path": ".", "ast": true, "content": "fn $NAME($$$ARGS) { $$$BODY }" }),
+		);
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			result.contains(
+				"No AST matches for pattern \"fn $NAME($$$ARGS) { $$$BODY }\": it does not parse in any searched language (python)."
+			),
+			"got: {result}"
+		);
+		assert!(result.contains("skipped python files"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_searches_plain_c_files_with_the_c_grammar() {
+		let file = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+		fs::write(file.path(), "int add(int a, int b) { return a + b; }\n")
+			.await
+			.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": file.path().to_string_lossy(), "ast": true, "content": "int $NAME($$$ARGS) { $$$BODY }" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			result.contains("int add(int a, int b) { return a + b; }"),
+			"got: {result}"
+		);
+	}
 
 	#[tokio::test]
 	async fn view_ast_single_file_unsupported_language_bails_with_guidance() {

@@ -14,7 +14,8 @@
 
 //! Unit tests for AST-pattern search.
 
-use super::{miss_diagnostic, search_source, AstMatch};
+use super::{ast_language, miss_diagnostic, search_source, AstMatch};
+use crate::structural::language_for_extension;
 
 fn matches(pairs: &[(usize, usize)]) -> Vec<AstMatch> {
 	pairs
@@ -37,8 +38,8 @@ fn search_source_matches_rust_javascript_python_and_go() {
 		),
 		Ok(matches(&[(1, 1), (2, 1)]))
 	);
-	// Python needs a body in the pattern: a bare `def $F($$$A):` is incomplete
-	// code that parses into error nodes.
+	// Python: a trailing colon without a body parses but matches nothing —
+	// drop the colon or include the body.
 	assert_eq!(
 		search_source(
 			"python",
@@ -135,4 +136,65 @@ fn miss_diagnostic_names_the_parsed_kind_and_hints() {
 	let out = miss_diagnostic("fn $F($$$A) {}", "python");
 	assert!(out.contains("does not parse as python"), "got: {out}");
 	assert!(out.contains("Multiple AST nodes"), "got: {out}");
+	assert!(!out.contains('µ'), "expando leaked: {out}");
+}
+
+#[test]
+fn search_source_matches_plain_c_with_the_c_grammar() {
+	// The C++ grammar parses this file as a `declaration`, so ellipsis-body
+	// patterns miss; the C grammar parses it as a function_definition.
+	assert_eq!(
+		search_source(
+			"c",
+			"int add(int a, int b) { return a + b; }\n",
+			"int $NAME($$$ARGS) { $$$BODY }"
+		),
+		Ok(matches(&[(1, 1)]))
+	);
+	assert_eq!(
+		search_source(
+			"c",
+			"static void run(void) { work(); }\n",
+			"static void $NAME(void) { $$$BODY }"
+		),
+		Ok(matches(&[(1, 1)]))
+	);
+}
+
+#[test]
+fn ast_language_routes_c_and_h_to_the_c_grammar_only() {
+	// AST mode: .c/.h use the C grammar like upstream ast-grep; .cpp and
+	// friends stay with the C++ grammar.
+	assert_eq!(ast_language("x.c"), Some("c"));
+	assert_eq!(ast_language("x.h"), Some("c"));
+	assert_eq!(ast_language("x.cpp"), Some("cpp"));
+	assert_eq!(ast_language("x.hpp"), Some("cpp"));
+	// The outline and symbol modes keep the shared C++ mapping.
+	assert_eq!(language_for_extension("c"), Some("cpp"));
+	assert_eq!(language_for_extension("h"), Some("cpp"));
+}
+
+#[test]
+fn pattern_parse_errors_echo_the_user_pattern() {
+	// The expando char is internal: errors must quote the `$` pattern.
+	let error = search_source("python", "def a():\n    pass\n", "fn $NAME($$$ARGS) { $$$BODY }").unwrap_err();
+	assert!(error.contains("fn $NAME($$$ARGS) { $$$BODY }"), "got: {error}");
+	assert!(!error.contains('µ'), "got: {error}");
+	let error = search_source("php", "<?php\na();\n", "$A = \"$NAME here\";").unwrap_err();
+	assert!(error.contains("$A = \"$NAME here\";"), "got: {error}");
+	assert!(!error.contains('µ'), "got: {error}");
+}
+
+#[test]
+fn python_patterns_may_omit_the_body_only_with_the_colon() {
+	// A trailing colon without a body parses but matches nothing; dropping
+	// the colon (or keeping the body) matches.
+	assert_eq!(
+		search_source("python", "def a():\n    pass\n", "def $F($$$A):"),
+		Ok(vec![])
+	);
+	assert_eq!(
+		search_source("python", "def a():\n    pass\n", "def $F($$$A)"),
+		Ok(matches(&[(1, 2)]))
+	);
 }

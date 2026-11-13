@@ -35,7 +35,7 @@ use crate::utils::line_hash::line_id_at;
 use crate::utils::truncation::MAX_RESULT_BYTES;
 use anyhow::{anyhow, bail, Result};
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -165,8 +165,11 @@ async fn ast_directory(call: &McpToolCall, path: &str, source: &PathSource, quer
 
 		// A pattern that fails to parse for one language must not fail the
 		// whole walk: files of that language are skipped and the error is
-		// reported once per language, not once per file.
+		// reported once per language, not once per file. Languages the pattern
+		// does parse in are collected so a zero-match result can diagnose each
+		// of them, not an arbitrary first file's language.
 		let parse_errors: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+		let searched: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 		let mut blocks: Vec<(usize, String)> = files
 			.par_iter()
 			.enumerate()
@@ -183,7 +186,12 @@ async fn ast_directory(call: &McpToolCall, path: &str, source: &PathSource, quer
 				let content = String::from_utf8_lossy(&bytes);
 				let language = ast_language(rel_path)?;
 				let matches = match search_source(language, &content, &pattern) {
-					Ok(matches) => matches,
+					Ok(matches) => {
+						if let Ok(mut set) = searched.lock() {
+							set.insert(language.to_string());
+						}
+						matches
+					}
 					Err(e) => {
 						if let Ok(mut errors) = parse_errors.lock() {
 							errors.entry(language.to_string()).or_insert(e);
@@ -198,11 +206,12 @@ async fn ast_directory(call: &McpToolCall, path: &str, source: &PathSource, quer
 		blocks.sort_by_key(|(i, _)| *i);
 		let blocks: Vec<String> = blocks.into_iter().map(|(_, block)| block).collect();
 		let parse_errors = parse_errors.into_inner().ok();
+		let searched = searched.into_inner().unwrap_or_default();
 		Ok(join_ast_blocks(
 			&label,
 			blocks,
 			&pattern,
-			files.first().and_then(|file| ast_language(file)),
+			&searched,
 			parse_errors.as_ref(),
 			flags,
 		))
@@ -257,13 +266,17 @@ async fn ast_directory_remote(
 	let pattern = pattern.to_string();
 	let output = tokio::task::spawn_blocking(move || {
 		let mut parse_errors: BTreeMap<String, String> = BTreeMap::new();
+		let mut searched: BTreeSet<String> = BTreeSet::new();
 		let blocks: Vec<String> = reads
 			.into_iter()
 			.filter_map(|(_, rel_path, content)| {
 				let content = content?;
 				let language = ast_language(&rel_path)?;
 				let matches = match search_source(language, &content, &pattern) {
-					Ok(matches) => matches,
+					Ok(matches) => {
+						searched.insert(language.to_string());
+						matches
+					}
 					Err(e) => {
 						parse_errors.entry(language.to_string()).or_insert(e);
 						return None;
@@ -273,14 +286,7 @@ async fn ast_directory_remote(
 				Some(flags.output.label(&rel_path, &body))
 			})
 			.collect();
-		join_ast_blocks(
-			&label,
-			blocks,
-			&pattern,
-			files.first().and_then(|(file, _)| ast_language(file)),
-			Some(&parse_errors),
-			flags,
-		)
+		join_ast_blocks(&label, blocks, &pattern, &searched, Some(&parse_errors), flags)
 	})
 	.await
 	.map_err(|e| anyhow!("Failed to search AST patterns: {e}"))?;
@@ -463,23 +469,39 @@ fn render_match_lines(
 
 /// Join per-file blocks for a directory search: compact modes one row per
 /// file, line modes the `path:` block style under the result budget. Zero
-/// matches yield the miss diagnostic (plus per-language parse errors when
-/// the pattern failed some languages); parse errors are appended as notes
-/// even when other files matched, once per language.
+/// matches yield the miss diagnostic for every language the pattern did
+/// parse in (sorted, one diagnostic each); languages whose parse failed get
+/// the skipped notes instead — never both. When nothing parsed anywhere but
+/// files were searchable, a one-line header replaces the diagnostics and the
+/// notes carry the detail. Parse errors are appended as notes even when
+/// other files matched, once per language.
 fn join_ast_blocks(
 	label: &str,
 	blocks: Vec<String>,
 	pattern: &str,
-	first_language: Option<&str>,
+	searched: &BTreeSet<String>,
 	parse_errors: Option<&BTreeMap<String, String>>,
 	flags: ViewFlags,
 ) -> String {
 	let empty_errors = BTreeMap::new();
 	let parse_errors = parse_errors.unwrap_or(&empty_errors);
 	if blocks.is_empty() {
-		let mut out = match first_language {
-			Some(language) => miss_diagnostic(pattern, language),
-			None => format!("No AST-searchable files found under {label}."),
+		let mut out = if !searched.is_empty() {
+			searched
+				.iter()
+				.map(|language| miss_diagnostic(pattern, language))
+				.collect::<Vec<_>>()
+				.join("\n\n")
+		} else if parse_errors.is_empty() {
+			format!("No AST-searchable files found under {label}.")
+		} else {
+			// Nothing parsed in any searched language: the notes below carry
+			// the per-language errors, the header names the pattern once.
+			let attempted: Vec<&str> = parse_errors.keys().map(String::as_str).collect();
+			format!(
+				"No AST matches for pattern {pattern:?}: it does not parse in any searched language ({}).",
+				attempted.join(", ")
+			)
 		};
 		for (language, error) in parse_errors {
 			out.push_str(&format!(
