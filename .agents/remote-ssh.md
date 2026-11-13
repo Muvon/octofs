@@ -48,7 +48,8 @@ File tools (view, text_editor, batch_edit, extract_lines, workdir) reach remote 
 it runs on the local machine and bails with guidance under a remote workdir. `ssh host 'cmd'` inside the shell
 tool is checked by the same misuse rules as local commands (recursive gate in `detect_shell_misuse`).
 A bare remote directory listing defaults to `max_depth: 1` (each subdirectory costs an SFTP round trip);
-`pattern`/`content` searches always walk the whole tree.
+`pattern`/`content` searches always walk the whole tree — so do the structural modes (outline, `symbol`,
+`ast`).
 
 ## Tests
 

@@ -1,7 +1,8 @@
 # Octofs — adding or changing an MCP tool
 
 Read this first. Reference example: the `view` tool — `#[tool]` block in `src/mcp/server.rs`, execute path in
-`src/mcp/fs/core.rs` + `file_ops.rs`, tests in `fs_tests.rs`.
+`src/mcp/fs/core.rs` + `file_ops.rs` (plus `structure.rs`/`symbols.rs`/`ast.rs` for its structural modes),
+tests in `fs_tests.rs`.
 
 ## Checklist
 
@@ -31,6 +32,9 @@ Read this first. Reference example: the `view` tool — `#[tool]` block in `src/
   client's transport drops the whole connection, not just the call. `view` and `shell` fail with the size and
   how to narrow; job output is tail-capped (`MAX_TAIL_BYTES` in `background.rs`). An unbounded response is a
   bug.
+- **Structural modes split pure parsing from I/O** — the tree-sitter work lives in `src/structural/` (content in,
+  structured items out, no filesystem access); `fs/structure.rs`, `fs/symbols.rs` and `fs/ast.rs` own the walk,
+  the reads and the rendering. Keep new grammar or lookup logic on the pure side.
 - **Hints vs errors** — non-fatal guidance goes through `request_ctx::push_hint` (drained into the response);
   hard misuse and invalid input `bail!` so the call fails.
 - **Writes** — acquire the file lock (`text_editing`), snapshot via `save_file_history` (undo), keep the delta

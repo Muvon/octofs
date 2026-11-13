@@ -16,6 +16,9 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 | view / create / undo / path resolution | `src/mcp/fs/core.rs` + `src/mcp/fs/file_ops.rs` |
 | str_replace / batch_edit internals / file locking | `src/mcp/fs/text_editing.rs` |
 | Directory listing, glob + content filtering | `src/mcp/fs/directory.rs` + `src/mcp/fs/search.rs` |
+| Structural outline (`view` `flags: "s"`) | `src/mcp/fs/structure.rs` + `src/structural/` (grammars) |
+| Symbol navigation (`view` `symbol`, `flags: "r"`) | `src/mcp/fs/symbols.rs` + `src/structural/symbols.rs` |
+| AST-pattern search (`view` `ast: true`) | `src/mcp/fs/ast.rs` + `src/structural/ast_search.rs` |
 | Delta views / view cache | `src/mcp/fs/delta.rs` — `note_write`, `note_create`, `render_whole_file` |
 | Background jobs / MCP resources / subscriptions | `src/mcp/fs/background.rs` + handlers in `src/mcp/server.rs` |
 | SSH/SFTP paths, auth, connection pool | `src/mcp/fs/remote.rs` — read `.agents/remote-ssh.md` first |
@@ -43,6 +46,9 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 - `shell` always runs locally and bails on a remote workdir; join remote paths via `PathSource`, never `PathBuf::join` (it inserts `\` on Windows and corrupts URLs).
 - RSA SSH keys are unsupported by design (RUSTSEC-2023-0071) and russh uses the `ring` backend because Alpine/musl builds have no cmake — do not "fix" either.
 - Outer `std::sync::Mutex` in `FILE_LOCKS` is never held across `.await`; `resolve_path` does not canonicalize (files may not exist yet) — canonicalize only for lock keys.
+- Tree-sitter walks must be iterative cursor walks — no depth recursion, no per-child `child(i)` loops: deep nesting overflowed the stack and wide files went quadratic.
+- ast-grep metavariable expando chars are per language (`µ` for rust/python/go/ruby/swift/php/elixir, `𐀀` for C/C++, `$` elsewhere) — see `src/structural/ast_search.rs`.
+- `view` mode exclusivity is enforced in `src/mcp/fs/core.rs` (`ast` → `symbol` → outline → listing/search): each mode bails on the others' parameters before dispatch.
 - Register every spawned shell child via `register_child` so SIGTERM/EOF cleanup kills its process group; job output reads are tail-capped (`MAX_TAIL_BYTES`).
 - HTTP access control (`src/http_auth.rs`) is the only boundary in front of `shell` over `--bind`: a non-loopback bind without a token must stay refused, the token check must stay constant-time, and token-less servers keep rmcp's loopback Host allowlist plus enforced Origin validation. Don't weaken any of the three.
 

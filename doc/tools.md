@@ -20,11 +20,14 @@ Relative paths resolve against the session workdir (see
 
 ---
 
-## `view` — read files, list directories, search content
+## `view` — read files, list directories, search content, navigate code
 
-**Modules:** `fs/core.rs`, `fs/file_ops.rs`, `fs/directory.rs`, `fs/search.rs`, `fs/delta.rs`
+**Modules:** `fs/core.rs`, `fs/file_ops.rs`, `fs/directory.rs`, `fs/search.rs`,
+`fs/delta.rs`, `fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`; parsing lives in
+`src/structural/` (`mod.rs`, `signature_extractor.rs`, `symbols.rs`,
+`ast_search.rs`, `languages/`)
 
-One tool, three read modes, selected by the parameters:
+One tool, several read modes, selected by the parameters:
 
 - **File read** (`path`) — lines render as `N:hh|content`, where `N:hh` is the
   line id edit tools target (see [Line ids](architecture.md#line-ids)). Ranged
@@ -38,15 +41,61 @@ One tool, three read modes, selected by the parameters:
   one `path\tNL\t~Nt` (lines, ~tokens) entry per file.
 - **Content search** (`content`, optionally `regex: true`, with `context` lines
   around each match) — literal or regex matching over a file or tree, bounded
-  by `pattern` globs.
+  by `pattern` globs. In the default line mode, matches in a file with a
+  grammar are preceded by their enclosing symbol (e.g. `[impl Store › fn
+  flush]`), once per symbol change; the compact modes (`c`, `l`, `o`), inverted
+  searches and files without a grammar render without them
+  (`fs/search.rs`, `render_file_matches_with_breadcrumbs`).
+- **Structural outline** (`flags: "s"`) — the declarations of a file, or of
+  every grammar-supported file under a directory, with their bodies elided.
+  Each rendered line keeps its `N:hh` id, so the outline feeds `batch_edit`
+  like any other view. Markdown files yield their headings. A directory
+  outline honours `pattern`, `max_depth` and `include_hidden`. Rejected
+  together with `content`, `start`/`end` and the other flags.
+- **Symbol navigation** (`symbol: "<name>"`, `*` wildcards allowed) — the
+  definitions of a name in a file or under a directory; `flags: "r"` returns
+  its references instead, `c`/`l` give per-file counts and matching paths. An
+  exact name renders the whole definition when it is short enough, longer
+  ones and wildcard matches render a bounded preview. A directory lookup
+  honours `pattern`, `max_depth`, `include_hidden` and `context`. Markdown
+  files yield their headings, Svelte files the symbols of their `<script>`
+  blocks; CSS and JSON name no navigable symbol (a single file says so, a
+  directory skips them). Rejected together with `content` and `start`/`end`;
+  the `s`, `o` and `v` flags are rejected with it, `r` needs `symbol`, and
+  `c`/`l` keep their search meanings.
+- **AST search** (`ast: true`, with the ast-grep pattern in `content`) — the
+  pattern is matched against the syntax tree instead of the text: `$NAME`
+  matches one node, `$$$ARGS` a sequence, `$_` any single node. The pattern
+  must be complete, valid code in the target language (a Python pattern needs
+  its body). Works on a file or a directory, locally or over `ssh://`, and
+  honours `pattern`, `max_depth`, `include_hidden`, `context` and the `c`/`l`
+  flags. Rejected together with `regex`, `symbol`, `start`/`end` and the
+  `s`/`v`/`o` flags. CSS, JSON and Markdown files are not AST-searchable.
+  Zero matches return a diagnostic naming the parsed kind, the
+  metavariables and the plain-text fallback.
+
+The modes are mutually exclusive: `view_existing_path` (`fs/core.rs`)
+dispatches `ast` → `symbol` → outline → listing/search and each mode bails on
+the other modes' parameters before dispatch. The three structural modes split
+pure parsing from I/O — `src/structural/` takes content in and returns
+structured items without touching the filesystem, while `fs/structure.rs`,
+`fs/symbols.rs` and `fs/ast.rs` own the walk, the reads and the rendering.
+Structural reads never register in the delta/view cache.
+
+**Supported languages.** The outline covers Rust, Python, JavaScript,
+TypeScript, Go, Java, C/C++, PHP, Bash, Ruby, Lua, JSON, Swift, Svelte, CSS,
+Elixir and Markdown (`src/structural/languages/`). Symbol navigation covers the
+same set except CSS and JSON; AST search covers the same set except CSS, JSON
+and Markdown, and searches a Svelte file through its `<script>` blocks.
 
 **Delta views.** Re-viewing a *whole* file returns only the hunks changed since
 the last full view of that file in the same session (or an unchanged marker).
 The `ViewCache` (`fs/delta.rs`) stores the last content the model saw; a
-Myers line diff renders changed hunks with fresh ids. Ranged views and searches
-bypass the cache by design — only whole-file views update it. Octofs's own
-writes keep the cache truthful via `delta::note_write` / `note_create`, so an
-edit followed by a whole-file view does not replay the file.
+Myers line diff renders changed hunks with fresh ids. Ranged views, searches
+and the structural read modes bypass the cache by design — only whole-file
+views update it. Octofs's own writes keep the cache truthful via
+`delta::note_write` / `note_create`, so an edit followed by a whole-file view
+does not replay the file.
 
 Deltas are opt-in per client: a session gets a `ViewCache` only when its client
 sends `context_epoch` (a non-negative integer) in `experimental.session` on every

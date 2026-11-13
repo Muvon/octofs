@@ -20,7 +20,10 @@ src/
       file_ops.rs      — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs  — str_replace_spec (progressive matching), batch_edit_spec, per-file async locking
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks
-      search.rs        — literal/regex matcher with context blocks
+      search.rs        — literal/regex matcher with context blocks, enclosing-symbol breadcrumbs
+      structure.rs     — structural outline mode (flags: "s"): file/directory walk, outline rendering
+      symbols.rs       — symbol navigation mode (symbol, flags: "r"): definitions, references, breadcrumbs
+      ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars
       delta.rs         — ViewCache (note_write/note_create/render_whole_file), Myers line diff, hunk rendering
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops
       shell.rs         — execute_shell_command, misuse gate, foreground window, process-group cleanup
@@ -28,6 +31,13 @@ src/
       workdir.rs       — workdir get/set/reset (WorkdirResult)
     *_tests.rs         — sibling unit tests; fs_tests.rs = cross-module integration; server_tests.rs = in-process
                           protocol delivery tests (rmcp `client` feature, dev-dependency only)
+  structural/
+    mod.rs             — outline entry point, extension → language map, supported-language list
+    signature_extractor.rs — signature line spans per language, Markdown headings
+    symbols.rs         — definitions/references by name, per-line enclosing-symbol breadcrumbs
+    ast_search.rs      — ast-grep pattern search over the grammars, expando rewrite, miss diagnostics
+    languages/         — one tree-sitter grammar + outline/symbol rules per language
+    *_tests.rs         — sibling unit tests (mod, signature_extractor, symbols, ast_search, per language)
   utils/
     line_hash.rs       — N:hh line ids (FNV1a-8 of content), parse_endpoint, verify_line_id
     truncation.rs      — estimate_tokens, truncate_to_tokens, global response truncation
@@ -39,6 +49,11 @@ src/
 function inside `request_ctx::with_request_context(view_cache, …)` → result string → `append_hints()` drains the
 hint queue into the response. Tool methods return protocol content; one may attach a `ResourceLink` when a call
 promotes a job to background (see shell).
+
+`view` dispatches by mode in `fs/core.rs` (`view_existing_path`): `ast` → `symbol` → outline (`flags: "s"`) →
+listing/content search. Every mode bails on the other modes' parameters before dispatch, so the modes are
+mutually exclusive. The structural modes split pure parsing (`src/structural/`, content in — structured items
+out) from I/O and rendering (`fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`).
 
 ## State
 
