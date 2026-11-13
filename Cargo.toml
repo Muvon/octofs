@@ -84,6 +84,10 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-svelte-ng = "1.0.2"
 tree-sitter-swift = "0.7.4"
 tree-sitter-typescript = "0.23.2"
+# AST-pattern search (`view` with `ast: true`), ported from octocode. Grammar-
+# agnostic core: it is generic over the tree-sitter grammars above and adds no
+# tree-sitter dependency of its own, so it cannot conflict with their pins.
+ast-grep-core = "0.51.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

@@ -20,7 +20,7 @@ use super::remote::{
 	PathSource,
 };
 use crate::mcp::fs::search::ViewFlags;
-use crate::mcp::fs::{delta, directory, file_ops, structure, symbols, text_editing};
+use crate::mcp::fs::{ast, delta, directory, file_ops, structure, symbols, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::{format_extracted_content_smart, format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
@@ -342,6 +342,49 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		.get("content")
 		.and_then(|v| v.as_str())
 		.is_some_and(|c| !c.trim().is_empty());
+
+	// AST-pattern search (`ast` + `content`): exclusive of symbol navigation,
+	// outlines, ranges and regex, so it is dispatched before every other mode.
+	if call.parameters.get("ast").and_then(|v| v.as_bool()).unwrap_or(false) {
+		let pattern = call.parameters.get("content").and_then(|v| v.as_str()).map(str::trim);
+		let Some(pattern) = pattern else {
+			bail!("`ast` requires `content`: pass the AST pattern there, e.g. `fn $NAME($$$ARGS)`.");
+		};
+		if pattern.is_empty() {
+			bail!("`ast` requires a non-empty `content` pattern, e.g. `fn $NAME($$$ARGS)`.");
+		}
+		if call
+			.parameters
+			.get("symbol")
+			.and_then(|v| v.as_str())
+			.is_some_and(|s| !s.trim().is_empty())
+		{
+			bail!("`ast` cannot be combined with `symbol`: an AST search is pattern-based — drop `symbol`.");
+		}
+		if call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false) {
+			bail!("`ast` cannot be combined with `regex`: an AST pattern matches the syntax tree, not text — drop `regex`.");
+		}
+		let has_range = ["start", "end"]
+			.iter()
+			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()));
+		if has_range {
+			bail!("`ast` cannot be combined with `start`/`end`: an AST search returns whole matches — drop them.");
+		}
+		// `s`/`v`/`o` need ast-specific messages, so they are checked here
+		// rather than in `ViewFlags::parse`, whose `content`-mode messages
+		// would advise dropping `content` — which `ast` requires.
+		for flag in flags_param.unwrap_or_default().chars() {
+			match flag {
+				's' => bail!("View flag s cannot be combined with `ast`: an outline is its own output — drop `s`."),
+				'v' => bail!(
+					"View flag v cannot be combined with `ast`: an AST search has no non-matching lines — drop `v`."
+				),
+				'o' => bail!("View flag o cannot be combined with `ast`: an AST match renders whole lines — drop `o`."),
+				_ => {}
+			}
+		}
+		return ast::view_ast(call, path, source, pattern).await;
+	}
 
 	// Symbol navigation (`symbol`): exclusive of content search, ranges and
 	// outlines, so it is dispatched before every other mode. Trimmed once at

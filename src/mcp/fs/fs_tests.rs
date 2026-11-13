@@ -7592,4 +7592,321 @@ mod tests {
 			cleanup_remote_dir(&dir).await;
 		})
 	}
+	#[tokio::test]
+	async fn view_ast_searches_rust_javascript_python_and_go_files() {
+		let file = create_test_rs_file("fn a() {}\nfn b(x: u8, y: u8) {}\n").await;
+		let path = file.path().to_string_lossy().to_string();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": path, "ast": true, "content": "fn $F($$$A) {}" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("fn a() {}"), "got: {result}");
+		assert!(result.contains("fn b(x: u8, y: u8) {}"), "got: {result}");
+		// Every rendered source line carries an N:hh id usable by batch_edit
+		// (breadcrumb headers are the exception).
+		assert!(
+			result.lines().filter(|l| !l.starts_with('[')).all(|l| l.contains('|')),
+			"got: {result}"
+		);
+
+		let js = tempfile::Builder::new().suffix(".js").tempfile().unwrap();
+		fs::write(js.path(), "function a() {}\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": js.path().to_string_lossy(), "ast": true, "content": "function $F($$$A) {}" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("function a() {}"), "got: {result}");
+
+		let py = tempfile::Builder::new().suffix(".py").tempfile().unwrap();
+		fs::write(py.path(), "def a():\n    pass\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": py.path().to_string_lossy(), "ast": true, "content": "def $F($$$A):\n    $$$B" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("def a():"), "got: {result}");
+		assert!(result.contains("    pass"), "multi-line span not rendered: {result}");
+
+		let go = tempfile::Builder::new().suffix(".go").tempfile().unwrap();
+		fs::write(go.path(), "func a() {}\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": go.path().to_string_lossy(), "ast": true, "content": "func $F($$$A) {}" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("func a() {}"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_directory_honours_pattern_glob_and_c_and_l_flags() {
+		let root = tempfile::tempdir().unwrap();
+		fs::create_dir(root.path().join("sub")).await.unwrap();
+		fs::write(root.path().join("a.rs"), "fn handle_a() {}\n").await.unwrap();
+		fs::write(root.path().join("sub/b.rs"), "fn handle_b() {}\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("e.py"), "def handle_e():\n    pass\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("c.txt"), "fn handle_c() {}\n")
+			.await
+			.unwrap();
+
+		let mut call = McpToolCall::test_call(
+			"view",
+			json!({ "path": ".", "ast": true, "content": "fn $F($$$A) {}", "pattern": "**/*.rs" }),
+		);
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs:"), "got: {result}");
+		assert!(result.contains("sub/b.rs:"), "got: {result}");
+		assert!(result.contains("fn handle_a"), "got: {result}");
+		assert!(!result.contains("e.py"), "glob ignored: {result}");
+		assert!(!result.contains("c.txt"), "unsupported file listed: {result}");
+
+		let mut call = McpToolCall::test_call(
+			"view",
+			json!({ "path": ".", "ast": true, "content": "fn $F($$$A) {}", "flags": "c" }),
+		);
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs\t1"), "got: {result}");
+		assert!(result.contains("sub/b.rs\t1"), "got: {result}");
+		assert!(
+			!result.contains("e.py"),
+			"python fn does not match rust pattern: {result}"
+		);
+
+		let mut call = McpToolCall::test_call(
+			"view",
+			json!({ "path": ".", "ast": true, "content": "fn $F($$$A) {}", "flags": "l" }),
+		);
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("a.rs"), "got: {result}");
+		assert!(result.contains("sub/b.rs"), "got: {result}");
+		assert!(
+			!result.contains("fn handle"),
+			"files-only mode rendered lines: {result}"
+		);
+	}
+
+	#[tokio::test]
+	async fn view_ast_rejects_incompatible_parameters_and_flags() {
+		let file = create_test_rs_file("fn a() {}\n").await;
+		let path = file.path().to_string_lossy().to_string();
+		let cases = [
+			(json!({ "path": path, "ast": true }), "`ast` requires `content`"),
+			(
+				json!({ "path": path, "ast": true, "content": "  " }),
+				"non-empty `content`",
+			),
+			(
+				json!({ "path": path, "ast": true, "content": "fn $F() {}", "regex": true }),
+				"combined with `regex`",
+			),
+			(
+				json!({ "path": path, "ast": true, "content": "fn $F() {}", "symbol": "a" }),
+				"combined with `symbol`",
+			),
+			(
+				json!({ "path": path, "ast": true, "content": "fn $F() {}", "start": 1 }),
+				"combined with `start`/`end`",
+			),
+			(
+				json!({ "path": path, "ast": true, "content": "fn $F() {}", "flags": "s" }),
+				"flag s cannot be combined with `ast`",
+			),
+			(
+				json!({ "path": path, "ast": true, "content": "fn $F() {}", "flags": "v" }),
+				"flag v cannot be combined with `ast`",
+			),
+			(
+				json!({ "path": path, "ast": true, "content": "fn $F() {}", "flags": "o" }),
+				"flag o cannot be combined with `ast`",
+			),
+		];
+		for (params, message) in cases {
+			let call = McpToolCall::test_call("view", params);
+			let err = execute_view(&call).await.unwrap_err().to_string();
+			assert!(err.contains(message), "expected {message:?}, got: {err}");
+		}
+	}
+
+	#[tokio::test]
+	async fn view_ast_zero_matches_yields_the_miss_diagnostic() {
+		let file = create_test_rs_file("struct A;\n").await;
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": file.path().to_string_lossy(), "ast": true, "content": "fn $F($$$A) {}" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("No AST matches"), "got: {result}");
+		assert!(result.contains("kind=function_item"), "got: {result}");
+		assert!(result.contains("Try a plain `content` search"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_reports_unparseable_pattern_once_per_language() {
+		let root = tempfile::tempdir().unwrap();
+		// `fn $F($$$A) {}` parses in rust but is two top-level nodes in python.
+		fs::write(root.path().join("a.rs"), "fn a() {}\n").await.unwrap();
+		fs::write(root.path().join("b.py"), "def b():\n    pass\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("c.py"), "def c():\n    pass\n")
+			.await
+			.unwrap();
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "ast": true, "content": "fn $F($$$A) {}" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("fn a() {}"), "rust match missing: {result}");
+		assert_eq!(result.matches("skipped python files").count(), 1, "got: {result}");
+		assert!(result.contains("does not parse as python"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_single_file_unsupported_language_bails_with_guidance() {
+		let css = tempfile::Builder::new().suffix(".css").tempfile().unwrap();
+		fs::write(css.path(), "body { color: red; }\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": css.path().to_string_lossy(), "ast": true, "content": "$A" }),
+		);
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("AST pattern search is not supported for css files"),
+			"got: {err}"
+		);
+		assert!(err.contains("flags: \"s\""), "got: {err}");
+
+		let txt = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+		fs::write(txt.path(), "fn a() {}\n").await.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": txt.path().to_string_lossy(), "ast": true, "content": "fn $F() {}" }),
+		);
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.contains("No grammar for extension 'txt'"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_directory_skips_unsupported_files_silently() {
+		let root = tempfile::tempdir().unwrap();
+		fs::write(root.path().join("a.rs"), "fn a() {}\n").await.unwrap();
+		fs::write(root.path().join("b.css"), "body { color: red; }\n")
+			.await
+			.unwrap();
+		fs::write(root.path().join("c.txt"), "fn c() {}\n").await.unwrap();
+		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "ast": true, "content": "fn $F($$$A) {}" }));
+		call.workdir = root.path().to_path_buf();
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("fn a() {}"), "got: {result}");
+		assert!(!result.contains("b.css"), "css file listed: {result}");
+		assert!(!result.contains("c.txt"), "txt file listed: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_offsets_svelte_script_blocks_to_file_coordinates() {
+		let svelte = tempfile::Builder::new().suffix(".svelte").tempfile().unwrap();
+		fs::write(
+			svelte.path(),
+			"<h1>hi</h1>\n<script>\n\tfunction greet() {}\n</script>\n",
+		)
+		.await
+		.unwrap();
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": svelte.path().to_string_lossy(), "ast": true, "content": "function $F() {}" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("function greet() {}"), "got: {result}");
+		assert!(result.starts_with("3:"), "not offset to file row 3: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_caps_long_match_spans_with_an_elision_marker() {
+		let mut src = String::from("fn a() {\n");
+		for i in 0..40 {
+			src.push_str(&format!("\tlet v{i} = {i};\n"));
+		}
+		src.push_str("}\n");
+		let file = create_test_rs_file(&src).await;
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": file.path().to_string_lossy(), "ast": true, "content": "fn $F() { $$$A }" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(
+			result.contains("… 12 lines omitted …"),
+			"elision marker missing: {result}"
+		);
+		assert!(result.contains("let v0 = 0;"), "first span line missing: {result}");
+		// The cap keeps the span's last line so the match's extent stays visible.
+		assert!(
+			result.lines().next_back().is_some_and(|l| l.ends_with('}')),
+			"last span line missing: {result}"
+		);
+		assert!(!result.contains("let v30 = 30;"), "capped line rendered: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_survives_ten_thousand_levels_of_nesting() {
+		let deep = format!("fn f() {{ {}1{} }}", "(".repeat(10000), ")".repeat(10000));
+		let file = create_test_rs_file(&deep).await;
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": file.path().to_string_lossy(), "ast": true, "content": "($A)" }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("fn f()"), "got: {result}");
+	}
+
+	#[tokio::test]
+	async fn view_ast_renders_context_lines() {
+		let file = create_test_rs_file("mod m {\n\tfn a() {}\n}\n").await;
+		let call = McpToolCall::test_call(
+			"view",
+			json!({ "path": file.path().to_string_lossy(), "ast": true, "content": "fn $F($$$A) {}", "context": 1 }),
+		);
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("[mod m › fn a]"), "breadcrumb missing: {result}");
+		assert!(
+			result.contains("mod m {") && result.contains("}"),
+			"context lines missing: {result}"
+		);
+	}
+	#[test]
+	fn remote_view_ast_searches_a_remote_directory() {
+		if remote_test_prefix().is_none() {
+			return;
+		}
+		remote_runtime().block_on(async {
+			let dir = setup_remote_dir().await;
+			let file_path = format!("{dir}/ast.rs");
+			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
+			crate::mcp::fs::remote::io_write(&source, b"fn a() {}\nfn b(x: u8) {}\n")
+				.await
+				.unwrap();
+
+			let call = McpToolCall::test_call(
+				"view",
+				json!({ "path": file_path, "ast": true, "content": "fn $F($$$A) {}" }),
+			);
+			let result = execute_view(&call).await.unwrap();
+			assert!(result.contains("fn a() {}"), "got: {result}");
+			assert!(result.contains("fn b(x: u8) {}"), "got: {result}");
+
+			let call = McpToolCall::test_call(
+				"view",
+				json!({ "path": dir, "ast": true, "content": "fn $F($$$A) {}", "flags": "c" }),
+			);
+			let result = execute_view(&call).await.unwrap();
+			assert!(result.contains("ast.rs\t2"), "got: {result}");
+
+			cleanup_remote_dir(&dir).await;
+		})
+	}
 }

@@ -17,6 +17,7 @@
 //! Callers pass a path label (only its extension picks the language) and the
 //! file contents, and get structured items back.
 
+pub mod ast_search;
 mod languages;
 mod signature_extractor;
 pub mod symbols;

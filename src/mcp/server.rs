@@ -1254,10 +1254,14 @@ pub struct ViewParams {
 	#[serde(default)]
 	pub pattern: Option<String>,
 	/// Locate code: searches the whole file/tree (`start`/`end` ignored) for a literal
-	/// substring, or a Rust regex with `regex: true` (`(?i)` case-insensitive; alternation for
-	/// related terms).
+	/// substring, a Rust regex with `regex: true` (`(?i)` case-insensitive; alternation for
+	/// related terms), or an ast-grep pattern with `ast: true`.
 	#[serde(default)]
 	pub content: Option<String>,
+	/// Treat `content` as an ast-grep pattern matched against the syntax tree,
+	/// e.g. `fn $NAME($$$ARGS)` or `$OBJ.unwrap()`. Default: false.
+	#[serde(default)]
+	pub ast: Option<bool>,
 	/// Treat `content` as a regex. Default: false.
 	#[serde(default)]
 	pub regex: Option<bool>,
