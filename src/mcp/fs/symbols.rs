@@ -21,6 +21,7 @@
 //! cache. The graph relations (`callers`, `callees`, ...) are validated here
 //! and answered by `super::graph`.
 
+use super::code_index::{identifier_runs, CodeIndexes, IndexUnavailable};
 use super::directory::{join_bounded, missing_path_hint, read_capped, remote_child};
 use super::file_ops::MAX_VIEW_FILE_BYTES;
 use super::graph::{execute_graph, GraphRelation, GraphRequest, MAX_GRAPH_DEPTH};
@@ -273,6 +274,35 @@ async fn symbol_file(
 	})
 }
 
+/// Workdir-relative files that can hold the exact name `symbol`, from the
+/// code index, so the directory walk parses those only. `None` when the
+/// index cannot narrow the lookup: a wildcard, hidden files wanted, a name
+/// with no identifier text, or a workdir that does not fit the index.
+async fn indexed_candidates(
+	workdir: &Path,
+	matcher: &NameMatcher,
+	symbol: &str,
+	include_hidden: bool,
+) -> Result<Option<HashSet<String>>> {
+	if matcher.is_wildcard() || include_hidden || identifier_runs(symbol).is_empty() {
+		return Ok(None);
+	}
+	let root = tokio::fs::canonicalize(workdir)
+		.await
+		.map_err(|e| anyhow!("Cannot resolve the workdir {}: {e}", workdir.display()))?;
+	let index = CodeIndexes::global().index(&root);
+	let found = async {
+		index.refresh().await?;
+		index.files_spelling_verified(&[symbol]).await
+	}
+	.await;
+	match found {
+		Ok(ids) => Ok(Some(ids.iter().filter_map(|id| index.path_of(*id)).collect())),
+		Err(error) if error.is::<IndexUnavailable>() => Ok(None),
+		Err(error) => Err(error),
+	}
+}
+
 async fn symbol_directory(
 	call: &McpToolCall,
 	path: &str,
@@ -311,8 +341,12 @@ async fn symbol_directory(
 	let working_dir = call.workdir.clone();
 	let label = path.to_string();
 	let matcher = matcher.clone();
+	let candidates = if abs_dir.starts_with(&call.workdir) {
+		indexed_candidates(&call.workdir, &matcher, symbol, include_hidden).await?
+	} else {
+		None
+	};
 	let symbol = symbol.to_string();
-
 	// The walk, read, parse and render are all CPU/IO-bound blocking work —
 	// one spawn_blocking, files in parallel like the tree content search.
 	let output = tokio::task::spawn_blocking(move || -> Result<String, String> {
@@ -331,6 +365,9 @@ async fn symbol_directory(
 			.par_iter()
 			.enumerate()
 			.filter_map(|(i, rel_path)| {
+				if candidates.as_ref().is_some_and(|spelled| !spelled.contains(rel_path)) {
+					return None;
+				}
 				let full_path = working_dir.join(rel_path);
 				// Files over the view cap are not loaded — same OOM bound as
 				// the content search; they are skipped silently like files

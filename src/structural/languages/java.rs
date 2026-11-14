@@ -32,6 +32,18 @@ impl Language for Java {
 		tree_sitter_java::LANGUAGE.into()
 	}
 
+	// A Java import is one statement with the whole qualified name after
+	// `import` (also `import static`, `.*`); there is no grouped form.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&["import"]
+	}
+
+	// `implements A,` newline `B` leaves a bare name on its own line, which
+	// the default name-list rule accepts.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["extends", "implements"]
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Same kinds as the outline: field declarations would be named after
 		// their type, and lambdas and imports declare no symbol.

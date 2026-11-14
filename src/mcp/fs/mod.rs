@@ -16,6 +16,7 @@
 
 pub mod ast;
 pub mod background;
+mod code_index;
 pub mod core;
 pub mod delta;
 mod digest;

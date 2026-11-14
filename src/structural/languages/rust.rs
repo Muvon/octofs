@@ -33,6 +33,17 @@ impl Language for Rust {
 		tree_sitter_rust::LANGUAGE.into()
 	}
 
+	// `use a::b;`, `mod b;`, `extern crate b;`; the names of a nested group
+	// sit on lines of their own, which the default name-list rule accepts.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&["use", "mod", "extern", "::"]
+	}
+
+	// `impl Trait for Type`, `trait A: B` (bounds continue on later lines).
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["impl", "trait"]
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// impl_item is left out: it declares no symbol of its own, its methods
 		// do (owned by the impl's type).

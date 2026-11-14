@@ -70,6 +70,19 @@ pub(crate) fn body_open_style(language: &str) -> BodyOpen {
 	}
 }
 
+/// Whether `line` may hold an import of the module `name` in `language`: a
+/// pre-filter for text scans that never rejects a line the extractor reads an
+/// import from. A language without an implementation keeps every line.
+pub(crate) fn line_may_import(language: &str, line: &str, name: &str) -> bool {
+	languages::get_language(language).is_none_or(|language| language.line_may_import(line, name))
+}
+
+/// Same for the line that names the parent type `name` of a declaration
+/// (`extends`, `implements`, ...).
+pub(crate) fn line_may_inherit(language: &str, line: &str, name: &str) -> bool {
+	languages::get_language(language).is_none_or(|language| language.line_may_inherit(line, name))
+}
+
 /// Extract the outline of `contents`, picking the language from the extension
 /// of `path_label`. The error is a one-line message: an unsupported extension
 /// names it and the supported languages. Parsing itself never fails — a

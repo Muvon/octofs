@@ -35,6 +35,17 @@ impl Language for Php {
 		tree_sitter_php::LANGUAGE_PHP.into()
 	}
 
+	// `use App\Models\User;`; the names of a group `use App\{` sit on lines
+	// of their own, which the default name-list rule accepts.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&["use", "\\", "require", "include"]
+	}
+
+	// `class A extends B implements C,` newline `D`.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["extends", "implements"]
+	}
+
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		// The type containers are restored (chunking drops them as too
 		// large); namespaces and use statements are dropped — a namespace is

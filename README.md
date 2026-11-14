@@ -513,10 +513,18 @@ The graph relations (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, 
 defaults to 1, `path` searches to 5, the maximum is 5). They are resolved by name and imports, not
 types: same-name symbols can be confused and dynamic calls missed, and `(guess)` marks a hop matched
 by name alone (repository-wide, ambiguous or unknown receiver). A call outside any function shows as `path:line  file`.
-External imports show as `external: <import>`. Every relation except `path` parses only the files that
-spell the names it follows, so it answers in well under a second on most repositories; `path` builds
-the graph of the whole workdir, which takes seconds on a large repository, and that graph stays cached
-(the last 4 workdirs). A `path` argument only narrows which definitions of `name` start the
+External imports show as `external: <import>`. Every relation except `path` is answered from a per-workdir
+code index (a compact table of which files spell which names, built on the first call and refreshed from
+file stamps on every call, so a file edited by any program is seen by the next query) and parses only the
+files that can matter, at most 600 per query and for at most 800 ms after the refresh; files parsed once are
+kept in memory (with what their imports resolved to) under a 192 MB ceiling shared by all indexes. When a
+name is spelled in more files than the cap or the time allows, the answer covers the files examined, and a
+closing line says how many candidates exist and that repeating the query examines the rest (parsed files do
+not count again); `path` or `Owner::name` narrows it. A name spelled in more than 3000 files with no such
+narrowing is not traced: the reply gives the file count. A list shows at most 100 results, most certain
+first, then a closing line counts the rest.
+`path` builds the graph of the whole workdir, which takes seconds on a large repository, and that graph
+stays cached (the last 4 workdirs). A `path` argument only narrows which definitions of `name` start the
 query, and must be inside the workdir. Files over 5 MB or that fail to parse are left out and named
 in a closing note, as are files cut by the whole-repository graph limits (20,000 files or 256 MB of source); a query that hits its
 hop or work limit says so instead of reporting "no path". Graph relations are local only. Zero results explain what was looked for and

@@ -18,6 +18,9 @@
 //! filesystem.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Replace backslashes so Windows-style and Unix-style spellings of a path
 /// compare equal.
@@ -65,6 +68,7 @@ pub fn resolve_relative_path(source_file: &str, relative_path: &str) -> String {
 
 /// File registry for efficient file lookup by path, directory and name.
 pub struct FileRegistry {
+	id: u64,
 	all_files: Vec<String>,
 	/// Separator-normalized path -> index into `all_files` (first occurrence
 	/// wins), so exact lookups are a hash hit instead of a scan that
@@ -81,6 +85,11 @@ pub struct FileRegistry {
 }
 
 impl FileRegistry {
+	/// Tells registries apart, so a result computed against one is not used
+	/// with another.
+	pub fn id(&self) -> u64 {
+		self.id
+	}
 	pub fn new(all_files: &[String]) -> Self {
 		let mut normalized_index = HashMap::with_capacity(all_files.len());
 		let mut exact_index = HashMap::with_capacity(all_files.len());
@@ -114,6 +123,7 @@ impl FileRegistry {
 		}
 
 		Self {
+			id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
 			all_files: all_files.to_vec(),
 			normalized_index,
 			exact_index,

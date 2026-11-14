@@ -20,6 +20,7 @@
 //! blocks join the code graph through `extract_embedded_sources`.
 
 use super::javascript::JavaScript;
+use super::typescript::TypeScript;
 use super::{EmbeddedSource, Language};
 use crate::structural::graph::registry::FileRegistry;
 use tree_sitter::{Node, Parser};
@@ -36,6 +37,16 @@ impl Language for Svelte {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_svelte_ng::LANGUAGE.into()
+	}
+
+	// Scripts are JavaScript or TypeScript; imports share one literal form.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		JavaScript {}.line_may_import(line, name)
+	}
+
+	// A script may be TypeScript, the stricter of the two.
+	fn line_may_inherit(&self, line: &str, name: &str) -> bool {
+		TypeScript {}.line_may_inherit(line, name)
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {

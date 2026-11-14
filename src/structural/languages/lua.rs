@@ -15,7 +15,7 @@
 //! Lua grammar: named function declarations, plus the graph facts
 //! (`require` imports, module-return exports, calls, owners).
 
-use super::{extract_call_target, parse_call_target, CallTarget, Language};
+use super::{extract_call_target, parse_call_target, path_ends_with_name, CallTarget, Language};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
@@ -28,6 +28,12 @@ impl Language for Lua {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_lua::LANGUAGE.into()
+	}
+
+	// `require("m")`, `require 'm'` and the long-string form `require [[m]]`:
+	// the name is the last segment of the module path.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		path_ends_with_name(line, name, "\"']")
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {

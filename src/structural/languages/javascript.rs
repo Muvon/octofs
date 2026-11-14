@@ -16,9 +16,12 @@
 //! plus the graph methods (imports, calls, class inheritance, import
 //! resolution) that TypeScript, PHP, Python and Svelte reuse in part.
 
-use super::{parse_call_target, simple_type_name, CallTarget, Language, TypeRelationKind};
+use super::{parse_call_target, path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
+
+/// What closes the module path of a JavaScript or TypeScript import.
+pub(super) const SCRIPT_PATH_END: &str = "'\"`";
 
 pub(crate) struct JavaScript {}
 
@@ -39,6 +42,17 @@ impl Language for JavaScript {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_javascript::LANGUAGE.into()
+	}
+
+	// The module path is a string literal: the name is its last segment,
+	// before the extension and the closing quote.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		path_ends_with_name(line, name, SCRIPT_PATH_END)
+	}
+
+	// JavaScript has a single parent, and `extends` stays on the parent's line.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["extends"]
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {

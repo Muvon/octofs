@@ -169,6 +169,40 @@ pub(crate) trait Language: Send + Sync {
 		None
 	}
 
+	/// Substrings of which at least one appears on the same line as the imported
+	/// module/file name in every import form this language's extractor understands
+	/// that the line holds a keyword for. Empty means "no cheap filter": every line
+	/// naming the module is a candidate.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&[]
+	}
+
+	/// Same, for the line that names a parent type (extends / implements / embeds /
+	/// mixes in) in every form `extract_type_relations` understands.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&[]
+	}
+
+	/// Whether `line` may be the line of an import of the module `name` (a file
+	/// stem or directory name). Sound, not exact: it never rejects a line the
+	/// extractor reads an import from. The default accepts a line with a marker
+	/// and a line that holds nothing but names, which is how the continuation
+	/// lines of a grouped import look. Languages whose imports end in a quoted
+	/// path override it.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		let markers = self.import_line_markers();
+		contains_identifier(line, name)
+			&& (markers.is_empty()
+				|| markers.iter().any(|marker| marker_in_line(line, marker))
+				|| name_list_line(line, name, ""))
+	}
+
+	/// Whether `line` may name the parent type `name` of a declaration, with
+	/// the same soundness rule as `line_may_import`.
+	fn line_may_inherit(&self, line: &str, name: &str) -> bool {
+		inheritance_line(self.inheritance_line_markers(), line, name, INHERITANCE_LIST_EXTRA)
+	}
+
 	/// Every repository file an import names; empty for an external
 	/// dependency. Languages whose imports name a package or directory rather
 	/// than one file (Go, Java wildcards, Swift modules) override this with
@@ -178,6 +212,103 @@ pub(crate) trait Language: Send + Sync {
 			.into_iter()
 			.collect()
 	}
+}
+
+/// Characters other than identifier characters, spaces and brackets that a
+/// line of parent names may hold: bounds (`+`, `&`), generics, `:` and `;`.
+const INHERITANCE_LIST_EXTRA: &str = "+&<>:;'?";
+
+fn is_identifier_char(character: char) -> bool {
+	character.is_alphanumeric() || character == '_' || character == '$'
+}
+
+/// `name` occurs in `line` as a whole identifier.
+pub(crate) fn contains_identifier(line: &str, name: &str) -> bool {
+	!name.is_empty()
+		&& line.match_indices(name).any(|(start, _)| {
+			line[..start]
+				.chars()
+				.next_back()
+				.is_none_or(|before| !is_identifier_char(before))
+				&& line[start + name.len()..]
+					.chars()
+					.next()
+					.is_none_or(|after| !is_identifier_char(after))
+		})
+}
+
+/// A keyword marker must stand alone (`use` is not in `user`); a symbol
+/// marker (`::`, `\`) is a plain substring.
+fn marker_in_line(line: &str, marker: &str) -> bool {
+	let keyword = marker
+		.chars()
+		.next()
+		.zip(marker.chars().last())
+		.is_some_and(|(first, last)| is_identifier_char(first) && is_identifier_char(last));
+	if keyword {
+		contains_identifier(line, marker)
+	} else {
+		line.contains(marker)
+	}
+}
+
+/// A parent-type line: a marker keyword, or names only (`extra` widens what
+/// counts as a name list for the language). No markers keeps every line that
+/// names the type.
+pub(crate) fn inheritance_line(markers: &[&str], line: &str, name: &str, extra: &str) -> bool {
+	contains_identifier(line, name)
+		&& (markers.is_empty()
+			|| markers.iter().any(|marker| marker_in_line(line, marker))
+			|| name_list_line(line, name, extra))
+}
+
+/// The line without a trailing comment.
+fn without_comment(line: &str) -> &str {
+	let cut = ["//", "#", "/*"].iter().filter_map(|start| line.find(start)).min();
+	cut.map_or(line, |index| &line[..index])
+}
+
+/// A line that holds `name` among names only: identifiers, spaces, commas and
+/// brackets (plus `extra`), such as the `b,` of a parenthesised import group.
+/// A name used in code (`query = x`, `query.filter()`) has other characters.
+fn name_list_line(line: &str, name: &str, extra: &str) -> bool {
+	let code = without_comment(line);
+	contains_identifier(code, name)
+		&& code.chars().all(|character| {
+			is_identifier_char(character)
+				|| character.is_whitespace()
+				|| ",(){}".contains(character)
+				|| extra.contains(character)
+		})
+}
+
+/// `name` is the last segment of a path written in `line`: whole identifier,
+/// then any file extensions, then one of `closers` (or the end of the line
+/// when `closers` holds a newline). A URL string that merely contains the
+/// name does not qualify.
+pub(crate) fn path_ends_with_name(line: &str, name: &str, closers: &str) -> bool {
+	if name.is_empty() {
+		return false;
+	}
+	line.match_indices(name).any(|(start, _)| {
+		if line[..start].chars().next_back().is_some_and(is_identifier_char) {
+			return false;
+		}
+		let mut rest = &line[start + name.len()..];
+		while let Some(after_dot) = rest.strip_prefix('.') {
+			let extension_len = after_dot
+				.find(|character: char| !is_identifier_char(character))
+				.unwrap_or(after_dot.len());
+			if extension_len == 0 {
+				break;
+			}
+			rest = &after_dot[extension_len..];
+		}
+		match rest.chars().next() {
+			None => closers.contains('\n'),
+			Some(next) => closers.contains(next),
+		}
+	})
 }
 
 /// Gets a language implementation by its name.
@@ -202,6 +333,10 @@ pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
 		_ => None,
 	}
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod mod_tests;
 
 /// Extract a symbol from a node by finding a child matching any of multiple
 /// kinds. A kind also matches when the child's kind merely contains it, which

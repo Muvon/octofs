@@ -21,8 +21,8 @@ use super::types::{CodeRelationship, RelationType};
 use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Finds the language implementation for a language name. A parameter instead
 /// of a direct `get_language` call so tests can plug in a language that
@@ -120,6 +120,74 @@ pub struct SymbolFileData {
 	pub calls: Vec<(u32, CallTarget)>,
 	pub type_relations: Vec<TypeRelationDecl>,
 	pub symbols: Vec<SymbolDecl>,
+	/// What this file's imports resolved to, kept for as long as the file is.
+	pub memo: ImportMemo,
+}
+
+/// The repository files each import string of one file resolved to, valid for
+/// one registry. A different registry (files were added or removed) empties
+/// it on the next use. Cloning gives an empty memo.
+#[derive(Default)]
+pub struct ImportMemo(Mutex<MemoState>);
+
+#[derive(Default)]
+struct MemoState {
+	registry_id: u64,
+	resolved: HashMap<String, Arc<Vec<String>>>,
+}
+
+/// Per entry: the map slot, the key string and the vector header, beyond the
+/// text itself.
+const MEMO_ENTRY_OVERHEAD_BYTES: usize = 112;
+
+impl ImportMemo {
+	fn state(&self) -> std::sync::MutexGuard<'_, MemoState> {
+		self.0.lock().unwrap_or_else(PoisonError::into_inner)
+	}
+
+	fn get(&self, registry_id: u64, import: &str) -> Option<Arc<Vec<String>>> {
+		let state = self.state();
+		if state.registry_id != registry_id {
+			return None;
+		}
+		state.resolved.get(import).cloned()
+	}
+
+	fn insert(&self, registry_id: u64, import: &str, resolved: Arc<Vec<String>>) {
+		let mut state = self.state();
+		if state.registry_id != registry_id {
+			state.registry_id = registry_id;
+			state.resolved.clear();
+		}
+		state.resolved.insert(import.to_string(), resolved);
+	}
+
+	/// Memory held, for the index's accounting.
+	pub fn bytes(&self) -> usize {
+		self.state()
+			.resolved
+			.iter()
+			.map(|(import, paths)| {
+				MEMO_ENTRY_OVERHEAD_BYTES
+					+ import.len() + paths
+					.iter()
+					.map(|path| path.len() + std::mem::size_of::<String>())
+					.sum::<usize>()
+			})
+			.sum()
+	}
+}
+
+impl Clone for ImportMemo {
+	fn clone(&self) -> Self {
+		Self::default()
+	}
+}
+
+impl std::fmt::Debug for ImportMemo {
+	fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(formatter, "ImportMemo({} imports)", self.state().resolved.len())
+	}
 }
 
 impl SymbolFileData {
@@ -132,6 +200,7 @@ impl SymbolFileData {
 			calls: data.calls,
 			type_relations: data.type_relations,
 			symbols: data.symbols,
+			memo: ImportMemo::default(),
 		}
 	}
 }
@@ -526,6 +595,9 @@ struct SymbolIndex {
 	free_by_file: HashMap<String, HashMap<String, Vec<String>>>,
 	/// Same shape for the symbols that have an owning type (methods).
 	method_by_file: HashMap<String, HashMap<String, Vec<String>>>,
+	/// Symbol name -> the files declaring it, so a lookup visits those and not
+	/// every file the caller imports.
+	files_by_name: HashMap<String, Vec<String>>,
 }
 
 impl SymbolIndex {
@@ -538,6 +610,7 @@ impl SymbolIndex {
 			by_file_symbol_ids: HashMap::new(),
 			free_by_file: HashMap::new(),
 			method_by_file: HashMap::new(),
+			files_by_name: HashMap::new(),
 		};
 		for file in files {
 			let ids = symbol_node_ids(&file.path, &file.symbols);
@@ -575,8 +648,29 @@ impl SymbolIndex {
 				}
 			}
 			index.by_file_symbol_ids.insert(file.path.clone(), ids);
+			let mut names: Vec<&str> = file.symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+			names.sort_unstable();
+			names.dedup();
+			for name in names {
+				index
+					.files_by_name
+					.entry(name.to_string())
+					.or_default()
+					.push(file.path.clone());
+			}
 		}
 		index
+	}
+
+	/// The imported files that declare `name`: only the declaring files are
+	/// visited, not every imported file (a Go package import names hundreds).
+	fn imported_declaring<'a>(&'a self, imported: &'a ImportedFiles, name: &str) -> impl Iterator<Item = &'a str> + 'a {
+		self.files_by_name
+			.get(name)
+			.into_iter()
+			.flatten()
+			.map(String::as_str)
+			.filter(move |file| imported.set.contains(*file))
 	}
 
 	/// Resolve a referenced name to symbol node ids, scoped: same file first,
@@ -585,7 +679,7 @@ impl SymbolIndex {
 		&self,
 		source_path: &str,
 		target_name: &str,
-		imported_files: &[String],
+		imported: &ImportedFiles,
 		allow_ambiguous: bool,
 	) -> Vec<Resolved<'_>> {
 		// 1. Same file: a direct AST fact.
@@ -606,12 +700,8 @@ impl SymbolIndex {
 		// import before deciding: returning the first match makes import order
 		// silently choose between two equally plausible declarations.
 		let mut imported_targets = Vec::new();
-		for imported in imported_files {
-			if let Some(targets) = self
-				.by_file
-				.get(imported.as_str())
-				.and_then(|names| names.get(target_name))
-			{
+		for declaring in self.imported_declaring(imported, target_name) {
+			if let Some(targets) = self.by_file.get(declaring).and_then(|names| names.get(target_name)) {
 				imported_targets.extend(targets);
 			}
 		}
@@ -649,9 +739,8 @@ impl SymbolIndex {
 		source_path: &str,
 		source_owner: Option<&str>,
 		target: &CallTarget,
-		imports: &[(String, String)],
 		bindings: &[(ImportBinding, String)],
-		imported_files: &[String],
+		imported: &ImportedFiles,
 	) -> Vec<Resolved<'_>> {
 		let mut bound_targets = Vec::new();
 		for (binding, path) in bindings {
@@ -683,7 +772,7 @@ impl SymbolIndex {
 		}
 
 		let Some(qualifier) = target.qualifier.as_deref() else {
-			return self.resolve(source_path, &target.name, imported_files, false);
+			return self.resolve(source_path, &target.name, imported, false);
 		};
 		let qualifier_leaf = qualifier
 			.rsplit("::")
@@ -720,7 +809,7 @@ impl SymbolIndex {
 			}
 			let imported: Vec<_> = ids
 				.iter()
-				.filter(|id| imported_files.iter().any(|path| id.starts_with(path.as_str())))
+				.filter(|id| imported.list.iter().any(|path| id.starts_with(path.as_str())))
 				.collect();
 			if imported.len() == 1 {
 				return vec![(imported[0].as_str(), CONFIDENCE_OWNER_IMPORTED)];
@@ -728,39 +817,25 @@ impl SymbolIndex {
 		}
 
 		// Module-qualified call: constrain lookup to the matching imported file.
-		for (raw_import, imported_file) in imports {
-			let import_leaf = raw_import
-				.rsplit([':', '.', '/'])
-				.next()
-				.unwrap_or(raw_import)
-				.trim_matches(|character: char| !character.is_alphanumeric() && character != '_');
-			if qualifier_leaf == import_leaf || qualifier_leaf == file_stem(imported_file) {
-				if let Some(ids) = self
-					.by_file
-					.get(imported_file)
-					.and_then(|symbols| symbols.get(&target.name))
-				{
-					if ids.len() == 1 {
-						return vec![(ids[0].as_str(), CONFIDENCE_MODULE_QUALIFIED)];
-					}
+		let named_files = imported.by_qualifier.get(qualifier_leaf);
+		for imported_file in named_files.into_iter().flatten() {
+			if let Some(ids) = self
+				.by_file
+				.get(imported_file)
+				.and_then(|symbols| symbols.get(&target.name))
+			{
+				if ids.len() == 1 {
+					return vec![(ids[0].as_str(), CONFIDENCE_MODULE_QUALIFIED)];
 				}
 			}
 		}
 		// A call qualified by an import's name reaches a free function of the
 		// imported files (`http.ListenAndServe`), never a method that happens
 		// to share the name (`Server.ListenAndServe`).
-		let names_an_import = imports.iter().any(|(raw_import, imported_file)| {
-			let import_leaf = raw_import
-				.rsplit([':', '.', '/'])
-				.next()
-				.unwrap_or(raw_import)
-				.trim_matches(|character: char| !character.is_alphanumeric() && character != '_');
-			qualifier_leaf == import_leaf || qualifier_leaf == file_stem(imported_file)
-		});
-		if names_an_import {
-			let free_targets: Vec<&String> = imported_files
-				.iter()
-				.filter_map(|imported| self.free_by_file.get(imported.as_str())?.get(&target.name))
+		if named_files.is_some() {
+			let free_targets: Vec<&String> = self
+				.imported_declaring(imported, &target.name)
+				.filter_map(|imported| self.free_by_file.get(imported)?.get(&target.name))
 				.flatten()
 				.collect();
 			if let [only] = free_targets.as_slice() {
@@ -769,7 +844,7 @@ impl SymbolIndex {
 		}
 		// Unknown instance receiver: retain only a uniquely resolvable scoped
 		// target and cap its confidence; never fan out ubiquitous method names.
-		let scoped = self.resolve(source_path, &target.name, imported_files, false);
+		let scoped = self.resolve(source_path, &target.name, imported, false);
 		if !scoped.is_empty() {
 			return scoped
 				.into_iter()
@@ -782,9 +857,9 @@ impl SymbolIndex {
 		let method_in = |file: &str| self.method_by_file.get(file).and_then(|names| names.get(&target.name));
 		let methods: Vec<&String> = match method_in(source_path) {
 			Some(here) => here.iter().collect(),
-			None => imported_files
-				.iter()
-				.filter_map(|file| method_in(file))
+			None => self
+				.imported_declaring(imported, &target.name)
+				.filter_map(method_in)
 				.flatten()
 				.collect(),
 		};
@@ -809,15 +884,20 @@ fn file_stem(path: &str) -> &str {
 /// the binding pass all ask for the same imports, and a resolver can cost a
 /// directory scan.
 pub(crate) struct ImportResolver<'a> {
-	registry: FileRegistry,
+	registry: Arc<FileRegistry>,
 	lookup: LanguageLookup<'a>,
 	cache: HashMap<(String, String), Arc<Vec<String>>>,
 }
 
 impl<'a> ImportResolver<'a> {
 	pub(crate) fn new(paths: &[String], lookup: LanguageLookup<'a>) -> Self {
+		Self::with_registry(Arc::new(FileRegistry::new(paths)), lookup)
+	}
+
+	/// A resolver over a registry built once and shared by many builds.
+	pub(crate) fn with_registry(registry: Arc<FileRegistry>, lookup: LanguageLookup<'a>) -> Self {
 		Self {
-			registry: FileRegistry::new(paths),
+			registry,
 			lookup,
 			cache: HashMap::new(),
 		}
@@ -843,6 +923,73 @@ impl<'a> ImportResolver<'a> {
 		self.cache.insert(key, resolved.clone());
 		resolved
 	}
+
+	/// [`Self::resolve`] for an import of `file`, memoized on the file: later
+	/// builds over the same registry do not resolve it again.
+	pub(crate) fn resolve_for(&mut self, file: &SymbolFileData, import: &str) -> Arc<Vec<String>> {
+		let registry_id = self.registry.id();
+		if let Some(resolved) = file.memo.get(registry_id, import) {
+			return resolved;
+		}
+		let resolved = self.resolve(&file.language, &file.path, import);
+		file.memo.insert(registry_id, import, resolved.clone());
+		resolved
+	}
+}
+
+/// The part of a build's call and type relations an answer reads. A query
+/// follows a few names (callers, subtypes) or the bodies of a few definitions
+/// (callees, supertypes); resolving every call of every examined file would
+/// cost far more than the answer needs.
+#[derive(Default)]
+pub struct RelationFilter {
+	/// Callee and parent-type names to resolve, wherever they are written.
+	pub names: HashSet<String>,
+	/// File path -> `(first, last)` 1-based lines of the definitions whose
+	/// bodies are resolved in full.
+	pub bodies: HashMap<String, Vec<(u32, u32)>>,
+	/// Types whose parent clauses are resolved wherever they are written.
+	pub declared_types: HashSet<String>,
+}
+
+impl RelationFilter {
+	fn in_body(&self, path: &str, line: u32) -> bool {
+		// `line` is 0-based, node lines are 1-based.
+		self.bodies
+			.get(path)
+			.is_some_and(|ranges| ranges.iter().any(|(first, last)| line + 1 >= *first && line < *last))
+	}
+
+	/// Whether the file has anything the filter asks for.
+	fn touches(&self, file: &SymbolFileData) -> bool {
+		self.bodies.contains_key(&file.path)
+			|| file
+				.calls
+				.iter()
+				.any(|(line, callee)| self.keeps_call(file, *line, callee))
+			|| file
+				.type_relations
+				.iter()
+				.any(|relation| self.keeps_type_relation(file, relation))
+	}
+
+	fn keeps_call(&self, file: &SymbolFileData, line: u32, callee: &CallTarget) -> bool {
+		self.names.contains(&callee.name)
+			|| self.in_body(&file.path, line)
+			// A call through an import alias spells the alias, and a default
+			// import names nothing: both can reach a definition of a wanted name.
+			|| file.import_bindings.iter().any(|binding| {
+				binding.local_name == callee.name
+					&& binding.imported_name.as_ref().is_none_or(|imported| self.names.contains(imported))
+			})
+	}
+
+	fn keeps_type_relation(&self, file: &SymbolFileData, relation: &TypeRelationDecl) -> bool {
+		self.names.contains(&relation.target_name)
+			|| self.in_body(&file.path, relation.line)
+			// `impl Shape for Square` sits outside the body of `Square`.
+			|| relation.source_name.as_ref().is_some_and(|source| self.declared_types.contains(source))
+	}
 }
 
 /// Discover symbol-to-symbol edges (calls / extends / implements) for the
@@ -851,6 +998,7 @@ impl<'a> ImportResolver<'a> {
 pub(crate) fn discover_symbol_relationships(
 	files: &[&SymbolFileData],
 	resolver: &mut ImportResolver,
+	filter: Option<&RelationFilter>,
 ) -> Vec<CodeRelationship> {
 	let index = SymbolIndex::build(files);
 
@@ -860,34 +1008,26 @@ pub(crate) fn discover_symbol_relationships(
 	let resolutions: Vec<Option<FileResolution>> = files
 		.iter()
 		.map(|source_file| {
-			if !resolver.has_language(&source_file.language) {
+			if !resolver.has_language(&source_file.language)
+				|| filter.is_some_and(|filter| !filter.touches(source_file))
+			{
 				return None;
 			}
 			let mut resolved_imports: Vec<(String, String)> = Vec::new();
 			for import in &source_file.imports {
-				for path in resolver
-					.resolve(&source_file.language, &source_file.path, import)
-					.iter()
-				{
+				for path in resolver.resolve_for(source_file, import).iter() {
 					resolved_imports.push((import.clone(), path.clone()));
 				}
 			}
 			let mut resolved_bindings: Vec<(ImportBinding, String)> = Vec::new();
 			for binding in &source_file.import_bindings {
-				for path in resolver
-					.resolve(&source_file.language, &source_file.path, &binding.import_path)
-					.iter()
-				{
+				for path in resolver.resolve_for(source_file, &binding.import_path).iter() {
 					resolved_bindings.push((binding.clone(), path.clone()));
 				}
 			}
-			let mut imported_files: Vec<String> = resolved_imports.iter().map(|(_, path)| path.clone()).collect();
-			imported_files.sort_unstable();
-			imported_files.dedup();
 			Some(FileResolution {
-				resolved_imports,
+				imported: ImportedFiles::new(&resolved_imports),
 				resolved_bindings,
-				imported_files,
 			})
 		})
 		.collect();
@@ -896,7 +1036,7 @@ pub(crate) fn discover_symbol_relationships(
 		.par_iter()
 		.zip(resolutions.par_iter())
 		.flat_map_iter(|(source_file, resolution)| match resolution {
-			Some(resolution) => discover_file_relationships(source_file, resolution, &index),
+			Some(resolution) => discover_file_relationships(source_file, resolution, &index, filter),
 			None => Vec::new(),
 		})
 		.collect();
@@ -907,9 +1047,55 @@ pub(crate) fn discover_symbol_relationships(
 
 /// Imports of one file with the repository files they resolved to.
 struct FileResolution {
-	resolved_imports: Vec<(String, String)>,
 	resolved_bindings: Vec<(ImportBinding, String)>,
-	imported_files: Vec<String>,
+	imported: ImportedFiles,
+}
+
+/// The files one file imports, in the shapes a call lookup needs.
+struct ImportedFiles {
+	/// Sorted, without duplicates.
+	list: Vec<String>,
+	set: HashSet<String>,
+	/// What a qualifier of a call can name an imported file by (the last
+	/// part of the import string, or the file's stem) -> the files, in import
+	/// order.
+	by_qualifier: HashMap<String, Vec<String>>,
+}
+
+impl ImportedFiles {
+	fn new(resolved_imports: &[(String, String)]) -> Self {
+		let mut list: Vec<String> = resolved_imports.iter().map(|(_, path)| path.clone()).collect();
+		list.sort_unstable();
+		list.dedup();
+		let mut by_qualifier: HashMap<String, Vec<String>> = HashMap::new();
+		for (raw_import, imported_file) in resolved_imports {
+			let leaf = import_leaf(raw_import);
+			by_qualifier
+				.entry(leaf.to_string())
+				.or_default()
+				.push(imported_file.clone());
+			let stem = file_stem(imported_file);
+			if stem != leaf {
+				by_qualifier
+					.entry(stem.to_string())
+					.or_default()
+					.push(imported_file.clone());
+			}
+		}
+		Self {
+			set: list.iter().cloned().collect(),
+			list,
+			by_qualifier,
+		}
+	}
+}
+
+fn import_leaf(raw_import: &str) -> &str {
+	raw_import
+		.rsplit([':', '.', '/'])
+		.next()
+		.unwrap_or(raw_import)
+		.trim_matches(|character: char| !character.is_alphanumeric() && character != '_')
 }
 
 /// Call and type-relation edges of one file.
@@ -917,11 +1103,11 @@ fn discover_file_relationships(
 	source_file: &SymbolFileData,
 	resolution: &FileResolution,
 	index: &SymbolIndex,
+	filter: Option<&RelationFilter>,
 ) -> Vec<CodeRelationship> {
 	let FileResolution {
-		resolved_imports,
 		resolved_bindings,
-		imported_files,
+		imported,
 	} = resolution;
 	let mut relationships = Vec::new();
 	// Built from the same `files`, so the entry always exists.
@@ -946,6 +1132,9 @@ fn discover_file_relationships(
 	};
 
 	for (line, callee) in &source_file.calls {
+		if filter.is_some_and(|filter| !filter.keeps_call(source_file, *line, callee)) {
+			continue;
+		}
 		let (source_id, source_symbol) = match owning_symbol(*line, true) {
 			Some((id, symbol)) => (id, Some(symbol)),
 			None => (source_file.path.as_str(), None),
@@ -967,9 +1156,8 @@ fn discover_file_relationships(
 			&source_file.path,
 			source_symbol.and_then(|symbol| symbol.owner.as_deref()),
 			callee,
-			resolved_imports,
 			resolved_bindings,
-			imported_files,
+			imported,
 		) {
 			relationships.push(CodeRelationship {
 				source: source_id.to_string(),
@@ -982,12 +1170,15 @@ fn discover_file_relationships(
 	}
 
 	for relation in &source_file.type_relations {
+		if filter.is_some_and(|filter| !filter.keeps_type_relation(source_file, relation)) {
+			continue;
+		}
 		// The declared type wins over whatever symbol encloses the clause:
 		// `impl Trait for Foo` inside `mod x {}`, or in another file than
 		// `struct Foo`, still belongs to Foo.
 		let declared = relation.source_name.as_deref().and_then(|name| {
 			index
-				.resolve(&source_file.path, name, imported_files, false)
+				.resolve(&source_file.path, name, imported, false)
 				.into_iter()
 				.next()
 				.map(|(id, _)| id)
@@ -999,7 +1190,7 @@ fn discover_file_relationships(
 			TypeRelationKind::Extends => RelationType::Extends,
 			TypeRelationKind::Implements => RelationType::Implements,
 		};
-		for (target, confidence) in index.resolve(&source_file.path, &relation.target_name, imported_files, true) {
+		for (target, confidence) in index.resolve(&source_file.path, &relation.target_name, imported, true) {
 			relationships.push(CodeRelationship {
 				source: source_id.to_string(),
 				target: target.to_string(),

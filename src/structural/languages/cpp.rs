@@ -15,8 +15,8 @@
 //! C++ grammar: function definitions and type/namespace containers.
 
 use super::{
-	extract_call_target, extract_symbol_by_kinds, find_graph_symbol_owner, parse_call_target, simple_type_name,
-	CallTarget, Language, TypeRelationKind,
+	extract_call_target, extract_symbol_by_kinds, find_graph_symbol_owner, parse_call_target, path_ends_with_name,
+	simple_type_name, CallTarget, Language, TypeRelationKind,
 };
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
@@ -30,6 +30,18 @@ impl Language for Cpp {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_cpp::LANGUAGE.into()
+	}
+
+	// The header is quoted or angle-bracketed on a preprocessor line; the name
+	// is its last segment, before the extension.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		line.contains('#') && path_ends_with_name(line, name, "\">")
+	}
+
+	// A base list may put each base on its own line (`private C {`), which the
+	// default name-list rule accepts.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["class", "struct"]
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -231,12 +243,20 @@ const INCLUDE_DIRECTORIES: [&str; 4] = ["include", "inc", "headers", "lib"];
 
 /// Header path of an `#include "x.h"` / `#include <x.h>` directive, without
 /// the quotes or angle brackets. A macro-expanded include has neither and
-/// yields nothing.
+/// yields nothing. Nested conditionals indent the keyword (`#  include`), so
+/// the `#` and the keyword are matched apart.
 fn parse_cpp_include(include_text: &str) -> Option<String> {
-	let include_part = include_text.trim().strip_prefix("#include")?.trim();
-	let quoted = include_part.strip_prefix('"').and_then(|rest| rest.strip_suffix('"'));
-	let bracketed = include_part.strip_prefix('<').and_then(|rest| rest.strip_suffix('>'));
-	quoted.or(bracketed).map(str::to_string)
+	let include_part = include_text
+		.trim()
+		.strip_prefix('#')?
+		.trim_start()
+		.strip_prefix("include")?
+		.trim();
+	// Up to the closing delimiter, not the end of the text: a trailing
+	// comment may follow the header on the same line.
+	let quoted = include_part.strip_prefix('"').and_then(|rest| rest.split_once('"'));
+	let bracketed = include_part.strip_prefix('<').and_then(|rest| rest.split_once('>'));
+	quoted.or(bracketed).map(|(header, _)| header.to_string())
 }
 
 /// A header named relative to the including file's directory.

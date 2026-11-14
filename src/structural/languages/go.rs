@@ -15,11 +15,15 @@
 //! Go grammar: functions, methods and type specs.
 
 use super::{
-	files_in_dir_matching, find_graph_symbol_owner, parse_call_target, path_ends_with_components, simple_type_name,
-	CallTarget, Language, TypeRelationKind,
+	files_in_dir_matching, find_graph_symbol_owner, inheritance_line, parse_call_target, path_ends_with_components,
+	path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind,
 };
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
+
+/// What an embedded field line may hold besides its name: a pointer star, a
+/// package qualifier and a struct tag.
+const GO_EMBEDDED_FIELD_EXTRA: &str = "*.`\":;";
 
 pub(crate) struct Go {}
 
@@ -30,6 +34,23 @@ impl Language for Go {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_go::LANGUAGE.into()
+	}
+
+	// The path is a string literal, so even in a `import (` block (no `import`
+	// keyword on the line) the name is the last segment before the closing
+	// quote; a URL or other string that merely holds the name does not match.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		path_ends_with_name(line, name, "\"`")
+	}
+
+	// An embedded field is a bare type name (`Logger`, `*Logger`, `pkg.Logger`)
+	// that may be the only token on its line, optionally with a tag.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["struct", "interface"]
+	}
+
+	fn line_may_inherit(&self, line: &str, name: &str) -> bool {
+		inheritance_line(self.inheritance_line_markers(), line, name, GO_EMBEDDED_FIELD_EXTRA)
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {

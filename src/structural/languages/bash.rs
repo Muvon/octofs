@@ -15,9 +15,12 @@
 //! Bash grammar: named function definitions, plus the graph facts
 //! (`source` / `.` imports, command calls).
 
-use super::{parse_call_target, CallTarget, Language};
+use super::{parse_call_target, path_ends_with_name, CallTarget, Language};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
+
+/// What may follow the last segment of a sourced path.
+const BASH_PATH_END: &str = "\"' \t;&|)\n";
 
 pub(crate) struct Bash {}
 
@@ -28,6 +31,12 @@ impl Language for Bash {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_bash::LANGUAGE.into()
+	}
+
+	// `source file` or `. file`: the file is the command's first argument, so
+	// the name ends a word (optionally quoted, with an extension).
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		(line.contains("source") || line.contains(". ")) && path_ends_with_name(line, name, BASH_PATH_END)
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {

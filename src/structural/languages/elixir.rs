@@ -84,6 +84,17 @@ impl Language for Elixir {
 		tree_sitter_elixir::LANGUAGE.into()
 	}
 
+	// `alias MyApp.{` newline `Repo,` newline `User` leaves a bare module name
+	// on its own line, which the default name-list rule accepts.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&["alias", "import", "require", "use"]
+	}
+
+	// The protocol is the first argument of `defimpl`, on its own line.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["defimpl"]
+	}
+
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		vec!["call"]
 	}

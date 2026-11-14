@@ -141,18 +141,44 @@ node; `imported_by` = incoming; `path` = one multi-source search over `Calls`, `
 They are resolved by name and imports, not types, and are local only (an `ssh://` path or remote
 workdir fails with guidance).
 
-- **Scoped builds.** `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by` parse
-  only the files that spell the names they follow (found with a whole-identifier byte search over the
-  gitignore-aware walk, level by level for `depth`); import resolution still looks paths up in the list of
-  every repository file, so the answer equals the whole-repository graph's. One difference: a callee name
-  spelled in more than `MAX_FILES_PER_FOLLOWED_NAME` (200) files (`get`, `push`) is not searched for
-  repository-wide, so a `(guess)` hop to it can be missing; calls that resolve through the imports of the
-  calling file still appear. A query that would need more than `MAX_SCOPED_FILES` (3,000) files falls back
-  to the cached whole-repository graph. `path` always uses the whole-repository graph (it needs global
+- **Code index queries.** `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by` are
+  answered from the per-workdir code index (`fs/code_index.rs`): a Bloom filter of the identifiers of every
+  file, plus a parsed-file cache under a 192 MB ceiling shared by all indexes (at most 2 workdirs; idle ones
+  are dropped after 10 minutes). The ceiling counts the parsed data, what each file's imports resolved to
+  (kept per file, dropped when the file or the set of files changes), the path table and the cached
+  lookups. Each call refreshes the index from file stamps, so a file changed by any program is seen by
+  the next call. Lookups of which
+  files spell a name, which have an import or inheritance line, and finished complete answers are cached
+  until a file changes. Only the files a rule picks are parsed, level by level for `depth`, on a pool of at
+  most 6 threads, at most `MAX_PARSED_FILES_PER_QUERY` (600) files and for at most `QUERY_TIME_BUDGET_MS`
+  (800 ms, counted after the refresh; one chunk of files is always parsed so a repeat gets further) per query (cached files are free):
+  - definitions of `name`: the files that look like declaring it first (the files under `path` when given),
+    then the other files spelling it; `Owner::name` needs both names. A name spelled in more than
+    `MAX_FILES_SPELLING_TO_TRACE` (3000) files with no `path` or `Owner::name` is not traced: the reply
+    says "about N files" (counted from the filters, nothing is read) and to give `path` or `Owner::name`.
+  - `callers`: the files spelling the name, the importers of the definition file first; with several
+    definitions only the definition files and their importers.
+  - `callees`, `supertypes`: the definition file, then each followed name in the files the definition file
+    imports, and repository-wide only when at most `MAX_FILES_PER_FOLLOWED_NAME` (200) files spell it
+    (`get`, `push` are not searched repository-wide, so a `(guess)` hop to them can be missing).
+  - `subtypes`, `imported_by`: files with a line that names the type or the file and may be an inheritance
+    or import line in their language (`Language::line_may_inherit` / `line_may_import`: the marker keyword
+    of the language, a line holding only names, and for quoted paths the name before the closing quote).
+    `imported_by` builds no graph: each candidate's imports are resolved through the file registry once,
+    kept with the parsed file, and a candidate stays when one of them names the file (or a package that
+    holds it).
+  A list shows at most `MAX_LISTED_RESULTS` (100) results, most certain first, then a closing line
+  counts the rest.
+  When the cap or the time budget cuts the candidates, the answer comes from the files examined and a closing line says
+  "N candidate files, M examined; repeat the query to examine the rest". Parsed files are kept and do not
+  count against the cap, so repeating the same query examines further files until the answer is complete
+  and the line is gone; partial answers are never cached. Narrowing with `path` or `Owner::name` ends it
+  sooner. `path` always uses the whole-repository graph (it needs global
   reachability), so its first call on a large repository takes seconds and its graph stays in memory
   (about 1.5 GB on the VS Code repository). A name with more than eight definitions is listed instead of
-  followed, from a declarations-only scan. Scoped builds ignore `MAX_GRAPH_FILES` and
-  `MAX_GRAPH_SOURCE_BYTES`: they read every walked file once per query and keep only the matches.
+  followed, from a declarations-only scan. Re-exports through barrel files are not followed by
+  `imported_by`. Local `definition` and `references` of an exact name over a directory parse only the
+  files the index says spell the name.
 - **Packages.** Go imports, Java wildcard imports and Swift module imports name a package of several files:
   one `Imports` edge per importing file targets the package's canonical (alphabetically first) file, and
   `imported_by` of any file of the package answers through it; calls through the import resolve against
@@ -166,7 +192,7 @@ workdir fails with guidance).
   least recently used dropped first. Every call re-walks the tree and hashes (relative path, size,
   mtime, and on unix ctime and inode) of each file, without reading any; a graph is rebuilt only when
   that stamp changes. Concurrent calls for one root wait for a single build. Nothing is stored on disk.
-- **Limits.** The cached whole-repository graph (`path`, and queries that fall back to it) holds at most
+- **Limits.** The cached whole-repository graph (`path`) holds at most
   `MAX_GRAPH_FILES` (20,000) files and `MAX_GRAPH_SOURCE_BYTES` (256 MB);
   the rest are counted in a closing note. A traversal stops at `MAX_REPORTED_HOPS` and a path search at
   `MAX_PATHS` paths or its work limit; each says so in the output instead of reporting an empty result.

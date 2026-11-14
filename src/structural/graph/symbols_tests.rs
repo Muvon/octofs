@@ -24,7 +24,7 @@ use crate::structural::graph::test_language_tests::{lookup, TestLanguage};
 fn discover_symbol_relationships(files: &[SymbolFileData], lookup: LanguageLookup) -> Vec<CodeRelationship> {
 	let paths: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
 	let refs: Vec<&SymbolFileData> = files.iter().collect();
-	super::discover_symbol_relationships(&refs, &mut ImportResolver::new(&paths, lookup))
+	super::discover_symbol_relationships(&refs, &mut ImportResolver::new(&paths, lookup), None)
 }
 
 fn declaration(name: &str, kind: &str, start_line: u32, end_line: u32) -> SymbolDecl {
@@ -63,6 +63,7 @@ fn file(path: &str) -> SymbolFileData {
 		calls: Vec::new(),
 		type_relations: Vec::new(),
 		symbols: Vec::new(),
+		memo: ImportMemo::default(),
 	}
 }
 

@@ -690,7 +690,10 @@ impl OctofsServer {
 			types, so same-name symbols can be confused and dynamic calls missed; `(guess)` marks a \
 			hop matched by name alone (repository-wide, ambiguous or unknown receiver). They are local only and search the whole session workdir; `path` \
 			only narrows which definitions of `name` start the query. All relations but `path` parse only the files that \
-			mention the names they follow; `path` builds the whole-repository graph, so its first call on a large \
+			mention the names they follow, at most 600 per query and for at most 800 ms: for a very common name the result is partial and a \
+			closing line says so; repeat the same query to examine the rest, or narrow it with `path` or `Owner::name` \
+			(a name spelled in over 3000 files is not traced without one). A list shows at most 100 results, most \
+			certain first, and a closing line counts the rest. `path` builds the whole-repository graph, so its first call on a large \
 			repository takes seconds (later calls reuse it). For plain text use `view` \
 			with `content`."
 	)]

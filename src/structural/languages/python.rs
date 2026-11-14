@@ -31,6 +31,17 @@ impl Language for Python {
 		tree_sitter_python::LANGUAGE.into()
 	}
 
+	// `import a.b`, `from a import b`; the names of a parenthesised group sit
+	// on lines of their own, which the default name-list rule accepts.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&["import", "from"]
+	}
+
+	// `class A(Base):`; further bases may sit on lines of their own.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["class"]
+	}
+
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		// The class container is included (chunking drops it as too large);
 		// imports are dropped — they declare nothing an outline needs.

@@ -23,7 +23,8 @@ src/
       search.rs        — literal/regex matcher with context blocks, enclosing-symbol breadcrumbs
       structure.rs     — structural outline mode (flags: "s"): file/directory walk, outline rendering
       symbols.rs       — `symbol` tool: parameter validation, definitions/references (text-level), breadcrumbs
-      graph_scoped.rs  — query-scoped graph builds: parse only the files that mention the followed names
+      code_index.rs    — per-workdir code index: Bloom token filters, stamp refresh, parsed-file cache under one memory ceiling
+      graph_scoped.rs  — query-scoped graph builds on the code index: parse only the files a rule picks, at most 600 per query and 800 ms after the refresh
       graph.rs         — `symbol` graph relations: workdir walk, per-workdir LRU graph cache (stamp of path/size/mtime/ctime/inode),
                          traversal rendering; local only, scope is always the session workdir
       ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars

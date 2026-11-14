@@ -40,6 +40,9 @@ pub use types::{CodeGraph, CodeNode, CodeRelationship, RelationType, SkippedFile
 use crate::structural::languages::get_language;
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
+use registry::FileRegistry;
+use std::sync::Arc;
+pub use symbols::RelationFilter;
 use symbols::{
 	discover_symbol_relationships, extract_symbols_from_contents, sort_and_dedup, symbol_node_ids, FileAstData,
 	ImportResolver, LanguageLookup, SymbolDecl, SymbolFileData, CONFIDENCE_CERTAIN,
@@ -80,6 +83,12 @@ struct LoadedFile {
 pub struct ParsedSource {
 	data: SymbolFileData,
 	line_count: u32,
+}
+
+impl AsRef<ParsedSource> for ParsedSource {
+	fn as_ref(&self) -> &ParsedSource {
+		self
+	}
 }
 
 impl ParsedSource {
@@ -186,12 +195,43 @@ fn parse_contents(language_name: &str, contents: &str, lookup: LanguageLookup) -
 }
 
 /// [`assemble_graph`] with the shipped languages.
-pub fn assemble_repository_graph(
-	sources: &[ParsedSource],
+pub fn assemble_repository_graph<S: AsRef<ParsedSource>>(
+	sources: &[S],
 	all_paths: &[String],
 	skipped: Vec<SkippedFile>,
 ) -> CodeGraph {
 	assemble_graph(sources, all_paths, skipped, &get_language)
+}
+
+/// [`assemble_graph`] over a registry of every repository path that the
+/// caller built once and keeps, with the shipped languages.
+pub fn assemble_repository_graph_in<S: AsRef<ParsedSource>>(
+	sources: &[S],
+	registry: Arc<FileRegistry>,
+	skipped: Vec<SkippedFile>,
+) -> CodeGraph {
+	assemble_with_resolver(
+		sources,
+		skipped,
+		ImportResolver::with_registry(registry, &get_language),
+		None,
+	)
+}
+
+/// [`assemble_repository_graph_in`] with call and type relations resolved
+/// only as far as `filter` asks: what a callers or callees query reads.
+pub fn assemble_filtered_graph_in<S: AsRef<ParsedSource>>(
+	sources: &[S],
+	registry: Arc<FileRegistry>,
+	skipped: Vec<SkippedFile>,
+	filter: &RelationFilter,
+) -> CodeGraph {
+	assemble_with_resolver(
+		sources,
+		skipped,
+		ImportResolver::with_registry(registry, &get_language),
+		Some(filter),
+	)
 }
 
 /// The graph over `sources`. Import resolution looks paths up in `all_paths`,
@@ -199,13 +239,22 @@ pub fn assemble_repository_graph(
 /// repository still resolves every import the way the full graph would, and
 /// an import of an unparsed file points at a stub file node. The result does
 /// not depend on the order of `sources`.
-pub(crate) fn assemble_graph(
-	sources: &[ParsedSource],
+pub(crate) fn assemble_graph<S: AsRef<ParsedSource>>(
+	sources: &[S],
 	all_paths: &[String],
 	skipped: Vec<SkippedFile>,
 	lookup: LanguageLookup,
 ) -> CodeGraph {
-	let mut ordered: Vec<&ParsedSource> = sources.iter().collect();
+	assemble_with_resolver(sources, skipped, ImportResolver::new(all_paths, lookup), None)
+}
+
+fn assemble_with_resolver<S: AsRef<ParsedSource>>(
+	sources: &[S],
+	skipped: Vec<SkippedFile>,
+	mut resolver: ImportResolver,
+	filter: Option<&RelationFilter>,
+) -> CodeGraph {
+	let mut ordered: Vec<&ParsedSource> = sources.iter().map(AsRef::as_ref).collect();
 	ordered.sort_by(|a, b| a.data.path.cmp(&b.data.path));
 
 	let mut graph = CodeGraph {
@@ -221,11 +270,14 @@ pub(crate) fn assemble_graph(
 	// One resolver for the whole build: every import is resolved once, however
 	// many passes ask for it.
 	let files: Vec<&SymbolFileData> = ordered.iter().map(|source| &source.data).collect();
-	let mut resolver = ImportResolver::new(all_paths, lookup);
+	let t = std::time::Instant::now(); // SPANTMP
 	add_import_edges(&mut graph, &files, &mut resolver);
+	eprintln!("SPAN   asm_import_edges {:?} ({} files)", t.elapsed(), files.len()); // SPANTMP
+	let t = std::time::Instant::now(); // SPANTMP
 	graph
 		.relationships
-		.extend(discover_symbol_relationships(&files, &mut resolver));
+		.extend(discover_symbol_relationships(&files, &mut resolver, filter));
+	eprintln!("SPAN   asm_discover {:?}", t.elapsed()); // SPANTMP
 	sort_and_dedup(&mut graph.relationships);
 	add_stub_file_nodes(&mut graph);
 	graph
@@ -257,12 +309,46 @@ fn add_stub_file_nodes(graph: &mut CodeGraph) {
 
 /// Nodes and `Contains` edges only, with no import or call resolution: enough
 /// to look definitions up cheaply.
-pub fn declaration_graph(sources: &[ParsedSource]) -> CodeGraph {
+pub fn declaration_graph<S: AsRef<ParsedSource>>(sources: &[S]) -> CodeGraph {
 	let mut graph = CodeGraph::default();
-	for source in sources {
+	for source in sources.iter().map(AsRef::as_ref) {
 		let data = &source.data;
 		add_file_nodes(&mut graph, &data.path, &data.language, source.line_count, &data.symbols);
 	}
+	graph
+}
+
+/// What each import of `source` resolves to, as lists of repository files.
+/// The answers are kept on the file, so asking again over the same registry
+/// resolves nothing. Imports of external modules give empty lists; an import
+/// that names the file's own package is left out, as in the full graph.
+pub fn resolved_imports(registry: &Arc<FileRegistry>, source: &ParsedSource) -> Vec<Arc<Vec<String>>> {
+	let mut resolver = ImportResolver::with_registry(registry.clone(), &get_language);
+	let data = &source.data;
+	data.imports
+		.iter()
+		.map(|import| import.trim())
+		.filter(|import| !import.is_empty())
+		.map(|import| resolver.resolve_for(data, import))
+		.filter(|resolved| !resolved.iter().any(|member| member == &data.path))
+		.collect()
+}
+
+/// [`declaration_graph`] of `sources` plus the given `(importer, imported)`
+/// edges. A file that was not parsed gets a stub node.
+pub fn import_edge_graph<S: AsRef<ParsedSource>>(sources: &[S], edges: &[(String, String)]) -> CodeGraph {
+	let mut graph = declaration_graph(sources);
+	for (importer, imported) in edges {
+		graph.relationships.push(CodeRelationship {
+			source: importer.clone(),
+			target: imported.clone(),
+			relation: RelationType::Imports,
+			confidence: CONFIDENCE_CERTAIN,
+			line: None,
+		});
+	}
+	sort_and_dedup(&mut graph.relationships);
+	add_stub_file_nodes(&mut graph);
 	graph
 }
 
@@ -322,7 +408,7 @@ fn add_import_edges(graph: &mut CodeGraph, files: &[&SymbolFileData], resolver: 
 			if import.is_empty() {
 				continue;
 			}
-			let resolved = resolver.resolve(&file.language, &file.path, import);
+			let resolved = resolver.resolve_for(file, import);
 			let target = match resolved.first() {
 				None => {
 					let id = format!("{EXTERNAL_ID_PREFIX}{import}");

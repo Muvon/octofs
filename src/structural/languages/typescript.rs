@@ -59,6 +59,18 @@ impl Language for TypeScript {
 		tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
 	}
 
+	// Same string-literal module path as JavaScript.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		JavaScript {}.line_may_import(line, name)
+	}
+
+	// `implements A,` newline `B` and multi-parent `interface X extends A,`
+	// newline `B` leave a bare name on its own line, which the default
+	// name-list rule accepts.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["extends", "implements"]
+	}
+
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		// Mirrors JavaScript plus the TypeScript-only declaration forms;
 		// import/export statements are dropped. internal_module/module are the

@@ -15,7 +15,7 @@
 //! CSS grammar: rule sets and at-rules, named by their selectors, plus the
 //! graph facts (`@import` edges between stylesheets).
 
-use super::Language;
+use super::{path_ends_with_name, Language};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
@@ -29,6 +29,12 @@ impl Language for Css {
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		// The CSS parser also handles SCSS/SASS syntax.
 		tree_sitter_css::LANGUAGE.into()
+	}
+
+	// `@import "x"`, `@import 'x'`, `@import url("x")` and `@import url(x)`: the
+	// name ends the path.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		path_ends_with_name(line, name, "\"')")
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {

@@ -16,8 +16,8 @@
 //! graph facts (require imports, calls, superclass relations).
 
 use super::{
-	extract_symbol_by_kinds, parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language,
-	TypeRelationKind,
+	extract_symbol_by_kinds, parse_call_target, path_ends_with_components, path_ends_with_name, simple_type_name,
+	CallTarget, Language, TypeRelationKind,
 };
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
@@ -31,6 +31,18 @@ impl Language for Ruby {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_ruby::LANGUAGE.into()
+	}
+
+	// `require` / `require_relative` / `load` take a quoted literal ending in
+	// the name.
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		path_ends_with_name(line, name, "'\"")
+	}
+
+	// `class A < B`, and `include A,` newline `B` leaves a bare name on its own
+	// line, which the default name-list rule accepts.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["<", "include", "extend", "prepend"]
 	}
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {

@@ -33,6 +33,18 @@ impl Language for Swift {
 		tree_sitter_swift::LANGUAGE.into()
 	}
 
+	// An import is one line: the module path follows `import` (after any
+	// `@testable` / kind keyword) with no list or block form.
+	fn import_line_markers(&self) -> &'static [&'static str] {
+		&["import"]
+	}
+
+	// `: Base,` newline `Proto` leaves a bare name on its own line, which the
+	// default name-list rule accepts.
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		&["class", "struct", "enum", "extension", "protocol", "actor"]
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Same kinds as the outline: properties, subscripts and imports
 		// declare no symbol of their own.
