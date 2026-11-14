@@ -44,6 +44,10 @@ impl Language for Java {
 		&["extends", "implements"]
 	}
 
+	fn directory_is_package(&self) -> bool {
+		true
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Same kinds as the outline: field declarations would be named after
 		// their type, and lambdas and imports declare no symbol.
@@ -190,27 +194,41 @@ impl Language for Java {
 	/// class import names one file.
 	fn resolve_import_files(&self, import_path: &str, _source_file: &str, all_files: &FileRegistry) -> Vec<String> {
 		if let Some(package) = import_path.strip_suffix(".*") {
-			return resolve_wildcard_import(package, all_files);
+			let files = resolve_wildcard_import(package, all_files);
+			if !files.is_empty() {
+				return files;
+			}
+			// `import static com.x.Util.*` and `import com.x.Outer.*` name a
+			// class, not a package.
+			return resolve_class_import(package, all_files).into_iter().collect();
 		}
 		resolve_class_import(import_path, all_files).into_iter().collect()
 	}
 }
 
 /// `com.example.MyClass` -> a file `com/example/MyClass.java` that ends with
-/// the whole package path, wherever the source root is. A name without a dot
-/// has no package path to map.
+/// the whole package path, wherever the source root is. A trailing member
+/// (`import static com.example.Util.helper`) or nested class
+/// (`com.example.Outer.Inner`) is not a file: the path is shortened one
+/// segment at a time while a package path remains. A name without a dot has
+/// no package path to map.
 fn resolve_class_import(import_path: &str, all_files: &FileRegistry) -> Option<String> {
-	if !import_path.contains('.') {
-		return None;
+	let mut path = import_path;
+	while let Some((parent, _)) = path.rsplit_once('.') {
+		let relative_path = format!("{}.java", path.replace('.', "/"));
+		let file_name = relative_path.rsplit('/').next()?;
+		let found = all_files
+			.files_named(file_name)
+			.iter()
+			.filter(|file| path_ends_with_components(file, &relative_path))
+			.min()
+			.cloned();
+		if found.is_some() {
+			return found;
+		}
+		path = parent;
 	}
-	let relative_path = format!("{}.java", import_path.replace('.', "/"));
-	let file_name = relative_path.rsplit('/').next()?;
-	all_files
-		.files_named(file_name)
-		.iter()
-		.filter(|file| path_ends_with_components(file, &relative_path))
-		.min()
-		.cloned()
+	None
 }
 
 /// The `.java` files of the directory whose path ends with the package path

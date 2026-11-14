@@ -81,17 +81,31 @@ impl Language for Ruby {
 	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
 		let mut imports = Vec::new();
 		if node.kind() == "call" {
-			if let Ok(call_text) = node.utf8_text(contents.as_bytes()) {
-				if let Some(required_file) = parse_ruby_require(call_text) {
-					imports.push(required_file);
-				}
-			}
+			imports.extend(required_file(node, contents));
 		}
 		// Ruby has no explicit exports.
 		(imports, Vec::new())
 	}
 
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
+		// A bare name used as a statement (`setup`) is a call of a method
+		// without arguments; anywhere else, or when the method assigns or
+		// receives a local of that name, it is a variable.
+		if node.kind() == "identifier" {
+			let is_statement = node.parent().is_some_and(|parent| {
+				matches!(
+					parent.kind(),
+					"program" | "body_statement" | "then" | "else" | "do" | "begin"
+				)
+			});
+			let name = node.utf8_text(contents.as_bytes()).unwrap_or_default();
+			return if is_statement && !is_local_variable(node, contents, name) && declares_method(node, contents, name)
+			{
+				parse_call_target(name).into_iter().collect()
+			} else {
+				Vec::new()
+			};
+		}
 		if node.kind() != "call" {
 			return Vec::new();
 		}
@@ -108,8 +122,19 @@ impl Language for Ruby {
 		if matches!(name, "require" | "require_relative" | "load") {
 			return Vec::new();
 		}
-		let raw = node
-			.child_by_field_name("receiver")
+		let receiver = node.child_by_field_name("receiver");
+		// `Widget.new` constructs the class, as `new Widget` does elsewhere:
+		// the call is a use of the class.
+		if name == "new" {
+			if let Some(class) = receiver
+				.filter(|receiver| matches!(receiver.kind(), "constant" | "scope_resolution"))
+				.and_then(|receiver| receiver.utf8_text(contents.as_bytes()).ok())
+				.and_then(simple_type_name)
+			{
+				return parse_call_target(&class).into_iter().collect();
+			}
+		}
+		let raw = receiver
 			.and_then(|receiver| receiver.utf8_text(contents.as_bytes()).ok())
 			.map(|receiver| format!("{receiver}.{name}"))
 			.unwrap_or_else(|| name.to_string());
@@ -135,14 +160,92 @@ impl Language for Ruby {
 	}
 
 	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		// `require 'x.rb'` names the file with its extension; the lookup adds
+		// the extension itself.
+		let without_extension = |path: &'_ str| -> String { path.strip_suffix(".rb").unwrap_or(path).to_string() };
 		if let Some(relative_path) = import_path.strip_prefix("relative:") {
-			resolve_relative_require(relative_path, source_file, all_files)
+			resolve_relative_require(&without_extension(relative_path), source_file, all_files)
 		} else if import_path.starts_with("./") || import_path.starts_with("../") {
-			resolve_relative_require(import_path, source_file, all_files)
+			resolve_relative_require(&without_extension(import_path), source_file, all_files)
 		} else {
-			resolve_absolute_require(import_path, all_files)
+			resolve_absolute_require(&without_extension(import_path), all_files)
 		}
 	}
+}
+
+/// Parents under which an identifier introduces a local variable.
+const LOCAL_BINDING_PARENTS: [&str; 13] = [
+	"method_parameters",
+	"block_parameters",
+	"lambda_parameters",
+	"optional_parameter",
+	"keyword_parameter",
+	"splat_parameter",
+	"hash_splat_parameter",
+	"block_parameter",
+	"destructured_parameter",
+	"left_assignment_list",
+	"rest_assignment",
+	"exception_variable",
+	"for",
+];
+
+/// Whether `found` holds for any node under `root`, in document order,
+/// found with an iterative walk.
+fn any_node(root: Node, mut found: impl FnMut(Node) -> bool) -> bool {
+	let mut cursor = root.walk();
+	loop {
+		if found(cursor.node()) {
+			return true;
+		}
+		if cursor.goto_first_child() {
+			continue;
+		}
+		while !cursor.goto_next_sibling() {
+			if !cursor.goto_parent() {
+				return false;
+			}
+		}
+	}
+}
+
+/// Whether the method around `node` (or the file, outside any method)
+/// assigns `name` or takes it as a parameter.
+fn is_local_variable(node: Node, contents: &str, name: &str) -> bool {
+	let mut scope = node;
+	while let Some(parent) = scope.parent() {
+		scope = parent;
+		if matches!(scope.kind(), "method" | "singleton_method") {
+			break;
+		}
+	}
+	any_node(scope, |candidate| {
+		if candidate.kind() != "identifier" || candidate.utf8_text(contents.as_bytes()) != Ok(name) {
+			return false;
+		}
+		candidate.parent().is_some_and(|parent| {
+			LOCAL_BINDING_PARENTS.contains(&parent.kind())
+				|| (matches!(parent.kind(), "assignment" | "operator_assignment")
+					&& parent.child_by_field_name("left") == Some(candidate))
+		})
+	})
+}
+
+/// Whether the file declares a method called `name` (in a class, a module
+/// or at the top level): only then is a bare `name` a call this hook can
+/// vouch for. A method of a required file is reached by the resolver only
+/// through a call it can see, so a bare name of one is not reported.
+fn declares_method(node: Node, contents: &str, name: &str) -> bool {
+	let mut root = node;
+	while let Some(parent) = root.parent() {
+		root = parent;
+	}
+	any_node(root, |candidate| {
+		matches!(candidate.kind(), "method" | "singleton_method")
+			&& candidate
+				.child_by_field_name("name")
+				.is_some_and(|declared| declared.utf8_text(contents.as_bytes()) == Ok(name))
+	})
 }
 
 const RUBY_EXTENSION: &str = "rb";
@@ -203,25 +306,30 @@ fn push_constant_relation(
 	}
 }
 
-fn parse_ruby_require(call_text: &str) -> Option<String> {
-	let trimmed = call_text.trim();
-	if let Some(rest) = trimmed.strip_prefix("require ") {
-		if let Some(filename) = extract_ruby_string_literal(rest) {
-			return Some(filename);
-		}
+/// The file a `require`, `require_relative` or `load` call names, with or
+/// without parentheses; a computed argument names no file.
+fn required_file(call: Node, contents: &str) -> Option<String> {
+	if call.child_by_field_name("receiver").is_some() {
+		return None;
 	}
-	if let Some(rest) = trimmed.strip_prefix("require_relative ") {
-		if let Some(filename) = extract_ruby_string_literal(rest) {
-			// Marked so the resolver anchors it at the requiring file.
-			return Some(format!("relative:{filename}"));
-		}
+	let method = call
+		.child_by_field_name("method")?
+		.utf8_text(contents.as_bytes())
+		.ok()?;
+	if !matches!(method, "require" | "require_relative" | "load") {
+		return None;
 	}
-	if let Some(rest) = trimmed.strip_prefix("load ") {
-		if let Some(filename) = extract_ruby_string_literal(rest) {
-			return Some(filename);
-		}
-	}
-	None
+	let arguments = call
+		.child_by_field_name("arguments")?
+		.utf8_text(contents.as_bytes())
+		.ok()?;
+	let filename = extract_ruby_string_literal(arguments.trim().trim_start_matches('(').trim_end_matches(')'))?;
+	// Marked so the resolver anchors it at the requiring file.
+	Some(if method == "require_relative" {
+		format!("relative:{filename}")
+	} else {
+		filename
+	})
 }
 
 fn extract_ruby_string_literal(text: &str) -> Option<String> {

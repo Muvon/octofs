@@ -19,6 +19,7 @@ use super::{
 	path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind,
 };
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
 
 /// What an embedded field line may hold besides its name: a pointer star, a
@@ -101,6 +102,39 @@ impl Language for Go {
 		(imports, exports)
 	}
 
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		let Ok(text) = node.utf8_text(contents.as_bytes()) else {
+			return Vec::new();
+		};
+		if imports.is_empty() {
+			return Vec::new();
+		}
+		// `alias "path"` lines; a blank or dot alias binds no name.
+		text.lines()
+			.filter_map(|line| {
+				let parts: Vec<_> = line
+					.trim()
+					.trim_start_matches("import")
+					.trim_matches(['(', ')'])
+					.split_whitespace()
+					.collect();
+				(parts.len() == 2 && !matches!(parts[0], "_" | ".")).then(|| ImportBinding {
+					local_name: parts[0].to_string(),
+					imported_name: None,
+					import_path: parts[1].trim_matches('"').to_string(),
+				})
+			})
+			.collect()
+	}
+
+	fn module_root_file(&self) -> Option<&'static str> {
+		Some(GO_MODULE_FILE)
+	}
+
+	fn directory_is_package(&self) -> bool {
+		true
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		if node.kind() != "call_expression" {
 			return Vec::new();
@@ -130,20 +164,39 @@ impl Language for Go {
 	}
 
 	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
-		// Go has no `extends`/`implements`; struct embedding
-		// (`type Foo struct { Bar }`) is the idiomatic equivalent and the only
+		// Go has no `extends`/`implements`; embedding (`type Foo struct { Bar }`,
+		// `type Foo interface { Bar }`) is the idiomatic equivalent and the only
 		// edge reported. Interface satisfaction is structural, so it is not.
-		let mut relations = Vec::new();
-		if node.kind() == "field_declaration" && node.child_by_field_name("name").is_none() {
-			if let Some(name) = node
-				.child_by_field_name("type")
-				.and_then(|type_node| type_node.utf8_text(contents.as_bytes()).ok())
-				.and_then(simple_type_name)
-			{
-				relations.push((TypeRelationKind::Extends, name));
+		let embedded = match node.kind() {
+			"field_declaration" if node.child_by_field_name("name").is_none() => node.child_by_field_name("type"),
+			// An interface element that is one plain type (`Logger`, `io.Reader`):
+			// a union or a `~T` constraint embeds nothing by name.
+			"type_elem" if node.named_child_count() == 1 => node.named_child(0),
+			_ => None,
+		};
+		embedded
+			.filter(|type_node| matches!(type_node.kind(), "type_identifier" | "qualified_type" | "pointer_type"))
+			.and_then(|type_node| type_node.utf8_text(contents.as_bytes()).ok())
+			.and_then(simple_type_name)
+			.map(|name| (TypeRelationKind::Extends, name))
+			.into_iter()
+			.collect()
+	}
+
+	// The type that embeds, not the embedded one: the field line names the
+	// embedded type, which would make `Foo` extend itself.
+	fn extract_type_relation_source(&self, node: Node, contents: &str) -> Option<String> {
+		let mut current = node.parent();
+		while let Some(parent) = current {
+			if parent.kind() == "type_spec" {
+				return parent
+					.child_by_field_name("name")
+					.and_then(|name| name.utf8_text(contents.as_bytes()).ok())
+					.map(str::to_string);
 			}
+			current = parent.parent();
 		}
-		relations
+		None
 	}
 
 	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
@@ -227,12 +280,25 @@ fn resolve_relative_import(import_path: &str, source_file: &str, registry: &File
 	package_files(registry, &resolve_relative_path(source_file, import_path))
 }
 
+/// Directory of the Go standard library inside the Go source tree.
+const GO_STANDARD_LIBRARY_ROOT: &str = "src";
+
+/// The manifest that roots a Go module: imports of the module's own
+/// packages are written relative to its directory.
+const GO_MODULE_FILE: &str = "go.mod";
+
 /// Match the import path against directory paths component by component,
 /// longest suffix of the import first: `example.com/app/internal/store`
 /// prefers `internal/store` over a bare `store` directory. A directory must
-/// end with the suffix on a component boundary, so `os` never matches
-/// `repos` and a standard-library import with no such directory stays
-/// external.
+/// end with the suffix on a component boundary.
+///
+/// Only a module-qualified path (its first segment has a dot) is matched by
+/// suffix. A path without one is the project's own module when a `go.mod`
+/// directory holds the rest of it (`module myapp` makes `myapp/internal/log`
+/// the directory `internal/log` next to the `go.mod`); otherwise it is a
+/// standard-library package (`log`, `net/http`) and names the directory
+/// `src/<path>` of the Go source tree or `<path>` at the root, never a
+/// project directory such as `internal/log`.
 fn resolve_package_import(import_path: &str, registry: &FileRegistry) -> Vec<String> {
 	let normalized_import = normalize_separators(import_path);
 	let segments: Vec<&str> = normalized_import
@@ -242,6 +308,31 @@ fn resolve_package_import(import_path: &str, registry: &FileRegistry) -> Vec<Str
 	let Some(last_segment) = segments.last() else {
 		return Vec::new();
 	};
+	if !segments[0].contains('.') {
+		let path = segments.join("/");
+		if segments.len() > 1 {
+			let rest = segments[1..].join("/");
+			let mut modules: Vec<&String> = registry.files_named(GO_MODULE_FILE).iter().collect();
+			modules.sort();
+			for go_mod in modules {
+				let directory = go_mod.rsplit_once('/').map_or("", |(directory, _)| directory);
+				let candidate = if directory.is_empty() {
+					rest.clone()
+				} else {
+					format!("{directory}/{rest}")
+				};
+				let files = package_files(registry, &candidate);
+				if !files.is_empty() {
+					return files;
+				}
+			}
+		}
+		let in_source_tree = package_files(registry, &format!("{GO_STANDARD_LIBRARY_ROOT}/{path}"));
+		if !in_source_tree.is_empty() {
+			return in_source_tree;
+		}
+		return package_files(registry, &path);
+	}
 	for start in 0..segments.len() {
 		let suffix = segments[start..].join("/");
 		let mut directories: Vec<&String> = registry

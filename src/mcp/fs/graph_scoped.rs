@@ -51,9 +51,10 @@
 
 use super::code_index::{CodeIndex, CodeIndexes, FileId, LineKind, ParseLimit, SpellingSet, PARSE_CHUNK};
 use super::graph::{
-	oversize_reason, path_endpoints, start_nodes, GraphRelation, GraphSnapshot, MAX_EXPANDED_DEFINITIONS,
+	in_scope, oversize_reason, path_endpoints, start_nodes, GraphRelation, GraphSnapshot, MAX_EXPANDED_DEFINITIONS,
 	MAX_REPORTED_HOPS, PATH_RELATIONS,
 };
+use crate::structural;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::types::{EXTERNAL_KIND, FILE_KIND};
 use crate::structural::graph::{
@@ -90,19 +91,16 @@ const REEXPORT_HOPS: usize = 3;
 /// Files parsed per round while no definition of the name has been found.
 const DEFINITION_SEARCH_CHUNK: usize = 100;
 
-/// File stems an import replaces by their directory (`./components` for
-/// `components/index.ts`).
-const DIRECTORY_STEMS: [&str; 5] = ["index", "mod", "__init__", "lib", "main"];
-
-/// Extensions whose imports name a package directory, not a file.
-const PACKAGE_EXTENSIONS: [&str; 3] = ["go", "java", "swift"];
-
 /// What a scoped query produced.
 pub(super) enum Answer {
 	Graph {
 		snapshot: Box<GraphSnapshot>,
-		/// Closing lines about what the cap left out.
+		/// Closing lines about what the cap or the clock left out: the answer
+		/// is partial and is not kept.
 		notices: Vec<String>,
+		/// Closing lines about what the answer did not look at that do not make
+		/// it partial: repeating the query would not change them.
+		info: Vec<String>,
 	},
 	/// The query is not traced at all; the text says why and how to narrow it.
 	Message(String),
@@ -133,6 +131,8 @@ struct Query {
 	cut_at: Option<String>,
 	/// Set by a `path` search: its two ends and the levels explored from each.
 	path_progress: Option<PathProgress>,
+	/// Notes that do not make the answer partial.
+	info: Vec<String>,
 }
 
 impl Query {
@@ -151,6 +151,7 @@ impl Query {
 			considered: HashSet::new(),
 			cut_at: None,
 			path_progress: None,
+			info: Vec::new(),
 		})
 	}
 
@@ -224,6 +225,70 @@ impl Query {
 		}
 	}
 
+	/// The files whose lines mention `token` the way `kind` asks, read under
+	/// this query's clock. Files not read before it ran out are candidates
+	/// the answer did not examine: it is partial, and repeating goes on.
+	async fn marked_lines(&mut self, token: &str, kind: LineKind) -> Result<Arc<Vec<FileId>>> {
+		let scan = self.index.marked_lines(token, kind, self.deadline).await?;
+		if !scan.unscanned.is_empty() {
+			self.considered.extend(scan.unscanned.iter().copied());
+			self.note_cut(token);
+		}
+		Ok(scan.files)
+	}
+
+	/// The files that spell `name`, read under this query's clock. Files not
+	/// read before it ran out are candidates the answer did not examine: it
+	/// is partial, and repeating goes on.
+	async fn spelling(&mut self, name: &str) -> Result<Arc<SpellingSet>> {
+		let set = self.index.spelling(name, self.deadline).await?;
+		if !set.unread.is_empty() {
+			self.considered.extend(set.unread.iter().copied());
+			self.note_cut(name);
+		}
+		Ok(set)
+	}
+
+	/// `marked_lines` among the files of `spelling`, with the same accounting.
+	async fn marked_among(
+		&mut self,
+		name: &str,
+		spelling: &SpellingSet,
+		token: &str,
+		kind: LineKind,
+	) -> Result<Arc<Vec<FileId>>> {
+		// Files of a partly read spelling are candidates too, so a result
+		// cached now stays a superset once the rest is read.
+		let candidates: Vec<FileId> = spelling.files.iter().chain(&spelling.unread).copied().collect();
+		let scan = self
+			.index
+			.marked_among(name, &candidates, token, kind, self.deadline)
+			.await?;
+		if !scan.unscanned.is_empty() {
+			self.considered.extend(scan.unscanned.iter().copied());
+			self.note_cut(token);
+		}
+		Ok(scan.files)
+	}
+
+	/// A definition search that left candidate files unexamined. Without a
+	/// definition yet the answer is partial (repeating goes on); with one, the
+	/// answer stands but says how many files were not looked at.
+	fn note_unsearched(&mut self, name: &str, found: &Definitions) {
+		if found.unexamined.is_empty() {
+			return;
+		}
+		if found.starts.is_empty() {
+			self.considered.extend(found.unexamined.iter().copied());
+			self.note_cut(name);
+		} else {
+			self.info.push(format!(
+				"[{} more file(s) spell `{name}` without looking like declarations and were not searched for further definitions; give `path` (a file or directory) to search them]",
+				found.unexamined.len()
+			));
+		}
+	}
+
 	/// What is left when a call stopped at the cap or the clock. Counted over
 	/// the whole query (every name and level followed), so repeating it shows
 	/// how far the answer has come.
@@ -289,6 +354,7 @@ impl Query {
 					.collect(),
 			}),
 			notices: self.progress_notice().into_iter().collect(),
+			info: self.info.clone(),
 		}
 	}
 
@@ -348,7 +414,7 @@ impl Query {
 	/// repository-wide only when few files spell it. `bounded`: stop looking
 	/// names up once the budget is spent; the flag says whether every name was.
 	async fn followed_candidates(
-		&self,
+		&mut self,
 		graph: &CodeGraph,
 		relations: &[RelationType],
 		frontier: &[String],
@@ -378,7 +444,7 @@ impl Query {
 			}
 			let candidates = self.index.files_spelling(&[&name]).await?;
 			let wanted: Vec<FileId> = if candidates.len() <= MAX_FILES_PER_FOLLOWED_NAME {
-				declaring_first(&*self.index.spelling(&name).await?)
+				declaring_first(&*self.spelling(&name).await?)
 			} else {
 				let near: Vec<FileId> = candidates.into_iter().filter(|id| imported.contains(id)).collect();
 				if near.is_empty() {
@@ -401,7 +467,7 @@ impl Query {
 
 	/// Examine the candidates of a followed `name`, then the files they take
 	/// the name from without declaring it: a name imported through a barrel
-	/// file (`__init__.py`, `index.ts`) is declared further on.
+	/// file (one that only passes names on) is declared further on.
 	async fn ensure_followed(&mut self, name: &str, wanted: &[FileId]) -> Result<()> {
 		self.ensure(wanted, name).await?;
 		let mut pending: Vec<FileId> = wanted.to_vec();
@@ -447,7 +513,7 @@ impl Query {
 				candidates = self.call_candidates(graph, &name, &definition_path).await?;
 			}
 			if relations.contains(&RelationType::Extends) || relations.contains(&RelationType::Implements) {
-				candidates.extend(self.index.marked_lines(&name, LineKind::Inheritance).await?.iter());
+				candidates.extend(self.marked_lines(&name, LineKind::Inheritance).await?.iter());
 			}
 			self.ensure(&candidates, &name).await?;
 		}
@@ -515,7 +581,7 @@ impl Query {
 	/// import edge; the name it passes on may be an alias, which the importers
 	/// spell. The chain is followed `REEXPORT_HOPS` times.
 	async fn call_candidates(&mut self, graph: &CodeGraph, name: &str, definition_path: &str) -> Result<Vec<FileId>> {
-		let set = self.index.spelling(name).await?;
+		let set = self.spelling(name).await?;
 		let definitions = graph
 			.nodes
 			.values()
@@ -531,18 +597,17 @@ impl Query {
 		for _ in 0..=REEXPORT_HOPS {
 			let mut next = Vec::new();
 			for (path, followed) in &level {
-				let followed_set = self.index.spelling(followed).await?;
+				let followed_set = self.spelling(followed).await?;
 				let mut candidates: Vec<FileId> = Vec::new();
 				for token in file_tokens(path) {
 					importing.extend(
-						self.index
-							.marked_among(followed, &followed_set.files, &token, LineKind::Import)
+						self.marked_among(followed, &followed_set, &token, LineKind::Import)
 							.await?
 							.iter(),
 					);
 					// A module spelled everywhere is not searched for re-exports.
 					if self.index.files_spelling(&[token.as_str()]).await?.len() <= MAX_FILES_SPELLING_TO_TRACE {
-						candidates.extend(self.index.marked_lines(&token, LineKind::ReExport).await?.iter());
+						candidates.extend(self.marked_lines(&token, LineKind::ReExport).await?.iter());
 					}
 				}
 				let candidates: Vec<FileId> = candidates
@@ -613,29 +678,10 @@ fn imported_paths(graph: &CodeGraph, from: &HashSet<&str>) -> Vec<String> {
 	paths
 }
 
-/// What importers of a file spell: its name without extensions, and for a
-/// package file or a directory index also its directory. Any other file's
-/// directory (`common`, `src`) is spelled by thousands of unrelated files and
-/// would make the query as wide as the repository.
+/// What importers of a file spell, without the names of directories that
+/// thousands of unrelated files spell: deduplicated, in order.
 fn file_tokens(path: &str) -> BTreeSet<String> {
-	let mut tokens = BTreeSet::new();
-	let mut parts = path.rsplit('/');
-	let mut names_directory = false;
-	if let Some(file_name) = parts.next() {
-		let mut pieces = file_name.split('.');
-		let stem = pieces.next().unwrap_or(file_name);
-		if !stem.is_empty() {
-			tokens.insert(stem.to_string());
-		}
-		names_directory =
-			DIRECTORY_STEMS.contains(&stem) || pieces.next_back().is_some_and(|ext| PACKAGE_EXTENSIONS.contains(&ext));
-	}
-	if let Some(directory) = parts.next().filter(|_| names_directory) {
-		if !directory.is_empty() {
-			tokens.insert(directory.to_string());
-		}
-	}
-	tokens
+	structural::importer_names(path).into_iter().collect()
 }
 
 fn last_level_ids(found: &crate::structural::graph::traverse::Neighborhood) -> Vec<String> {
@@ -644,10 +690,6 @@ fn last_level_ids(found: &crate::structural::graph::traverse::Neighborhood) -> V
 		.last()
 		.map(|level| level.iter().map(|hop| hop.node_id.clone()).collect())
 		.unwrap_or_default()
-}
-
-fn in_scope(path: &str, scope: &str) -> bool {
-	path == scope || path.strip_prefix(scope).is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn too_common_message(name: &str, files: usize) -> String {
@@ -727,12 +769,7 @@ async fn imports(query: &mut Query, file: &str, depth: usize) -> Result<Answer> 
 /// Files of the directory of an index-like file and one level below: the
 /// importers of a `from . import name` that spells no module name.
 fn nameless_importers(query: &Query, file: &str) -> Vec<FileId> {
-	let stem = file
-		.rsplit('/')
-		.next()
-		.and_then(|name| name.split('.').next())
-		.unwrap_or("");
-	if !DIRECTORY_STEMS.contains(&stem) {
+	if !structural::is_directory_index(file) {
 		return Vec::new();
 	}
 	let directory = file.rsplit_once('/').map_or("", |(directory, _)| directory);
@@ -753,8 +790,16 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 	for level in 1..=depth {
 		let mut candidates: Vec<FileId> = Vec::new();
 		let mut listed: HashSet<FileId> = HashSet::new();
-		for token in &tokens {
-			for id in query.index.marked_lines(token, LineKind::Import).await?.iter() {
+		for (position, token) in tokens.iter().enumerate() {
+			// One token is read in full, so the clock is checked between them.
+			if position > 0 && query.is_capped() {
+				query.note_cut(token);
+				break;
+			}
+			// A token spelled in thousands of files is still read: the stem of
+			// a module (`lifecycle`) is how its importers name it. The scan
+			// runs under the query's clock and a repeat goes on.
+			for id in query.marked_lines(token, LineKind::Import).await?.iter() {
 				if listed.insert(*id) {
 					candidates.push(*id);
 				}
@@ -794,11 +839,12 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 }
 
 /// What a search for definitions found: the declaration graph of every file
-/// examined, the matching nodes and whether every candidate file was looked at.
+/// examined, the matching nodes and the candidate files not looked at.
 struct Definitions {
 	graph: CodeGraph,
 	starts: Vec<String>,
 	searched_all: bool,
+	unexamined: Vec<FileId>,
 }
 
 /// Look for the definitions of `name`: the files that look like declarations
@@ -810,10 +856,15 @@ async fn find_definitions(
 	scope: Option<&str>,
 	first_round_limit: usize,
 ) -> Result<Definitions> {
-	let set = query.index.spelling(name).await?;
+	let set = query.spelling(name).await?;
 	let mut ordered = declaring_first(&set);
 	if let Some(scope) = scope {
-		ordered.retain(|id| query.index.path_of(*id).is_some_and(|path| in_scope(&path, scope)));
+		ordered.retain(|id| {
+			query
+				.index
+				.path_of(*id)
+				.is_some_and(|path| in_scope(&path, Some(scope)))
+		});
 	}
 	// The files that look like declarations are examined first and, when
 	// they hold no definition, the rest in rounds.
@@ -831,11 +882,16 @@ async fn find_definitions(
 		// Declarations are all the search for a definition needs.
 		let graph = declaration_graph(&query.sources);
 		let starts = start_nodes(&graph, name, scope);
-		if !starts.is_empty() || examined >= ordered.len() || query.is_capped() {
+		let remaining = ordered.len() - examined;
+		// A found definition ends the search: the files not examined are
+		// counted in the answer, not parsed for another definition.
+		let enough = !starts.is_empty();
+		if enough || remaining == 0 || query.is_capped() {
 			return Ok(Definitions {
 				graph,
 				starts,
-				searched_all: examined >= ordered.len(),
+				searched_all: remaining == 0,
+				unexamined: ordered[examined..].to_vec(),
 			});
 		}
 	}
@@ -858,7 +914,9 @@ async fn symbol_query(
 	if !narrowed && filter_hits > MAX_FILES_SPELLING_TO_TRACE {
 		return Ok(Answer::Message(too_common_message(name, filter_hits)));
 	}
-	let Definitions { mut graph, starts, .. } = find_definitions(query, name, scope, usize::MAX).await?;
+	let found = find_definitions(query, name, scope, usize::MAX).await?;
+	query.note_unsearched(name, &found);
+	let Definitions { mut graph, starts, .. } = found;
 	if starts.len() > MAX_EXPANDED_DEFINITIONS {
 		// Listed, not followed: no relations needed.
 		return Ok(query.finish(graph));
@@ -914,6 +972,7 @@ async fn path_query(query: &mut Query, name: &str, to: &str, scope: Option<&str>
 		return Ok(Answer::Message(too_common_message(name, filter_hits)));
 	}
 	let from = find_definitions(query, name, scope, usize::MAX).await?;
+	query.note_unsearched(name, &from);
 	if from.starts.is_empty() {
 		return Ok(query.finish(from.graph));
 	}
@@ -924,6 +983,13 @@ async fn path_query(query: &mut Query, name: &str, to: &str, scope: Option<&str>
 	if end.starts.is_empty() && end.searched_all {
 		return Ok(query.finish(end.graph));
 	}
+	// No definition of `to` yet and files left unexamined: if no chain is
+	// found either, the answer is partial, never a final "no definition".
+	let end_unexamined = if end.starts.is_empty() {
+		end.unexamined.clone()
+	} else {
+		Vec::new()
+	};
 
 	let mut graph = query.graph();
 	// Levels explored from each end by steps that looked at every file they
@@ -934,8 +1000,18 @@ async fn path_query(query: &mut Query, name: &str, to: &str, scope: Option<&str>
 		let (starts, _) = path_endpoints(&graph, name, scope);
 		let (ends, _) = path_endpoints(&graph, to, None);
 		query.take_parsed_hops(&mut graph, &starts, &ends, depth);
-		let index = GraphIndex::new(&graph);
-		let found = find_paths(&graph, &index, &starts, &ends, &PATH_RELATIONS, depth);
+		// The search walks the whole graph: off the async reactor.
+		let (searched, found) = tokio::task::spawn_blocking({
+			let (starts, ends) = (starts.clone(), ends.clone());
+			move || {
+				let index = GraphIndex::new(&graph);
+				let found = find_paths(&graph, &index, &starts, &ends, &PATH_RELATIONS, depth);
+				(graph, found)
+			}
+		})
+		.await
+		.map_err(|error| anyhow!("The path search failed: {error}"))?;
+		graph = searched;
 		// The two sides met, or every level is used.
 		if !found.paths.is_empty() || forward + backward >= depth {
 			break;
@@ -1001,6 +1077,10 @@ async fn path_query(query: &mut Query, name: &str, to: &str, scope: Option<&str>
 			forward += 1;
 		}
 		graph = query.graph();
+	}
+	if !end_unexamined.is_empty() && path_endpoints(&graph, to, None).0.is_empty() {
+		query.considered.extend(end_unexamined);
+		query.note_cut(to);
 	}
 	query.path_progress = Some(PathProgress {
 		from: name.to_string(),

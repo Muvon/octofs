@@ -7,12 +7,12 @@ no database. The only index is a table kept in memory, built on the first query
 and refreshed from file metadata on every call, so a file edited by any program
 shows up in the next query.
 
-Measured (figures from the [index description](#how-the-index-behaves)): the
-first symbol query of a process builds the name table in 1.1 s on the 67,000-file
-Linux tree on an idle 12-core machine. After that, a query parses about 10 MB of
-source per second on 6 threads and stops after 800 ms, which is roughly 150 to
-400 files. When a name is spelled in more files than that, the answer covers the
-files examined so far and says how to continue.
+Measured (details in [Measurements](#measurements); benchmark machine: a 12-core
+Linux box shared with other jobs): the first symbol query of a process builds the
+index once, about 1.1 s on the 67,000-file Linux tree on an idle machine. After
+that, a query parses about 10 MB of source per second on 6 threads and stops after
+800 ms or 600 files, whichever comes first. When a name is spelled in more files
+than that, the answer covers the files examined so far and says how to continue.
 
 Two tools carry this:
 
@@ -55,6 +55,32 @@ Support differs by feature:
 | `symbol` `definition` / `references` | all except CSS and JSON; Markdown yields headings, Svelte the symbols of its `<script>` blocks | CSS and JSON name no navigable symbol: a single file fails with that guidance, a directory skips them |
 | AST search | all except CSS, JSON and Markdown; a Svelte file is searched through its `<script>` blocks | CSS, JSON, Markdown |
 | Graph relations (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`, `path`) | the languages whose definition in `src/structural/languages/` extracts the relation | Markdown and JSON contribute nothing to the graph. Bash and Lua define no extends or implements extraction, so `supertypes` and `subtypes` find nothing in them. CSS defines no calls or type relations |
+
+Graph relations also depend on what each language's definition resolves (checked
+in `src/structural/languages/` and `src/structural/graph/symbols.rs`):
+
+- Go: embedded struct fields and interfaces count as type relations. The files of
+  one directory are one package, so a call to a name declared in the same package
+  resolves without an import. An import path whose first segment has a dot is
+  matched to a local directory by path suffix. A path without a dot (`context`,
+  `log`, `net/http`) is taken as the standard library and matches only
+  `src/<path>` or `<path>` at the root.
+- Java: same-package calls resolve without an import, `new Foo()` reaches the
+  class, constructors are symbols, and static and nested-class imports resolve.
+- JavaScript and TypeScript: `require('./x')` and dynamic `import('./x')` count as
+  imports. TSX files use the TSX grammar. The tsconfig or jsconfig `paths` aliases
+  (`@/x`) are not read, so an aliased import is treated as external.
+- Python: an absolute import is looked up from the importing file's directory and
+  each directory above it, which covers `src/` layouts.
+- PHP: `new Foo` and `require`/`include` count. Ruby: `Foo.new` and `require("x")`
+  count.
+- Rust: `use super::*`, `crate::*` and `self::*` resolve, `#[path = "x.rs"]`
+  modules are followed, calls inside macro arguments are seen, and workspace
+  crates are matched by directory name and shown as a guess. `Cargo.toml` and
+  `go.mod` contents are not read.
+- C and C++: a call the parser reads as an error because a C++ keyword is used as
+  a name (`new`) is still recognised, and a function defined twice under
+  `#ifdef` and `#else` shows both definitions as guesses.
 
 ## Outline
 
@@ -265,7 +291,9 @@ it. Re-exports through barrel files are not followed by `imported_by`.
 
 `path` searches calls, extends and implements between the definitions of `name`
 and `to` and prints each chain on one line. Imports are not followed. `depth`
-defaults to 5.
+defaults to 5. It runs on the same in-memory index as the other relations and
+searches from both ends at once, one level at a time, parsing only the files it
+needs within the 800 ms and 600-file budget of the call.
 
 ```json
 {"relation": "path", "name": "main", "to": "inner"}
@@ -275,19 +303,43 @@ defaults to 5.
 src/main.rs:4 main -calls-> src/util.rs:1 helper -calls-> src/util.rs:5 inner
 ```
 
-A search that is too shallow to connect the two, or that hits its hop or work
-limit, says so instead of reporting that no path exists.
+"No path ... within depth N" is printed only when the search finished. A search
+that was cut by the budget or by its work limit says so, and repeating the query
+continues it. Measured on a 12-core Linux box shared with other jobs (minimum of 5
+fresh processes, first call / repeated call): go `ListenAndServe` to `readRequest`
+400 ms / 47 ms, to `Errorf` 459 ms / 45 ms; vscode 438 ms / 86 ms; tokio 39 ms /
+4 ms; cargo 142 ms / 27 ms; django 1,390 ms on the first call (the second call
+is complete) / 39 ms; Linux tree 2,228 ms / 221 ms.
+
+### Re-exports
+
+A name that a file only re-exports leads to the file that declares it. This is
+followed for `callers`, `callees` and `path`, up to 3 hops:
+
+- Python: names re-exported from an `__init__.py`, and `import *`.
+- JavaScript and TypeScript: `export ... from` (named, aliased, and `export *`).
+- Rust: `pub use` (a `use` line that starts with `pub`).
+
+Re-exports in the other languages are not followed.
 
 ### Reading the output
 
 - `(guess)` marks a hop matched by name alone: repository-wide, ambiguous or
   unknown receiver. Hops with stronger evidence are unmarked and listed first.
+- A call to a name that has several definitions in the same file (for example a C
+  function defined under both `#ifdef` and `#else`) leads to each of them, marked
+  `(guess)`.
+- A call on a receiver the tool cannot identify, such as `getRepo().save()`, is
+  resolved by name only and shown as `(guess)`.
 - A call outside any function lists the file as `path:line  file`.
 - A list shows at most 100 results, most certain first, then a closing line
   counts the rest.
 - Zero results explain what was looked for and suggest `relation: "references"`.
 - Relations are resolved by name and imports, not types. Same-name symbols can be
   confused and dynamic calls missed.
+- C and C++: code under preprocessor shapes the parser cannot read can hide a
+  call, so an empty or "No path" answer for C or C++ covers only what the parser
+  recognised.
 
 ## How the index behaves
 
@@ -301,9 +353,10 @@ disk.
 - **Refresh.** Every call re-walks the tree and compares file stamps (relative
   path, size, modification time and, on Unix, change time and inode) without
   reading any file. A file changed by any program is seen by the next call.
-- **Build.** The name table is built on the first symbol query of a process
-  (1.1 s on the 67,000-file Linux tree on an idle 12-core machine). The build
-  does not count against the query budget.
+- **Build.** The name table is built once, on the first symbol query of a process
+  (about 1.1 s on the 67,000-file Linux tree on an idle 12-core machine; 2 to 4 s
+  for the whole first call when the machine is loaded). The build is counted
+  after the refresh and does not count against the query budget.
 - **Parsing.** Only the files a query can need are parsed, level by level for
   `depth`, on a pool of at most 6 threads. A cap of 600 files and 800 ms applies
   per query; cached files are free, and at least one chunk of files is always
@@ -323,14 +376,16 @@ disk.
     such a name can be missing.
   - `subtypes`, `imported_by`: files with a line that names the type or file and
     may be an inheritance or import line in their language. `imported_by` builds
-    no graph.
-  - `path`: always the whole-repository graph, because it needs global
-    reachability. Its first call on a large repository takes seconds, and the
-    graph stays in memory (about 1.5 GB on the VS Code repository). The last 4
-    workdirs are kept, least recently used dropped first.
-- **Memory.** One 160 MB ceiling is shared by all indexes. It counts the parsed
-  data, the resolved imports, the path table and the cached lookups. At most 2
-  workdirs are indexed at once and idle ones are dropped after 10 minutes.
+    no graph. The same kind of line scan finds re-exports. These scans run under
+    the same 800 ms budget and give a partial answer with the repeat notice.
+  - `path`: both ends at once, one level at a time. The forward side follows what
+    the bodies of its frontier call, the backward side what spells the names of
+    its frontier; each round takes the side whose next level needs fewer unparsed
+    files. The search stops when the sides meet, when `depth` is used up, when a
+    side has nothing left or when the budget ends. No separate graph is built or
+    kept.
+- **Memory.** One ceiling of 160 MB of index data is shared by all indexes. At
+  most 2 workdirs are indexed at once and idle ones are dropped after 10 minutes.
 - **Partial answers.** When a name is spelled in more files than the cap or the
   clock allows, the answer comes from the files examined and a closing line says
   "N candidate files, M examined; repeat the query to examine the rest". Parsed
@@ -340,6 +395,34 @@ disk.
   it sooner.
 - **Definition and references** of an exact name over a directory parse only the
   files the index says spell the name.
+
+## Measurements
+
+Taken on a 12-core Linux box that was shared with other jobs, so treat them as
+orders of magnitude, not guarantees.
+
+Peak resident memory of the benchmark queries:
+
+| Repository | Peak resident memory |
+|---|---|
+| Linux tree | 280 to 320 MB |
+| vscode | 210 to 219 MB |
+| go | 103 to 126 MB |
+| django | 53 MB |
+| cargo | about 48 MB |
+| tokio | 38 MB |
+
+Time of a repeated `callers` or `imported_by` query whose answer is already
+complete: 3 to 4 ms on tokio, 24 to 30 ms on cargo, 36 to 42 ms on django, 45 to
+50 ms on go, 86 to 94 ms on vscode. `path` timings are under
+[Path between two symbols](#path-between-two-symbols).
+
+A query that still has files to examine takes about the refresh plus 800 ms: about
+1.1 s on vscode and 1.3 to 1.4 s on the Linux tree. The first symbol query of a
+process builds the index once: about 1.1 s on the Linux tree on an idle 12-core
+machine, 2 to 4 s for the whole first call when the machine is loaded.
+
+Files skipped by the 1 MB limit: 6 in vscode, 4 in go, 117 in the Linux tree.
 
 ## Limits
 
@@ -356,8 +439,15 @@ disk.
 - A name spelled in more than 3000 files, with no `path` or `Owner::name`, is not
   traced. The reply gives the file count and asks for `path` or `Owner::name`.
   Common names need one of them.
-- The whole-repository graph used by `path` holds at most 20,000 files and
-  256 MB of source. The rest are counted in a closing note.
+- C and C++ files whose calls sit under preprocessor shapes the parser cannot read
+  can hide a call (see [Reading the output](#reading-the-output)).
+- Import resolution reads neither `tsconfig.json`/`jsconfig.json` `paths` (aliased
+  imports are external), nor `go.mod`, nor `Cargo.toml`. Rust workspace crates are
+  matched by directory name and shown as a guess.
+- When a definition is found the search stops, and a closing line says how many
+  other files spell the name without looking like declarations.
+- `view` called with the removed `symbol` parameter or the `r` flag fails with an
+  error that names the `symbol` tool.
 - A traversal stops at its hop limit and a path search at its path or work limit;
   each says so in the output.
 - A name with more than eight definitions is listed instead of followed, from a

@@ -155,9 +155,10 @@ fn calls_keep_their_receiver_as_a_qualifier() {
 				name: "send_it".to_string(),
 				qualifier: Some("client".to_string()),
 			},
+			// `Widget.new` constructs the class, like `new Widget` elsewhere.
 			CallTarget {
-				name: "new".to_string(),
-				qualifier: Some("Widget".to_string()),
+				name: "Widget".to_string(),
+				qualifier: None,
 			},
 		]
 	);
@@ -245,6 +246,17 @@ fn symbol_owner_walks_up_to_the_enclosing_class_or_module() {
 }
 
 #[test]
+fn a_method_in_a_singleton_class_block_belongs_to_the_enclosing_class() {
+	let source = "class Config\n  class << self\n    def load\n    end\n  end\nend\n";
+	let tree = parse(source);
+	let methods = nodes_of_kind(tree.root_node(), "method");
+	assert_eq!(
+		Ruby {}.extract_symbol_owner(methods[0], source),
+		Some("Config".to_string())
+	);
+}
+
+#[test]
 fn a_relative_require_resolves_against_the_requiring_files_directory() {
 	let files = demo_app();
 	let lang = Ruby {};
@@ -298,4 +310,83 @@ fn graph_links_calls_imports_and_superclass_across_files() {
 	assert!(has("app/main.rb", "app/util.rb", RelationType::Imports));
 	assert!(has("app/main.rb::App::run", "app/util.rb::helper", RelationType::Calls));
 	assert!(has("app/main.rb::App", "app/base.rb::Base", RelationType::Extends));
+}
+
+#[test]
+fn new_reaches_the_class_and_a_bare_statement_reaches_the_method() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "ruby",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("app/widget.rb", "class Widget\n  def initialize\n  end\nend\n"),
+		file(
+			"app/main.rb",
+			"require_relative(\"widget\")\n\ndef boot\n  prepare\n  Widget.new\nend\n\ndef prepare\nend\n",
+		),
+	]);
+	let has = |source: &str, target: &str| {
+		graph
+			.relationships
+			.iter()
+			.any(|edge| edge.source == source && edge.target == target && edge.relation == RelationType::Calls)
+	};
+	assert!(has("app/main.rb::boot", "app/widget.rb::Widget"));
+	assert!(has("app/main.rb::boot", "app/main.rb::prepare"));
+}
+
+#[test]
+fn parenthesised_requires_bare_statement_calls_and_rb_suffixes_are_handled() {
+	let source = "require(\"json\")\nrequire_relative('lib/x.rb')\nrequire name\n";
+	let tree = parse(source);
+	let imports: Vec<String> = nodes_of_kind(tree.root_node(), "call")
+		.into_iter()
+		.flat_map(|node| Ruby {}.extract_imports_exports(node, source).0)
+		.collect();
+	assert_eq!(imports, vec!["json", "relative:lib/x.rb"]);
+
+	let files = registry(&["app/main.rb", "app/lib/x.rb"]);
+	assert_eq!(
+		Ruby {}
+			.resolve_import("relative:lib/x.rb", "app/main.rb", &files)
+			.as_deref(),
+		Some("app/lib/x.rb")
+	);
+
+	let source = "def setup\nend\n\ndef go\n  setup\n  value = other\nend\n";
+	let tree = parse(source);
+	let names: Vec<String> = nodes_of_kind(tree.root_node(), "identifier")
+		.into_iter()
+		.flat_map(|node| Ruby {}.extract_function_calls(node, source))
+		.map(|call| call.name)
+		.collect();
+	// `setup` stands alone as a statement; `other` is the value of an assignment.
+	assert_eq!(names, vec!["setup"]);
+}
+
+#[test]
+fn a_bare_name_is_a_call_only_when_a_method_of_that_name_is_in_scope() {
+	let bare_calls = |source: &str| -> Vec<String> {
+		let tree = parse(source);
+		nodes_of_kind(tree.root_node(), "identifier")
+			.into_iter()
+			.flat_map(|node| Ruby {}.extract_function_calls(node, source))
+			.map(|call| call.name)
+			.collect()
+	};
+	// A local assigned in the method hides the method of the same name.
+	assert!(bare_calls("def setup\nend\n\ndef go\n  setup = 1\n  setup\nend\n").is_empty());
+	// So does a parameter.
+	assert!(bare_calls("def setup\nend\n\ndef go(setup)\n  setup\nend\n").is_empty());
+	// A name no method of the file declares, in a file that pulls in nothing.
+	assert!(bare_calls("def go\n  setup\nend\n").is_empty());
+	// A required file does not make a bare name a call: the name may as
+	// well be a variable, and only a method the file declares is certain.
+	assert!(bare_calls("require_relative \"util\"\n\ndef go\n  setup\nend\n").is_empty());
+	// A method of the enclosing class counts.
+	assert_eq!(
+		bare_calls("class A\n  def setup\n  end\n\n  def go\n    setup\n  end\nend\n"),
+		vec!["setup"]
+	);
 }

@@ -17,7 +17,7 @@
 use super::Java;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, CodeRelationship, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
+use crate::structural::languages::{CallTarget, Language, TypeRelationKind, UNKNOWN_RECEIVER};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -311,6 +311,29 @@ fn an_import_must_match_the_whole_package_path_not_just_the_class_name() {
 }
 
 #[test]
+fn static_and_nested_class_imports_resolve_to_the_file_of_the_outer_class() {
+	let files = FileRegistry::new(&[
+		"src/com/example/Util.java".to_string(),
+		"src/com/example/Outer.java".to_string(),
+	]);
+	let java = Java {};
+	let source = "src/com/example/App.java";
+	assert_eq!(
+		java.resolve_import("com.example.Util.helper", source, &files),
+		Some("src/com/example/Util.java".to_string())
+	);
+	assert_eq!(
+		java.resolve_import("com.example.Outer.Inner", source, &files),
+		Some("src/com/example/Outer.java".to_string())
+	);
+	assert_eq!(
+		java.resolve_import_files("com.example.Util.*", source, &files),
+		vec!["src/com/example/Util.java".to_string()]
+	);
+	assert_eq!(java.resolve_import("org.other.Missing.thing", source, &files), None);
+}
+
+#[test]
 fn a_call_on_a_non_identifier_receiver_keeps_the_callee_name() {
 	let source = "class Service {\n\tvoid run() {\n\t\tgetRepo().save(name);\n\t\tnew Foo().bar();\n\t}\n}\n";
 	let tree = parse(source);
@@ -322,7 +345,15 @@ fn a_call_on_a_non_identifier_receiver_keeps_the_callee_name() {
 		.iter()
 		.map(|target| (target.name.as_str(), target.qualifier.as_deref()))
 		.collect();
-	assert_eq!(pairs, vec![("save", None), ("getRepo", None), ("bar", None)]);
+	// The receiver of `getRepo().save()` is an expression: its type is unknown.
+	assert_eq!(
+		pairs,
+		vec![
+			("save", Some(UNKNOWN_RECEIVER)),
+			("getRepo", None),
+			("bar", Some(UNKNOWN_RECEIVER))
+		]
+	);
 }
 
 #[test]
@@ -374,4 +405,111 @@ fn build_graph_links_calls_imports_and_inheritance_across_files() {
 		RelationType::Extends
 	)
 	.is_some());
+}
+
+#[test]
+fn new_reaches_the_class_and_its_constructor_in_the_same_file_and_across_files() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file(
+			"a/Foo.java",
+			"package a;\n\npublic class Foo {\n\tpublic Foo() {}\n\tpublic Foo(int n) {}\n\tstatic Foo make() {\n\t\treturn new Foo();\n\t}\n}\n",
+		),
+		file(
+			"b/Main.java",
+			"package b;\n\nimport a.Foo;\n\nclass Main {\n\tvoid run() {\n\t\tnew Foo();\n\t}\n}\n",
+		),
+	]);
+
+	assert!(edge(&graph, "a/Foo.java::Foo::make", "a/Foo.java::Foo", RelationType::Calls).is_some());
+	assert!(edge(&graph, "b/Main.java::Main::run", "a/Foo.java::Foo", RelationType::Calls).is_some());
+}
+
+#[test]
+fn a_call_on_a_chained_receiver_is_a_guess_never_a_certain_edge_to_the_current_class() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file(
+			"a/Service.java",
+			"package a;\n\nclass Service {\n\tvoid save() {}\n\tvoid run() {\n\t\tgetRepo().save();\n\t}\n}\n",
+		),
+		file("a/Repo.java", "package a;\n\nclass Repo {\n\tvoid save() {}\n}\n"),
+	]);
+
+	let call = edge(
+		&graph,
+		"a/Service.java::Service::run",
+		"a/Service.java::Service::save",
+		RelationType::Calls,
+	);
+	if let Some(call) = call {
+		assert!(
+			call.confidence <= crate::structural::graph::symbols::CONFIDENCE_NAME_ONLY_MAX,
+			"{}",
+			call.confidence
+		);
+	}
+}
+
+#[test]
+fn a_type_relation_sits_on_the_line_of_the_declaration_name_not_its_annotation() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("a/Base.java", "package a;\npublic class Base {}\n"),
+		file(
+			"a/Child.java",
+			"package a;\n\n@Deprecated\n@SuppressWarnings(\"x\")\npublic class Child extends Base {}\n",
+		),
+	]);
+	let relation = edge(
+		&graph,
+		"a/Child.java::Child",
+		"a/Base.java::Base",
+		RelationType::Extends,
+	)
+	.expect("extends edge");
+	assert_eq!(relation.line, Some(5));
+}
+
+#[test]
+fn a_class_of_the_same_package_is_reached_without_an_import() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("a/Helper.java", "package a;\npublic class Helper {}\n"),
+		file("b/Helper.java", "package b;\npublic class Helper {}\n"),
+		file(
+			"a/Caller.java",
+			"package a;\npublic class Caller {\n\tvoid run() {\n\t\tnew Helper();\n\t}\n}\n",
+		),
+	]);
+	assert!(edge(
+		&graph,
+		"a/Caller.java::Caller::run",
+		"a/Helper.java::Helper",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"a/Caller.java::Caller::run",
+		"b/Helper.java::Helper",
+		RelationType::Calls
+	)
+	.is_none());
 }

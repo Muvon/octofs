@@ -80,25 +80,37 @@ pub fn find_paths(
 	max_depth: usize,
 ) -> PathSearch {
 	let targets: HashSet<&str> = target_ids.iter().map(String::as_str).collect();
-	let mut queue: VecDeque<Vec<String>> = source_ids.iter().map(|id| vec![id.clone()]).collect();
+	// One state per queued step: the node, its parent state and its depth. A
+	// path is read back through the parents, so no step copies the path so far.
+	let mut states: Vec<PathState> = source_ids
+		.iter()
+		.map(|id| PathState {
+			node: id.as_str(),
+			parent: None,
+			depth: 0,
+		})
+		.collect();
+	let mut queue: VecDeque<usize> = (0..states.len()).collect();
 	let mut search = PathSearch::default();
 	let mut expansions = 0usize;
-	while let Some(path) = queue.pop_front() {
+	while let Some(position) = queue.pop_front() {
 		expansions += 1;
 		if expansions > MAX_EXPANSIONS {
 			search.work_cap_hit = true;
 			break;
 		}
-		let current = path.last().map(String::as_str).unwrap_or_default();
-		if path.len() > 1 && targets.contains(current) {
-			search.paths.push(path);
+		let PathState {
+			node: current, depth, ..
+		} = states[position];
+		if depth > 0 && targets.contains(current) {
+			search.paths.push(path_of(&states, position));
 			if search.paths.len() >= MAX_PATHS {
 				search.path_cap_hit = true;
 				break;
 			}
 			continue;
 		}
-		if path.len().saturating_sub(1) >= max_depth {
+		if depth >= max_depth {
 			continue;
 		}
 		let mut next: Vec<&str> = index
@@ -111,15 +123,57 @@ pub fn find_paths(
 		next.sort_unstable();
 		next.dedup();
 		for neighbor in next {
-			if path.iter().any(|node| node.as_str() == neighbor) {
+			if path_contains(&states, position, neighbor) {
 				continue;
 			}
-			let mut extended = path.clone();
-			extended.push(neighbor.to_string());
-			queue.push_back(extended);
+			if states.len() >= MAX_QUEUED_STATES {
+				search.work_cap_hit = true;
+				continue;
+			}
+			states.push(PathState {
+				node: neighbor,
+				parent: Some(position),
+				depth: depth + 1,
+			});
+			queue.push_back(states.len() - 1);
 		}
 	}
 	search
+}
+
+/// Queued steps one search may hold: the queue and the parent chain both
+/// grow with every neighbour, so the search stops queueing at this size.
+const MAX_QUEUED_STATES: usize = 500_000;
+
+/// One step of a path search: a node and the step it was reached from.
+struct PathState<'a> {
+	node: &'a str,
+	parent: Option<usize>,
+	depth: usize,
+}
+
+/// The nodes from the start to `position`, in order.
+fn path_of(states: &[PathState], position: usize) -> Vec<String> {
+	let mut nodes = Vec::new();
+	let mut current = Some(position);
+	while let Some(step) = current {
+		nodes.push(states[step].node.to_string());
+		current = states[step].parent;
+	}
+	nodes.reverse();
+	nodes
+}
+
+/// Whether `node` is already on the path that ends at `position`.
+fn path_contains(states: &[PathState], position: usize, node: &str) -> bool {
+	let mut current = Some(position);
+	while let Some(step) = current {
+		if states[step].node == node {
+			return true;
+		}
+		current = states[step].parent;
+	}
+	false
 }
 
 /// Which way `neighbors` follows relationships.

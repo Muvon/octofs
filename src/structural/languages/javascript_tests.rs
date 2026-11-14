@@ -245,3 +245,161 @@ fn graph_links_calls_imports_and_inheritance_across_files() {
 	assert!(has_edge(&graph, "b.js", "a.js", RelationType::Imports));
 	assert!(has_edge(&graph, "b.js::Child", "a.js::Base", RelationType::Extends));
 }
+
+#[test]
+fn require_and_dynamic_import_with_a_string_are_imports_and_bind_names() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "javascript",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("lib/x.js", "function helper() {}\nmodule.exports = { helper };\n"),
+		// A second `helper` rules out the unique-name guess: only the
+		// destructured binding can lead the call to lib/x.js.
+		file("other/z.js", "function helper() {}\n"),
+		file(
+			"app/y.js",
+			"const { helper: assist } = require('../lib/x');\nfunction run() {\n\tassist();\n}\nasync function load() {\n\treturn import('../lib/x');\n}\nconst name = './computed';\nrequire(name);\n",
+		),
+	]);
+
+	assert!(has_edge(&graph, "app/y.js", "lib/x.js", RelationType::Imports));
+	assert!(has_edge(
+		&graph,
+		"app/y.js::run",
+		"lib/x.js::helper",
+		RelationType::Calls
+	));
+	assert!(!graph
+		.relationships
+		.iter()
+		.any(|edge| edge.relation == RelationType::Imports && edge.target.contains("computed")));
+}
+
+#[test]
+fn class_field_arrows_and_object_property_functions_are_symbols_that_call() {
+	let graph = build_graph(vec![SourceFile {
+		path: "a.js".to_string(),
+		language: "javascript",
+		contents: "function helper() {}\nclass Store {\n\thandle = () => {\n\t\thelper();\n\t};\n}\nconst api = {\n\trun: function () {\n\t\thelper();\n\t},\n};\n"
+			.to_string(),
+	}]);
+	assert!(has_edge(
+		&graph,
+		"a.js::Store::handle",
+		"a.js::helper",
+		RelationType::Calls
+	));
+	assert!(has_edge(&graph, "a.js::run", "a.js::helper", RelationType::Calls));
+}
+
+#[test]
+fn a_file_that_starts_with_a_byte_order_mark_is_read_like_any_other() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "javascript",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("b.js", "\u{feff}export function a() {}\n"),
+		file(
+			"c.js",
+			"\u{feff}import { a } from './b';\nfunction run() {\n\ta();\n}\n",
+		),
+	]);
+	assert!(has_edge(&graph, "c.js", "b.js", RelationType::Imports));
+	assert!(has_edge(&graph, "c.js::run", "b.js::a", RelationType::Calls));
+}
+
+#[test]
+fn an_import_attribute_does_not_become_part_of_the_module_path() {
+	assert_eq!(
+		super::parse_js_import_statement_full_path("import data from './d.json' with { type: 'json' };"),
+		Some(vec!["./d.json".to_string()])
+	);
+	assert_eq!(
+		super::parse_js_import_statement_full_path("import './styles.css';"),
+		Some(vec!["./styles.css".to_string()])
+	);
+}
+
+#[test]
+fn a_default_import_binds_its_name_to_the_imported_file() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "javascript",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file(
+			"lib/x.js",
+			"export default function helper() {}\nexport function other() {}\n",
+		),
+		file("other/z.js", "function helper() {}\n"),
+		file(
+			"app/y.js",
+			"import helper, { other } from '../lib/x';\nfunction run() {\n\thelper();\n\tother();\n}\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"app/y.js::run",
+		"lib/x.js::helper",
+		RelationType::Calls
+	));
+	assert!(has_edge(
+		&graph,
+		"app/y.js::run",
+		"lib/x.js::other",
+		RelationType::Calls
+	));
+}
+
+#[test]
+fn a_default_import_calls_the_default_export_whatever_it_is_named() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "javascript",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("lib/v.js", "export default function draw() {}\n"),
+		file("other/z.js", "function draw() {}\n"),
+		file(
+			"app/y.js",
+			"import render from '../lib/v';\nfunction run() {\n\trender();\n}\n",
+		),
+	]);
+	assert!(has_edge(&graph, "app/y.js::run", "lib/v.js::draw", RelationType::Calls));
+	assert!(!has_edge(
+		&graph,
+		"app/y.js::run",
+		"other/z.js::draw",
+		RelationType::Calls
+	));
+}
+
+#[test]
+fn functions_assigned_to_exports_and_prototypes_are_symbols() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "javascript",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![file(
+		"lib/x.js",
+		"function helper() {}\nexports.f = () => {\n\thelper();\n};\nmodule.exports.g = function () {\n\thelper();\n};\nWidget.prototype.m = function () {\n\thelper();\n};\n",
+	)]);
+	for name in ["f", "g", "m"] {
+		assert!(
+			has_edge(
+				&graph,
+				&format!("lib/x.js::{name}"),
+				"lib/x.js::helper",
+				RelationType::Calls
+			),
+			"{name} is a symbol that calls helper"
+		);
+	}
+}

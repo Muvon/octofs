@@ -63,6 +63,7 @@ fn file(path: &str) -> SymbolFileData {
 		calls: Vec::new(),
 		type_relations: Vec::new(),
 		symbols: Vec::new(),
+		default_export: None,
 		memo: ImportMemo::default(),
 	}
 }
@@ -436,7 +437,9 @@ fn first_named_child_bindings(
 	let tree = parser.parse(code, None).expect("code should parse");
 	let statement = tree.root_node().named_child(0).expect("import statement");
 	let imports: Vec<String> = imports.iter().map(|import| import.to_string()).collect();
-	extract_import_bindings(language, statement, code, &imports)
+	crate::structural::languages::get_language(language)
+		.expect("known language")
+		.extract_import_bindings(statement, code, &imports)
 }
 
 #[test]
@@ -480,14 +483,17 @@ fn rust_use_alias_binds_the_alias_to_the_imported_name() {
 }
 
 #[test]
-fn rust_use_without_alias_yields_no_bindings() {
-	assert!(first_named_child_bindings(
+fn rust_use_without_alias_binds_the_leaf_under_its_own_name() {
+	let bindings = first_named_child_bindings(
 		tree_sitter_rust::LANGUAGE.into(),
 		"rust",
 		"use std::fmt;",
-		&["std::fmt"]
-	)
-	.is_empty());
+		&["std::fmt"],
+	);
+	assert_eq!(bindings.len(), 1);
+	assert_eq!(bindings[0].local_name, "fmt");
+	assert_eq!(bindings[0].imported_name.as_deref(), Some("fmt"));
+	assert_eq!(bindings[0].import_path, "std::fmt");
 }
 
 #[test]

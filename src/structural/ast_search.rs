@@ -99,6 +99,7 @@ macro_rules! define_ast_grep_lang {
 define_ast_grep_lang!(AstRust, tree_sitter_rust::LANGUAGE, 'µ');
 define_ast_grep_lang!(AstJavaScript, tree_sitter_javascript::LANGUAGE, '$');
 define_ast_grep_lang!(AstTypeScript, tree_sitter_typescript::LANGUAGE_TYPESCRIPT, '$');
+define_ast_grep_lang!(AstTsx, tree_sitter_typescript::LANGUAGE_TSX, '$');
 define_ast_grep_lang!(AstPython, tree_sitter_python::LANGUAGE, 'µ');
 define_ast_grep_lang!(AstGo, tree_sitter_go::LANGUAGE, 'µ');
 define_ast_grep_lang!(AstJava, tree_sitter_java::LANGUAGE, '$');
@@ -135,6 +136,10 @@ macro_rules! dispatch_lang {
 			"typescript" => {
 				#[allow(unused_variables)]
 				let $lang = AstTypeScript;
+				$body
+			}
+			"tsx" => {
+				let $lang = AstTsx;
 				$body
 			}
 			"python" => {

@@ -45,7 +45,7 @@ use std::sync::Arc;
 pub use symbols::RelationFilter;
 use symbols::{
 	discover_symbol_relationships, extract_symbols_from_contents, sort_and_dedup, symbol_node_ids, FileAstData,
-	ImportResolver, LanguageLookup, SymbolDecl, SymbolFileData, CONFIDENCE_CERTAIN, WILDCARD,
+	ImportResolver, LanguageLookup, SymbolDecl, SymbolFileData, CONFIDENCE_CERTAIN, CONFIDENCE_NAME_ONLY_MAX, WILDCARD,
 };
 use types::{EXTERNAL_KIND, FILE_KIND};
 
@@ -300,7 +300,7 @@ pub fn resolved_imports(registry: &Arc<FileRegistry>, source: &ParsedSource) -> 
 
 /// The repository files `source` takes `name` in from without declaring it
 /// (the named import of `name` and every wildcard import): where a barrel
-/// file such as an `__init__.py` or an `index.ts` sends a lookup next.
+/// file (a file that only passes names on) sends a lookup next.
 pub fn reexport_sources(registry: &Arc<FileRegistry>, source: &ParsedSource, name: &str) -> Vec<String> {
 	let data = &source.data;
 	if data.symbols.iter().any(|symbol| symbol.name == name) {
@@ -425,6 +425,7 @@ fn add_import_edges(graph: &mut CodeGraph, files: &[&SymbolFileData], resolver: 
 			}
 			let resolved = resolver.resolve_for(file, import);
 			let target = match resolved.first() {
+				None if resolver.is_optional(file, import) => continue,
 				None => {
 					let id = format!("{EXTERNAL_ID_PREFIX}{import}");
 					graph.nodes.entry(id.clone()).or_insert_with(|| CodeNode {
@@ -449,11 +450,19 @@ fn add_import_edges(graph: &mut CodeGraph, files: &[&SymbolFileData], resolver: 
 					canonical.clone()
 				}
 			};
+			// A guessed target (found by a name match, not by the path the
+			// import states) is
+			// no more certain than a name-only call edge.
+			let confidence = if !resolved.is_empty() && resolver.is_guess(file, import) {
+				CONFIDENCE_NAME_ONLY_MAX
+			} else {
+				CONFIDENCE_CERTAIN
+			};
 			graph.relationships.push(CodeRelationship {
 				source: file.path.clone(),
 				target,
 				relation: RelationType::Imports,
-				confidence: CONFIDENCE_CERTAIN,
+				confidence,
 				line: None,
 			});
 		}

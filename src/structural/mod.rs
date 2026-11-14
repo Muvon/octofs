@@ -23,6 +23,7 @@ mod languages;
 mod signature_extractor;
 pub mod symbols;
 
+pub(crate) use languages::module_root_files;
 use tree_sitter::Parser;
 
 /// One outline item: a declaration with the span of its signature lines.
@@ -109,6 +110,23 @@ pub fn is_supported(path_label: &str) -> bool {
 	language_for_extension(&path_extension(path_label)).is_some()
 }
 
+/// The language of the file at `path_label`, when it has a grammar.
+fn language_of(path_label: &str) -> Option<Box<dyn languages::Language>> {
+	languages::get_language(language_for_extension(&path_extension(path_label))?)
+}
+
+/// The names importers of the file write (see `Language::importer_names`).
+pub(crate) fn importer_names(path: &str) -> Vec<String> {
+	language_of(path)
+		.map(|language| language.importer_names(path))
+		.unwrap_or_default()
+}
+
+/// Whether the file stands for its directory (see `Language::is_directory_index`).
+pub(crate) fn is_directory_index(path: &str) -> bool {
+	language_of(path).is_some_and(|language| language.is_directory_index(path))
+}
+
 fn parse_outline(language: &str, contents: &str) -> Result<Vec<OutlineItem>, String> {
 	let lang = languages::get_language(language)
 		.ok_or_else(|| format!("No grammar implementation for language '{language}'."))?;
@@ -162,7 +180,10 @@ pub(crate) fn language_for_extension(extension: &str) -> Option<&'static str> {
 		"rs" => "rust",
 		"py" => "python",
 		"js" | "mjs" | "jsx" => "javascript",
-		"ts" | "tsx" => "typescript",
+		"ts" => "typescript",
+		// JSX needs the TSX grammar: the TypeScript one reads `<div>` as a type
+		// assertion and loses the components and calls inside it.
+		"tsx" => "tsx",
 		"go" => "go",
 		"java" => "java",
 		"cpp" | "cc" | "cxx" | "c++" | "c" | "h" | "hpp" | "hxx" | "cppm" | "ixx" | "mxx" | "ccm" | "cxxm" => "cpp",

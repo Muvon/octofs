@@ -158,7 +158,7 @@ async fn a_longer_identifier_is_not_a_verified_hit() {
 }
 
 #[tokio::test]
-async fn refresh_reports_new_changed_and_gone_files_and_rereads_only_the_changed_one() {
+async fn refresh_sees_new_changed_and_gone_files_and_rereads_only_the_changed_one() {
 	let root = project(&[
 		("a.rs", "fn aaa() {}\n"),
 		("b.rs", "fn bbb() {}\n"),
@@ -166,10 +166,11 @@ async fn refresh_reports_new_changed_and_gone_files_and_rereads_only_the_changed
 	]);
 	let indexes = CodeIndexes::new(limits(AMPLE));
 	let index = indexes.index(root.path());
-	let first = index.refresh().await.unwrap();
-	assert_eq!(first.new.len(), 3);
-	assert!(first.changed.is_empty() && first.gone.is_empty());
-	assert!(index.refresh().await.unwrap().is_empty());
+	index.refresh().await.unwrap();
+	for name in ["a.rs", "b.rs", "c.rs"] {
+		assert!(index.file_id(name).is_some(), "{name} is indexed");
+	}
+	index.refresh().await.unwrap();
 
 	index.files_spelling(&["aaa"]).await.unwrap();
 	assert_eq!(reads(&index), 3, "the filters read every file once");
@@ -182,11 +183,8 @@ async fn refresh_reports_new_changed_and_gone_files_and_rereads_only_the_changed
 	std::fs::remove_file(root.path().join("c.rs")).unwrap();
 	std::fs::write(root.path().join("d.rs"), "fn ddd() {}\n").unwrap();
 	let a = index.file_id("a.rs").unwrap();
-	let c = index.file_id("c.rs").unwrap();
-	let changes = index.refresh().await.unwrap();
-	assert_eq!(changes.changed, vec![a]);
-	assert_eq!(changes.gone, vec![c]);
-	assert_eq!(changes.new, vec![index.file_id("d.rs").unwrap()]);
+	index.refresh().await.unwrap();
+	assert!(index.file_id("d.rs").is_some());
 	assert!(index.file_id("c.rs").is_none());
 
 	let before = reads(&index);
@@ -357,15 +355,35 @@ async fn two_roots_are_independent_and_a_third_evicts_the_least_recent() {
 }
 
 #[tokio::test]
-async fn concurrent_refreshes_run_once() {
+async fn concurrent_refreshes_share_one_run_that_started_after_they_arrived() {
 	let root = numbered_project(10, 3);
 	let indexes = CodeIndexes::new(limits(AMPLE));
 	let index = indexes.index(root.path());
 	let (a, b, c, d) = tokio::join!(index.refresh(), index.refresh(), index.refresh(), index.refresh());
-	for changes in [a, b, c, d] {
-		assert_eq!(changes.unwrap().new.len(), 10);
+	// The first caller starts the walk; the other three arrived while it ran,
+	// so an edit made just before them could be missed by it: they share one
+	// more run, which started after they arrived.
+	for result in [a, b, c, d] {
+		result.unwrap();
 	}
-	assert_eq!(index.refresh_count.load(Ordering::Relaxed), 1);
+	assert_eq!(index.refresh_count.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
+async fn two_cold_callers_build_each_filter_once() {
+	let root = numbered_project(10, 3);
+	let indexes = CodeIndexes::new(limits(AMPLE));
+	let index = indexes.index(root.path());
+	index.refresh().await.unwrap();
+	let before = reads(&index);
+	let (first, second) = tokio::join!(index.ensure_ready(), index.ensure_ready());
+	first.unwrap();
+	second.unwrap();
+	assert_eq!(
+		reads(&index) - before,
+		10,
+		"every file is read once, not once per caller"
+	);
 }
 
 #[tokio::test]
@@ -426,4 +444,58 @@ async fn memory_use_counts_table_filters_and_parsed_data() {
 	assert!(index.memory_use().filters > 0);
 	assert_eq!(index.file_count(), 5);
 	assert_eq!(indexes.memory_used(), index.memory_use().total());
+}
+
+#[test]
+fn the_declaration_check_reads_a_bounded_window_before_a_name() {
+	// A minified file is one line of megabytes: reading back to the line
+	// start for each of a hundred thousand mentions would be quadratic. The
+	// check therefore sees only the bytes just before the name, which these
+	// two lines tell apart: the same `function` keyword counts when it is
+	// inside the window and not when it lies beyond it.
+	let wanted: HashSet<&[u8]> = HashSet::from([b"foo".as_slice()]);
+	let filler = "a.b(1);".repeat(DECLARATION_LOOKBACK_BYTES);
+	let far = format!("function {filler} foo(1);");
+	assert_eq!(scan_spelling(far.as_bytes(), &wanted, b"foo"), Some(false));
+	let near = format!("{filler} function foo(1);");
+	assert_eq!(scan_spelling(near.as_bytes(), &wanted, b"foo"), Some(true));
+
+	let minified = format!(" {}", "a.foo(1);".repeat(100_000)).into_bytes();
+	assert_eq!(scan_spelling(&minified, &wanted, b"foo"), Some(false));
+}
+
+#[tokio::test]
+async fn a_root_that_did_not_fit_is_built_again_only_after_memory_was_freed() {
+	let big = numbered_project(50, 200);
+	let probe = CodeIndexes::new(limits(AMPLE));
+	let probe_index = probe.index(big.path());
+	probe_index.refresh().await.unwrap();
+	probe_index.files_spelling(&["f0_0"]).await.unwrap();
+	let ample = probe_index.memory_use();
+	let ceiling = ample.table + ample.filters / 4;
+
+	let small = project(&[("one.rs", "fn one() {}\n")]);
+	let third = project(&[("three.rs", "fn three() {}\n")]);
+	let indexes = CodeIndexes::new(limits(ceiling));
+	let held = indexes.index(small.path());
+	held.refresh().await.unwrap();
+	tokio::time::sleep(Duration::from_millis(5)).await;
+	let unfit = indexes.index(big.path());
+	unfit.refresh().await.unwrap();
+	unfit.files_spelling(&["f0_0"]).await.unwrap_err();
+	assert!(!unfit.is_usable());
+	assert!(
+		Arc::ptr_eq(&unfit, &indexes.index(big.path())),
+		"nothing was freed: no new attempt"
+	);
+
+	tokio::time::sleep(Duration::from_millis(5)).await;
+	// A third root pushes the least recent one out; once its last handle is
+	// gone its memory returns.
+	indexes.index(third.path());
+	drop(held);
+	assert!(
+		!Arc::ptr_eq(&unfit, &indexes.index(big.path())),
+		"memory was freed: the root is built again"
+	);
 }

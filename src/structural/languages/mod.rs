@@ -32,10 +32,11 @@ pub(crate) mod rust;
 pub(crate) mod svelte;
 pub(crate) mod swift;
 pub(crate) mod typescript;
-
-use tree_sitter::Node;
+pub(crate) mod use_alias;
 
 use crate::structural::graph::registry::FileRegistry;
+use crate::structural::graph::symbols::ImportBinding;
+use tree_sitter::Node;
 
 /// Kind of type-level relationship a language may report from an AST node,
 /// emitted as an extends or implements edge between symbols.
@@ -220,6 +221,58 @@ pub(crate) trait Language: Send + Sync {
 			.into_iter()
 			.collect()
 	}
+
+	/// Whether the import is only a candidate: when it names no file it is
+	/// dropped instead of becoming an external dependency.
+	fn import_is_optional(&self, _import_path: &str) -> bool {
+		false
+	}
+
+	/// Whether the file an import resolves to was found by a guess (a name
+	/// match, not a path the import states): its edge is then not certain.
+	fn import_is_guess(&self, _import_path: &str, _source_file: &str, _all_files: &FileRegistry) -> bool {
+		false
+	}
+
+	/// The names a statement binds to the files it imports: `imports` are
+	/// what [`Self::extract_imports_exports`] returned for the same node.
+	/// Languages whose imports bind no names of their own leave it empty.
+	fn extract_import_bindings(&self, _node: Node, _contents: &str, _imports: &[String]) -> Vec<ImportBinding> {
+		Vec::new()
+	}
+
+	/// The name a node declares as the file's default export (`draw` in
+	/// `export default function draw() {}`): a default import names it
+	/// whatever the importer calls it.
+	fn default_export_name(&self, _node: Node, _contents: &str) -> Option<String> {
+		None
+	}
+
+	/// The file name that marks the root of a module or package of this
+	/// language (a manifest), when imports are written relative to it.
+	fn module_root_file(&self) -> Option<&'static str> {
+		None
+	}
+
+	/// Whether the files of one directory are one package: they see each
+	/// other's top-level names without importing them.
+	fn directory_is_package(&self) -> bool {
+		false
+	}
+
+	/// Whether the file at `path` stands for its directory: importing the
+	/// directory names this file (`index.ts`, `__init__.py`, `mod.rs`).
+	fn is_directory_index(&self, _path: &str) -> bool {
+		false
+	}
+
+	/// The names importers of the file at `path` write: its stem and, where
+	/// the file stands for its directory or the directory is a package, the
+	/// directory's name. Any other directory is spelled by unrelated files
+	/// and is left out.
+	fn importer_names(&self, path: &str) -> Vec<String> {
+		stem_and_directory(path, self.is_directory_index(path) || self.directory_is_package())
+	}
 }
 
 /// Characters other than identifier characters, spaces and brackets that a
@@ -325,6 +378,7 @@ pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
 		"rust" => Some(Box::new(rust::Rust {})),
 		"javascript" => Some(Box::new(javascript::JavaScript {})),
 		"typescript" => Some(Box::new(typescript::TypeScript {})),
+		"tsx" => Some(Box::new(typescript::Tsx {})),
 		"python" => Some(Box::new(python::Python {})),
 		"go" => Some(Box::new(go::Go {})),
 		"java" => Some(Box::new(java::Java {})),
@@ -340,6 +394,56 @@ pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
 		"svelte" => Some(Box::new(svelte::Svelte {})),
 		_ => None,
 	}
+}
+
+/// The stem of the file at `path` and, with `with_directory`, the name of
+/// its directory.
+pub(crate) fn stem_and_directory(path: &str, with_directory: bool) -> Vec<String> {
+	let mut parts = path.rsplit('/');
+	let file_name = parts.next().unwrap_or(path);
+	let stem = file_name.split('.').next().unwrap_or(file_name);
+	let mut names: Vec<String> = Vec::new();
+	if !stem.is_empty() {
+		names.push(stem.to_string());
+	}
+	if with_directory {
+		names.extend(
+			parts
+				.next()
+				.filter(|directory| !directory.is_empty())
+				.map(str::to_string),
+		);
+	}
+	names
+}
+
+/// Every language name `get_language` knows.
+const LANGUAGE_NAMES: [&str; 17] = [
+	"rust",
+	"javascript",
+	"typescript",
+	"tsx",
+	"python",
+	"go",
+	"java",
+	"cpp",
+	"php",
+	"bash",
+	"ruby",
+	"lua",
+	"json",
+	"swift",
+	"css",
+	"elixir",
+	"svelte",
+];
+
+/// The file names that mark a module root in any language.
+pub(crate) fn module_root_files() -> Vec<&'static str> {
+	LANGUAGE_NAMES
+		.iter()
+		.filter_map(|name| get_language(name)?.module_root_file())
+		.collect()
 }
 
 #[cfg(test)]
@@ -410,6 +514,11 @@ pub(crate) fn files_in_dir_matching(
 	files
 }
 
+/// The qualifier of a member call whose receiver is an expression, not a
+/// name (`getRepo().save()`): nothing is known about the receiver, so the
+/// call resolves by name only, at guess confidence.
+pub(crate) const UNKNOWN_RECEIVER: &str = "?";
+
 /// Parse a textual callee expression into its terminal name and qualifier.
 /// Handles the shared forms used by the supported languages: `foo`,
 /// `module.foo`, `Type::method`, `ptr->method`, and optional chaining. Generic
@@ -453,7 +562,23 @@ pub(crate) fn parse_call_target(text: &str) -> Option<CallTarget> {
 			.chars()
 			.all(|character: char| character.is_alphanumeric() || matches!(character, '_' | '$' | '@' | '#'))
 	}) {
-		return None;
+		// A member call on an expression (`getRepo().save()`, `"x".len()`)
+		// is still a call of `save`, on a receiver nothing is known about.
+		// Only an expression can end right before the `.`: a path such as
+		// `./run-tests.sh` or a file name names no item.
+		let before_name = normalized
+			.trim_end()
+			.strip_suffix(name)
+			.and_then(|rest| rest.strip_suffix('.'));
+		let is_member_call = before_name.is_some_and(|receiver| receiver.ends_with([')', ']', '}', '"', '\'']))
+			&& name
+				.chars()
+				.next()
+				.is_some_and(|first| first.is_alphabetic() || first == '_');
+		return is_member_call.then(|| CallTarget {
+			name: name.to_string(),
+			qualifier: Some(UNKNOWN_RECEIVER.to_string()),
+		});
 	}
 	let qualifier = if qualifier_segments.is_empty() {
 		None
@@ -479,6 +604,12 @@ pub(crate) fn find_graph_symbol_owner(node: Node, contents: &str) -> Option<Stri
 	let mut current = node.parent();
 	while let Some(parent) = current {
 		let kind = parent.kind();
+		// Ruby's `class << self` reopens the enclosing class's singleton: its
+		// methods belong to that class, and the block has no name of its own.
+		if kind == "singleton_class" {
+			current = parent.parent();
+			continue;
+		}
 		let is_owner = !kind.contains("body")
 			&& (kind.contains("class")
 				|| kind.contains("struct")

@@ -18,8 +18,12 @@
 use super::javascript::{join_path, parent_dir};
 use super::{parse_call_target, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::FileRegistry;
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
 
+/// Marks an import path that is only a candidate: `from pkg import sub` may
+/// name the module `pkg.sub` or an object of `pkg`.
+const SUBMODULE_CANDIDATE: &str = "~";
 pub(crate) struct Python {}
 
 impl Language for Python {
@@ -105,6 +109,56 @@ impl Language for Python {
 		(imports, exports)
 	}
 
+	fn is_directory_index(&self, path: &str) -> bool {
+		path.rsplit('/').next() == Some("__init__.py")
+	}
+
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		let Ok(text) = node.utf8_text(contents.as_bytes()) else {
+			return Vec::new();
+		};
+		if imports.is_empty() {
+			return Vec::new();
+		}
+		let text = text.trim();
+		let mut bindings = Vec::new();
+		if let Some(modules) = text.strip_prefix("import ") {
+			// Only `import a.b as c` binds a name of its own.
+			for item in modules.split(',') {
+				let mut parts = item.split_whitespace();
+				let Some(path) = parts.next() else { continue };
+				if parts.next() != Some("as") {
+					continue;
+				}
+				if let Some(alias) = parts.next() {
+					bindings.push(ImportBinding {
+						local_name: alias.to_string(),
+						imported_name: None,
+						import_path: path.to_string(),
+					});
+				}
+			}
+		} else if let Some((module, names)) = text.strip_prefix("from ").and_then(|rest| rest.split_once(" import ")) {
+			for item in names.trim_matches(['(', ')']).split(',') {
+				let mut parts = item.split_whitespace();
+				let Some(imported) = parts.next() else {
+					continue;
+				};
+				let local = if parts.next() == Some("as") {
+					parts.next().unwrap_or(imported)
+				} else {
+					imported
+				};
+				bindings.push(ImportBinding {
+					local_name: local.to_string(),
+					imported_name: Some(imported.to_string()),
+					import_path: module.trim().to_string(),
+				});
+			}
+		}
+		bindings
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		if node.kind() != "call" {
 			return Vec::new();
@@ -144,14 +198,25 @@ impl Language for Python {
 	}
 
 	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		let import_path = import_path.strip_prefix(SUBMODULE_CANDIDATE).unwrap_or(import_path);
 		let resolved = if import_path.starts_with('.') {
 			resolve_relative_import(import_path, source_file, all_files)
 		} else {
-			resolve_absolute_import(import_path, source_file, all_files)
+			resolve_absolute_import(import_path, source_file, all_files).map(|(found, _)| found)
 		};
 		// A module that names itself (`import pkg` inside `pkg/__init__.py`)
 		// is no dependency.
 		resolved.filter(|found| found != source_file)
+	}
+
+	fn import_is_guess(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> bool {
+		let import_path = import_path.strip_prefix(SUBMODULE_CANDIDATE).unwrap_or(import_path);
+		!import_path.starts_with('.')
+			&& resolve_absolute_import(import_path, source_file, all_files).is_some_and(|(_, guess)| guess)
+	}
+
+	fn import_is_optional(&self, import_path: &str) -> bool {
+		import_path.starts_with(SUBMODULE_CANDIDATE)
 	}
 }
 
@@ -170,10 +235,12 @@ fn parse_python_import_statement_full_path(import_text: &str) -> Vec<String> {
 		.collect()
 }
 
-/// Module paths of `from module import item`, leading dots included. When
-/// the module is only dots (`from . import a, b`) each imported name may be
-/// a submodule of that package, so one path per name is returned (`.a`,
-/// `.b`); the bare dots stand for `*` imports.
+/// Module paths of `from module import item`, leading dots included. Each
+/// imported name may be a submodule of that package, so one candidate path
+/// per name follows (`from pkg import sub` gives `pkg` and `~pkg.sub`; `from .
+/// import a, b` gives `.a` and `.b`, the bare dots stand for `*` imports). A
+/// candidate (marked with `~`) that names no file is dropped, not an external
+/// module: `from typing import List` imports `typing`.
 fn parse_python_from_import_statement_full_path(import_text: &str) -> Vec<String> {
 	let cleaned = import_text.trim();
 	let Some(rest) = cleaned.strip_prefix("from ") else {
@@ -186,10 +253,7 @@ fn parse_python_from_import_statement_full_path(import_text: &str) -> Vec<String
 	if module_part.is_empty() {
 		return Vec::new();
 	}
-	if !module_part.chars().all(|character| character == '.') {
-		return vec![module_part.to_string()];
-	}
-	let names: Vec<String> = names_part
+	let names: Vec<&str> = names_part
 		.trim()
 		.trim_matches(|character: char| matches!(character, '(' | ')'))
 		.split(',')
@@ -198,12 +262,20 @@ fn parse_python_from_import_statement_full_path(import_text: &str) -> Vec<String
 			name.chars()
 				.all(|character| character.is_alphanumeric() || character == '_')
 		})
-		.map(|name| format!("{module_part}{name}"))
 		.collect();
+	if !module_part.chars().all(|character| character == '.') {
+		let mut paths = vec![module_part.to_string()];
+		paths.extend(
+			names
+				.iter()
+				.map(|name| format!("{SUBMODULE_CANDIDATE}{module_part}.{name}")),
+		);
+		return paths;
+	}
 	if names.is_empty() {
 		return vec![module_part.to_string()];
 	}
-	names
+	names.iter().map(|name| format!("{module_part}{name}")).collect()
 }
 
 /// Parent of a directory, `None` above the root — `Path::parent` semantics,
@@ -237,12 +309,23 @@ fn resolve_relative_import(import_path: &str, source_file: &str, registry: &File
 	})
 }
 
-/// Resolve `pkg.module`: the importing file's package first, then the
-/// project root. The registry holds workdir-relative paths, so the root is
-/// the empty directory.
-fn resolve_absolute_import(import_path: &str, source_file: &str, registry: &FileRegistry) -> Option<String> {
-	find_python_module(import_path, parent_dir(source_file), registry)
-		.or_else(|| find_python_module(import_path, "", registry))
+/// Resolve `pkg.module`: the importing file's directory first, then each
+/// directory above it up to the project root. The registry holds
+/// workdir-relative paths, so the root is the empty directory. The flag says
+/// the file was found only in a directory between the two: a standard-library
+/// name (`types`) can collide with a local file up there, so that is a guess.
+fn resolve_absolute_import(import_path: &str, source_file: &str, registry: &FileRegistry) -> Option<(String, bool)> {
+	// The import root is the project root or any directory above the file:
+	// `src/` layouts and nested packages put it anywhere on the way up.
+	let own_directory = parent_dir(source_file);
+	let mut directory = own_directory;
+	loop {
+		if let Some(found) = find_python_module(import_path, directory, registry) {
+			let intermediate = directory != own_directory && !directory.is_empty();
+			return Some((found, intermediate));
+		}
+		directory = parent_of_dir(directory)?;
+	}
 }
 
 /// Find `a.b.c` below `base_dir` as `a/b/c.py` or `a/b/c/__init__.py`.

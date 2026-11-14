@@ -62,6 +62,7 @@ fn walk_skips_unsupported_gitignored_and_non_graph_languages() {
 
 	let walked: Vec<String> = walk_supported(root.path())
 		.unwrap()
+		.files
 		.into_iter()
 		.map(|(path, _)| path)
 		.collect();

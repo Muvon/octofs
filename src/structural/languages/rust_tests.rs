@@ -540,3 +540,143 @@ fn build_graph_links_calls_imports_and_trait_impls_across_files() {
 	)
 	.is_some());
 }
+
+#[test]
+fn glob_imports_of_the_crate_the_parent_and_the_module_itself_resolve_to_a_file() {
+	let files = registry(&["src/lib.rs", "src/a.rs", "src/a/b.rs"]);
+	assert_eq!(
+		Rust {}.resolve_import("crate", "src/a/b.rs", &files).as_deref(),
+		Some("src/lib.rs")
+	);
+	assert_eq!(
+		Rust {}.resolve_import("super", "src/a/b.rs", &files).as_deref(),
+		Some("src/a.rs")
+	);
+	assert_eq!(
+		Rust {}.resolve_import("self", "src/a/b.rs", &files).as_deref(),
+		Some("src/a/b.rs")
+	);
+}
+
+#[test]
+fn a_path_attribute_names_the_module_file_directly() {
+	let source = "#[path = \"other/impl.rs\"]\nmod platform;\n";
+	let tree = parse(source);
+	let (imports, _) = Rust {}.extract_imports_exports(first_node(&tree, "mod_item"), source);
+	let files = registry(&["src/lib.rs", "src/other/impl.rs"]);
+	assert_eq!(imports.len(), 1);
+	assert_eq!(
+		Rust {}.resolve_import(&imports[0], "src/lib.rs", &files).as_deref(),
+		Some("src/other/impl.rs")
+	);
+}
+
+#[test]
+fn super_inside_an_inline_module_is_the_enclosing_file() {
+	let source = "mod tests {\n\tuse super::*;\n\tuse super::sub::Item;\n\tuse super::super::other::Thing;\n}\n";
+	let tree = parse(source);
+	let imports: Vec<String> = nodes_of_kind(&tree, "use_declaration")
+		.into_iter()
+		.flat_map(|node| Rust {}.extract_imports_exports(node, source).0)
+		.collect();
+	// `use super::*;` names the file itself: no import. `super::sub` is the
+	// file's own child module; a second `super` climbs to the parent module.
+	assert_eq!(imports, vec!["self::sub::Item", "super::other::Thing"]);
+}
+
+#[test]
+fn calls_inside_macro_arguments_are_calls() {
+	let source = "fn t() {\n\tassert_eq!(compute(), 1);\n\tlet v = vec![make()];\n}\n";
+	let tree = parse(source);
+	let names: Vec<String> = nodes_of_kind(&tree, "token_tree")
+		.into_iter()
+		.flat_map(|node| Rust {}.extract_function_calls(node, source))
+		.map(|call| call.name)
+		.collect();
+	assert!(names.contains(&"compute".to_string()), "{names:?}");
+	assert!(names.contains(&"make".to_string()), "{names:?}");
+}
+
+#[test]
+fn a_pub_use_line_may_reexport_and_a_private_use_may_not() {
+	assert!(Rust {}.line_may_reexport("pub use inner::Thing;", "inner", "src/lib.rs"));
+	assert!(!Rust {}.line_may_reexport("use inner::Thing;", "inner", "src/lib.rs"));
+}
+
+#[test]
+fn a_use_of_another_workspace_crate_resolves_through_its_directory_name() {
+	let files = registry(&[
+		"crates/app/src/main.rs",
+		"crates/my-core/src/lib.rs",
+		"crates/my-core/src/store.rs",
+	]);
+	let rust = Rust {};
+	assert_eq!(
+		rust.resolve_import("my_core::store::Store", "crates/app/src/main.rs", &files)
+			.as_deref(),
+		Some("crates/my-core/src/store.rs")
+	);
+	assert_eq!(
+		rust.resolve_import("my_core::Config", "crates/app/src/main.rs", &files)
+			.as_deref(),
+		Some("crates/my-core/src/lib.rs")
+	);
+	assert_eq!(
+		rust.resolve_import("serde::Serialize", "crates/app/src/main.rs", &files),
+		None
+	);
+}
+
+#[test]
+fn every_alias_in_a_grouped_use_binds_its_own_name() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "rust",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("src/lib.rs", "mod util;\nmod other;\n"),
+		file("src/util.rs", "pub fn one() {}\npub fn two() {}\n"),
+		// The same names elsewhere rule out the unique-name guess.
+		file("src/other.rs", "pub fn one() {}\npub fn two() {}\n"),
+		file(
+			"src/app.rs",
+			"use crate::util::{one as uno, two as dos};\n\nfn run() {\n\tuno();\n\tdos();\n}\n",
+		),
+	]);
+	assert!(edge(&graph, "src/app.rs::run", "src/util.rs::one", RelationType::Calls).is_some());
+	assert!(edge(&graph, "src/app.rs::run", "src/util.rs::two", RelationType::Calls).is_some());
+}
+
+#[test]
+fn a_trait_from_the_standard_library_is_never_a_project_relation() {
+	let source = "struct Error;\nimpl std::error::Error for Error {}\nimpl Display for Error {}\n";
+	let tree = parse(source);
+	let relations: Vec<_> = nodes_of_kind(&tree, "impl_item")
+		.into_iter()
+		.flat_map(|node| Rust {}.extract_type_relations(node, source))
+		.collect();
+	assert_eq!(relations, vec![(TypeRelationKind::Implements, "Display".to_string())]);
+}
+
+#[test]
+fn a_workspace_crate_import_is_a_guess_and_its_edge_is_not_certain() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "rust",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("crates/my-core/src/lib.rs", "pub mod store;\n"),
+		file("crates/my-core/src/store.rs", "pub struct Store;\n"),
+		file("crates/app/src/main.rs", "use my_core::store::Store;\nfn main() {}\n"),
+	]);
+	let import = edge(
+		&graph,
+		"crates/app/src/main.rs",
+		"crates/my-core/src/store.rs",
+		RelationType::Imports,
+	)
+	.expect("import edge");
+	assert!(import.confidence < 1.0);
+}

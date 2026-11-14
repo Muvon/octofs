@@ -397,3 +397,121 @@ fn a_prototype_inside_a_body_is_not_a_call() {
 
 	assert!(edge(&graph, "main.c::run", "helper.c::helper", RelationType::Calls).is_none());
 }
+
+/// The shape of the Linux `include/linux/list.h` around `__list_add`: an
+/// attribute macro before the return type, a parameter named `new`, two
+/// definitions of `__list_add_valid` under `#ifdef`/`#else`, and the call in
+/// an `if (!...)`.
+const LINUX_LIST_H: &str = r#"#ifndef _LINUX_LIST_H
+#define _LINUX_LIST_H
+
+static inline void INIT_LIST_HEAD(struct list_head *list)
+{
+	WRITE_ONCE(list->next, list);
+	WRITE_ONCE(list->prev, list);
+}
+
+#ifdef CONFIG_LIST_HARDENED
+
+#ifdef CONFIG_DEBUG_LIST
+# define __list_valid_slowpath
+#else
+# define __list_valid_slowpath __cold __preserve_most
+#endif
+
+bool __list_valid_slowpath __list_add_valid_or_report(struct list_head *new,
+					      struct list_head *prev,
+					      struct list_head *next);
+
+static __always_inline bool __list_add_valid(struct list_head *new,
+					     struct list_head *prev,
+					     struct list_head *next)
+{
+	bool ret = true;
+
+	if (!IS_ENABLED(CONFIG_DEBUG_LIST)) {
+		if (likely(next->prev == prev && prev->next == next && new != prev && new != next))
+			return true;
+		ret = false;
+	}
+
+	ret &= __list_add_valid_or_report(new, prev, next);
+	return ret;
+}
+
+bool __list_valid_slowpath __list_del_entry_valid_or_report(struct list_head *entry);
+
+static __always_inline bool __list_del_entry_valid(struct list_head *entry)
+{
+	bool ret = true;
+
+	ret &= __list_del_entry_valid_or_report(entry);
+	return ret;
+}
+#else
+static inline bool __list_add_valid(struct list_head *new,
+				struct list_head *prev,
+				struct list_head *next)
+{
+	return true;
+}
+static inline bool __list_del_entry_valid(struct list_head *entry)
+{
+	return true;
+}
+#endif
+
+static __always_inline void __list_add(struct list_head *new,
+				       struct list_head *prev,
+				       struct list_head *next)
+{
+	if (!__list_add_valid(new, prev, next))
+		return;
+
+	next->prev = new;
+	new->next = next;
+	new->prev = prev;
+	WRITE_ONCE(prev->next, new);
+}
+
+static __always_inline void list_add(struct list_head *new,
+				     struct list_head *head)
+{
+	__list_add(new, head, head->next);
+}
+
+static inline void list_add_tail(struct list_head *new, struct list_head *head)
+{
+	__list_add(new, head->prev, head);
+}
+#endif
+"#;
+
+#[test]
+fn the_linux_list_header_keeps_every_call_edge_including_both_sides_of_an_ifdef() {
+	let graph = build_graph(vec![SourceFile {
+		path: "list.h".to_string(),
+		language: "cpp",
+		contents: LINUX_LIST_H.to_string(),
+	}]);
+
+	assert!(edge(
+		&graph,
+		"list.h::list_add_tail",
+		"list.h::__list_add",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(&graph, "list.h::list_add", "list.h::__list_add", RelationType::Calls).is_some());
+	// Two definitions of one name in one file: the call reaches both.
+	let to_valid = graph
+		.relationships
+		.iter()
+		.filter(|edge| {
+			edge.relation == RelationType::Calls
+				&& edge.source == "list.h::__list_add"
+				&& edge.target.starts_with("list.h::__list_add_valid")
+		})
+		.count();
+	assert_eq!(to_valid, 2);
+}

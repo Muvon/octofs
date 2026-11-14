@@ -685,17 +685,20 @@ impl OctofsServer {
 			references. The graph relations list one hop per line as `path:line  kind  Owner::name`, \
 			grouped by `depth N:`: `callers` and `callees` follow calls, `supertypes` and `subtypes` \
 			follow extends/implements, `imports` and `imported_by` follow the imports of the file in \
-			`path` (no `name`), `path` finds how `name` reaches `to` over calls, extends and implements (not imports). `depth` sets how far to follow \
-			(default 1, `path` 5, max 5). Graph relations are resolved by name and imports, not \
-			types, so same-name symbols can be confused and dynamic calls missed; `(guess)` marks a \
-			hop matched by name alone (repository-wide, ambiguous or unknown receiver). They are local only and search the whole session workdir; `path` \
-			only narrows which definitions of `name` start the query. All relations but `path` parse only the files that \
-			mention the names they follow, at most 600 per query and for at most 800 ms: for a very common name the result is partial and a \
-			closing line says so; repeat the same query to examine the rest, or narrow it with `path` or `Owner::name` \
-			(a name spelled in over 3000 files is not traced without one). A list shows at most 100 results, most \
-			certain first, and a closing line counts the rest. `path` builds the whole-repository graph, so its first call on a large \
-			repository takes seconds (later calls reuse it). For plain text use `view` \
-			with `content`."
+			`path` (no `name`), the relation `path` finds the shortest chain from `name` to `to` over calls, extends and implements (not imports). \
+			`depth` sets how far to follow (default 1, relation `path` 5, max 5). Graph relations are resolved by name \
+			and imports, not types, so same-name symbols can be confused and dynamic calls missed; `(guess)` marks a \
+			hop matched by name alone (repository-wide, ambiguous or unknown receiver). A name imported through a file \
+			that re-exports it (`index.ts`, `__init__.py`; also under another name) is followed up to three files \
+			deep. They are local only and search the whole session workdir; the `path` parameter only narrows which \
+			definitions of `name` start the query. Every relation parses only the files that mention the names it \
+			follows, at most 600 per query and for at most 800 ms, and files over 1 MB are left out and named in a \
+			closing line. For a very common name, or a chain that needs more files, the result is partial and a \
+			closing line says so; repeat the same query to examine the rest (parsed files are kept), or narrow it with \
+			`path` or `Owner::name` (a name spelled in over 3000 files is not traced without one). The relation `path` \
+			searches from both ends, one level at a time, and says \"No path\" only when the search finished. A list \
+			shows at most 100 results, most certain first, and a closing line counts the rest. For plain text use \
+			`view` with `content`."
 	)]
 	async fn symbol(
 		&self,
@@ -1345,6 +1348,12 @@ pub struct ViewParams {
 	/// lines of the file, or of every supported file under a directory, with bodies elided.
 	#[serde(default)]
 	pub flags: Option<String>,
+	/// Not a parameter of `view`: kept only so a call that still passes `symbol` reaches
+	/// the error naming the `symbol` tool, instead of serde dropping the key and the call
+	/// silently reading the path. Left out of the schema.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[schemars(skip)]
+	pub symbol: Option<serde_json::Value>,
 	/// Force the complete file when re-viewing a whole file (which may return only changed hunks),
 	/// e.g. after losing earlier context. No effect on ranges or searches; output limits
 	/// unchanged.

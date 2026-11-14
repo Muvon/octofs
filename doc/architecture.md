@@ -30,9 +30,10 @@ src/
       search.rs        — literal/regex matcher with context blocks, enclosing-symbol breadcrumbs
       structure.rs     — structural outline mode (flags: "s"): file/directory walk, outline rendering
       symbols.rs       — `symbol` tool: parameter validation, definitions/references (text-level), breadcrumbs
-      graph.rs         — `symbol` graph relations: workdir walk, single-entry graph cache, traversal rendering
+      graph.rs         — `symbol` graph relations: parameter handling, start nodes, traversal rendering under the response budget
       code_index.rs    — per-workdir code index: Bloom token filters, stamp refresh, parsed-file cache under one memory ceiling
-      graph_scoped.rs  — query-scoped graph relations on the code index (at most 600 parsed files, 800 ms per query)
+      graph_scoped.rs  — query-scoped graphs on the code index for every graph relation, `path` included (at most 600 parsed files, 800 ms per query)
+      multi_edit.rs    — `text_editor` `edits`: ordered replacements applied atomically across files
       ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars
       delta.rs         — ViewCache (note_write/note_create/render_whole_file), Myers line diff, hunk rendering
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops
@@ -77,8 +78,9 @@ out) from I/O and rendering (`fs/structure.rs`, `fs/ast.rs`).
 
 The `symbol` tool is separate. `execute_symbol` (`fs/symbols.rs`) validates the parameter combination for the
 `relation`, answers `definition`/`references` itself (local or `ssh://`) and hands the graph relations to
-`fs/graph.rs`. That module walks the session workdir, builds the graph with `structural::graph::build_graph`
-inside `spawn_blocking`, and renders the hops under the response budget; it is local only.
+`fs/graph.rs`. `fs/graph_scoped.rs` builds, on the code index, only the part of the graph a query needs
+(`structural::graph` holds the pure graph and traversal), and `fs/graph.rs` renders the hops under the
+response budget; it is local only.
 
 ## State
 
@@ -99,14 +101,10 @@ inside `spawn_blocking`, and renders the hops under the response budget; it is l
 - **Code index** (`fs/code_index.rs`) — per workdir root (LRU of 2, idle sweep after 10 minutes, one 160 MB
   memory ceiling): Bloom filters of file identifiers and a parsed-file cache keyed by file stamp; what each
   parsed file's imports resolved to is kept with it and counted in the ceiling.
-  `fs/graph_scoped.rs` answers `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by`
-  on it, parsing at most 600 files and for at most 800 ms per query (counted after the refresh and the filter build); `imported_by`
-  builds no graph; `path` uses the cache below.
-- **GRAPH_CACHE** (`fs/graph.rs`) — an LRU of up to 4 entries, one code graph per workdir root, each with a
-  stamp (hash of relative path, size, mtime, and on unix ctime and inode of every walked file). The stamp is
-  recomputed on every `symbol` graph call and a graph is rebuilt only when it differs. `BUILD_LOCKS` holds one
-  async lock per root so concurrent cold calls share one build. In-memory only; the std mutexes are never held
-  across `.await`.
+  `fs/graph_scoped.rs` answers every graph relation on it (`callers`, `callees`, `supertypes`, `subtypes`,
+  `imports`, `imported_by` and `path`), parsing at most 600 files and for at most 800 ms per query (counted
+  after the refresh and the filter build). `imported_by` builds no graph; `path` searches from both ends one
+  level at a time on the same index. No whole-workdir graph is built or cached, and nothing is stored on disk.
 - **ViewCache** (`delta.rs`) — per client session and file, the last content the
   model saw in full. Whole-file views return only hunks changed since; the
   server's own writes keep the cache in step via `note_write` (only if the

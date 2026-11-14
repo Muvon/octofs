@@ -277,9 +277,13 @@ async fn symbol_file(
 /// Workdir-relative files that can hold the exact name `symbol`, from the
 /// code index, so the directory walk parses those only. `None` when the
 /// index cannot narrow the lookup: a wildcard, hidden files wanted, a name
-/// with no identifier text, or a workdir that does not fit the index.
+/// with no identifier text, a workdir that does not fit the index, or a
+/// directory the index does not list the way the walker does (outside the
+/// workdir once symlinks and `..` are resolved, hidden, or ignored so that
+/// the index holds nothing of it).
 async fn indexed_candidates(
 	workdir: &Path,
+	directory: &Path,
 	matcher: &NameMatcher,
 	symbol: &str,
 	include_hidden: bool,
@@ -290,14 +294,31 @@ async fn indexed_candidates(
 	let root = tokio::fs::canonicalize(workdir)
 		.await
 		.map_err(|e| anyhow!("Cannot resolve the workdir {}: {e}", workdir.display()))?;
+	let Ok(canonical_directory) = tokio::fs::canonicalize(directory).await else {
+		return Ok(None);
+	};
+	let Ok(relative) = canonical_directory.strip_prefix(&root) else {
+		return Ok(None);
+	};
+	if relative
+		.components()
+		.any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+	{
+		return Ok(None);
+	}
+	let relative = relative.to_string_lossy().replace('\\', "/");
 	let index = CodeIndexes::global().index(&root);
 	let found = async {
 		index.refresh().await?;
-		index.files_spelling_verified(&[symbol]).await
+		if !index.has_files_under(&relative) {
+			return Ok(None);
+		}
+		index.files_spelling_verified(&[symbol]).await.map(Some)
 	}
 	.await;
 	match found {
-		Ok(ids) => Ok(Some(ids.iter().filter_map(|id| index.path_of(*id)).collect())),
+		Ok(Some(ids)) => Ok(Some(ids.iter().filter_map(|id| index.path_of(*id)).collect())),
+		Ok(None) => Ok(None),
 		Err(error) if error.is::<IndexUnavailable>() => Ok(None),
 		Err(error) => Err(error),
 	}
@@ -341,11 +362,7 @@ async fn symbol_directory(
 	let working_dir = call.workdir.clone();
 	let label = path.to_string();
 	let matcher = matcher.clone();
-	let candidates = if abs_dir.starts_with(&call.workdir) {
-		indexed_candidates(&call.workdir, &matcher, symbol, include_hidden).await?
-	} else {
-		None
-	};
+	let candidates = indexed_candidates(&call.workdir, &abs_dir, &matcher, symbol, include_hidden).await?;
 	let symbol = symbol.to_string();
 	// The walk, read, parse and render are all CPU/IO-bound blocking work —
 	// one spawn_blocking, files in parallel like the tree content search.
@@ -365,7 +382,12 @@ async fn symbol_directory(
 			.par_iter()
 			.enumerate()
 			.filter_map(|(i, rel_path)| {
-				if candidates.as_ref().is_some_and(|spelled| !spelled.contains(rel_path)) {
+				// A file of a language the index leaves out (Markdown, JSON) is
+				// never in the narrowed list: it is searched like any other.
+				if candidates
+					.as_ref()
+					.is_some_and(|spelled| super::graph::is_indexed_language(rel_path) && !spelled.contains(rel_path))
+				{
 					return None;
 				}
 				let full_path = working_dir.join(rel_path);

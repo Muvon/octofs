@@ -45,6 +45,10 @@ impl Language for Swift {
 		&["class", "struct", "enum", "extension", "protocol", "actor"]
 	}
 
+	// `import Module` names the directory that holds the module's files.
+	fn is_directory_index(&self, _path: &str) -> bool {
+		true
+	}
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Same kinds as the outline: properties, subscripts and imports
 		// declare no symbol of their own.

@@ -416,7 +416,7 @@ fn container_kinds(language: &str) -> &'static [(&'static str, &'static str)] {
 			("mod_item", "mod"),
 		],
 		"python" => &[("function_definition", "def"), ("class_definition", "class")],
-		"javascript" | "typescript" => &[
+		"javascript" | "typescript" | "tsx" => &[
 			("function_declaration", "function"),
 			("generator_function_declaration", "function"),
 			("method_definition", "method"),
@@ -499,7 +499,7 @@ fn definition_kinds(language: &str) -> &'static [&'static str] {
 			"method_definition",
 			"variable_declarator",
 		],
-		"typescript" => &[
+		"typescript" | "tsx" => &[
 			"function_declaration",
 			"generator_function_declaration",
 			"class_declaration",

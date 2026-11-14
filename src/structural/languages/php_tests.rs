@@ -17,7 +17,7 @@
 use super::Php;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
+use crate::structural::languages::{CallTarget, Language, TypeRelationKind, UNKNOWN_RECEIVER};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser};
 
@@ -143,7 +143,7 @@ fn static_and_namespaced_calls_keep_the_method_name_and_class_qualifier() {
 			("bar", Some("Foo")),
 			("bar", Some("Foo")),
 			("helper", None),
-			("save", None),
+			("save", Some(UNKNOWN_RECEIVER)),
 			("getRepo", None),
 			("find", Some("$this::repo")),
 		]
@@ -257,4 +257,19 @@ fn graph_links_calls_imports_and_inheritance_across_files() {
 		"App/Base.php::Base",
 		RelationType::Extends
 	));
+}
+
+#[test]
+fn new_is_a_call_of_the_class_and_require_include_are_imports() {
+	let mut calls = Vec::new();
+	for_each_node("<?php\n$a = new \\App\\Foo(1);\n$b = new Bar;\n", |node, contents| {
+		calls.extend(Php {}.extract_function_calls(node, contents));
+	});
+	let names: Vec<&str> = calls.iter().map(|call| call.name.as_str()).collect();
+	assert_eq!(names, vec!["Foo", "Bar"]);
+
+	let (imports, _) = imports_exports_in(
+		"<?php\nrequire 'a.php';\nrequire_once __DIR__ . '/lib/b.php';\ninclude(\"c.php\");\ninclude_once $computed;\n",
+	);
+	assert_eq!(imports, vec!["a.php", "./lib/b.php", "c.php"]);
 }

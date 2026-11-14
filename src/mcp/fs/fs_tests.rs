@@ -7604,6 +7604,49 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn symbol_directory_is_not_narrowed_where_the_index_and_the_walker_differ() {
+		let outer = tempfile::tempdir().unwrap();
+		let work = outer.path().join("work");
+		fs::create_dir_all(work.join("docs")).await.unwrap();
+		fs::create_dir_all(work.join(".hidden")).await.unwrap();
+		fs::create_dir_all(outer.path().join("sibling")).await.unwrap();
+		fs::write(work.join("docs/guide.md"), "# Installation\n\nRun it.\n")
+			.await
+			.unwrap();
+		fs::write(work.join("main.rs"), "fn handle_main() {}\n").await.unwrap();
+		fs::write(work.join(".hidden/h.rs"), "fn hidden_fn() {}\n")
+			.await
+			.unwrap();
+		fs::write(outer.path().join("sibling/b.rs"), "fn sibling_fn() {}\n")
+			.await
+			.unwrap();
+
+		// A language the index leaves out (Markdown) is still searched.
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": ".", "name": "Installation" }));
+		call.workdir = work.clone();
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("# Installation"), "markdown heading: {result}");
+
+		// A directory named explicitly outside the workdir (`..`) is walked.
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": "../sibling", "name": "sibling_fn" }));
+		call.workdir = work.clone();
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("sibling_fn"), "sibling directory: {result}");
+
+		// A hidden directory named explicitly is walked.
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": ".hidden", "name": "hidden_fn" }));
+		call.workdir = work.clone();
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("hidden_fn"), "hidden directory: {result}");
+
+		// The ordinary case still finds the file.
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": ".", "name": "handle_main" }));
+		call.workdir = work;
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("handle_main"), "{result}");
+	}
+
+	#[tokio::test]
 	async fn symbol_works_on_markdown_and_svelte() {
 		let md = tempfile::Builder::new().suffix(".md").tempfile().unwrap();
 		fs::write(md.path(), "# Installation\n\n## Setup\n\nRun the installer.\n")

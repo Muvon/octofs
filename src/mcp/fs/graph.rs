@@ -21,7 +21,7 @@
 
 use super::graph_scoped;
 use super::remote::{parse_path_source, resolve_path_source, PathSource};
-use super::structure::supported_files_under;
+use super::structure::supported_files_and_module_roots;
 use crate::mcp::{request_ctx, McpToolCall};
 use crate::structural::graph::symbols::CONFIDENCE_NAME_ONLY_MAX;
 use crate::structural::graph::types::{EXTERNAL_KIND, FILE_KIND};
@@ -204,8 +204,12 @@ pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Re
 		budget,
 	)
 	.await?;
-	let (snapshot, cap_notices) = match built {
-		graph_scoped::Answer::Graph { snapshot, notices } => (Arc::new(*snapshot), notices),
+	let (snapshot, cap_notices, info) = match built {
+		graph_scoped::Answer::Graph {
+			snapshot,
+			notices,
+			info,
+		} => (Arc::new(*snapshot), notices, info),
 		graph_scoped::Answer::Message(text) => return Ok(text),
 	};
 
@@ -236,7 +240,9 @@ pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Re
 	.map_err(|e| anyhow!("Failed to query the code graph: {e}"))??;
 
 	let mut result = body;
-	for note in skipped_note(&snapshot).into_iter().chain(cap_notices) {
+	// The files left out of the graph close the answer, after the notes on how
+	// far the search got.
+	for note in cap_notices.into_iter().chain(info).chain(skipped_note(&snapshot)) {
 		result.push('\n');
 		result.push_str(&note);
 	}
@@ -272,15 +278,25 @@ async fn resolve_scope(call: &McpToolCall, root: &Path, raw: Option<&str>) -> Re
 	let PathSource::Local(local) = resolve_path_source(raw, &call.workdir) else {
 		bail!(REMOTE_GRAPH_MESSAGE);
 	};
+	// The index does not follow links, so a symlinked directory is known by
+	// the place it points to: compare the resolved path with the resolved
+	// workdir (a workdir that is itself reached through a link, such as
+	// `/tmp` on macOS, would never match its unresolved spelling).
 	let canonical = tokio::fs::canonicalize(&local)
 		.await
 		.map_err(|_| anyhow!("Path not found: {raw} (resolved to {})", local.display()))?;
-	let relative = canonical.strip_prefix(root).map_err(|_| {
-		anyhow!(
-			"`path` {raw} is outside the workdir {}: graph relations resolve names across the whole workdir. Switch workdir with the `workdir` tool, or pass a path inside it.",
-			root.display()
-		)
-	})?;
+	let canonical_root = tokio::fs::canonicalize(root)
+		.await
+		.unwrap_or_else(|_| root.to_path_buf());
+	let relative = canonical
+		.strip_prefix(&canonical_root)
+		.or_else(|_| canonical.strip_prefix(root))
+		.map_err(|_| {
+			anyhow!(
+				"`path` {raw} is outside the workdir {}: graph relations resolve names across the whole workdir. Switch workdir with the `workdir` tool, or pass a path inside it.",
+				root.display()
+			)
+		})?;
 	let parts: Vec<_> = relative
 		.components()
 		.map(|part| part.as_os_str().to_string_lossy())
@@ -288,20 +304,33 @@ async fn resolve_scope(call: &McpToolCall, root: &Path, raw: Option<&str>) -> Re
 	Ok(Some(parts.join("/")))
 }
 
-/// Supported graph files under `root`, gitignore-aware, as workdir-relative
-/// paths with their language.
-pub(super) fn walk_supported(root: &Path) -> Result<Vec<(String, &'static str)>> {
-	let paths = supported_files_under(&root.to_string_lossy(), root, None, None, false)
-		.map_err(|e| anyhow!("{e}"))?
-		.unwrap_or_default();
-	Ok(paths
+/// What a walk of the graph files found.
+pub(super) struct SupportedFiles {
+	/// Workdir-relative paths with their language.
+	pub(super) files: Vec<(String, &'static str)>,
+	/// The module-root manifests seen on the way.
+	pub(super) module_roots: Vec<String>,
+}
+
+/// Supported graph files under `root`, gitignore-aware.
+pub(super) fn walk_supported(root: &Path) -> Result<SupportedFiles> {
+	let (paths, module_roots) =
+		supported_files_and_module_roots(&root.to_string_lossy(), root).map_err(|e| anyhow!("{e}"))?;
+	let files = paths
 		.into_iter()
 		.filter_map(|path| {
 			let language =
 				language_for_extension(&path_extension(&path)).filter(|l| !NO_GRAPH_LANGUAGES.contains(l))?;
 			Some((path, language))
 		})
-		.collect())
+		.collect();
+	Ok(SupportedFiles { files, module_roots })
+}
+
+/// Whether the code index holds files like `path`: a language with a
+/// grammar that is not one of the languages the index leaves out.
+pub(super) fn is_indexed_language(path: &str) -> bool {
+	language_for_extension(&path_extension(path)).is_some_and(|language| !NO_GRAPH_LANGUAGES.contains(&language))
 }
 
 pub(super) fn oversize_reason() -> String {
@@ -317,7 +346,7 @@ fn qualified_name(node: &CodeNode) -> String {
 	}
 }
 
-fn in_scope(path: &str, scope: Option<&str>) -> bool {
+pub(super) fn in_scope(path: &str, scope: Option<&str>) -> bool {
 	match scope {
 		None | Some("") => true,
 		Some(scope) => path == scope || path.strip_prefix(scope).is_some_and(|rest| rest.starts_with('/')),

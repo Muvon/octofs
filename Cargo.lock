@@ -1858,7 +1858,6 @@ dependencies = [
 name = "octofs"
 version = "0.24.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "ast-grep-core",
  "axum",

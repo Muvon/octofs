@@ -112,8 +112,8 @@ point reported.
 ## `symbol` — navigate code from a symbol name
 
 **Modules:** `fs/symbols.rs` (validation, `definition`/`references`), `fs/code_index.rs` and
-`fs/graph_scoped.rs` (index and query-scoped graph relations), `fs/graph.rs` (whole-repository graph
-for `path`, rendering); pure logic in `src/structural/symbols.rs` and `src/structural/graph/`
+`fs/graph_scoped.rs` (index and query-scoped graph relations), `fs/graph.rs` (relation parameters, rendering);
+pure logic in `src/structural/symbols.rs` and `src/structural/graph/`
 
 `relation` selects what a call returns; `name` is the symbol (`Owner::name` also matches) and `path`
 scopes it:
@@ -140,16 +140,18 @@ symbols and external imports; edges are `Contains`, `Imports`, `Calls`, `Extends
 resolved by name in a fixed order (same file, imported files, unique project-wide match), each with a
 confidence. Mapping: `callers` = incoming `Calls`; `callees` = outgoing `Calls`; `supertypes` =
 outgoing `Extends`+`Implements`; `subtypes` = incoming; `imports` = outgoing `Imports` of a file
-node; `imported_by` = incoming; `path` = one multi-source search over `Calls`, `Extends` and
+node; `imported_by` = incoming; `path` = a search from both ends, one level at a time, over `Calls`, `Extends` and
 `Implements` between the definitions of `name` and `to`. They are resolved by name and imports, not
 types, and are local only (an `ssh://` path or remote workdir fails with guidance).
 
-All relations except `path` run on the per-workdir code index (`fs/code_index.rs`, queries in
-`fs/graph_scoped.rs`); `path` uses the whole-repository graph cached in `fs/graph.rs`. Constants
-that bound a query: `MAX_PARSED_FILES_PER_QUERY` (600), `QUERY_TIME_BUDGET_MS` (800),
+All relations, `path` included, run on the per-workdir code index (`fs/code_index.rs`, queries in
+`fs/graph_scoped.rs`, rendering in `fs/graph.rs`); no whole-workdir graph is built or kept. `path` parses
+only the files it needs within the same 600-file and 800 ms budget. Constants that bound a query:
+`MAX_PARSED_FILES_PER_QUERY` (600), `QUERY_TIME_BUDGET_MS` (800),
 `MAX_FILES_SPELLING_TO_TRACE` (3000), `MAX_FILES_PER_FOLLOWED_NAME` (200), `MAX_LISTED_RESULTS` (100),
-`MAX_GRAPH_DEPTH` (5), `MAX_GRAPH_FILE_BYTES` (1 MB), `MAX_GRAPH_FILES` (20,000),
-`MAX_GRAPH_SOURCE_BYTES` (256 MB), `MAX_CACHED_WORKDIRS` (4), `MAX_REPORTED_HOPS` and `MAX_PATHS`.
+`MAX_GRAPH_DEPTH` (5), `MAX_GRAPH_FILE_BYTES` (1 MB), `REEXPORT_HOPS` (3), `MAX_REPORTED_HOPS` and
+`MAX_PATHS`. Re-exports are followed for `callers`, `callees` and `path` (Python `__init__.py` and
+`import *`, JS/TS `export ... from`, Rust `pub use`; hook: `Language::line_may_reexport`).
 What each limit means for a reader, how the index refreshes and what a partial answer looks like are
 in [code-exploration.md](code-exploration.md#how-the-index-behaves), with one worked example per
 relation in [Symbol lookups](code-exploration.md#symbol-lookups).

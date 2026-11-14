@@ -80,8 +80,78 @@ fn imports_yield_module_names() {
 	let (imports, _) =
 		imports_exports_in("import os, sys as system\nfrom pkg.mod import a, b\nfrom . import c\nfrom ..up import d\n");
 	// `from . import c` names a submodule of the package, so the imported
-	// name is part of the path.
-	assert_eq!(imports, vec!["os", "sys", "pkg.mod", ".c", "..up"]);
+	// name is part of the path; `from pkg.mod import a` may do the same, so
+	// the module comes with one path per name.
+	assert_eq!(
+		imports,
+		vec![
+			"os",
+			"sys",
+			"pkg.mod",
+			"~pkg.mod.a",
+			"~pkg.mod.b",
+			".c",
+			"..up",
+			"~..up.d"
+		]
+	);
+}
+
+#[test]
+fn an_absolute_import_is_found_from_every_directory_above_the_file() {
+	let files = registry(&[
+		"src/app/__init__.py",
+		"src/app/core/run.py",
+		"src/app/util.py",
+		"src/app/sub/mod.py",
+	]);
+	let py = Python {};
+	// `app` lives in `src/`, two levels above the importing file.
+	assert_eq!(
+		py.resolve_import("app.util", "src/app/core/run.py", &files),
+		Some("src/app/util.py".to_string())
+	);
+	// `from app import sub`: `app.sub` is a package without `__init__`, so only `app` resolves.
+	assert_eq!(
+		py.resolve_import("app", "src/app/core/run.py", &files),
+		Some("src/app/__init__.py".to_string())
+	);
+	let files = registry(&["pkg/__init__.py", "pkg/sub.py", "pkg/main.py"]);
+	let (imports, _) = imports_exports_in("from pkg import sub\n");
+	assert_eq!(imports, vec!["pkg", "~pkg.sub"]);
+	assert_eq!(
+		py.resolve_import("~pkg.sub", "pkg/main.py", &files),
+		Some("pkg/sub.py".to_string())
+	);
+	// A name that is no module (`from typing import List`) makes no external node.
+	assert!(py.import_is_optional("~typing.List"));
+	assert_eq!(py.resolve_import("~typing.List", "pkg/main.py", &files), None);
+}
+
+#[test]
+fn a_module_found_only_in_an_intermediate_ancestor_is_a_guess() {
+	let files = registry(&["types.py", "a/b/c/main.py", "a/types.py", "a/b/util.py"]);
+	let py = Python {};
+	// Own directory and the workdir root are certain.
+	assert!(!py.import_is_guess("util", "a/b/main.py", &files));
+	assert!(!py.import_is_guess("types", "x.py", &files));
+	// `a/types.py` sits between the importing file and the root.
+	assert_eq!(
+		py.resolve_import("types", "a/b/c/main.py", &files),
+		Some("a/types.py".to_string())
+	);
+	assert!(py.import_is_guess("types", "a/b/c/main.py", &files));
+}
+
+#[test]
+fn from_import_of_a_non_module_name_creates_no_external_node() {
+	let graph = build_graph(vec![SourceFile {
+		path: "app.py".to_string(),
+		language: "python",
+		contents: "from typing import List\n".to_string(),
+	}]);
+	let externals: Vec<&String> = graph.nodes.keys().filter(|id| id.starts_with("external:")).collect();
+	assert_eq!(externals, vec!["external:typing"]);
 }
 
 #[test]

@@ -101,6 +101,8 @@ pub struct FileAstData {
 	pub imports: Vec<String>,
 	pub import_bindings: Vec<ImportBinding>,
 	pub exports: Vec<String>,
+	/// The name the file's default export declares, when it has one.
+	pub default_export: Option<String>,
 	/// (0-based line, structured callee) pairs.
 	pub calls: Vec<(u32, CallTarget)>,
 	pub type_relations: Vec<TypeRelationDecl>,
@@ -120,6 +122,10 @@ pub struct SymbolFileData {
 	pub calls: Vec<(u32, CallTarget)>,
 	pub type_relations: Vec<TypeRelationDecl>,
 	pub symbols: Vec<SymbolDecl>,
+	/// The name the file's default export declares (`draw` in
+	/// `export default function draw() {}`): a default import calls it under
+	/// whatever name the importer chose.
+	pub default_export: Option<String>,
 	/// What this file's imports resolved to, kept for as long as the file is.
 	pub memo: ImportMemo,
 }
@@ -205,6 +211,7 @@ impl SymbolFileData {
 			calls: data.calls,
 			type_relations: data.type_relations,
 			symbols: data.symbols,
+			default_export: data.default_export,
 			memo: ImportMemo::default(),
 		}
 	}
@@ -372,6 +379,7 @@ pub(crate) fn extract_symbols_from_contents(
 		data.imports.extend(embedded_data.imports);
 		data.import_bindings.extend(embedded_data.import_bindings);
 		data.exports.extend(embedded_data.exports);
+		data.default_export = data.default_export.take().or(embedded_data.default_export);
 		data.calls.extend(embedded_data.calls);
 		data.type_relations.extend(embedded_data.type_relations);
 		data.symbols.extend(embedded_data.symbols);
@@ -415,10 +423,15 @@ fn visit_node(
 	data: &mut FileAstData,
 ) {
 	let (imports, exports) = language.extract_imports_exports(node, contents);
-	data.import_bindings
-		.extend(extract_import_bindings(language.name(), node, contents, &imports));
+	if !imports.is_empty() {
+		data.import_bindings
+			.extend(language.extract_import_bindings(node, contents, &imports));
+	}
 	data.imports.extend(imports);
 	data.exports.extend(exports);
+	if let Some(name) = language.default_export_name(node, contents) {
+		data.default_export = Some(name);
+	}
 
 	let line = node.start_position().row as u32;
 	for callee in language.extract_function_calls(node, contents) {
@@ -427,9 +440,15 @@ fn visit_node(
 	let type_relations = language.extract_type_relations(node, contents);
 	if !type_relations.is_empty() {
 		let source_name = language.extract_type_relation_source(node, contents);
+		// The declaration's own line: its node starts at the first annotation,
+		// decorator or modifier, which can sit lines above the name.
+		let relation_line = ["name", "type"]
+			.iter()
+			.find_map(|field| node.child_by_field_name(field))
+			.map_or(line, |name| name.start_position().row as u32);
 		for (kind, target_name) in type_relations {
 			data.type_relations.push(TypeRelationDecl {
-				line,
+				line: relation_line,
 				source_name: source_name.clone(),
 				kind,
 				target_name,
@@ -456,142 +475,11 @@ fn visit_node(
 	}
 }
 
-fn extract_import_bindings(
-	language: &str,
-	node: tree_sitter::Node,
-	contents: &str,
-	imports: &[String],
-) -> Vec<ImportBinding> {
-	if imports.is_empty() {
-		return Vec::new();
-	}
-	let Ok(text) = node.utf8_text(contents.as_bytes()) else {
-		return Vec::new();
-	};
-	let text = text.trim();
-	let mut bindings = Vec::new();
-
-	match language {
-		"python" if text.starts_with("import ") => {
-			for item in text.trim_start_matches("import ").split(',') {
-				let mut parts = item.split_whitespace();
-				let Some(path) = parts.next() else { continue };
-				if parts.next() == Some("as") {
-					if let Some(alias) = parts.next() {
-						bindings.push(ImportBinding {
-							local_name: alias.to_string(),
-							imported_name: None,
-							import_path: path.to_string(),
-						});
-					}
-				}
-			}
-		}
-		"python" if text.starts_with("from ") => {
-			if let Some((module, names)) = text.trim_start_matches("from ").split_once(" import ") {
-				for item in names.trim_matches(['(', ')']).split(',') {
-					let mut parts = item.split_whitespace();
-					let Some(imported) = parts.next() else {
-						continue;
-					};
-					let local = if parts.next() == Some("as") {
-						parts.next().unwrap_or(imported)
-					} else {
-						imported
-					};
-					bindings.push(ImportBinding {
-						local_name: local.to_string(),
-						imported_name: Some(imported.to_string()),
-						import_path: module.trim().to_string(),
-					});
-				}
-			}
-		}
-		"javascript" | "typescript" => {
-			let Some(path) = imports.first() else {
-				return bindings;
-			};
-			let clause = text
-				.trim_start_matches("import")
-				.split(" from ")
-				.next()
-				.unwrap_or_default()
-				.trim();
-			if clause == "export *" {
-				bindings.push(ImportBinding {
-					local_name: WILDCARD.to_string(),
-					imported_name: Some(WILDCARD.to_string()),
-					import_path: path.clone(),
-				});
-			}
-			if let Some(alias) = clause.strip_prefix("* as ") {
-				bindings.push(ImportBinding {
-					local_name: alias.trim().to_string(),
-					imported_name: None,
-					import_path: path.clone(),
-				});
-			}
-			if let (Some(start), Some(end)) = (clause.find('{'), clause.rfind('}')) {
-				// `get` rather than a slice: a stray `}` before the `{` is
-				// malformed input, not a reason to panic.
-				for item in clause.get(start + 1..end).unwrap_or_default().split(',') {
-					let mut parts = item.trim().trim_start_matches("type ").split_whitespace();
-					let Some(imported) = parts.next() else {
-						continue;
-					};
-					let local = if parts.next() == Some("as") {
-						parts.next().unwrap_or(imported)
-					} else {
-						imported
-					};
-					bindings.push(ImportBinding {
-						local_name: local.to_string(),
-						imported_name: Some(imported.to_string()),
-						import_path: path.clone(),
-					});
-				}
-			}
-		}
-		"go" => {
-			for line in text.lines() {
-				let parts: Vec<_> = line
-					.trim()
-					.trim_start_matches("import")
-					.trim_matches(['(', ')'])
-					.split_whitespace()
-					.collect();
-				if parts.len() == 2 && !matches!(parts[0], "_" | ".") {
-					bindings.push(ImportBinding {
-						local_name: parts[0].to_string(),
-						imported_name: None,
-						import_path: parts[1].trim_matches('"').to_string(),
-					});
-				}
-			}
-		}
-		"rust" | "php" if text.contains(" as ") => {
-			let cleaned = text.trim_start_matches("use ").trim_end_matches(';').trim();
-			if let Some((path, alias)) = cleaned.rsplit_once(" as ") {
-				let imported = path.rsplit([':', '\\']).find(|part| !part.is_empty()).unwrap_or(path);
-				bindings.push(ImportBinding {
-					local_name: alias.trim().to_string(),
-					imported_name: Some(imported.to_string()),
-					import_path: imports.first().cloned().unwrap_or_else(|| path.to_string()),
-				});
-			}
-		}
-		_ => {}
-	}
-
-	bindings
-}
-
 /// A resolved reference: the target symbol id and how sure the match is.
 type Resolved<'a> = (&'a str, f32);
 
-/// Files a lookup follows from one that only re-exports a name (`from .base
-/// import reverse` in an `__init__.py`, `export { f } from './a'` in an
-/// `index.ts`) before it gives up.
+/// Files a lookup follows from one that only re-exports a name (a barrel
+/// file that passes on what other files declare) before it gives up.
 const MAX_REEXPORT_HOPS: usize = 3;
 
 /// A name a file takes in: its name in the other file and the files the
@@ -609,7 +497,7 @@ struct ReExports {
 }
 
 /// What a wildcard import binds instead of a name.
-pub(super) const WILDCARD: &str = "*";
+pub(crate) const WILDCARD: &str = "*";
 
 /// Symbol lookup structures shared by symbol-edge discovery.
 struct SymbolIndex {
@@ -635,6 +523,10 @@ struct SymbolIndex {
 	/// File path -> what it brings in from other files, for the files that
 	/// import names or everything of another file.
 	reexports: HashMap<String, ReExports>,
+	/// File path -> the name its default export declares.
+	default_exports: HashMap<String, String>,
+	/// File path -> language, for the files whose directory is a package.
+	package_languages: HashMap<String, String>,
 }
 
 impl SymbolIndex {
@@ -649,8 +541,13 @@ impl SymbolIndex {
 			method_by_file: HashMap::new(),
 			files_by_name: HashMap::new(),
 			reexports: HashMap::new(),
+			default_exports: HashMap::new(),
+			package_languages: HashMap::new(),
 		};
 		for file in files {
+			if let Some(name) = &file.default_export {
+				index.default_exports.insert(file.path.clone(), name.clone());
+			}
 			let ids = symbol_node_ids(&file.path, &file.symbols);
 			for (symbol, id) in file.symbols.iter().zip(ids.iter()) {
 				index.by_name.entry(symbol.name.clone()).or_default().push(id.clone());
@@ -733,7 +630,7 @@ impl SymbolIndex {
 
 	/// The symbols `name` is in `path`: its own declarations or, when it
 	/// declares none, what the files it takes the name from declare (a barrel
-	/// file such as an `__init__.py` or an `index.ts`).
+	/// file that only passes names on).
 	fn declared_or_reexported(&self, path: &str, name: &str) -> Vec<&String> {
 		let mut found = Vec::new();
 		let mut seen = HashSet::new();
@@ -782,6 +679,36 @@ impl SymbolIndex {
 			.filter(move |file| imported.set.contains(*file))
 	}
 
+	/// The declarations of `name` in the other files of the directory of
+	/// `source_path`, for the languages where a directory is a package.
+	fn same_package_targets(&self, source_path: &str, name: &str) -> Vec<&String> {
+		let Some(language) = self.package_languages.get(source_path) else {
+			return Vec::new();
+		};
+		let directory = source_path.rsplit_once('/').map_or("", |(directory, _)| directory);
+		self.files_by_name
+			.get(name)
+			.into_iter()
+			.flatten()
+			.filter(|file| {
+				file.as_str() != source_path
+					&& self.package_languages.get(file.as_str()) == Some(language)
+					&& file.rsplit_once('/').map_or("", |(parent, _)| parent) == directory
+			})
+			.filter_map(|file| self.by_file.get(file.as_str())?.get(name))
+			.flatten()
+			.collect()
+	}
+
+	/// Records the language of every file whose directory is a package.
+	fn set_package_languages(&mut self, files: &[&SymbolFileData], resolver: &ImportResolver) {
+		for file in files {
+			if resolver.directory_is_package(&file.language) {
+				self.package_languages.insert(file.path.clone(), file.language.clone());
+			}
+		}
+	}
+
 	/// Resolve a referenced name to symbol node ids, scoped: same file first,
 	/// then files the source imports, then a unique global declaration.
 	fn resolve(
@@ -793,8 +720,19 @@ impl SymbolIndex {
 	) -> Vec<Resolved<'_>> {
 		// 1. Same file: a direct AST fact.
 		if let Some(targets) = self.by_file.get(source_path).and_then(|names| names.get(target_name)) {
-			if targets.len() == 1 {
-				return vec![(targets[0].as_str(), CONFIDENCE_SAME_FILE)];
+			if targets.len() == 1 || class_with_constructors(targets, target_name) {
+				return targets.iter().map(|id| (id.as_str(), CONFIDENCE_SAME_FILE)).collect();
+			}
+			// The same declaration twice (overloads, the two sides of a
+			// conditional compilation: one owner and name, so the ids carry `@line`) is one
+			// direct fact: a call reaches each. Different owners keep the
+			// ambiguity rule.
+			let first = without_collision_suffix(targets[0].as_str());
+			if targets.iter().all(|id| without_collision_suffix(id) == first) {
+				return targets
+					.iter()
+					.map(|id| (id.as_str(), CONFIDENCE_SAME_FILE_AMBIGUOUS))
+					.collect();
 			}
 			if allow_ambiguous {
 				return targets
@@ -803,6 +741,19 @@ impl SymbolIndex {
 					.collect();
 			}
 			return Vec::new();
+		}
+
+		// 1b. Same package: the files of one directory are one package in Go
+		// and, by convention, in Java, and a package sees its own names
+		// without an import.
+		let mut package_targets = self.same_package_targets(source_path, target_name);
+		package_targets.sort_unstable();
+		package_targets.dedup();
+		if package_targets.len() == 1 || class_with_constructors(&package_targets, target_name) {
+			return package_targets
+				.into_iter()
+				.map(|id| (id.as_str(), CONFIDENCE_IMPORTED_FILE))
+				.collect();
 		}
 
 		// 2. Files the source imports declare the target. Collect across every
@@ -827,8 +778,11 @@ impl SymbolIndex {
 		}
 		imported_targets.sort_unstable();
 		imported_targets.dedup();
-		if imported_targets.len() == 1 {
-			return vec![(imported_targets[0].as_str(), CONFIDENCE_IMPORTED_FILE)];
+		if imported_targets.len() == 1 || class_with_constructors(&imported_targets, target_name) {
+			return imported_targets
+				.into_iter()
+				.map(|id| (id.as_str(), CONFIDENCE_IMPORTED_FILE))
+				.collect();
 		}
 		if !imported_targets.is_empty() {
 			if allow_ambiguous {
@@ -842,7 +796,9 @@ impl SymbolIndex {
 
 		// 3. Unique global declaration.
 		match self.by_name.get(target_name) {
-			Some(ids) if ids.len() == 1 => vec![(ids[0].as_str(), CONFIDENCE_GLOBAL_UNIQUE)],
+			Some(ids) if ids.len() == 1 || class_with_constructors(ids, target_name) => {
+				ids.iter().map(|id| (id.as_str(), CONFIDENCE_GLOBAL_UNIQUE)).collect()
+			}
 			// Multiple candidates: only type relations (extends/implements)
 			// record them. Call sites hit ubiquitous method names (`new`,
 			// `get`) and would balloon the edge set with noise.
@@ -866,7 +822,15 @@ impl SymbolIndex {
 		for (binding, path) in bindings {
 			if target.qualifier.is_none() && binding.local_name == target.name {
 				let imported_name = binding.imported_name.as_deref().unwrap_or(&target.name);
-				bound_targets.extend(self.declared_or_reexported(path, imported_name));
+				let mut declared = self.declared_or_reexported(path, imported_name);
+				// A default import takes whatever name the importer chose; the
+				// file's default export is the declaration it names.
+				if declared.is_empty() && binding.imported_name.is_none() {
+					if let Some(default_name) = self.default_exports.get(path) {
+						declared = self.declared_or_reexported(path, default_name);
+					}
+				}
+				bound_targets.extend(declared);
 			}
 			if target.qualifier.as_deref() == Some(binding.local_name.as_str()) {
 				if let Some(owner) = &binding.imported_name {
@@ -1028,6 +992,10 @@ impl<'a> ImportResolver<'a> {
 		(self.lookup)(language_name).is_some()
 	}
 
+	fn directory_is_package(&self, language_name: &str) -> bool {
+		(self.lookup)(language_name).is_some_and(|language| language.directory_is_package())
+	}
+
 	/// The repository files `import` names from `source_file`: one for most
 	/// languages, a whole package for Go, Java wildcards and Swift modules,
 	/// none for an external module or a language without an implementation.
@@ -1055,6 +1023,18 @@ impl<'a> ImportResolver<'a> {
 		let resolved = self.resolve(&file.language, &file.path, import);
 		file.memo.insert(registry_id, import, resolved.clone());
 		resolved
+	}
+
+	/// Whether `import` of `file` is only a candidate that is dropped when it
+	/// names no file.
+	pub(crate) fn is_optional(&self, file: &SymbolFileData, import: &str) -> bool {
+		(self.lookup)(&file.language).is_some_and(|language| language.import_is_optional(import))
+	}
+
+	/// Whether `import` of `file` resolves by a guess rather than a stated path.
+	pub(crate) fn is_guess(&self, file: &SymbolFileData, import: &str) -> bool {
+		(self.lookup)(&file.language)
+			.is_some_and(|language| language.import_is_guess(import, &file.path, &self.registry))
 	}
 }
 
@@ -1123,6 +1103,7 @@ pub(crate) fn discover_symbol_relationships(
 ) -> Vec<CodeRelationship> {
 	let mut index = SymbolIndex::build(files);
 	index.set_reexports(files, resolver);
+	index.set_package_languages(files, resolver);
 
 	// Import resolution memoizes through `&mut resolver`, so it runs first and
 	// serially (cheap: one lookup per distinct import); the per-call matching
@@ -1220,6 +1201,28 @@ fn import_leaf(raw_import: &str) -> &str {
 		.trim_matches(|character: char| !character.is_alphanumeric() && character != '_')
 }
 
+/// The id of a symbol without the trailing `@line` `symbol_node_ids` adds to
+/// declarations that share owner and name. An `@` elsewhere (a path such as
+/// `@scope/pkg/x.ts`, a Next.js `@modal` directory) is part of the id.
+fn without_collision_suffix(id: &str) -> &str {
+	match id.rsplit_once('@') {
+		Some((base, line)) if !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit()) => base,
+		_ => id,
+	}
+}
+
+/// Whether `ids` are one type and its constructors: a constructor is named
+/// like its class, so `new Foo()` has the class and every constructor as
+/// targets, and all of them are the call's facts, not an ambiguity.
+fn class_with_constructors<S: AsRef<str>>(ids: &[S], name: &str) -> bool {
+	let constructor_suffix = format!("::{name}::{name}");
+	let types = ids
+		.iter()
+		.filter(|id| !without_collision_suffix(id.as_ref()).ends_with(&constructor_suffix))
+		.count();
+	types == 1 && ids.len() > 1
+}
+
 /// Call and type-relation edges of one file.
 fn discover_file_relationships(
 	source_file: &SymbolFileData,
@@ -1313,6 +1316,11 @@ fn discover_file_relationships(
 			TypeRelationKind::Implements => RelationType::Implements,
 		};
 		for (target, confidence) in index.resolve(&source_file.path, &relation.target_name, imported, true) {
+			// A parent that resolves to the type itself is a same-named
+			// outside type (`impl std::error::Error for Error`).
+			if target == source_id {
+				continue;
+			}
 			relationships.push(CodeRelationship {
 				source: source_id.to_string(),
 				target: target.to_string(),

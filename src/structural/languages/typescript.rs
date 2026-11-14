@@ -18,11 +18,12 @@
 //! type-declaration file lookups.
 
 use super::javascript::{
-	join_path, js_call_target, parse_js_export_statement, parse_js_import_statement_full_path, re_export_source,
-	JavaScript,
+	function_value_name, join_path, js_call_target, parse_js_export_statement, parse_js_import_statement_full_path,
+	re_export_source, JavaScript,
 };
 use super::{extract_symbol_by_kinds, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
 
 pub(crate) struct TypeScript {}
@@ -83,6 +84,7 @@ impl Language for TypeScript {
 			"function_declaration",
 			"method_definition",
 			"arrow_function",
+			"function_expression",
 			"class_declaration",
 			"interface_declaration",
 			"type_alias_declaration",
@@ -98,6 +100,7 @@ impl Language for TypeScript {
 			"function_declaration",
 			"method_definition",
 			"arrow_function",
+			"function_expression",
 			"class_declaration",
 			"abstract_class_declaration",
 			"interface_declaration",
@@ -107,16 +110,8 @@ impl Language for TypeScript {
 	}
 
 	fn extract_declaration_name(&self, node: Node, contents: &str) -> Option<String> {
-		if node.kind() == "arrow_function" {
-			// An arrow function's name is the variable it is assigned to.
-			let parent = node.parent()?;
-			if parent.kind() != "variable_declarator" {
-				return None;
-			}
-			return parent
-				.child_by_field_name("name")
-				.and_then(|name| name.utf8_text(contents.as_bytes()).ok())
-				.map(str::to_string);
+		if matches!(node.kind(), "arrow_function" | "function_expression") {
+			return function_value_name(node, contents);
 		}
 		extract_symbol_by_kinds(node, contents, &["identifier", "name"])
 	}
@@ -162,10 +157,23 @@ impl Language for TypeScript {
 					}
 				}
 			}
+			"call_expression" => imports.extend(super::javascript::dynamic_import_source(node, contents)),
 			_ => {}
 		}
 
 		(imports, exports)
+	}
+
+	fn is_directory_index(&self, path: &str) -> bool {
+		super::javascript::is_index_file(path)
+	}
+
+	fn default_export_name(&self, node: Node, contents: &str) -> Option<String> {
+		super::javascript::default_export_name(node, contents)
+	}
+
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		super::javascript::import_bindings(node, contents, imports)
 	}
 
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
@@ -211,6 +219,74 @@ impl Language for TypeScript {
 			return Some(found);
 		}
 		resolve_ts_module_import(import_path, all_files)
+	}
+}
+
+/// `.tsx` files: TypeScript with JSX, which needs its own grammar (the
+/// TypeScript one reads `<div>` as a type assertion, losing the components
+/// and the calls inside the markup). Everything but the grammar is the
+/// TypeScript behaviour.
+pub(crate) struct Tsx {}
+
+impl Language for Tsx {
+	fn name(&self) -> &'static str {
+		"tsx"
+	}
+
+	fn get_ts_language(&self) -> tree_sitter::Language {
+		tree_sitter_typescript::LANGUAGE_TSX.into()
+	}
+
+	fn line_may_import(&self, line: &str, name: &str) -> bool {
+		TypeScript {}.line_may_import(line, name)
+	}
+
+	fn line_may_reexport(&self, line: &str, name: &str, path: &str) -> bool {
+		TypeScript {}.line_may_reexport(line, name, path)
+	}
+
+	fn inheritance_line_markers(&self) -> &'static [&'static str] {
+		TypeScript {}.inheritance_line_markers()
+	}
+
+	fn get_outline_kinds(&self) -> Vec<&'static str> {
+		TypeScript {}.get_outline_kinds()
+	}
+
+	fn get_symbol_kinds(&self) -> Vec<&'static str> {
+		TypeScript {}.get_symbol_kinds()
+	}
+
+	fn extract_declaration_name(&self, node: Node, contents: &str) -> Option<String> {
+		TypeScript {}.extract_declaration_name(node, contents)
+	}
+
+	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
+		TypeScript {}.extract_imports_exports(node, contents)
+	}
+
+	fn is_directory_index(&self, path: &str) -> bool {
+		super::javascript::is_index_file(path)
+	}
+
+	fn default_export_name(&self, node: Node, contents: &str) -> Option<String> {
+		super::javascript::default_export_name(node, contents)
+	}
+
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		super::javascript::import_bindings(node, contents, imports)
+	}
+
+	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
+		TypeScript {}.extract_function_calls(node, contents)
+	}
+
+	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
+		TypeScript {}.extract_type_relations(node, contents)
+	}
+
+	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		TypeScript {}.resolve_import(import_path, source_file, all_files)
 	}
 }
 
@@ -326,7 +402,8 @@ fn collect_clause_names(
 	for child in clause.children(&mut cursor) {
 		if matches!(
 			child.kind(),
-			"identifier" | "type_identifier" | "nested_type_identifier" | "generic_type"
+			// `extends ns.Base` is a member expression in a class heritage.
+			"identifier" | "type_identifier" | "nested_type_identifier" | "generic_type" | "member_expression"
 		) {
 			if let Ok(text) = child.utf8_text(contents.as_bytes()) {
 				if let Some(name) = simple_type_name(text) {

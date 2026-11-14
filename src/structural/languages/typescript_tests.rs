@@ -230,3 +230,70 @@ fn graph_links_calls_imports_inheritance_and_implementation() {
 		RelationType::Implements
 	));
 }
+
+#[test]
+fn a_tsx_component_is_a_symbol_that_calls_what_its_markup_calls() {
+	let graph = build_graph(vec![SourceFile {
+		path: "src/view.tsx".to_string(),
+		language: "tsx",
+		contents: "function formatTitle(): string {\n\treturn 'x';\n}\n\nexport const Title = (props: { n: number }) => <h1>{formatTitle()}</h1>;\n".to_string(),
+	}]);
+
+	assert!(has_edge(
+		&graph,
+		"src/view.tsx::Title",
+		"src/view.tsx::formatTitle",
+		RelationType::Calls
+	));
+}
+
+#[test]
+fn a_jsx_component_is_a_symbol_that_calls_what_its_markup_calls() {
+	let graph = build_graph(vec![SourceFile {
+		path: "src/view.jsx".to_string(),
+		language: "javascript",
+		contents:
+			"function formatTitle() {\n\treturn 'x';\n}\n\nexport const Title = () => <h1>{formatTitle()}</h1>;\n"
+				.to_string(),
+	}]);
+
+	assert!(has_edge(
+		&graph,
+		"src/view.jsx::Title",
+		"src/view.jsx::formatTitle",
+		RelationType::Calls
+	));
+}
+
+#[test]
+fn the_extension_picks_the_grammar_of_the_language() {
+	assert_eq!(crate::structural::language_for_extension("tsx"), Some("tsx"));
+	assert_eq!(crate::structural::language_for_extension("ts"), Some("typescript"));
+	assert_eq!(crate::structural::language_for_extension("jsx"), Some("javascript"));
+}
+
+#[test]
+fn a_namespaced_base_class_extends_its_simple_name() {
+	let relations = relations_in("class A extends ns.Base implements I {}\n");
+	assert_eq!(
+		relations,
+		vec![
+			(TypeRelationKind::Extends, "Base".to_string()),
+			(TypeRelationKind::Implements, "I".to_string())
+		]
+	);
+}
+
+#[test]
+fn an_at_sign_in_a_path_does_not_make_two_owners_one_declaration() {
+	let graph = build_graph(vec![SourceFile {
+		path: "app/@modal/page.ts".to_string(),
+		language: "typescript",
+		contents: "class A {\n\trun() {}\n}\nclass B {\n\trun() {}\n}\nfunction go() {\n\trun();\n}\n".to_string(),
+	}]);
+	// Two owners declare `run`: a bare call is no certain fact about either.
+	assert!(!graph
+		.relationships
+		.iter()
+		.any(|edge| edge.source == "app/@modal/page.ts::go" && edge.relation == RelationType::Calls));
+}

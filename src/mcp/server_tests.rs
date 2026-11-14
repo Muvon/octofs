@@ -1412,3 +1412,23 @@ async fn edit_with_check_is_refused_when_shell_is_not_granted() {
 	assert!(error.contains("`check` needs the `shell` tool"), "{error}");
 	assert_eq!(std::fs::read_to_string(&file).expect("read"), "one\n");
 }
+
+#[tokio::test]
+async fn a_view_call_with_the_moved_symbol_parameter_or_flag_is_rejected_after_real_deserialization() {
+	// The key must survive the tool's own parameter struct: serde drops an
+	// unknown field, which would turn the call into a silent listing.
+	for arguments in [
+		json!({ "path": "src", "symbol": "foo" }),
+		json!({ "path": "src", "flags": "r" }),
+	] {
+		let params: super::ViewParams = serde_json::from_value(arguments).expect("view params");
+		let call = crate::mcp::McpToolCall {
+			tool_name: "view".to_string(),
+			parameters: serde_json::to_value(&params).unwrap_or_default(),
+			tool_id: String::new(),
+			workdir: std::env::temp_dir(),
+		};
+		let error = crate::mcp::fs::execute_view(&call).await.expect_err("rejected");
+		assert!(error.to_string().contains("`symbol` tool"), "{error}");
+	}
+}

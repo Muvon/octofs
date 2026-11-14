@@ -26,11 +26,13 @@
 //!
 //! All roots together stay under one memory ceiling (`INDEX_MEMORY_BYTES`).
 //! When the token filters of a root do not fit, their size per token shrinks
-//! down to `MIN_BITS_PER_TOKEN`; below that the root is not indexed and the
-//! caller falls back to the stateless path. An index nobody used for
-//! `INDEX_IDLE_SECS` is dropped by one sweeper task.
+//! down to `MIN_BITS_PER_TOKEN`; below that the root is unusable: its graph
+//! relations answer with an error saying so, while `definition` and
+//! `references` read the files directly. An unusable root is built again
+//! once other roots have given memory back. An index
+//! nobody used for `INDEX_IDLE_SECS` is dropped by one sweeper task.
 
-use super::graph::{walk_supported, MAX_GRAPH_FILE_BYTES};
+use super::graph::{walk_supported, SupportedFiles, MAX_GRAPH_FILE_BYTES};
 use crate::structural::graph::registry::{heap_chunk, FileRegistry};
 use crate::structural::graph::{parse_files, FileSpec, ParsedSource, SkippedFile};
 use crate::structural::{line_may_import, line_may_inherit, line_may_reexport};
@@ -143,7 +145,10 @@ pub(super) struct IndexUnavailable;
 
 impl fmt::Display for IndexUnavailable {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "the code index of this workdir does not fit in the memory limit")
+		write!(
+			f,
+			"the code index of this workdir does not fit in the memory limit; it is built again after a minute or when another workdir is released (`definition` and `references` still work, `path` does not make the index smaller)"
+		)
 	}
 }
 
@@ -162,20 +167,6 @@ pub(super) struct MemoryUse {
 impl MemoryUse {
 	pub(super) fn total(&self) -> usize {
 		self.table + self.filters + self.parsed + self.registry
-	}
-}
-
-/// What a refresh found. Ids of deleted files are never reused.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(super) struct Changes {
-	pub(super) new: Vec<FileId>,
-	pub(super) changed: Vec<FileId>,
-	pub(super) gone: Vec<FileId>,
-}
-
-impl Changes {
-	pub(super) fn is_empty(&self) -> bool {
-		self.new.is_empty() && self.changed.is_empty() && self.gone.is_empty()
 	}
 }
 
@@ -469,6 +460,7 @@ fn parsed_bytes(source: &ParsedSource) -> usize {
 			.iter()
 			.map(|symbol| text_bytes(&symbol.name) + text_bytes(&symbol.kind) + optional_text_bytes(&symbol.owner))
 			.sum::<usize>();
+	bytes += optional_text_bytes(&data.default_export);
 	bytes
 }
 
@@ -545,10 +537,13 @@ struct State {
 	/// The set of paths, built when first needed and dropped when a file
 	/// appears or goes.
 	registry: Option<Arc<FileRegistry>>,
+	/// Paths of the module-root manifests, sorted: not indexed, but import
+	/// resolution reads where the modules are.
+	module_roots: Vec<String>,
 	/// Lookups valid until some file changes: cleared by every refresh that
 	/// found a change.
 	spelling: HashMap<String, Arc<SpellingSet>>,
-	marked: HashMap<(String, LineKind), Arc<Vec<FileId>>>,
+	marked: HashMap<(String, LineKind), Marked>,
 	answers: HashMap<String, Arc<String>>,
 	/// Counts the refreshes that found a change.
 	generation: u64,
@@ -572,6 +567,7 @@ impl State {
 				parsed: 0,
 				registry: 0,
 			},
+			module_roots: Vec::new(),
 			registry: None,
 			spelling: HashMap::new(),
 			marked: HashMap::new(),
@@ -601,19 +597,32 @@ impl State {
 		let spelling: usize = self
 			.spelling
 			.iter()
-			.map(|(name, set)| entry + heap_chunk(name.capacity()) + ids(&set.files) + ids(&set.declaring))
+			.map(|(name, set)| {
+				entry + heap_chunk(name.capacity()) + ids(&set.files) + ids(&set.declaring) + ids(&set.unread)
+			})
 			.sum();
 		let marked: usize = self
 			.marked
 			.iter()
-			.map(|((token, _), files)| entry + heap_chunk(token.capacity()) + ids(files))
+			.map(|((token, _), marked)| {
+				let unscanned = marked
+					.unscanned
+					.as_ref()
+					.map_or(0, |ids| heap_chunk(ids.capacity() * std::mem::size_of::<FileId>()));
+				entry + heap_chunk(token.capacity()) + ids(&marked.files) + unscanned
+			})
 			.sum();
 		let answers: usize = self
 			.answers
 			.iter()
 			.map(|(key, text)| entry + heap_chunk(key.capacity()) + heap_chunk(text.capacity()))
 			.sum();
-		slots + paths + map + examined + spelling + marked + answers
+		let module_roots: usize = self
+			.module_roots
+			.iter()
+			.map(|path| std::mem::size_of::<String>() + heap_chunk(path.capacity()))
+			.sum();
+		slots + paths + map + examined + spelling + marked + answers + module_roots
 	}
 }
 
@@ -624,8 +633,14 @@ pub(super) struct CodeIndex {
 	state: Mutex<State>,
 	/// Held across a refresh: concurrent callers wait for the running one.
 	refresh_gate: tokio::sync::Mutex<()>,
+	/// Refreshes begun so far: a caller that waited reuses the result of a
+	/// refresh only if it began after the caller arrived.
+	refresh_started: AtomicUsize,
+	/// Held while the missing filters are built, so two cold callers do not
+	/// both read every file.
+	filter_gate: Mutex<()>,
+	#[cfg(test)]
 	refresh_count: AtomicUsize,
-	last_changes: Mutex<Arc<Changes>>,
 	#[cfg(test)]
 	reads: AtomicUsize,
 	#[cfg(test)]
@@ -666,8 +681,10 @@ impl CodeIndex {
 			budget,
 			state: Mutex::new(State::new()),
 			refresh_gate: tokio::sync::Mutex::new(()),
+			refresh_started: AtomicUsize::new(0),
+			filter_gate: Mutex::new(()),
+			#[cfg(test)]
 			refresh_count: AtomicUsize::new(0),
-			last_changes: Mutex::new(Arc::new(Changes::default())),
 			#[cfg(test)]
 			reads: AtomicUsize::new(0),
 			#[cfg(test)]
@@ -713,6 +730,17 @@ impl CodeIndex {
 		lock(&self.state).by_path.get(path).copied()
 	}
 
+	/// Whether the index holds a file at or under the workdir-relative
+	/// `directory` (empty: the workdir itself).
+	pub(super) fn has_files_under(&self, directory: &str) -> bool {
+		let prefix = if directory.is_empty() {
+			String::new()
+		} else {
+			format!("{directory}/")
+		};
+		lock(&self.state).by_path.keys().any(|path| path.starts_with(&prefix))
+	}
+
 	#[cfg(test)]
 	pub(super) fn file_count(&self) -> usize {
 		lock(&self.state).by_path.len()
@@ -730,26 +758,34 @@ impl CodeIndex {
 		lock(&self.state).use_bytes
 	}
 
-	/// Re-walk and re-stat the workdir; what is new, changed or gone since the
-	/// last call. Concurrent callers share one run.
-	pub(super) async fn refresh(self: &Arc<Self>) -> Result<Arc<Changes>> {
-		let seen = self.refresh_count.load(Ordering::Acquire);
+	/// Re-walk and re-stat the workdir. Concurrent callers share one run.
+	pub(super) async fn refresh(self: &Arc<Self>) -> Result<()> {
+		let arrived_after = self.refresh_started.load(Ordering::Acquire);
 		let _single_flight = self.refresh_gate.lock().await;
-		if self.refresh_count.load(Ordering::Acquire) != seen {
-			return Ok(lock(&self.last_changes).clone());
+		// A refresh that began after this call arrived has walked the files as
+		// they are now; one that was already running when it arrived may have
+		// missed an edit made just before the call.
+		if self.refresh_started.load(Ordering::Acquire) != arrived_after {
+			return Ok(());
 		}
+		self.refresh_started.fetch_add(1, Ordering::AcqRel);
 		let this = self.clone();
-		let changes = Arc::new(blocking(move || this.refresh_blocking()).await?);
-		*lock(&self.last_changes) = changes.clone();
+		blocking(move || this.refresh_blocking()).await?;
+		#[cfg(test)]
 		self.refresh_count.fetch_add(1, Ordering::AcqRel);
-		Ok(changes)
+		Ok(())
 	}
 
-	fn refresh_blocking(&self) -> Result<Changes> {
+	fn refresh_blocking(&self) -> Result<()> {
 		if !self.is_usable() {
 			return Err(IndexUnavailable.into());
 		}
-		let walked: Vec<(String, &'static str, Stamp)> = walk_supported(&self.root)?
+		let SupportedFiles {
+			files: found,
+			mut module_roots,
+		} = walk_supported(&self.root)?;
+		module_roots.sort_unstable();
+		let walked: Vec<(String, &'static str, Stamp)> = found
 			.into_par_iter()
 			.filter_map(|(path, language)| {
 				let stamp = stamp_of(&self.root, &path)?;
@@ -758,7 +794,8 @@ impl CodeIndex {
 			.collect();
 
 		let mut state = lock(&self.state);
-		let mut changes = Changes::default();
+		let mut content_changed = false;
+		let mut file_set_changed = false;
 		let mut seen = vec![false; state.files.len()];
 		for (path, language, stamp) in walked {
 			match state.by_path.get(&path).copied() {
@@ -770,7 +807,7 @@ impl CodeIndex {
 					if !unchanged {
 						state.files[id as usize] = Some(FileEntry { path, language, stamp });
 						self.drop_derived(&mut state, id);
-						changes.changed.push(id);
+						content_changed = true;
 					}
 				}
 				None => {
@@ -778,7 +815,7 @@ impl CodeIndex {
 					state.by_path.insert(path.clone(), id);
 					state.files.push(Some(FileEntry { path, language, stamp }));
 					state.filters.push(None);
-					changes.new.push(id);
+					file_set_changed = true;
 				}
 			}
 		}
@@ -791,14 +828,19 @@ impl CodeIndex {
 				state.by_path.remove(&entry.path);
 			}
 			self.drop_derived(&mut state, id);
-			changes.gone.push(id);
+			file_set_changed = true;
 		}
-		if !changes.is_empty() {
+		// A new or removed manifest changes how imports resolve.
+		if state.module_roots != module_roots {
+			state.module_roots = module_roots;
+			file_set_changed = true;
+		}
+		if content_changed || file_set_changed {
 			state.generation += 1;
 			state.spelling.clear();
 			state.marked.clear();
 			state.answers.clear();
-			if !(changes.new.is_empty() && changes.gone.is_empty()) {
+			if file_set_changed {
 				self.drop_registry(&mut state);
 			}
 		}
@@ -806,7 +848,7 @@ impl CodeIndex {
 			self.release_all(&mut state);
 			return Err(IndexUnavailable.into());
 		}
-		Ok(changes)
+		Ok(())
 	}
 
 	fn drop_registry(&self, state: &mut State) {
@@ -825,6 +867,15 @@ impl CodeIndex {
 		if let Some(cached) = state.parsed.remove(&id) {
 			state.use_bytes.parsed -= cached.bytes;
 			self.budget.sub(cached.bytes);
+		}
+	}
+
+	/// Charge the table after a cache insert. Over the ceiling the new item
+	/// is dropped by `drop_item`, so nothing cached goes uncounted.
+	fn charge_or_drop(&self, state: &mut State, drop_item: impl FnOnce(&mut State)) {
+		if !self.recharge_table(state) {
+			drop_item(state);
+			self.recharge_table(state);
 		}
 	}
 
@@ -854,6 +905,7 @@ impl CodeIndex {
 		};
 		state.files = Vec::new();
 		state.by_path = HashMap::new();
+		state.module_roots = Vec::new();
 		state.filters = Vec::new();
 		state.parsed = HashMap::new();
 		state.registry = None;
@@ -897,6 +949,13 @@ impl CodeIndex {
 	}
 
 	fn ensure_filters(&self) -> Result<()> {
+		// One build at a time: two cold callers would each read every file,
+		// together exceed the ceiling and shrink the filters for good. The
+		// second finds nothing left to build.
+		let _single_flight = self
+			.filter_gate
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner);
 		let built = self.build_missing_filters();
 		release_freed_memory();
 		built
@@ -909,28 +968,38 @@ impl CodeIndex {
 				if !state.indexed {
 					return Err(IndexUnavailable.into());
 				}
-				let pending: Vec<(FileId, String)> = state
+				let pending: Vec<(FileId, String, Stamp)> = state
 					.files
 					.iter()
 					.enumerate()
 					.filter(|(index, entry)| entry.is_some() && state.filters[*index].is_none())
-					.filter_map(|(index, entry)| Some((index as FileId, entry.as_ref()?.path.clone())))
+					.filter_map(|(index, entry)| {
+						let entry = entry.as_ref()?;
+						Some((index as FileId, entry.path.clone(), entry.stamp))
+					})
 					.collect();
 				(pending, state.bits_per_token)
 			};
 			if pending.is_empty() {
 				return Ok(());
 			}
-			let outcomes: Vec<(FileId, FilterOutcome)> = pending
+			let outcomes: Vec<(FileId, Stamp, FilterOutcome)> = pending
 				.into_par_iter()
-				.map(|(id, path)| (id, self.build_filter(&path, bits_per_token)))
+				.map(|(id, path, stamp)| (id, stamp, self.build_filter(&path, bits_per_token)))
 				.collect();
 			let mut out_of_memory = false;
 			let mut state = lock(&self.state);
-			for (id, outcome) in outcomes {
+			for (id, stamp, outcome) in outcomes {
 				match outcome {
 					FilterOutcome::Built(filter, bytes) => {
-						let slot_free = state.files[id as usize].is_some() && state.filters[id as usize].is_none();
+						// The file may have changed or the root been released while
+						// the filter was built from the old content.
+						let current = state
+							.files
+							.get(id as usize)
+							.and_then(Option::as_ref)
+							.is_some_and(|entry| entry.stamp == stamp);
+						let slot_free = current && state.filters.get(id as usize).is_some_and(Option::is_none);
 						if slot_free {
 							state.filters[id as usize] = Some(filter);
 							state.use_bytes.filters += bytes;
@@ -1015,7 +1084,7 @@ impl CodeIndex {
 	/// run really occurs as a whole token.
 	pub(super) async fn files_spelling_verified(self: &Arc<Self>, names: &[&str]) -> Result<Vec<FileId>> {
 		if let [name] = names {
-			return Ok(self.spelling(name).await?.files.clone());
+			return Ok(self.spelling(name, None).await?.files.clone());
 		}
 		let this = self.clone();
 		let names: Vec<String> = names.iter().map(|name| name.to_string()).collect();
@@ -1093,6 +1162,7 @@ impl CodeIndex {
 			}
 			// Sorted: where two paths normalize alike, the first one wins.
 			let mut paths: Vec<String> = state.by_path.keys().cloned().collect();
+			paths.extend(state.module_roots.iter().cloned());
 			paths.sort_unstable();
 			let registry = Arc::new(FileRegistry::new(&paths));
 			let bytes = registry.heap_bytes();
@@ -1143,52 +1213,106 @@ impl CodeIndex {
 		if state.answers.len() >= MAX_CACHED_ANSWERS {
 			state.answers.clear();
 		}
-		state.answers.insert(key, Arc::new(answer));
-		self.recharge_table(&mut state);
+		state.answers.insert(key.clone(), Arc::new(answer));
+		self.charge_or_drop(&mut state, |state| {
+			state.answers.remove(&key);
+		});
 	}
 
 	/// Whether `spelling(name)` is answered from the cache.
 	pub(super) fn spelling_known(&self, name: &str) -> bool {
-		lock(&self.state).spelling.contains_key(name)
+		lock(&self.state)
+			.spelling
+			.get(name)
+			.is_some_and(|set| set.unread.is_empty())
 	}
 
 	/// The files that really spell `name` and the ones of them that look like
-	/// they declare it, both in path order. Cached until a file changes, so a
-	/// repeated query does not read the files again.
-	pub(super) async fn spelling(self: &Arc<Self>, name: &str) -> Result<Arc<SpellingSet>> {
-		let generation = {
+	/// they declare it, both in path order. The candidate files are read in
+	/// chunks until `deadline`; the ones not read yet come back in `unread`,
+	/// and a repeat goes on with those. A call always reads one chunk. Cached
+	/// until a file changes, so a repeated query does not read the files again.
+	pub(super) async fn spelling(self: &Arc<Self>, name: &str, deadline: Option<Instant>) -> Result<Arc<SpellingSet>> {
+		let (generation, resume) = {
 			let state = lock(&self.state);
-			if let Some(set) = state.spelling.get(name) {
+			let cached = state.spelling.get(name);
+			if let Some(set) = cached.filter(|set| set.unread.is_empty()) {
 				return Ok(set.clone());
 			}
-			state.generation
+			(state.generation, cached.cloned())
 		};
 		let this = self.clone();
 		let key = name.to_string();
-		let set = Arc::new(blocking(move || this.spelling_blocking(&key)).await?);
+		let set = Arc::new(blocking(move || this.spelling_blocking(&key, resume, deadline)).await?);
 		let mut state = lock(&self.state);
 		if state.generation == generation {
 			if state.spelling.len() >= MAX_CACHED_LOOKUPS {
 				state.spelling.clear();
 			}
 			state.spelling.insert(name.to_string(), set.clone());
-			self.recharge_table(&mut state);
+			self.charge_or_drop(&mut state, |state| {
+				state.spelling.remove(name);
+			});
 		}
 		Ok(set)
 	}
 
-	fn spelling_blocking(&self, name: &str) -> Result<SpellingSet> {
-		let (hits, runs) = self.filter_hits(&[name])?;
-		let Some(simple) = identifier_runs(name).last().map(|run| run.to_string()) else {
+	/// Reads the candidates of `name` (all of them, or the `unread` ones of an
+	/// earlier partial `resume`) chunk by chunk until all are read or `deadline`
+	/// has passed (after at least one chunk).
+	fn spelling_blocking(
+		&self,
+		name: &str,
+		resume: Option<Arc<SpellingSet>>,
+		deadline: Option<Instant>,
+	) -> Result<SpellingSet> {
+		let runs = identifier_runs(name);
+		let Some(simple) = runs.last().map(|run| run.to_string()) else {
 			return Ok(SpellingSet::default());
 		};
-		let wanted: HashSet<&[u8]> = runs.iter().map(String::as_bytes).collect();
-		let paths: Vec<(FileId, String)> = hits
-			.into_iter()
-			.filter_map(|id| Some((id, self.path_of(id)?)))
-			.collect();
+		let wanted: HashSet<&[u8]> = runs.iter().map(|run| run.as_bytes()).collect();
+		let (mut pending, mut found): (Vec<FileId>, Vec<(FileId, bool)>) = match resume {
+			Some(set) => {
+				let declaring: HashSet<FileId> = set.declaring.iter().copied().collect();
+				let found = set.files.iter().map(|id| (*id, declaring.contains(id))).collect();
+				(set.unread.clone(), found)
+			}
+			None => (self.filter_hits(&[name])?.0, Vec::new()),
+		};
+		let mut next = 0;
+		let mut chunks = 0;
+		while next < pending.len() {
+			let out_of_time = deadline.is_some_and(|deadline| Instant::now() >= deadline);
+			if chunks > 0 && out_of_time {
+				break;
+			}
+			let end = (next + SCAN_CHUNK).min(pending.len());
+			found.extend(self.scan_spelling_chunk(&pending[next..end], &wanted, simple.as_bytes())?);
+			next = end;
+			chunks += 1;
+		}
+		let unread = pending.split_off(next);
+		found.sort_by_cached_key(|(id, _)| self.path_of(*id));
+		Ok(SpellingSet {
+			declaring: found
+				.iter()
+				.filter(|(_, declares)| *declares)
+				.map(|(id, _)| *id)
+				.collect(),
+			files: found.into_iter().map(|(id, _)| id).collect(),
+			unread,
+		})
+	}
+
+	fn scan_spelling_chunk(
+		&self,
+		ids: &[FileId],
+		wanted: &HashSet<&[u8]>,
+		simple: &[u8],
+	) -> Result<Vec<(FileId, bool)>> {
+		let paths: Vec<(FileId, String)> = ids.iter().filter_map(|id| Some((*id, self.path_of(*id)?))).collect();
 		let pool = parse_pool().ok_or_else(|| anyhow!("The parse thread pool did not start"))?;
-		let mut found: Vec<(FileId, String, bool)> = pool.install(|| {
+		Ok(pool.install(|| {
 			paths
 				.into_par_iter()
 				.filter_map(|(id, path)| {
@@ -1199,20 +1323,11 @@ impl CodeIndex {
 						if !read_capped_into(&full_path, buffer) {
 							return None;
 						}
-						scan_spelling(buffer, &wanted, simple.as_bytes()).map(|declares| (id, path, declares))
+						scan_spelling(buffer, wanted, simple).map(|declares| (id, declares))
 					})
 				})
 				.collect()
-		});
-		found.sort_unstable_by(|a, b| a.1.cmp(&b.1));
-		Ok(SpellingSet {
-			declaring: found
-				.iter()
-				.filter(|(_, _, declares)| *declares)
-				.map(|(id, _, _)| *id)
-				.collect(),
-			files: found.into_iter().map(|(id, _, _)| id).collect(),
-		})
+		}))
 	}
 
 	/// The extracted data of a file, parsed on a miss. A changed file has a
@@ -1416,7 +1531,7 @@ impl CodeIndex {
 				state.examined.insert(id, stamp);
 			}
 		}
-		self.recharge_table(&mut state);
+		self.charge_or_drop(&mut state, |state| state.examined.clear());
 	}
 
 	/// Reserve `bytes` of the budget, evicting the least recently used parsed
@@ -1476,68 +1591,152 @@ impl CodeIndex {
 
 	/// The files with a line that holds the whole identifier `token` and may
 	/// be an import (or parent-type line) in the file's language, in path
-	/// order. Cached until a file changes.
-	pub(super) async fn marked_lines(self: &Arc<Self>, token: &str, kind: LineKind) -> Result<Arc<Vec<FileId>>> {
+	/// order. The candidate files are read in chunks until `deadline`; the
+	/// ones not read yet come back in `unscanned`, and a repeat goes on with
+	/// those. A call always reads one chunk, so repeating gets further.
+	/// Cached until a file changes.
+	pub(super) async fn marked_lines(
+		self: &Arc<Self>,
+		token: &str,
+		kind: LineKind,
+		deadline: Option<Instant>,
+	) -> Result<MarkedScan> {
 		let key = (token.to_string(), kind);
-		let generation = {
-			let state = lock(&self.state);
-			if let Some(files) = state.marked.get(&key) {
-				return Ok(files.clone());
-			}
-			state.generation
-		};
-		let this = self.clone();
 		let name = token.to_string();
-		let files = Arc::new(blocking(move || this.marked_lines_blocking(&name, kind)).await?);
-		let mut state = lock(&self.state);
-		if state.generation == generation {
-			if state.marked.len() >= MAX_CACHED_LOOKUPS {
-				state.marked.clear();
-			}
-			state.marked.insert(key, files.clone());
-			self.recharge_table(&mut state);
-		}
-		Ok(files)
+		self.cached_marked(key, move |this, resume| {
+			this.marked_lines_blocking(&name, kind, resume, deadline)
+		})
+		.await
 	}
 
 	/// The files among the ones that spell `name` with a line that holds the
 	/// identifier `token` and may be an import (or parent-type line): only
 	/// those files are read, so it is cheap even if `token` is spelled
-	/// everywhere. Cached with the other line lookups until a file changes.
+	/// everywhere. Partial and cached like `marked_lines`.
 	pub(super) async fn marked_among(
 		self: &Arc<Self>,
 		name: &str,
 		spelling: &[FileId],
 		token: &str,
 		kind: LineKind,
-	) -> Result<Arc<Vec<FileId>>> {
+		deadline: Option<Instant>,
+	) -> Result<MarkedScan> {
 		// A key no plain token can have: identifiers hold no `>`.
 		let key = (format!("{name}>{token}"), kind);
-		let generation = {
+		let candidates = spelling.to_vec();
+		let token = token.to_string();
+		self.cached_marked(key, move |this, resume| {
+			let start = resume.unwrap_or(ScanProgress {
+				found: Vec::new(),
+				pending: candidates,
+			});
+			this.marked_chunks(start, &token, kind, deadline)
+		})
+		.await
+	}
+
+	/// Runs `scan` on the files found and the candidates left by an earlier
+	/// partial call (or `None` on a first call) and caches what it returns.
+	/// Resuming works on the stored candidate ids themselves, not on a position
+	/// in a list that a refresh in between may have changed.
+	async fn cached_marked(
+		self: &Arc<Self>,
+		key: (String, LineKind),
+		scan: impl FnOnce(&Self, Option<ScanProgress>) -> Result<ScanProgress> + Send + 'static,
+	) -> Result<MarkedScan> {
+		let (generation, resume) = {
 			let state = lock(&self.state);
-			if let Some(files) = state.marked.get(&key) {
-				return Ok(files.clone());
-			}
-			state.generation
+			let resume = match state.marked.get(&key) {
+				Some(Marked { files, unscanned: None }) => {
+					return Ok(MarkedScan {
+						files: files.clone(),
+						unscanned: Vec::new(),
+					})
+				}
+				Some(Marked {
+					files,
+					unscanned: Some(left),
+				}) => Some(ScanProgress {
+					found: files.to_vec(),
+					pending: left.to_vec(),
+				}),
+				None => None,
+			};
+			(state.generation, resume)
 		};
 		let this = self.clone();
-		let ids = spelling.to_vec();
-		let token = token.to_string();
-		let files = Arc::new(blocking(move || this.marked_in(&ids, &token, kind)).await?);
+		let progress = blocking(move || scan(this.as_ref(), resume)).await?;
+		let (files, unscanned) = (progress.found, progress.pending);
+		let files = Arc::new(files);
 		let mut state = lock(&self.state);
 		if state.generation == generation {
 			if state.marked.len() >= MAX_CACHED_LOOKUPS {
 				state.marked.clear();
 			}
-			state.marked.insert(key, files.clone());
-			self.recharge_table(&mut state);
+			state.marked.insert(
+				key.clone(),
+				Marked {
+					files: files.clone(),
+					unscanned: (!unscanned.is_empty()).then(|| Arc::new(unscanned.clone())),
+				},
+			);
+			self.charge_or_drop(&mut state, |state| {
+				state.marked.remove(&key);
+			});
 		}
-		Ok(files)
+		Ok(MarkedScan { files, unscanned })
 	}
 
-	fn marked_lines_blocking(&self, token: &str, kind: LineKind) -> Result<Vec<FileId>> {
-		let hits = self.filter_hits(&[token])?.0;
-		self.marked_in(&hits, token, kind)
+	/// The candidates of `token` are the files whose filter holds it, or the
+	/// ones an earlier partial call left. Returns the files found so far in
+	/// path order and the candidates left.
+	fn marked_lines_blocking(
+		&self,
+		token: &str,
+		kind: LineKind,
+		resume: Option<ScanProgress>,
+		deadline: Option<Instant>,
+	) -> Result<ScanProgress> {
+		let start = match resume {
+			Some(progress) => progress,
+			None => ScanProgress {
+				found: Vec::new(),
+				pending: self.filter_hits(&[token])?.0,
+			},
+		};
+		self.marked_chunks(start, token, kind, deadline)
+	}
+
+	/// Reads the pending candidates chunk by chunk until all are read or
+	/// `deadline` has passed (after at least one chunk), adding the matches to
+	/// the files found.
+	fn marked_chunks(
+		&self,
+		start: ScanProgress,
+		token: &str,
+		kind: LineKind,
+		deadline: Option<Instant>,
+	) -> Result<ScanProgress> {
+		let ScanProgress { mut found, mut pending } = start;
+		let mut next = 0;
+		let mut chunks = 0;
+		while next < pending.len() {
+			let out_of_time = deadline.is_some_and(|deadline| Instant::now() >= deadline);
+			if chunks > 0 && out_of_time {
+				break;
+			}
+			let end = (next + SCAN_CHUNK).min(pending.len());
+			found.extend(self.marked_in(&pending[next..end], token, kind)?);
+			next = end;
+			chunks += 1;
+		}
+		let unscanned = pending.split_off(next);
+		found.sort_by_cached_key(|id| self.path_of(*id));
+		found.dedup();
+		Ok(ScanProgress {
+			found,
+			pending: unscanned,
+		})
 	}
 
 	fn marked_in(&self, hits: &[FileId], token: &str, kind: LineKind) -> Result<Vec<FileId>> {
@@ -1568,6 +1767,29 @@ impl CodeIndex {
 		kept.sort_unstable_by(|a, b| a.1.cmp(b.1));
 		Ok(kept.into_iter().map(|(id, _)| id).collect())
 	}
+}
+
+/// Candidate files read between two looks at the clock.
+const SCAN_CHUNK: usize = 400;
+
+/// A cached line lookup: complete (`unscanned` is `None`) or the files found
+/// so far with the candidate files not read yet.
+pub(super) struct Marked {
+	files: Arc<Vec<FileId>>,
+	unscanned: Option<Arc<Vec<FileId>>>,
+}
+
+/// Where a line scan stands: the files found so far and the candidates not
+/// read yet.
+struct ScanProgress {
+	found: Vec<FileId>,
+	pending: Vec<FileId>,
+}
+
+/// What `marked_lines` found and the candidate files it did not read.
+pub(super) struct MarkedScan {
+	pub(super) files: Arc<Vec<FileId>>,
+	pub(super) unscanned: Vec<FileId>,
 }
 
 /// Which line hint `marked_lines` checks.
@@ -1656,14 +1878,21 @@ const DECLARATION_KEYWORDS: [&str; 26] = [
 /// that follows later on the line (`func (s *Server) Name(`).
 const CALLABLE_KEYWORDS: [&str; 4] = ["fn", "def", "func", "function"];
 
+/// Bytes before an occurrence the declaration check reads: a minified file
+/// is one line of megabytes, and scanning back to the line start for every
+/// occurrence would be quadratic.
+const DECLARATION_LOOKBACK_BYTES: usize = 200;
+
 /// Whether the occurrence of the name at `start..end` looks like the
 /// declaration of it. A guess that only orders the files to parse: a wrong
 /// answer costs a repeat of the query, never a missed result.
 fn looks_like_declaration(bytes: &[u8], start: usize, end: usize) -> bool {
-	let line_start = bytes[..start]
-		.iter()
-		.rposition(|byte| *byte == b'\n')
-		.map_or(0, |index| index + 1);
+	let window_start = start.saturating_sub(DECLARATION_LOOKBACK_BYTES);
+	// Whether `prefix` is the whole text before the name on its line.
+	let (line_start, whole_line) = match bytes[window_start..start].iter().rposition(|byte| *byte == b'\n') {
+		Some(index) => (window_start + index + 1, true),
+		None => (window_start, window_start == 0),
+	};
 	let prefix = &bytes[line_start..start];
 	let before_name = prefix.trim_ascii_end();
 	let before_name = before_name.strip_suffix(b"*").unwrap_or(before_name).trim_ascii_end();
@@ -1679,9 +1908,10 @@ fn looks_like_declaration(bytes: &[u8], start: usize, end: usize) -> bool {
 	if !opens_parameters {
 		return false;
 	}
-	let starts_flush = prefix
-		.first()
-		.is_some_and(|byte| is_identifier_byte(*byte) || *byte == b'*');
+	let starts_flush = whole_line
+		&& prefix
+			.first()
+			.is_some_and(|byte| is_identifier_byte(*byte) || *byte == b'*');
 	starts_flush
 		|| prefix
 			.split(|byte| !is_identifier_byte(*byte))
@@ -1714,6 +1944,8 @@ pub(super) struct SpellingSet {
 	pub(super) files: Vec<FileId>,
 	/// The files among them with a line that looks like a declaration.
 	pub(super) declaring: Vec<FileId>,
+	/// Candidate files not read yet when the clock ran out; a repeat reads them.
+	pub(super) unread: Vec<FileId>,
 }
 
 fn contains_identifier(line: &[u8], token: &[u8]) -> bool {
@@ -1783,6 +2015,9 @@ impl IndexLimits {
 struct Slot {
 	index: Arc<CodeIndex>,
 	last_used: Instant,
+	/// Memory in use when the root was first seen unusable (its filters did
+	/// not fit): it can fit only once something else gave memory back.
+	used_when_unfit: Option<usize>,
 }
 
 #[derive(Default)]
@@ -1835,8 +2070,27 @@ impl CodeIndexes {
 		let mut registry = lock(&self.registry);
 		let now = Instant::now();
 		if let Some(slot) = registry.roots.get_mut(root) {
+			if slot.index.is_usable() {
+				slot.last_used = now;
+				return slot.index.clone();
+			}
+			// A root that did not fit is not kept alive by use: it is built
+			// again once memory was freed, and until then the idle sweeper
+			// can drop it.
+			let used = self.budget.used.load(Ordering::Acquire);
+			let used_when_unfit = *slot.used_when_unfit.get_or_insert(used);
+			if used >= used_when_unfit {
+				return slot.index.clone();
+			}
+			let fresh = Arc::new(CodeIndex::new(root.to_path_buf(), self.budget.clone()));
+			lock(&self.budget.peers).push(Arc::downgrade(&fresh));
+			let replaced = std::mem::replace(&mut slot.index, fresh.clone());
 			slot.last_used = now;
-			return slot.index.clone();
+			slot.used_when_unfit = None;
+			drop(registry);
+			// Dropping an index trims the allocator: not under the registry lock.
+			drop(replaced);
+			return fresh;
 		}
 		let index = Arc::new(CodeIndex::new(root.to_path_buf(), self.budget.clone()));
 		lock(&self.budget.peers).push(Arc::downgrade(&index));
@@ -1845,8 +2099,10 @@ impl CodeIndexes {
 			Slot {
 				index: index.clone(),
 				last_used: now,
+				used_when_unfit: None,
 			},
 		);
+		let mut evicted: Vec<Slot> = Vec::new();
 		while registry.roots.len() > self.limits.max_roots {
 			let oldest = registry
 				.roots
@@ -1854,15 +2110,17 @@ impl CodeIndexes {
 				.filter(|(key, _)| key.as_path() != root)
 				.min_by_key(|(_, slot)| slot.last_used)
 				.map(|(key, _)| key.clone());
-			match oldest {
-				Some(key) => registry.roots.remove(&key),
+			match oldest.and_then(|key| registry.roots.remove(&key)) {
+				Some(slot) => evicted.push(slot),
 				None => break,
-			};
+			}
 		}
 		if !registry.sweeper_running {
 			registry.sweeper_running = true;
 			self.spawn_sweeper();
 		}
+		drop(registry);
+		drop(evicted);
 		index
 	}
 
@@ -1870,15 +2128,31 @@ impl CodeIndexes {
 	/// the idle roots and ends when none is left.
 	fn spawn_sweeper(&self) {
 		let registry = self.registry.clone();
+		let budget = self.budget.clone();
 		let idle = self.limits.idle;
 		let period = (idle / SWEEPS_PER_IDLE_PERIOD).max(Duration::from_millis(1));
 		tokio::spawn(async move {
 			loop {
 				tokio::time::sleep(period).await;
-				let mut registry = lock(&registry);
-				registry.roots.retain(|_, slot| slot.last_used.elapsed() < idle);
-				if registry.roots.is_empty() {
-					registry.sweeper_running = false;
+				let (dropped, none_left) = {
+					let mut registry = lock(&registry);
+					let idle_keys: Vec<PathBuf> = registry
+						.roots
+						.iter()
+						.filter(|(_, slot)| slot.last_used.elapsed() >= idle)
+						.map(|(key, _)| key.clone())
+						.collect();
+					let dropped: Vec<Slot> = idle_keys.iter().filter_map(|key| registry.roots.remove(key)).collect();
+					let none_left = registry.roots.is_empty();
+					if none_left {
+						registry.sweeper_running = false;
+					}
+					(dropped, none_left)
+				};
+				// Dropping an index trims the allocator: not under the lock.
+				drop(dropped);
+				lock(&budget.peers).retain(|peer| peer.strong_count() > 0);
+				if none_left {
 					return;
 				}
 			}

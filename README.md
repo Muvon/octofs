@@ -23,7 +23,7 @@ MCP Registry: [`io.github.Muvon/octofs`](https://registry.modelcontextprotocol.i
 
 ## Overview
 
-Octofs is a single binary that gives an AI assistant two things over MCP: tools to read, search, edit and copy files, run shell commands and reach remote hosts over SSH, and tools to explore code — file outlines, syntax-tree search and a `symbol` tool that finds definitions, references, callers, callees, imports and type hierarchies. Code-navigation tools often need a separate indexing step, and an index can fall behind files edited by another program. Octofs computes the answers from the files on disk, using an in-memory table that is built on the first query and refreshed from file metadata on every call, so there is no indexing command and no database. Measured: the first symbol query of a process builds that table in 1.1 s on the 67,000-file Linux tree on an idle 12-core machine; after that a query parses about 10 MB of source per second on 6 threads and stops after 800 ms, and a name too common to finish in that time gets a partial answer that a repeated query extends.
+Octofs is a single binary that gives an AI assistant two things over MCP: tools to read, search, edit and copy files, run shell commands and reach remote hosts over SSH, and tools to explore code — file outlines, syntax-tree search and a `symbol` tool that finds definitions, references, callers, callees, imports and type hierarchies. Code-navigation tools often need a separate indexing step, and an index can fall behind files edited by another program. Octofs computes the answers from the files on disk, using an in-memory table that is built on the first query and refreshed from file metadata on every call, so there is no indexing command and no database. Measured on a 12-core Linux box shared with other jobs: the first symbol query of a process builds that table once, in about 1.1 s on the 67,000-file Linux tree on an idle machine; after that a query parses about 10 MB of source per second on 6 threads and stops after 800 ms, and a name too common to finish in that time gets a partial answer that a repeated query extends. A repeated query with a complete answer took 3 to 221 ms across the benchmark repositories.
 
 ## Filesystem tools
 
@@ -66,7 +66,13 @@ Rust, Python, JavaScript, TypeScript, Go, Java, C/C++, PHP, Bash, Ruby, Lua, JSO
 - A query parses at most 600 files and runs at most 800 ms. When a name is spelled in more files than that, the answer covers the files examined, and a closing line says to repeat the query to examine the rest.
 - A name that is spelled in more than 3000 files needs a `path` or an `Owner::name` form; without one it is not traced.
 - A list shows at most 100 results, most certain first.
-- All parsed files share one 160 MB memory ceiling. The `path` relation builds a graph of the whole workdir, which takes seconds on a large repository, covers at most 20,000 files or 256 MB of source, and stays in memory (about 1.5 GB on the VS Code repository).
+- Re-exports are followed for `callers`, `callees` and `path` (Python `__init__.py` re-exports and `import *`, JavaScript and TypeScript `export ... from`, up to 3 hops) and for Rust `pub use`. Re-exports in the other languages are not followed.
+- A call to a name with several definitions in one file (a C function under `#ifdef` and `#else`, for example) leads to each of them, marked `(guess)`.
+- In C and C++, code under preprocessor shapes the parser cannot read can hide a call, so an empty or "No path" answer covers only what the parser recognised.
+- The `path` relation searches from both ends one level at a time within the same 600-file and 800 ms budget; a search that was cut says so and repeating the query continues it. "No path ... within depth N" appears only when the search finished.
+- Import resolution does not read `tsconfig.json`/`jsconfig.json` `paths` (aliased imports count as external), `go.mod` or `Cargo.toml`.
+- A call on a receiver the tool cannot identify, such as `getRepo().save()`, is resolved by name only and shown as `(guess)`.
+- The index holds at most 160 MB of data. Peak resident memory in the benchmark was 280 to 320 MB on the Linux tree and 38 MB on tokio, on a 12-core Linux box shared with other jobs; figures per repository are in [doc/code-exploration.md](doc/code-exploration.md#measurements).
 
 ---
 
@@ -689,7 +695,7 @@ octofs/
 │   │   │   ├── symbols.rs       # `symbol` tool: definitions, references, parameter validation
 │   │   │   ├── code_index.rs    # Per-workdir in-memory code index: name filters, parsed-file cache
 │   │   │   ├── graph_scoped.rs  # `symbol` graph relations answered on the code index
-│   │   │   ├── graph.rs         # `symbol` `path` relation: whole-workdir graph cache, rendering
+│   │   │   ├── graph.rs         # `symbol` graph relations: parameters, rendering
 │   │       ├── ast.rs           # AST-pattern search mode (ast: true)
 │   │       ├── shell.rs         # Command execution, background, process cleanup
 │   │       ├── workdir.rs       # Working directory management

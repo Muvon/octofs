@@ -56,7 +56,7 @@ fn scoped_with_budget(
 		build(index, relation, name, None, scope, depth, budget).await
 	});
 	match answer.unwrap() {
-		Answer::Graph { snapshot, notices } => (render(&snapshot, relation, name, scope, depth), notices),
+		Answer::Graph { snapshot, notices, .. } => (render(&snapshot, relation, name, scope, depth), notices),
 		Answer::Message(text) => panic!("{relation:?} {name:?} was not traced: {text}"),
 	}
 }
@@ -94,6 +94,7 @@ fn render(
 fn whole_repository(root: &Path) -> GraphSnapshot {
 	let files: Vec<SourceFile> = walk_supported(root)
 		.unwrap()
+		.files
 		.into_iter()
 		.map(|(path, language)| SourceFile {
 			contents: std::fs::read_to_string(root.join(&path)).unwrap(),
@@ -144,7 +145,7 @@ fn scoped_path(
 		build(index, GraphRelation::Path, Some(name), Some(to), scope, depth, budget).await
 	});
 	match answer.unwrap() {
-		Answer::Graph { snapshot, notices } => (
+		Answer::Graph { snapshot, notices, .. } => (
 			render_path(&snapshot, name, to, scope, depth, !notices.is_empty()),
 			notices,
 		),
@@ -592,10 +593,53 @@ fn a_chain_of_two_re_exports_leads_callers_to_the_definition() {
 
 #[test]
 #[serial]
+fn a_c_header_with_two_definitions_of_a_name_gives_callers_and_a_path_through_both() {
+	// The shape of Linux `list.h`: an attribute macro before the return
+	// type, `new` as a parameter name, and the same function defined on both
+	// sides of an `#ifdef`.
+	let header = "#ifdef CONFIG_DEBUG_LIST\nstatic __always_inline bool __list_add_valid(struct list_head *new,\n\t\t\t\t\t     struct list_head *prev)\n{\n\treturn true;\n}\n#else\nstatic inline bool __list_add_valid(struct list_head *new,\n\t\t\t\tstruct list_head *prev)\n{\n\treturn true;\n}\n#endif\n\nstatic __always_inline void __list_add(struct list_head *new, struct list_head *prev)\n{\n\tif (!__list_add_valid(new, prev))\n\t\treturn;\n}\n\nstatic inline void list_add_tail(struct list_head *new, struct list_head *head)\n{\n\t__list_add(new, head->prev);\n}\n";
+	let root = project(&[("include/list.h", header), NOISE]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("__list_add_valid"),
+		None,
+		1,
+		&["include/list.h:15  function  __list_add"],
+	);
+	assert_same(
+		root.path(),
+		GraphRelation::Callees,
+		Some("__list_add"),
+		None,
+		1,
+		&[
+			"include/list.h:2  function  __list_add_valid",
+			"include/list.h:8  function  __list_add_valid",
+		],
+	);
+	assert_same_path(
+		root.path(),
+		"list_add_tail",
+		"__list_add_valid",
+		5,
+		&[
+			"include/list.h:21 list_add_tail",
+			"include/list.h:2 __list_add_valid",
+			"include/list.h:8 __list_add_valid",
+		],
+	);
+}
+
+#[test]
+#[serial]
 fn rust_pub_use_keeps_its_callers() {
 	let root = project(&[
 		("src/util.rs", "pub fn helper() {}\n"),
-		("src/lib.rs", "pub mod util;\npub use util::helper;\n"),
+		// A second `helper` keeps the unique-name fallback from answering:
+		// only the plain `use` binding can pick the right one.
+		("src/other.rs", "pub fn helper() {}\n"),
+		("src/lib.rs", "pub mod util;\npub mod other;\npub use util::helper;\n"),
 		("src/main.rs", "use crate::helper;\n\nfn main() {\n\thelper();\n}\n"),
 		NOISE,
 	]);
@@ -698,7 +742,11 @@ fn a_callee_name_spelled_everywhere_resolves_through_the_imports_of_the_caller()
 fn files_are_found_by_their_name_and_their_directory() {
 	let tokens = file_tokens("src/net/http/server.go");
 	assert_eq!(tokens, BTreeSet::from(["server".to_string(), "http".to_string()]));
-	assert_eq!(file_tokens("lib.rs"), BTreeSet::from(["lib".to_string()]));
+	// A crate root is also what `crate::` names in the importers.
+	assert_eq!(
+		file_tokens("lib.rs"),
+		BTreeSet::from(["lib".to_string(), "crate".to_string()])
+	);
 	assert_eq!(file_tokens("src/foo.d.ts"), BTreeSet::from(["foo".to_string()]));
 	assert_eq!(file_tokens("src/common/util.ts"), BTreeSet::from(["util".to_string()]));
 	assert_eq!(
@@ -813,7 +861,7 @@ fn the_import_line_filter_keeps_importers_and_drops_other_mentions() {
 		let index = CodeIndexes::global().index(root.path());
 		let found = block_on(async {
 			index.refresh().await.unwrap();
-			index.marked_lines("util", LineKind::Import).await.unwrap()
+			index.marked_lines("util", LineKind::Import, None).await.unwrap().files
 		});
 		let paths: Vec<String> = found.iter().filter_map(|id| index.path_of(*id)).collect();
 		assert_eq!(paths, vec![importer_path], "{extension}");
@@ -830,7 +878,7 @@ fn a_grouped_import_keeps_the_continuation_line_that_holds_only_the_name() {
 	let index = CodeIndexes::global().index(root.path());
 	let found = block_on(async {
 		index.refresh().await.unwrap();
-		index.marked_lines("util", LineKind::Import).await.unwrap()
+		index.marked_lines("util", LineKind::Import, None).await.unwrap().files
 	});
 	let paths: Vec<String> = found.iter().filter_map(|id| index.path_of(*id)).collect();
 	assert_eq!(paths, vec!["pkg/importer.py".to_string()]);
@@ -884,6 +932,152 @@ fn an_unnarrowed_name_spelled_past_the_trace_limit_is_not_traced_and_nothing_is_
 	assert!(text.contains("spelled in about 3051 files"), "{text}");
 	assert!(text.contains("`path`") && text.contains("`Owner::name`"), "{text}");
 	assert_eq!(CodeIndexes::global().index(root.path()).parse_count(), 0);
+}
+
+#[test]
+#[serial]
+fn a_definition_search_stopped_by_the_cap_is_partial_and_repeating_finds_the_definition() {
+	// 700 files spell the name and none looks like a declaration (the
+	// definition is an indented method), so the definition in file 650 lies
+	// past the 600-file cap of one call.
+	let mut files: Vec<(String, String)> = Vec::new();
+	for n in 0..700 {
+		let contents = if n == 650 {
+			"export class K {\n  shared() {}\n}\n".to_string()
+		} else {
+			format!("export const v{n} = shared;\n")
+		};
+		files.push((format!("src/m{n:04}.ts"), contents));
+	}
+	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+	let root = project(&borrowed);
+
+	let (first, notices) = scoped(root.path(), GraphRelation::Callers, Some("shared"), None, 1);
+	assert!(!notices.is_empty(), "the cut was not recorded: {first}");
+	assert!(notices.join("\n").contains("700 candidate files"), "{notices:?}");
+
+	let (_, notices) = scoped(root.path(), GraphRelation::Callers, Some("shared"), None, 1);
+	assert!(notices.is_empty(), "{notices:?}");
+}
+
+#[test]
+#[serial]
+fn a_path_end_not_found_within_the_cap_is_partial_not_a_final_negative() {
+	// `shared` is spelled in 700 files; its only definition (an indented
+	// method, so it does not look like one) is past what one call examines.
+	let mut files: Vec<(String, String)> = Vec::new();
+	for n in 0..700 {
+		let contents = if n == 650 {
+			"export class K {\n  shared() {}\n}\n".to_string()
+		} else {
+			format!("export const v{n} = shared;\n")
+		};
+		files.push((format!("src/m{n:04}.ts"), contents));
+	}
+	files.push(("src/start.ts".to_string(), "export function start() {}\n".to_string()));
+	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+	let root = project(&borrowed);
+	let run = || {
+		let answer = block_on(async {
+			let index = open(root.path()).await?;
+			build(index, GraphRelation::Path, Some("start"), Some("shared"), None, 5, None).await
+		})
+		.unwrap();
+		let Answer::Graph { notices, .. } = answer else {
+			panic!("expected a graph");
+		};
+		notices
+	};
+	assert!(!run().is_empty(), "the unfinished search for `to` was not reported");
+}
+
+#[test]
+#[serial]
+fn importers_of_a_file_named_by_a_token_spelled_everywhere_are_still_searched() {
+	let root = crowd(MAX_FILES_SPELLING_TO_TRACE + 50);
+	let answer = block_on(async {
+		let index = open(root.path()).await?;
+		build(
+			index,
+			GraphRelation::ImportedBy,
+			None,
+			None,
+			Some("src/def.ts"),
+			1,
+			None,
+		)
+		.await
+	})
+	.unwrap();
+	let Answer::Graph { info, snapshot, .. } = answer else {
+		panic!("expected a graph");
+	};
+	// The token is searched like any other: the files that import `def.ts`
+	// are found, the same as when the token is rare.
+	assert!(info.is_empty(), "{info:?}");
+	assert!(
+		snapshot
+			.graph
+			.relationships
+			.iter()
+			.any(|edge| edge.target == "src/def.ts" && edge.relation == crate::structural::graph::RelationType::Imports),
+		"no importer was found"
+	);
+}
+
+#[test]
+#[serial]
+fn an_import_scan_that_runs_out_of_time_is_partial_and_repeating_completes_it() {
+	// The stem `stem` is spelled in more files than one scan chunk holds.
+	let mut files: Vec<(String, String)> = (0..1000)
+		.map(|n| (format!("src/m{n:04}.ts"), "// stem\n".to_string()))
+		.collect();
+	files.push(("src/stem.ts".to_string(), "export const x = 1;\n".to_string()));
+	files.push(("src/user_a.ts".to_string(), "import { x } from './stem';\n".to_string()));
+	files.push(("src/user_z.ts".to_string(), "import { x } from './stem';\n".to_string()));
+	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+	let root = project(&borrowed);
+
+	let run = || {
+		let answer = block_on(async {
+			let index = open(root.path()).await?;
+			build(
+				index,
+				GraphRelation::ImportedBy,
+				None,
+				None,
+				Some("src/stem.ts"),
+				1,
+				Some(Duration::ZERO),
+			)
+			.await
+		})
+		.unwrap();
+		let Answer::Graph { snapshot, notices, .. } = answer else {
+			panic!("expected a graph");
+		};
+		let importers = snapshot
+			.graph
+			.relationships
+			.iter()
+			.filter(|edge| {
+				edge.target == "src/stem.ts" && edge.relation == crate::structural::graph::RelationType::Imports
+			})
+			.count();
+		(notices, importers)
+	};
+
+	let (first_notices, first_importers) = run();
+	assert!(!first_notices.is_empty(), "the unread files were not reported");
+	let (mut notices, mut importers) = (first_notices, first_importers);
+	for _ in 0..8 {
+		if notices.is_empty() {
+			break;
+		}
+		(notices, importers) = run();
+	}
+	assert!(notices.is_empty(), "repeating did not finish: {notices:?}");
+	assert_eq!(importers, 2, "both importers are found once the scan completes");
 }
 
 #[test]

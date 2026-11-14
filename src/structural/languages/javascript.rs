@@ -18,6 +18,7 @@
 
 use super::{parse_call_target, path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
 use tree_sitter::Node;
 
 /// What closes the module path of a JavaScript or TypeScript import.
@@ -70,6 +71,7 @@ impl Language for JavaScript {
 			"function_declaration",
 			"method_definition",
 			"arrow_function",
+			"function_expression",
 			"class_declaration",
 		]
 	}
@@ -79,16 +81,8 @@ impl Language for JavaScript {
 	}
 
 	fn extract_declaration_name(&self, node: Node, contents: &str) -> Option<String> {
-		if node.kind() == "arrow_function" {
-			// An arrow function's name is the variable it is assigned to.
-			let parent = node.parent()?;
-			if parent.kind() != "variable_declarator" {
-				return None;
-			}
-			return parent
-				.child_by_field_name("name")
-				.and_then(|name| name.utf8_text(contents.as_bytes()).ok())
-				.map(str::to_string);
+		if matches!(node.kind(), "arrow_function" | "function_expression") {
+			return function_value_name(node, contents);
 		}
 		super::extract_symbol_by_kinds(node, contents, &["identifier", "name"])
 	}
@@ -113,10 +107,23 @@ impl Language for JavaScript {
 					}
 				}
 			}
+			"call_expression" => imports.extend(dynamic_import_source(node, contents)),
 			_ => {}
 		}
 
 		(imports, exports)
+	}
+
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		import_bindings(node, contents, imports)
+	}
+
+	fn default_export_name(&self, node: Node, contents: &str) -> Option<String> {
+		default_export_name(node, contents)
+	}
+
+	fn is_directory_index(&self, path: &str) -> bool {
+		is_index_file(path)
 	}
 
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
@@ -158,6 +165,226 @@ impl Language for JavaScript {
 			resolve_module_import(import_path, all_files)
 		}
 	}
+}
+
+/// The name an arrow function or function expression takes from where its
+/// value is stored: `const f = () => {}`, a class field `handle = () => {}`,
+/// an object property `{ run: function () {} }` or an export / prototype
+/// assignment (`exports.f = () => {}`, `Foo.prototype.m = function () {}`).
+/// Anything else (an argument, a returned value) is anonymous.
+pub(crate) fn function_value_name(node: Node, contents: &str) -> Option<String> {
+	let parent = node.parent()?;
+	let (name_field, value_field) = match parent.kind() {
+		"variable_declarator" => (parent.child_by_field_name("name"), "value"),
+		"field_definition" | "public_field_definition" => (
+			parent
+				.child_by_field_name("property")
+				.or_else(|| parent.child_by_field_name("name")),
+			"value",
+		),
+		"pair" => (
+			parent
+				.child_by_field_name("key")
+				.filter(|key| matches!(key.kind(), "property_identifier" | "identifier")),
+			"value",
+		),
+		"assignment_expression" => (
+			parent
+				.child_by_field_name("left")
+				.filter(|left| is_export_or_prototype_target(*left, contents))
+				.and_then(|left| left.child_by_field_name("property")),
+			"right",
+		),
+		_ => (None, "value"),
+	};
+	let name_field = name_field?;
+	let is_the_value = parent
+		.child_by_field_name(value_field)
+		.is_some_and(|value| value.id() == node.id());
+	if !is_the_value {
+		return None;
+	}
+	name_field.utf8_text(contents.as_bytes()).ok().map(str::to_string)
+}
+
+/// `exports.f`, `module.exports.f` and `Foo.prototype.m`: the places a
+/// function assigned to a property is a symbol of the file.
+fn is_export_or_prototype_target(left: Node, contents: &str) -> bool {
+	if left.kind() != "member_expression" {
+		return false;
+	}
+	let Some(object) = left.child_by_field_name("object") else {
+		return false;
+	};
+	let Ok(text) = object.utf8_text(contents.as_bytes()) else {
+		return false;
+	};
+	text == "exports" || text == "module.exports" || text.ends_with(".prototype")
+}
+
+/// Whether the file is an `index` file: importing its directory names it.
+/// Shared with TypeScript.
+pub(crate) fn is_index_file(path: &str) -> bool {
+	path.rsplit('/')
+		.next()
+		.and_then(|file_name| file_name.split('.').next())
+		== Some("index")
+}
+
+/// The name of `export default function name() {}`, `export default class
+/// Name {}` and `export default name;`.
+pub(crate) fn default_export_name(node: Node, contents: &str) -> Option<String> {
+	let mut cursor = node.walk();
+	let is_default = node.children(&mut cursor).any(|child| child.kind() == "default");
+	if !is_default {
+		return None;
+	}
+	let named = node
+		.child_by_field_name("declaration")
+		.and_then(|declaration| declaration.child_by_field_name("name"))
+		.or_else(|| {
+			node.child_by_field_name("value")
+				.filter(|value| value.kind() == "identifier")
+		})?;
+	named.utf8_text(contents.as_bytes()).ok().map(str::to_string)
+}
+
+/// The names an `import` statement or a `require` call binds, shared with
+/// TypeScript.
+pub(crate) fn import_bindings(node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+	let Some(path) = imports.first() else {
+		return Vec::new();
+	};
+	if node.kind() == "call_expression" {
+		return required_bindings(node, contents, path);
+	}
+	let Ok(text) = node.utf8_text(contents.as_bytes()) else {
+		return Vec::new();
+	};
+	let text = text.trim();
+	let mut bindings = Vec::new();
+	let clause = text
+		.trim_start_matches("import")
+		.split(" from ")
+		.next()
+		.unwrap_or_default()
+		.trim();
+	if clause == "export *" {
+		bindings.push(ImportBinding {
+			local_name: WILDCARD.to_string(),
+			imported_name: Some(WILDCARD.to_string()),
+			import_path: path.clone(),
+		});
+	}
+	// `import Foo from './foo'` and `import Foo, { a } from './foo'`: the
+	// default import is named after what the importer chose, which need not
+	// be what the file calls it, so it binds like a namespace.
+	let default_name = clause
+		.trim_start_matches("type ")
+		.split(',')
+		.next()
+		.unwrap_or_default()
+		.trim();
+	if text.starts_with("import")
+		&& !default_name.is_empty()
+		&& default_name
+			.chars()
+			.all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
+	{
+		bindings.push(ImportBinding {
+			local_name: default_name.to_string(),
+			imported_name: None,
+			import_path: path.clone(),
+		});
+	}
+	if let Some(alias) = clause.strip_prefix("* as ") {
+		bindings.push(ImportBinding {
+			local_name: alias.trim().to_string(),
+			imported_name: None,
+			import_path: path.clone(),
+		});
+	}
+	if let (Some(start), Some(end)) = (clause.find('{'), clause.rfind('}')) {
+		// `get` rather than a slice: a stray `}` before the `{` is
+		// malformed input, not a reason to panic.
+		for item in clause.get(start + 1..end).unwrap_or_default().split(',') {
+			let mut parts = item.trim().trim_start_matches("type ").split_whitespace();
+			let Some(imported) = parts.next() else {
+				continue;
+			};
+			let local = if parts.next() == Some("as") {
+				parts.next().unwrap_or(imported)
+			} else {
+				imported
+			};
+			bindings.push(ImportBinding {
+				local_name: local.to_string(),
+				imported_name: Some(imported.to_string()),
+				import_path: path.clone(),
+			});
+		}
+	}
+	bindings
+}
+
+/// `const x = require('./x')` and `const { a, b: c } = require('./x')`: the
+/// names sit on the declarator that holds the call.
+fn required_bindings(call: Node, contents: &str, path: &str) -> Vec<ImportBinding> {
+	let Some(pattern) = call
+		.parent()
+		.filter(|parent| parent.kind() == "variable_declarator")
+		.and_then(|declarator| declarator.child_by_field_name("name"))
+	else {
+		return Vec::new();
+	};
+	let pattern_text = pattern.utf8_text(contents.as_bytes()).unwrap_or_default().trim();
+	if pattern.kind() == "identifier" {
+		return vec![ImportBinding {
+			local_name: pattern_text.to_string(),
+			imported_name: None,
+			import_path: path.to_string(),
+		}];
+	}
+	if pattern.kind() != "object_pattern" {
+		return Vec::new();
+	}
+	let inner = pattern_text.trim_start_matches('{').trim_end_matches('}');
+	inner
+		.split(',')
+		.filter_map(|item| {
+			// `a`, `a: b` and `a = 1` all name the property `a`.
+			let imported = item.split([':', '=']).next().unwrap_or_default().trim();
+			let local = item.split_once(':').map_or(imported, |(_, renamed)| {
+				renamed.split('=').next().unwrap_or_default().trim()
+			});
+			(!imported.is_empty() && !local.is_empty()).then(|| ImportBinding {
+				local_name: local.to_string(),
+				imported_name: Some(imported.to_string()),
+				import_path: path.to_string(),
+			})
+		})
+		.collect()
+}
+
+/// The module of `require('./x')` or `import('./x')` when the argument is a
+/// string literal; a computed argument names no file.
+pub(crate) fn dynamic_import_source(node: Node, contents: &str) -> Option<String> {
+	if node.kind() != "call_expression" {
+		return None;
+	}
+	let function = node.child_by_field_name("function")?;
+	let loads_a_module = function.kind() == "import"
+		|| (function.kind() == "identifier" && function.utf8_text(contents.as_bytes()).ok() == Some("require"));
+	if !loads_a_module {
+		return None;
+	}
+	let argument = node.child_by_field_name("arguments")?.named_child(0)?;
+	if argument.kind() != "string" {
+		return None;
+	}
+	let text = argument.utf8_text(contents.as_bytes()).ok()?;
+	let module_path = text.trim_matches(|c| c == '\'' || c == '"');
+	(!module_path.is_empty()).then(|| module_path.to_string())
 }
 
 /// The callee of a `call_expression` or `new_expression`, shared with
@@ -238,13 +465,12 @@ pub(crate) fn parse_js_import_statement_full_path(import_text: &str) -> Option<V
 		None => cleaned.strip_prefix("import "),
 	}?;
 
-	let module_path = module_part
-		.trim()
-		.trim_start_matches('\'')
-		.trim_start_matches('"')
-		.trim_end_matches(';')
-		.trim_end_matches('\'')
-		.trim_end_matches('"');
+	// The specifier is the first quoted string of that part; what follows is
+	// an import attribute (`with { type: 'json' }`) or the closing `;`.
+	let module_part = module_part.trim();
+	let quote = module_part.chars().next().filter(|first| matches!(first, '\'' | '"'))?;
+	let inner = &module_part[1..];
+	let module_path = &inner[..inner.find(quote)?];
 	if module_path.is_empty() {
 		return None;
 	}

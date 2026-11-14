@@ -288,12 +288,21 @@ fn a_standard_library_import_never_matches_a_directory_that_merely_ends_with_its
 	let go = Go {};
 	let files = registry(&["cmd/main.go", "repos/repo.go", "vendor/ios/ios.go"]);
 	assert_eq!(go.resolve_import("os", "cmd/main.go", &files), None);
-	// A directory named exactly like the package does resolve.
-	let files = registry(&["cmd/main.go", "third_party/os/os.go"]);
+	// Only the Go source tree names such a directory: `src/os` or `os`.
+	let files = registry(&["cmd/main.go", "src/os/os.go"]);
 	assert_eq!(
 		go.resolve_import("os", "cmd/main.go", &files),
-		Some("third_party/os/os.go".to_string())
+		Some("src/os/os.go".to_string())
 	);
+	let files = registry(&["cmd/main.go", "src/net/http/server.go"]);
+	assert_eq!(
+		go.resolve_import("net/http", "cmd/main.go", &files),
+		Some("src/net/http/server.go".to_string())
+	);
+	// A project directory of the same name somewhere else is not the library.
+	let files = registry(&["cmd/main.go", "pkg/log/log.go", "internal/errors/errors.go"]);
+	assert_eq!(go.resolve_import("log", "cmd/main.go", &files), None);
+	assert_eq!(go.resolve_import("errors", "cmd/main.go", &files), None);
 }
 
 #[test]
@@ -415,4 +424,75 @@ fn build_graph_links_calls_imports_and_struct_embedding_across_files() {
 		RelationType::Extends
 	)
 	.is_some());
+}
+
+#[test]
+fn embedding_in_the_same_file_extends_the_embedded_type_and_never_itself() {
+	let graph = build_graph(vec![SourceFile {
+		path: "app/app.go".to_string(),
+		language: "go",
+		contents: "package app\n\ntype Logger struct{}\n\ntype Store interface{}\n\ntype Server struct {\n\tLogger\n}\n\ntype Cache struct {\n\t*Logger\n}\n\ntype Backend interface {\n\tStore\n\tClose() error\n}\n".to_string(),
+	}]);
+
+	assert!(edge(
+		&graph,
+		"app/app.go::Server",
+		"app/app.go::Logger",
+		RelationType::Extends
+	)
+	.is_some());
+	assert!(edge(&graph, "app/app.go::Cache", "app/app.go::Logger", RelationType::Extends).is_some());
+	assert!(edge(
+		&graph,
+		"app/app.go::Backend",
+		"app/app.go::Store",
+		RelationType::Extends
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"app/app.go::Logger",
+		"app/app.go::Logger",
+		RelationType::Extends
+	)
+	.is_none());
+}
+
+#[test]
+fn a_function_of_the_same_package_is_reached_without_an_import() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "go",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("p/helper.go", "package p\n\nfunc Helper() {}\n"),
+		file("q/helper.go", "package q\n\nfunc Helper() {}\n"),
+		file("p/run.go", "package p\n\nfunc Run() {\n\tHelper()\n}\n"),
+	]);
+	assert!(edge(&graph, "p/run.go::Run", "p/helper.go::Helper", RelationType::Calls).is_some());
+	assert!(edge(&graph, "p/run.go::Run", "q/helper.go::Helper", RelationType::Calls).is_none());
+}
+
+#[test]
+fn a_dotless_import_is_the_modules_own_package_when_a_go_mod_holds_the_rest() {
+	let go = Go {};
+	// `module myapp`: `myapp/internal/log` is the directory next to the go.mod.
+	let files = registry(&["go.mod", "cmd/main.go", "internal/log/log.go"]);
+	assert_eq!(
+		go.resolve_import("myapp/internal/log", "cmd/main.go", &files),
+		Some("internal/log/log.go".to_string())
+	);
+	// The standard-library `log` is no project directory.
+	assert_eq!(go.resolve_import("log", "cmd/main.go", &files), None);
+	// A go.mod in a subdirectory roots the module there.
+	let files = registry(&["svc/go.mod", "svc/cmd/main.go", "svc/store/store.go"]);
+	assert_eq!(
+		go.resolve_import("svc/store", "svc/cmd/main.go", &files),
+		Some("svc/store/store.go".to_string())
+	);
+	// The standard library still never matches a directory elsewhere.
+	let files = registry(&["go.mod", "cmd/main.go", "third_party/os/os.go"]);
+	assert_eq!(go.resolve_import("os", "cmd/main.go", &files), None);
+	assert_eq!(go.resolve_import("net/http", "cmd/main.go", &files), None);
 }

@@ -223,6 +223,28 @@ pub(super) fn supported_files_under(
 	Ok(Some(files))
 }
 
+/// Grammar-supported files under a local directory and the module-root
+/// manifests (a language's `module_root_file`) found by the same walk: their
+/// directories are the module roots import resolution needs.
+pub(super) fn supported_files_and_module_roots(
+	abs_dir_str: &str,
+	working_dir: &Path,
+) -> Result<(Vec<String>, Vec<String>), String> {
+	let mut builder = build_walker(abs_dir_str, None, false);
+	let mut files = collect_file_paths(&mut builder, working_dir);
+	let manifest_names = structural::module_root_files();
+	let module_roots = files
+		.iter()
+		.filter(|file| {
+			let base_name = file.rsplit('/').next().unwrap_or(file.as_str());
+			manifest_names.contains(&base_name)
+		})
+		.cloned()
+		.collect();
+	files.retain(|file| structural::is_supported(file));
+	Ok((files, module_roots))
+}
+
 /// Grammar-supported files under a remote directory, glob-filtered. `None`
 /// when the glob matched no file at all.
 pub(super) async fn supported_remote_files(

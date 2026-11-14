@@ -17,8 +17,10 @@
 //! namespace resolution).
 
 use super::javascript::{join_path, parent_dir};
+use super::use_alias::aliased_use_bindings;
 use super::{parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
 
 pub(crate) struct Php {}
@@ -94,10 +96,23 @@ impl Language for Php {
 					}
 				}
 			}
+			// `require 'x.php';`, `include_once __DIR__ . '/x.php';`
+			"require_expression" | "require_once_expression" | "include_expression" | "include_once_expression" => {
+				imports.extend(included_file(node, contents));
+			}
 			_ => {}
 		}
 
 		(imports, exports)
+	}
+
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		if node.kind() != "namespace_use_declaration" {
+			return Vec::new();
+		}
+		node.utf8_text(contents.as_bytes())
+			.map(|text| aliased_use_bindings(text.trim(), imports))
+			.unwrap_or_default()
 	}
 
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
@@ -109,6 +124,16 @@ impl Language for Php {
 				.and_then(|text| parse_call_target(last_namespace_segment(text))),
 			"member_call_expression" | "nullsafe_member_call_expression" | "scoped_call_expression" => {
 				method_call_target(node, contents)
+			}
+			// `new Foo(...)` constructs, and so uses, the class `Foo`.
+			"object_creation_expression" => {
+				let mut cursor = node.walk();
+				let class = node
+					.children(&mut cursor)
+					.find(|child| matches!(child.kind(), "name" | "qualified_name" | "relative_name"));
+				class
+					.and_then(|class| class.utf8_text(contents.as_bytes()).ok())
+					.and_then(|text| parse_call_target(last_namespace_segment(text)))
 			}
 			_ => None,
 		};
@@ -169,6 +194,41 @@ impl Language for Php {
 
 		resolve_namespace_import(&normalize_separators(import_path), source_file, all_files)
 	}
+}
+
+/// The file a `require`/`include` names when its argument is a string or
+/// `__DIR__ . '/file.php'`; any other expression is computed at run time.
+fn included_file(node: Node, contents: &str) -> Option<String> {
+	let mut argument = node.named_child(0)?;
+	// `include("c.php")` wraps the argument in parentheses.
+	while argument.kind() == "parenthesized_expression" {
+		argument = argument.named_child(0)?;
+	}
+	let string_text = |string: Node| -> Option<String> {
+		if !matches!(string.kind(), "string" | "encapsed_string") {
+			return None;
+		}
+		let text = string.utf8_text(contents.as_bytes()).ok()?;
+		let path = text.trim_matches(|c| c == '\'' || c == '"');
+		(!path.is_empty()).then(|| path.to_string())
+	};
+	if let Some(path) = string_text(argument) {
+		return Some(path);
+	}
+	if argument.kind() != "binary_expression" {
+		return None;
+	}
+	let left = argument
+		.child_by_field_name("left")?
+		.utf8_text(contents.as_bytes())
+		.ok()?;
+	if left != "__DIR__" {
+		return None;
+	}
+	let path = string_text(argument.child_by_field_name("right")?)?;
+	// `__DIR__` is the including file's directory.
+	let relative = path.trim_start_matches('/');
+	Some(format!("./{relative}"))
 }
 
 /// The text after the last `\` of a namespaced name (`\App\Foo` -> `Foo`).

@@ -14,8 +14,13 @@
 
 //! Rust grammar: items, types, traits, modules, constants and macros.
 
-use super::{extract_symbol_by_kinds, parse_call_target, simple_type_name, CallTarget, Language, TypeRelationKind};
-use crate::structural::graph::registry::{normalize_separators, FileRegistry};
+use super::use_alias::aliased_use_bindings;
+use super::{
+	extract_symbol_by_kinds, parse_call_target, simple_type_name, stem_and_directory, CallTarget, Language,
+	TypeRelationKind, UNKNOWN_RECEIVER,
+};
+use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
 
 /// File names whose child modules sit next to them rather than in a directory
@@ -100,16 +105,25 @@ impl Language for Rust {
 		match node.kind() {
 			"use_declaration" => {
 				if let Ok(use_text) = node.utf8_text(contents.as_bytes()) {
-					imports.extend(expand_rust_use_paths(use_text));
+					let nesting = inline_module_depth(node);
+					imports.extend(
+						expand_rust_use_paths(use_text)
+							.into_iter()
+							.filter_map(|path| lift_super_out_of_inline_modules(path, nesting)),
+					);
 				}
 			}
 			"mod_item" => {
 				if let Some(name) = declared_name(node, contents) {
 					// A mod_item without a body is a file-level declaration
 					// (`mod foo;`): it depends on foo.rs or foo/mod.rs, so it is
-					// emitted as a self-relative import for resolve_import.
+					// emitted as a self-relative import for resolve_import. A
+					// `#[path = "x.rs"]` names the file directly.
 					if node.child_by_field_name("body").is_none() {
-						imports.push(format!("self::{name}"));
+						match path_attribute(node, contents) {
+							Some(path) => imports.push(format!("{PATH_ATTRIBUTE_PREFIX}{path}")),
+							None => imports.push(format!("self::{name}")),
+						}
 					}
 					if is_public(node, contents) {
 						exports.push(name);
@@ -127,12 +141,54 @@ impl Language for Rust {
 		(imports, exports)
 	}
 
+	fn is_directory_index(&self, path: &str) -> bool {
+		matches!(path.rsplit('/').next(), Some("mod.rs" | "lib.rs" | "main.rs"))
+	}
+
+	// The crate root is what `crate::` names.
+	fn importer_names(&self, path: &str) -> Vec<String> {
+		let file_name = path.rsplit('/').next().unwrap_or(path);
+		let mut names = stem_and_directory(path, self.is_directory_index(path));
+		if matches!(file_name, "lib.rs" | "main.rs") {
+			names.push("crate".to_string());
+		}
+		names
+	}
+
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		if node.kind() != "use_declaration" {
+			return Vec::new();
+		}
+		let Ok(text) = node.utf8_text(contents.as_bytes()) else {
+			return Vec::new();
+		};
+		let mut bindings = aliased_use_bindings(text.trim(), imports);
+		// A plain or grouped `use a::b::{C, D}` brings each leaf in under its
+		// own name, so a call to `C` is looked up in the files the import names.
+		for import in imports {
+			let name = import.rsplit(':').next().unwrap_or_default();
+			let already_bound = bindings
+				.iter()
+				.any(|binding| binding.imported_name.as_deref() == Some(name));
+			if name.is_empty() || matches!(name, "self" | "super" | "crate") || already_bound {
+				continue;
+			}
+			bindings.push(ImportBinding {
+				local_name: name.to_string(),
+				imported_name: Some(name.to_string()),
+				import_path: import.clone(),
+			});
+		}
+		bindings
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		let callee = match node.kind() {
 			"call_expression" => node.child_by_field_name("function"),
 			// The macro name (`vec`, or a path such as `crate::utils::debug_log`)
 			// without its `!`.
 			"macro_invocation" => node.child_by_field_name("macro"),
+			"token_tree" => return calls_in_token_tree(node, contents),
 			_ => None,
 		};
 		callee
@@ -140,6 +196,11 @@ impl Language for Rust {
 			.and_then(parse_call_target)
 			.into_iter()
 			.collect()
+	}
+
+	// `pub use a::b;` re-exports what the module `name` declares.
+	fn line_may_reexport(&self, line: &str, name: &str, _path: &str) -> bool {
+		line.trim_start().starts_with("pub") && self.line_may_import(line, name)
 	}
 
 	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
@@ -151,6 +212,7 @@ impl Language for Rust {
 				if let Some(name) = node
 					.child_by_field_name("trait")
 					.and_then(|trait_node| trait_node.utf8_text(contents.as_bytes()).ok())
+					.filter(|text| !is_standard_library_path(text))
 					.and_then(simple_type_name)
 				{
 					relations.push((TypeRelationKind::Implements, name));
@@ -165,7 +227,11 @@ impl Language for Rust {
 							child.kind(),
 							"type_identifier" | "scoped_type_identifier" | "generic_type"
 						) {
-							if let Some(name) = child.utf8_text(contents.as_bytes()).ok().and_then(simple_type_name) {
+							let bound = child
+								.utf8_text(contents.as_bytes())
+								.ok()
+								.filter(|text| !is_standard_library_path(text));
+							if let Some(name) = bound.and_then(simple_type_name) {
 								relations.push((TypeRelationKind::Extends, name));
 							}
 						}
@@ -188,6 +254,17 @@ impl Language for Rust {
 	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
 		let source_file = normalize_separators(source_file);
 		let module_dir = module_directory(&source_file);
+		if let Some(path) = import_path.strip_prefix(PATH_ATTRIBUTE_PREFIX) {
+			return all_files.find_exact_file(&resolve_relative_path(&source_file, &format!("./{path}")));
+		}
+		// `use crate::*;`, `use super::*;` and `use self::*;` lose the glob and
+		// leave the bare keyword: the module file itself.
+		match import_path {
+			"crate" => return find_crate_root(&source_file, all_files),
+			"super" => return find_module_file(directory_of(&module_dir), all_files),
+			"self" => return Some(source_file),
+			_ => {}
+		}
 		if let Some(module_path) = import_path.strip_prefix("crate::") {
 			return resolve_crate_import(module_path, &source_file, all_files);
 		}
@@ -205,11 +282,71 @@ impl Language for Rust {
 		if let Some(found) = resolve_relative_import(import_path, &module_dir, all_files) {
 			return Some(found);
 		}
-		import_path
-			.contains("::")
-			.then(|| resolve_crate_import(import_path, &source_file, all_files))
-			.flatten()
+		if !import_path.contains("::") {
+			return None;
+		}
+		resolve_crate_import(import_path, &source_file, all_files)
+			.or_else(|| resolve_workspace_crate_import(import_path, all_files))
 	}
+
+	// A path that only another workspace crate of that directory name can
+	// own is matched by name, not by anything the `use` states.
+	fn import_is_guess(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> bool {
+		let source_file = normalize_separators(source_file);
+		let is_bare = import_path.contains("::")
+			&& !import_path.starts_with(PATH_ATTRIBUTE_PREFIX)
+			&& ["crate::", "self::", "super::"]
+				.iter()
+				.all(|prefix| !import_path.starts_with(prefix));
+		is_bare
+			&& resolve_relative_import(import_path, &module_directory(&source_file), all_files).is_none()
+			&& resolve_crate_import(import_path, &source_file, all_files).is_none()
+			&& resolve_workspace_crate_import(import_path, all_files).is_some()
+	}
+}
+
+/// How many inline modules (`mod tests { ... }`) enclose the node.
+fn inline_module_depth(node: Node) -> usize {
+	let mut depth = 0;
+	let mut current = node.parent();
+	while let Some(parent) = current {
+		if parent.kind() == "mod_item" {
+			depth += 1;
+		}
+		current = parent.parent();
+	}
+	depth
+}
+
+/// `super` inside an inline module is the module around it: each level of
+/// nesting consumes one `super`, so `use super::*;` in a file's `mod tests`
+/// names the file itself (no import) and `use super::sub::Item;` names the
+/// file's own child module `sub`.
+fn lift_super_out_of_inline_modules(path: String, nesting: usize) -> Option<String> {
+	let mut path = path;
+	for _ in 0..nesting {
+		if path == "super" {
+			return None;
+		}
+		match path.strip_prefix("super::") {
+			Some(rest) => path = rest.to_string(),
+			None => return Some(path),
+		}
+	}
+	if nesting == 0 || path == "super" || path.starts_with("super::") {
+		return Some(path);
+	}
+	// A bare name after consuming `super` is the file's own item.
+	path.contains("::").then(|| format!("self::{path}"))
+}
+
+/// A path into the standard library (`std::error::Error`): its trait is
+/// never one of the project's, even when the project declares a type with
+/// the same final name.
+fn is_standard_library_path(text: &str) -> bool {
+	["std::", "core::", "alloc::", "::std::", "::core::", "::alloc::"]
+		.iter()
+		.any(|prefix| text.trim_start().starts_with(prefix))
 }
 
 /// Text of the node's `name` field.
@@ -217,6 +354,59 @@ fn declared_name(node: Node, contents: &str) -> Option<String> {
 	node.child_by_field_name("name")
 		.and_then(|name| name.utf8_text(contents.as_bytes()).ok())
 		.map(str::to_string)
+}
+
+/// Prefix of the import string a `#[path = ".."] mod x;` emits, so
+/// `resolve_import` reads the file name instead of searching for a module.
+const PATH_ATTRIBUTE_PREFIX: &str = "pathattr::";
+
+/// The `x.rs` of a `#[path = "x.rs"]` attribute directly before the node.
+fn path_attribute(node: Node, contents: &str) -> Option<String> {
+	let mut previous = node.prev_named_sibling();
+	while let Some(sibling) = previous.filter(|sibling| sibling.kind() == "attribute_item") {
+		let text = sibling.utf8_text(contents.as_bytes()).ok()?;
+		if let Some((_, rest)) = text
+			.split_once("path")
+			.filter(|(before, _)| before.trim_end_matches(['#', '[', ' ']).is_empty())
+		{
+			let quoted = rest.split_once('=')?.1.trim().trim_end_matches(']').trim();
+			return Some(quoted.trim_matches('"').to_string());
+		}
+		previous = sibling.prev_named_sibling();
+	}
+	None
+}
+
+/// Calls inside a macro's arguments (`assert_eq!(f(), 1)`, `vec![g()]`): the
+/// grammar leaves them as tokens, where a name directly followed by a
+/// parenthesised group reads as a call. A name after a `.` is a method call
+/// on an unknown receiver.
+fn calls_in_token_tree(node: Node, contents: &str) -> Vec<CallTarget> {
+	let mut calls = Vec::new();
+	let mut cursor = node.walk();
+	let children: Vec<Node> = node.children(&mut cursor).collect();
+	for (position, child) in children.iter().enumerate() {
+		let Some(next) = children.get(position + 1) else {
+			break;
+		};
+		if child.kind() != "identifier"
+			|| next.kind() != "token_tree"
+			|| !next
+				.utf8_text(contents.as_bytes())
+				.is_ok_and(|text| text.starts_with('('))
+		{
+			continue;
+		}
+		let Ok(name) = child.utf8_text(contents.as_bytes()) else {
+			continue;
+		};
+		let after_dot = position > 0 && children[position - 1].kind() == ".";
+		calls.push(CallTarget {
+			name: name.to_string(),
+			qualifier: after_dot.then(|| UNKNOWN_RECEIVER.to_string()),
+		});
+	}
+	calls
 }
 
 /// Whether the item carries a `pub` visibility modifier (`pub`, `pub(crate)`).
@@ -365,11 +555,38 @@ fn find_crate_root(source_file: &str, registry: &FileRegistry) -> Option<String>
 	}
 }
 
+/// `use other_crate::module::Item` names another crate of the same
+/// workspace: its root is the `src/lib.rs` of the directory whose name is
+/// the crate's (hyphens in a package name become underscores). The manifest
+/// is not read, so a package named differently from its directory is not
+/// found.
+fn resolve_workspace_crate_import(import_path: &str, registry: &FileRegistry) -> Option<String> {
+	let (crate_name, module_path) = import_path.split_once("::")?;
+	let mut roots: Vec<&String> = registry
+		.files_named("lib.rs")
+		.iter()
+		.filter(|root| {
+			let mut parents = root.rsplit('/').skip(1);
+			parents.next() == Some("src")
+				&& parents
+					.next()
+					.is_some_and(|directory| directory.replace('-', "_") == crate_name)
+		})
+		.collect();
+	roots.sort();
+	resolve_in_crate(module_path, roots.first()?.to_string(), registry)
+}
+
 /// Resolve `crate::module::Item`: the deepest module path that names a file,
 /// as `module.rs` or `module/mod.rs` under the crate root's directory.
 fn resolve_crate_import(module_path: &str, source_file: &str, registry: &FileRegistry) -> Option<String> {
-	let parts: Vec<&str> = module_path.split("::").collect();
 	let crate_root = find_crate_root(source_file, registry)?;
+	resolve_in_crate(module_path, crate_root, registry)
+}
+
+/// The module path below the root file of one crate.
+fn resolve_in_crate(module_path: &str, crate_root: String, registry: &FileRegistry) -> Option<String> {
+	let parts: Vec<&str> = module_path.split("::").collect();
 	let crate_dir = directory_of(&crate_root);
 
 	for end in (1..=parts.len()).rev() {
