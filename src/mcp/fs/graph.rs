@@ -252,7 +252,6 @@ static GRAPH_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 
 /// Answer a graph relation. Local only; the graph scope is `call.workdir`.
 pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Result<String> {
-	let total_started = std::time::Instant::now(); // SPANTMP
 	if parse_path_source(&call.workdir.to_string_lossy()).is_remote() {
 		bail!(REMOTE_GRAPH_MESSAGE);
 	}
@@ -271,9 +270,7 @@ pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Re
 		}
 		cache_slot = Some((index.clone(), key, index.generation()));
 		let budget = Some(Duration::from_millis(graph_scoped::QUERY_TIME_BUDGET_MS));
-		eprintln!("SPAN open_done {:?}", total_started.elapsed()); // SPANTMP
 		let built = graph_scoped::build(index, request.relation, request.name, scope.as_deref(), depth, budget).await?;
-		eprintln!("SPAN build_done {:?}", total_started.elapsed()); // SPANTMP
 		match built {
 			graph_scoped::Answer::Graph { snapshot, notices } => {
 				cap_notices = notices;
@@ -309,7 +306,6 @@ pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Re
 	})
 	.await
 	.map_err(|e| anyhow!("Failed to query the code graph: {e}"))??;
-	eprintln!("SPAN render_done {:?}", total_started.elapsed()); // SPANTMP
 
 	let mut result = body;
 	let complete = cap_notices.is_empty();
@@ -317,26 +313,10 @@ pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Re
 		result.push('\n');
 		result.push_str(&note);
 	}
-	if let Some((index, _, _)) = &cache_slot {
-		// SPANTMP
-		let rss = std::fs::read_to_string("/proc/self/status")
-			.unwrap_or_default()
-			.lines()
-			.filter(|l| l.starts_with("VmRSS") || l.starts_with("VmHWM"))
-			.collect::<Vec<_>>()
-			.join(" "); // SPANTMP
-		eprintln!(
-			"SPAN memory accounted {} | malloc in use {} MB | {}",
-			index.spantmp_memory(),
-			super::code_index::spantmp_malloc_in_use_mb(),
-			rss
-		); // SPANTMP
-	} // SPANTMP
-   // A partial answer is not kept: repeating the query continues it.
+	// A partial answer is not kept: repeating the query continues it.
 	if let Some((index, key, generation)) = cache_slot.filter(|_| complete) {
 		index.store_answer(key, result.clone(), generation);
 	}
-	eprintln!("SPAN execute_total {:?}", total_started.elapsed()); // SPANTMP
 	Ok(result)
 }
 

@@ -116,9 +116,7 @@ struct Query {
 
 impl Query {
 	async fn new(index: Arc<CodeIndex>, budget: Option<Duration>) -> Result<Self> {
-		let span_started = std::time::Instant::now(); // SPANTMP
 		let registry = index.registry().await?;
-		eprintln!("SPAN registry {:?}", span_started.elapsed()); // SPANTMP
 		Ok(Self {
 			registry,
 			index,
@@ -163,9 +161,7 @@ impl Query {
 			min_fresh: PARSE_CHUNK.saturating_sub(self.fresh),
 			deadline: self.deadline,
 		};
-		let t = std::time::Instant::now(); // SPANTMP
 		let mut batch = self.index.parse_many(new, limit).await?;
-		eprintln!("SPAN ensure_parse {:?} (fresh {})", t.elapsed(), batch.fresh); // SPANTMP
 		self.fresh += batch.fresh;
 		let again = ParseLimit {
 			max_fresh: usize::MAX,
@@ -233,16 +229,11 @@ impl Query {
 	}
 
 	fn graph(&self) -> CodeGraph {
-		let t = std::time::Instant::now(); // SPANTMP
-		let g = assemble_filtered_graph_in(&self.sources, self.registry.clone(), self.skipped.clone(), &self.filter);
-		eprintln!("SPAN graph_total {:?} ({} sources)", t.elapsed(), self.sources.len()); // SPANTMP
-		g
+		assemble_filtered_graph_in(&self.sources, self.registry.clone(), self.skipped.clone(), &self.filter)
 	}
 
 	fn finish(&self, graph: CodeGraph) -> Answer {
-		let span_started = std::time::Instant::now(); // SPANTMP
 		self.index.account_memos(self.have.iter().copied());
-		eprintln!("SPAN account_memos {:?}", span_started.elapsed()); // SPANTMP
 		let index = GraphIndex::new(&graph);
 		Answer::Graph {
 			snapshot: Box::new(GraphSnapshot {
@@ -384,18 +375,12 @@ impl Query {
 		// header imported by thousands of files is not searched for importers.
 		let mut importing: HashSet<FileId> = HashSet::new();
 		for token in file_tokens(definition_path) {
-			let span_started = std::time::Instant::now(); // SPANTMP
 			importing.extend(
 				self.index
 					.marked_among(name, &set.files, &token, LineKind::Import)
 					.await?
 					.iter(),
 			);
-			eprintln!(
-				"SPAN marked_among {:?} ({} spelling)",
-				span_started.elapsed(),
-				set.files.len()
-			); // SPANTMP
 		}
 		let mut ordered: Vec<FileId> = self.index.file_id(definition_path).into_iter().collect();
 		ordered.extend(set.files.iter().filter(|id| importing.contains(id)));
@@ -483,10 +468,6 @@ fn too_common_message(name: &str, files: usize) -> String {
 
 /// The index of `root`, refreshed.
 pub(super) async fn open(root: &Path) -> Result<Arc<CodeIndex>> {
-	eprintln!(
-		"SPAN baseline malloc in use {} MB",
-		super::code_index::spantmp_malloc_in_use_mb()
-	); // SPANTMP
 	let index = CodeIndexes::global().index(root);
 	index.refresh().await?;
 	// The token filters of a cold process are built here, before the query's
@@ -589,9 +570,7 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 			candidates.extend(query.sorted_by_path(nameless_ids));
 		}
 		let label = tokens.iter().next().cloned().unwrap_or_default();
-		eprintln!("SPAN imported_by_candidates ready {}", candidates.len()); // SPANTMP
 		query.ensure(&candidates, &label).await?;
-		let span_started = std::time::Instant::now(); // SPANTMP
 		let mut frontier: Vec<String> = Vec::new();
 		for id in &candidates {
 			let Some(source) = query.parsed_source(*id) else {
@@ -610,12 +589,6 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 				importers.push(source.clone());
 			}
 		}
-		eprintln!(
-			"SPAN imported_by_resolve {:?} ({} candidates, {} have)",
-			span_started.elapsed(),
-			candidates.len(),
-			query.have.len()
-		); // SPANTMP
 		if level == depth || frontier.is_empty() {
 			break;
 		}
@@ -638,20 +611,11 @@ async fn symbol_query(
 	let scope = scope.filter(|path| !path.is_empty());
 	let narrowed = scope.is_some() || name.contains("::");
 	// Counted from the filters alone: nothing is read to say "too common".
-	let span_started = std::time::Instant::now(); // SPANTMP
 	let filter_hits = query.index.files_spelling(&[name]).await?.len();
-	eprintln!("SPAN files_spelling {:?} ({filter_hits})", span_started.elapsed()); // SPANTMP
 	if !narrowed && filter_hits > MAX_FILES_SPELLING_TO_TRACE {
 		return Ok(Answer::Message(too_common_message(name, filter_hits)));
 	}
-	let t = std::time::Instant::now(); // SPANTMP
 	let set = query.index.spelling(name).await?;
-	eprintln!(
-		"SPAN spelling {:?} ({} files, {} declaring)",
-		t.elapsed(),
-		set.files.len(),
-		set.declaring.len()
-	); // SPANTMP
 	let mut ordered = declaring_first(&set);
 	if let Some(scope) = scope {
 		ordered.retain(|id| query.index.path_of(*id).is_some_and(|path| in_scope(&path, scope)));

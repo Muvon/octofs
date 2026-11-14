@@ -329,9 +329,6 @@ fn parse_tree(contents: &str, language: &dyn Language) -> Result<tree_sitter::Tr
 		.ok_or_else(|| anyhow!("tree-sitter produced no syntax tree"))
 }
 
-pub static SPAN_TS_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // SPANTMP
-pub static SPAN_WALK_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // SPANTMP
-
 /// Single-pass AST extraction: imports, exports, call sites, type relations
 /// and symbol declarations from ONE parse of `contents`, including the code
 /// regions the language embeds in other languages (a Svelte `<script>`).
@@ -340,20 +337,10 @@ pub(crate) fn extract_symbols_from_contents(
 	language: &dyn Language,
 	lookup: LanguageLookup,
 ) -> Result<FileAstData> {
-	let span_started = std::time::Instant::now(); // SPANTMP
 	let tree = parse_tree(contents, language)?;
-	SPAN_TS_NS.fetch_add(
-		span_started.elapsed().as_nanos() as u64,
-		std::sync::atomic::Ordering::Relaxed,
-	); // SPANTMP
-	let span_started = std::time::Instant::now(); // SPANTMP
 	let root = tree.root_node();
 	let mut data = FileAstData::default();
 	walk_ast(root, contents, language, &language.get_symbol_kinds(), &mut data);
-	SPAN_WALK_NS.fetch_add(
-		span_started.elapsed().as_nanos() as u64,
-		std::sync::atomic::Ordering::Relaxed,
-	); // SPANTMP
 
 	for embedded in language.extract_embedded_sources(root, contents) {
 		// A block that cannot be parsed costs only itself: the host file's own

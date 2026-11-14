@@ -91,7 +91,7 @@ inside `spawn_blocking`, and renders the hops under the response budget; it is l
   held across `.await`.
 - **FILE_HISTORY** — content snapshot before every write; powers `undo_edit`
   (max 10 levels per file, in-memory only).
-- **Code index** (`fs/code_index.rs`) — per workdir root (LRU of 2, idle sweep after 10 minutes, one 192 MB
+- **Code index** (`fs/code_index.rs`) — per workdir root (LRU of 2, idle sweep after 10 minutes, one 160 MB
   memory ceiling): Bloom filters of file identifiers and a parsed-file cache keyed by file stamp; what each
   parsed file's imports resolved to is kept with it and counted in the ceiling.
   `fs/graph_scoped.rs` answers `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by`

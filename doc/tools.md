@@ -143,7 +143,7 @@ workdir fails with guidance).
 
 - **Code index queries.** `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by` are
   answered from the per-workdir code index (`fs/code_index.rs`): a Bloom filter of the identifiers of every
-  file, plus a parsed-file cache under a 192 MB ceiling shared by all indexes (at most 2 workdirs; idle ones
+  file, plus a parsed-file cache under a 160 MB ceiling shared by all indexes (at most 2 workdirs; idle ones
   are dropped after 10 minutes). The ceiling counts the parsed data, what each file's imports resolved to
   (kept per file, dropped when the file or the set of files changes), the path table and the cached
   lookups. Each call refreshes the index from file stamps, so a file changed by any program is seen by
@@ -156,7 +156,8 @@ workdir fails with guidance).
   files is always parsed so a repeat gets further) per query (cached files are free). Measured on 6 threads:
   about 10 MB of source per second, 72 % of it tree-sitter parsing and 25 % symbol extraction, so a query
   examines roughly 150 to 400 files. The closing line counts over the whole query (every name and level
-  followed): its candidates and the files examined so far.
+  followed): its candidates and the files examined so far. Graph parsing skips files over
+  `MAX_GRAPH_FILE_BYTES` (1 MB) and names them in a closing note; the view commands keep their 5 MB limit.
   - definitions of `name`: the files that look like declaring it first (the files under `path` when given),
     then the other files spelling it; `Owner::name` needs both names. A name spelled in more than
     `MAX_FILES_SPELLING_TO_TRACE` (3000) files with no `path` or `Owner::name` is not traced: the reply

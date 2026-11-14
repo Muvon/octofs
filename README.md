@@ -519,7 +519,7 @@ file stamps on every call, so a file edited by any program is seen by the next q
 files that can matter, at most 600 per query and for at most 800 ms (counted after the refresh and, on a cold
 process, after the one-time build of the name table); parsing runs at about 10 MB of source per second on 6 threads, so
 a query examines roughly 150 to 400 files before the clock stops it; files parsed once are
-kept in memory (with what their imports resolved to) under a 192 MB ceiling shared by all indexes. When a
+kept in memory (with what their imports resolved to) under a 160 MB ceiling shared by all indexes. When a
 name is spelled in more files than the cap or the time allows, the answer covers the files examined, and a
 closing line says how many candidates exist and that repeating the query examines the rest (parsed files do
 not count again); `path` or `Owner::name` narrows it. A name spelled in more than 3000 files with no such

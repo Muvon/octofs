@@ -49,7 +49,7 @@ pub(super) const MAX_INDEXED_WORKDIRS: usize = 2;
 
 /// Heap bytes the token filters, parsed caches and file tables of ALL indexed
 /// roots may hold together.
-pub(super) const INDEX_MEMORY_BYTES: usize = 176 * 1024 * 1024;
+pub(super) const INDEX_MEMORY_BYTES: usize = 160 * 1024 * 1024;
 
 /// Seconds an index may stay unused before the sweeper drops it.
 pub(super) const INDEX_IDLE_SECS: u64 = 600;
@@ -117,10 +117,6 @@ impl Drop for InflightPermit {
 		released.notify_all();
 	}
 }
-
-static SPAN_THREADS: AtomicUsize = AtomicUsize::new(0); // SPANTMP
-static SPAN_FILE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // SPANTMP
-static SPAN_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // SPANTMP
 
 /// Capacity a per-thread read buffer keeps between files.
 const KEPT_BUFFER_BYTES: usize = 1024 * 1024;
@@ -734,10 +730,6 @@ impl CodeIndex {
 		lock(&self.state).use_bytes
 	}
 
-	pub(super) fn spantmp_memory(&self) -> String {
-		format!("{:?}", lock(&self.state).use_bytes) // SPANTMP
-	}
-
 	/// Re-walk and re-stat the workdir; what is new, changed or gone since the
 	/// last call. Concurrent callers share one run.
 	pub(super) async fn refresh(self: &Arc<Self>) -> Result<Arc<Changes>> {
@@ -905,9 +897,7 @@ impl CodeIndex {
 	}
 
 	fn ensure_filters(&self) -> Result<()> {
-		let span_started = Instant::now(); // SPANTMP
 		let built = self.build_missing_filters();
-		eprintln!("SPAN ensure_filters {:?}", span_started.elapsed()); // SPANTMP
 		release_freed_memory();
 		built
 	}
@@ -1294,7 +1284,6 @@ impl CodeIndex {
 		// the small ones are done. Every thread takes the next outstanding file
 		// until none is left or the deadline has passed; at least `min_fresh`
 		// files are taken whatever the clock says.
-		let span_batch_started = Instant::now(); // SPANTMP
 		let next = AtomicUsize::new(0);
 		let per_thread = pool.broadcast(|_| {
 			let mut done: Vec<(usize, FreshParse)> = Vec::new();
@@ -1307,18 +1296,8 @@ impl CodeIndex {
 				if out_of_time && position >= limit.min_fresh {
 					break;
 				}
-				let span_file_started = Instant::now(); // SPANTMP
-				SPAN_BYTES.fetch_add(
-					std::fs::metadata(self.root.join(path)).map_or(0, |m| m.len()),
-					Ordering::Relaxed,
-				); // SPANTMP
 				done.push((position, (*id, *stamp, self.parse_file(path, language))));
-				SPAN_FILE_NS.fetch_add(span_file_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-				// SPANTMP
 			}
-			if !done.is_empty() {
-				SPAN_THREADS.fetch_add(1, Ordering::Relaxed);
-			} // SPANTMP
 			done
 		});
 		let mut taken: Vec<(usize, FreshParse)> = per_thread.into_iter().flatten().collect();
@@ -1338,16 +1317,6 @@ impl CodeIndex {
 			}
 		}
 		drop(state);
-		eprintln!(
-			"SPAN parse_batch wall {:?}, threads used {}, summed file time {} ms, bytes {}, ts parse {} ms, extraction {} ms, files {}",
-			span_batch_started.elapsed(),
-			SPAN_THREADS.swap(0, Ordering::Relaxed),
-			SPAN_FILE_NS.swap(0, Ordering::Relaxed) / 1_000_000,
-			SPAN_BYTES.swap(0, Ordering::Relaxed),
-			crate::structural::graph::symbols::SPAN_TS_NS.swap(0, Ordering::Relaxed) / 1_000_000,
-			crate::structural::graph::symbols::SPAN_WALK_NS.swap(0, Ordering::Relaxed) / 1_000_000,
-			batch.fresh
-		); // SPANTMP
 		if batch.fresh >= PARSE_TRIM_THRESHOLD {
 			release_freed_memory();
 		}
@@ -1771,27 +1740,6 @@ fn parse_pool() -> Option<&'static rayon::ThreadPool> {
 extern "C" {
 	fn malloc_trim(pad: usize) -> i32;
 }
-
-#[repr(C)] // SPANTMP
-struct Mallinfo2 {
-	arena: usize,
-	ordblks: usize,
-	smblks: usize,
-	hblks: usize,
-	hblkhd: usize,
-	usmblks: usize,
-	fsmblks: usize,
-	uordblks: usize,
-	fordblks: usize,
-	keepcost: usize,
-} // SPANTMP
-extern "C" {
-	fn mallinfo2() -> Mallinfo2;
-} // SPANTMP
-pub(super) fn spantmp_malloc_in_use_mb() -> usize {
-	let info = unsafe { mallinfo2() };
-	(info.uordblks + info.hblkhd) / (1024 * 1024)
-} // SPANTMP
 
 /// glibc keeps freed memory in its arenas; give it back.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]

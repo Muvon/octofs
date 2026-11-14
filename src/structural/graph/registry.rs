@@ -76,16 +76,16 @@ pub fn heap_chunk(bytes: usize) -> usize {
 	(bytes + std::mem::size_of::<usize>()).next_multiple_of(16).max(32)
 }
 
-/// File registry for efficient file lookup by path, directory and name.
+/// The directory part of a separator-normalized path (`""` for the root).
+fn directory_of(normalized: &str) -> &str {
+	normalized.rsplit_once('/').map_or("", |(directory, _)| directory)
+}
+
+/// File registry for efficient file lookup by path, directory and name. Every
+/// path is stored twice (by directory and by name); exact lookups scan the
+/// files of one directory.
 pub struct FileRegistry {
 	id: u64,
-	all_files: Vec<String>,
-	/// Separator-normalized path -> index into `all_files` (first occurrence
-	/// wins), so exact lookups are a hash hit instead of a scan that
-	/// re-normalizes every path on every `resolve_import` call.
-	normalized_index: HashMap<String, usize>,
-	/// Exact path -> index into `all_files` (first occurrence wins).
-	exact_index: HashMap<String, usize>,
 	/// Directory (forward slashes, `""` is the root) -> files directly in it.
 	files_by_dir: HashMap<String, Vec<String>>,
 	/// Base name with extension -> every file with that name.
@@ -100,14 +100,11 @@ impl FileRegistry {
 	pub fn id(&self) -> u64 {
 		self.id
 	}
+
 	/// Heap bytes held, by capacity, with the allocator's per-block overhead:
-	/// the paths are stored in several maps, one copy each.
+	/// every path is stored by directory and by name.
 	pub fn heap_bytes(&self) -> usize {
 		let text = |paths: &[String]| paths.iter().map(|path| heap_chunk(path.capacity())).sum::<usize>();
-		let keyed = |map: &HashMap<String, usize>| {
-			map.capacity() * (std::mem::size_of::<(String, usize)>() + 1)
-				+ map.keys().map(|key| heap_chunk(key.capacity())).sum::<usize>()
-		};
 		let grouped = |map: &HashMap<String, Vec<String>>| {
 			map.capacity() * (std::mem::size_of::<(String, Vec<String>)>() + 1)
 				+ map
@@ -119,23 +116,15 @@ impl FileRegistry {
 					})
 					.sum::<usize>()
 		};
-		heap_chunk(self.all_files.capacity() * std::mem::size_of::<String>())
-			+ text(&self.all_files)
-			+ keyed(&self.normalized_index)
-			+ keyed(&self.exact_index)
-			+ grouped(&self.files_by_dir)
-			+ grouped(&self.files_by_name)
-			+ grouped(&self.dirs_by_name)
+		grouped(&self.files_by_dir) + grouped(&self.files_by_name) + grouped(&self.dirs_by_name)
 	}
 
 	pub fn new(all_files: &[String]) -> Self {
-		let mut normalized_index = HashMap::with_capacity(all_files.len());
-		let mut exact_index = HashMap::with_capacity(all_files.len());
 		let mut files_by_dir: HashMap<String, Vec<String>> = HashMap::new();
 		let mut files_by_name: HashMap<String, Vec<String>> = HashMap::new();
 		let mut dirs_by_name: HashMap<String, Vec<String>> = HashMap::new();
 		let mut seen_dirs: HashSet<String> = HashSet::new();
-		for (index, file_path) in all_files.iter().enumerate() {
+		for file_path in all_files {
 			let normalized = normalize_separators(file_path);
 			let (directory, name) = normalized.rsplit_once('/').unwrap_or(("", normalized.as_str()));
 			files_by_dir
@@ -156,15 +145,10 @@ impl FileRegistry {
 					.push(ancestor.to_string());
 				ancestor = ancestor.rsplit_once('/').map_or("", |(parent, _)| parent);
 			}
-			normalized_index.entry(normalized).or_insert(index);
-			exact_index.entry(file_path.clone()).or_insert(index);
 		}
 
 		Self {
 			id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
-			all_files: all_files.to_vec(),
-			normalized_index,
-			exact_index,
 			files_by_dir,
 			files_by_name,
 			dirs_by_name,
@@ -189,7 +173,7 @@ impl FileRegistry {
 
 	/// Whether a file equal to `path` (after separator normalization) exists.
 	pub fn contains(&self, path: &str) -> bool {
-		self.normalized_index.contains_key(&normalize_separators(path))
+		self.find_normalized(path).is_some()
 	}
 
 	/// First registry file named `base_path` plus one of `extensions`, tried in
@@ -206,16 +190,26 @@ impl FileRegistry {
 
 	/// First registry file equal to `target` after separator normalization.
 	pub fn find_normalized(&self, target: &str) -> Option<&str> {
-		self.normalized_index
-			.get(&normalize_separators(target))
-			.map(|&index| self.all_files[index].as_str())
+		let target = normalize_separators(target);
+		self.files_in_dir(directory_of(&target))
+			.iter()
+			.map(String::as_str)
+			.find(|file| {
+				if file.contains('\\') {
+					normalize_separators(file) == target
+				} else {
+					*file == target
+				}
+			})
 	}
 
 	/// First registry file byte-equal to `target`.
 	pub fn find_verbatim(&self, target: &str) -> Option<&str> {
-		self.exact_index
-			.get(target)
-			.map(|&index| self.all_files[index].as_str())
+		let normalized = normalize_separators(target);
+		self.files_in_dir(directory_of(&normalized))
+			.iter()
+			.map(String::as_str)
+			.find(|file| *file == target)
 	}
 
 	/// Exact file match that tolerates Windows- and Unix-style separators.

@@ -270,14 +270,10 @@ fn assemble_with_resolver<S: AsRef<ParsedSource>>(
 	// One resolver for the whole build: every import is resolved once, however
 	// many passes ask for it.
 	let files: Vec<&SymbolFileData> = ordered.iter().map(|source| &source.data).collect();
-	let t = std::time::Instant::now(); // SPANTMP
 	add_import_edges(&mut graph, &files, &mut resolver);
-	eprintln!("SPAN   asm_import_edges {:?} ({} files)", t.elapsed(), files.len()); // SPANTMP
-	let t = std::time::Instant::now(); // SPANTMP
 	graph
 		.relationships
 		.extend(discover_symbol_relationships(&files, &mut resolver, filter));
-	eprintln!("SPAN   asm_discover {:?}", t.elapsed()); // SPANTMP
 	sort_and_dedup(&mut graph.relationships);
 	add_stub_file_nodes(&mut graph);
 	graph
