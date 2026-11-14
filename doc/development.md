@@ -38,8 +38,8 @@ This checkout auto-syncs to the dev server — run build/test/clippy there
 ## Adding or changing an MCP tool
 
 Reference example: the `view` tool — `#[tool]` block in `src/mcp/server.rs`,
-execute path in `src/mcp/fs/core.rs` + `file_ops.rs` (plus `structure.rs`/`symbols.rs`/`ast.rs` for its
-structural modes), tests in `fs_tests.rs`.
+execute path in `src/mcp/fs/core.rs` + `file_ops.rs` (plus `structure.rs`/`ast.rs` for its structural modes),
+tests in `fs_tests.rs`.
 
 1. **`src/mcp/server.rs`** — Params struct (`Deserialize` + `JsonSchema`,
    schemars/serde annotations); an `async fn` method with
@@ -70,7 +70,8 @@ structural modes), tests in `fs_tests.rs`.
   cap (e.g. `MAX_TAIL_BYTES`). Context economy is the product's core promise;
   an unbounded response is a bug.
 - **Structural modes split pure parsing from I/O** — the tree-sitter work lives in `src/structural/` (content
-  in, structured items out, no filesystem access); `fs/structure.rs`, `fs/symbols.rs` and `fs/ast.rs` own the
+  in, structured items out, no filesystem access); `fs/structure.rs`, `fs/ast.rs` and the `symbol` tool's
+  `fs/symbols.rs`/`fs/graph.rs` own the
   walk, the reads and the rendering. Keep new grammar or lookup logic on the pure side.
 - **Hints vs errors** — non-fatal guidance goes through
   `request_ctx::push_hint`; hard misuse and invalid input `bail!`.

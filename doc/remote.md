@@ -59,7 +59,8 @@ duplicate connections and repeated agent prompts.
 remote command execution. Everything file-shaped (`view`, `text_editor`,
 `batch_edit`, `extract_lines`, directory listings, content search) works
 remotely, with remote listing quirks handled in `fs/directory.rs`. The
-structural read modes work remotely too — outline (`flags: "s"`), symbol
-navigation (`symbol`) and AST search (`ast: true`) each walk the remote tree
-(`fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`); like every search, they
-walk the whole tree unless `max_depth` bounds them.
+structural read modes work remotely too — outline (`flags: "s"`), AST search
+(`ast: true`) and the `symbol` tool's `definition`/`references` each walk the remote tree
+(`fs/structure.rs`, `fs/ast.rs`, `fs/symbols.rs`); like every search, they
+walk the whole tree unless `max_depth` bounds them. The `symbol` graph relations
+(`callers`, `callees`, ...) are local only.

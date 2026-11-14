@@ -68,7 +68,7 @@ pub struct ViewFlags {
 	pub invert: bool,
 	/// Structural outline (`s`): signature/declaration lines with bodies elided.
 	pub structure: bool,
-	/// Symbol references instead of definitions (`r`, requires `symbol`).
+	/// Symbol references instead of definitions; set by the `symbol` tool, never parsed from `view` flags.
 	pub references: bool,
 }
 
@@ -76,9 +76,7 @@ impl ViewFlags {
 	/// Parse the letters. `l` means files-only for a search and a long row for a listing,
 	/// as it does for `grep` and `ls`. A leading `-` is accepted because callers type it.
 	/// `s` is exclusive: it cannot be combined with the other letters or with `content`.
-	/// `r` needs `symbol`; with `symbol`, `c`/`l` keep their search meanings and `o`/`v`/`s`
-	/// are rejected.
-	pub fn parse(flags: Option<&str>, has_content: bool, has_symbol: bool) -> Result<Self> {
+	pub fn parse(flags: Option<&str>, has_content: bool) -> Result<Self> {
 		let mut parsed = ViewFlags::default();
 		for flag in flags.unwrap_or_default().chars() {
 			let output = match flag {
@@ -92,13 +90,9 @@ impl ViewFlags {
 					continue;
 				}
 				'r' => {
-					if !has_symbol {
-						bail!("View flag r requires `symbol`: it switches a symbol search to references — add `symbol` or drop `r`.");
-					}
-					parsed.references = true;
-					continue;
+					bail!("View flag r does not exist on `view`: symbol references are the `symbol` tool with relation \"references\" — drop `r`.");
 				}
-				'l' if !has_content && !has_symbol => {
+				'l' if !has_content => {
 					parsed.long = true;
 					continue;
 				}
@@ -118,14 +112,8 @@ impl ViewFlags {
 		if parsed.structure && has_content {
 			bail!("View flag s cannot be combined with `content`: drop `content` to get the outline.");
 		}
-		if parsed.structure && has_symbol {
-			bail!("View flag s cannot be combined with `symbol`: drop one of them — `s` is an outline, `symbol` is a lookup.");
-		}
-		if !has_content && !has_symbol && (parsed.invert || parsed.output != SearchOutput::Lines) {
+		if !has_content && (parsed.invert || parsed.output != SearchOutput::Lines) {
 			bail!("View flags c, o and v apply to a `content` search; without `content` only l (size and modification time) applies.");
-		}
-		if has_symbol && (parsed.invert || parsed.output == SearchOutput::OnlyMatching) {
-			bail!("View flags o and v cannot be combined with `symbol`: a symbol search returns whole lines — drop the other letter.");
 		}
 		if parsed.invert && parsed.output == SearchOutput::OnlyMatching {
 			bail!("View flags o and v cannot be combined: a non-matching line has no matched text.");

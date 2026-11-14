@@ -12,25 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Symbol navigation mode of `view` (`symbol` parameter): definitions of a
-//! name, or its references with `flags: "r"`, in a file or under a directory.
-//! Lookup is pure (`crate::structural::symbols`); this module owns the I/O,
-//! the walk (shared with the outline mode) and the rendering. Every source
-//! line renders as an ordinary `N:hh|content` line so the ids feed
-//! `batch_edit` unchanged. Symbol reads never register in the delta/view
-//! cache.
+//! The `symbol` tool: code navigation that starts from a symbol name.
+//! `definition` and `references` are text-level lookups in a file or under a
+//! directory; lookup is pure (`crate::structural::symbols`) and this module
+//! owns the I/O, the walk (shared with the outline mode) and the rendering.
+//! Every source line renders as an ordinary `N:hh|content` line so the ids
+//! feed `batch_edit` unchanged. Symbol reads never register in the delta/view
+//! cache. The graph relations (`callers`, `callees`, ...) are validated here
+//! and answered by `super::graph`.
 
-use super::directory::{join_bounded, read_capped, remote_child};
+use super::directory::{join_bounded, missing_path_hint, read_capped, remote_child};
 use super::file_ops::MAX_VIEW_FILE_BYTES;
-use super::remote::{io_is_dir, io_metadata, io_read, io_read_capped, PathSource};
+use super::graph::{execute_graph, GraphRelation, GraphRequest, MAX_GRAPH_DEPTH};
+use super::remote::{io_exists, io_is_dir, io_metadata, io_read, io_read_capped, resolve_path_source, PathSource};
 use super::search::{SearchOutput, ViewFlags};
 use super::structure::{join_blocks_budgeted, supported_files_under, supported_remote_files};
 use crate::mcp::McpToolCall;
 use crate::structural::symbols::{find_definitions, find_references, NameMatcher, SymbolHit};
 use crate::utils::line_hash::line_id;
-use crate::utils::truncation::MAX_RESULT_BYTES;
+use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use rayon::prelude::*;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -40,12 +43,180 @@ const SMALL_DEFINITION_LINES: usize = 32;
 /// Preview lines shown before the omitted-lines marker.
 const PREVIEW_LINES: usize = 4;
 
+/// Parameters that only shape a definition or references search; a graph
+/// relation rejects them. One list so the check and the message stay together.
+const TEXT_SEARCH_PARAMS: [&str; 5] = ["flags", "context", "pattern", "max_depth", "include_hidden"];
+
+/// The `definition` relation: what the tool does when `relation` is omitted.
+const DEFINITION_RELATION: &str = "definition";
+/// The `references` relation.
+const REFERENCES_RELATION: &str = "references";
+
+/// A trimmed string parameter; `None` when absent, null or blank (the default
+/// a client fills in for an unused field).
+fn optional_text<'a>(call: &'a McpToolCall, key: &str) -> Result<Option<&'a str>> {
+	match call.parameters.get(key) {
+		None | Some(Value::Null) => Ok(None),
+		Some(Value::String(text)) => Ok(Some(text.trim()).filter(|text| !text.is_empty())),
+		Some(_) => bail!("`{key}` must be a string — drop it or pass a value."),
+	}
+}
+
+/// Whether the caller passed a real value. Clients that send every schema
+/// field fill the unused ones with defaults (null, "", 0, false): those count
+/// as absent.
+fn is_set(call: &McpToolCall, key: &str) -> bool {
+	match call.parameters.get(key) {
+		None | Some(Value::Null) => false,
+		Some(Value::String(text)) => !text.is_empty(),
+		Some(Value::Number(number)) => number.as_f64() != Some(0.0),
+		Some(Value::Bool(flag)) => *flag,
+		Some(_) => true,
+	}
+}
+
+/// The `flags` of a `symbol` call: `c` (count) or `l` (files only), each
+/// optionally behind a leading `-`; the lines output is the default. `r` is
+/// not a flag here: references are a relation.
+fn symbol_output(call: &McpToolCall) -> Result<SearchOutput> {
+	let mut output = SearchOutput::Lines;
+	for flag in call
+		.parameters
+		.get("flags")
+		.and_then(|v| v.as_str())
+		.unwrap_or_default()
+		.chars()
+	{
+		let requested = match flag {
+			'-' => continue,
+			'c' => SearchOutput::Count,
+			'l' => SearchOutput::FilesOnly,
+			'r' => bail!("Flag r does not exist on `symbol`: pass relation \"references\" instead."),
+			other => bail!("Unknown flag {other:?} for `symbol`: the flags are c (count) and l (files only)."),
+		};
+		if output != SearchOutput::Lines && output != requested {
+			bail!("Flags c and l are alternatives for `symbol`: pass one of them.");
+		}
+		output = requested;
+	}
+	Ok(output)
+}
+
+fn optional_depth(call: &McpToolCall) -> Result<Option<usize>> {
+	match call.parameters.get("depth") {
+		None | Some(Value::Null) => Ok(None),
+		Some(value) => match value.as_u64() {
+			Some(0) => Ok(None),
+			Some(depth) => Ok(Some(depth as usize)),
+			_ => bail!("`depth` must be an integer from 1 to {MAX_GRAPH_DEPTH}."),
+		},
+	}
+}
+
+/// Entry point of the `symbol` tool: validate the parameter combination for
+/// the relation, then answer it from a text-level lookup or the code graph.
+pub async fn execute_symbol(call: &McpToolCall) -> Result<String> {
+	let relation = optional_text(call, "relation")?.unwrap_or(DEFINITION_RELATION);
+	let name = optional_text(call, "name")?;
+	let to = optional_text(call, "to")?;
+	let path = optional_text(call, "path")?;
+	let depth = optional_depth(call)?;
+
+	if relation == DEFINITION_RELATION || relation == REFERENCES_RELATION {
+		let Some(name) = name else {
+			bail!("relation \"{relation}\" needs `name`: the symbol to look up (`*` wildcards allowed, e.g. \"handle_*\").");
+		};
+		if to.is_some() {
+			bail!("`to` is only valid with relation \"path\" — drop it.");
+		}
+		if depth.is_some() {
+			bail!("`depth` applies to graph relations (callers, callees, imports, imported_by, supertypes, subtypes, path) — drop it.");
+		}
+		let output = symbol_output(call)?;
+		let path = path.unwrap_or(".");
+		let source = resolve_path_source(path, &call.workdir);
+		if !io_exists(&source).await? {
+			let nearby = match &source {
+				PathSource::Local(missing) => missing_path_hint(missing.clone(), call.workdir.clone()).await,
+				PathSource::Remote { .. } => String::new(),
+			};
+			bail!("Path not found: {path} (resolved to {}){nearby}", source.display());
+		}
+		let result = view_symbols(call, path, &source, name, relation == REFERENCES_RELATION, output).await?;
+		// Count and files-only rows are not budgeted per file, so a huge tree
+		// could still overflow the transport.
+		if result.len() > MAX_RESULT_BYTES {
+			bail!(
+				"Result is {}, too large to return in one tool result (limit {}). Narrow `path`, `pattern` or `name`.",
+				format_megabytes(result.len()),
+				format_megabytes(MAX_RESULT_BYTES)
+			);
+		}
+		return Ok(result);
+	}
+
+	let Some(graph_relation) = GraphRelation::parse(relation) else {
+		bail!(
+			"Unknown relation {relation:?}: the relations are definition, references, callers, callees, imports, imported_by, supertypes, subtypes and path."
+		);
+	};
+	for key in TEXT_SEARCH_PARAMS {
+		if is_set(call, key) {
+			bail!("`{key}` applies to relations definition and references only — drop it for \"{relation}\".");
+		}
+	}
+	if matches!(graph_relation, GraphRelation::Imports | GraphRelation::ImportedBy) {
+		if name.is_some() {
+			bail!("relation \"{relation}\" works on a file: pass its `path` and drop `name`.");
+		}
+		if path.is_none() {
+			bail!("relation \"{relation}\" needs `path`: the file whose imports to follow.");
+		}
+	} else if name.is_none() {
+		bail!("relation \"{relation}\" needs `name`: the symbol to start from.");
+	}
+	if graph_relation == GraphRelation::Path {
+		if to.is_none() {
+			bail!("relation \"path\" needs `to`: the symbol to reach from `name`.");
+		}
+	} else if to.is_some() {
+		bail!("`to` is only valid with relation \"path\" — drop it.");
+	}
+	for (key, value) in [("name", name), ("to", to)] {
+		if value.is_some_and(|symbol| symbol.contains('*')) {
+			bail!("`{key}` cannot contain `*`: wildcards work with relations definition and references only.");
+		}
+	}
+
+	execute_graph(
+		call,
+		&GraphRequest {
+			relation: graph_relation,
+			name,
+			to,
+			path,
+			depth,
+		},
+	)
+	.await
+}
+
 /// Render the symbol results for a file, or for every supported file under a
-/// directory. Flag and parameter exclusivity (`symbol` without `content`,
-/// `start`/`end`, `s`/`o`/`v`) is validated upstream in `view_existing_path`
-/// and `ViewFlags::parse`.
-pub async fn view_symbols(call: &McpToolCall, path: &str, source: &PathSource, symbol: &str) -> Result<String> {
-	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), false, true)?;
+/// directory. `references` selects references over definitions; `output` is
+/// the validated `c`/`l` flag.
+pub async fn view_symbols(
+	call: &McpToolCall,
+	path: &str,
+	source: &PathSource,
+	symbol: &str,
+	references: bool,
+	output: SearchOutput,
+) -> Result<String> {
+	let flags = ViewFlags {
+		output,
+		references,
+		..ViewFlags::default()
+	};
 	let matcher = NameMatcher::new(symbol).map_err(|e| anyhow!("{e}"))?;
 	let context = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 	if io_is_dir(source).await? {
@@ -308,7 +479,7 @@ fn render_hits_body(
 			};
 			if omitted > 0 {
 				body.push_str(&format!(
-					"\n[symbol results truncated: {omitted} hits omitted — narrow `symbol` or count them with `flags: \"c\"`]"
+					"\n[symbol results truncated: {omitted} hits omitted — narrow `name` or count them with `flags: \"c\"`]"
 				));
 			}
 			Some(body)
@@ -459,7 +630,7 @@ fn join_symbol_blocks(label: &str, blocks: Vec<String>, flags: ViewFlags, symbol
 fn no_symbol_matches(flags: ViewFlags, symbol: &str, scope: &str) -> String {
 	let kind = if flags.references { "references" } else { "definitions" };
 	format!(
-		"No {kind} found for symbol \"{symbol}\" {scope}.\nTry a `*` wildcard (e.g. \"{symbol}*\") or a `content` search for plain text."
+		"No {kind} found for symbol \"{symbol}\" {scope}.\nTry a `*` wildcard (e.g. \"{symbol}*\") or a `view` `content` search for plain text."
 	)
 }
 

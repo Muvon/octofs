@@ -20,7 +20,7 @@ use super::remote::{
 	PathSource,
 };
 use crate::mcp::fs::search::ViewFlags;
-use crate::mcp::fs::{ast, delta, directory, file_ops, structure, symbols, text_editing};
+use crate::mcp::fs::{ast, delta, directory, file_ops, structure, text_editing};
 use crate::utils::line_hash::{self, Endpoint};
 use crate::utils::truncation::{format_extracted_content_smart, format_line_spans, format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
@@ -404,8 +404,8 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		.and_then(|v| v.as_str())
 		.is_some_and(|c| !c.trim().is_empty());
 
-	// AST-pattern search (`ast` + `content`): exclusive of symbol navigation,
-	// outlines, ranges and regex, so it is dispatched before every other mode.
+	// AST-pattern search (`ast` + `content`): exclusive of outlines, ranges
+	// and regex, so it is dispatched before every other mode.
 	if call.parameters.get("ast").and_then(|v| v.as_bool()).unwrap_or(false) {
 		let pattern = call.parameters.get("content").and_then(|v| v.as_str()).map(str::trim);
 		let Some(pattern) = pattern else {
@@ -413,14 +413,6 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		};
 		if pattern.is_empty() {
 			bail!("`ast` requires a non-empty `content` pattern, e.g. `fn $NAME($$$ARGS)`.");
-		}
-		if call
-			.parameters
-			.get("symbol")
-			.and_then(|v| v.as_str())
-			.is_some_and(|s| !s.trim().is_empty())
-		{
-			bail!("`ast` cannot be combined with `symbol`: an AST search is pattern-based — drop `symbol`.");
 		}
 		if call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false) {
 			bail!("`ast` cannot be combined with `regex`: an AST pattern matches the syntax tree, not text — drop `regex`.");
@@ -444,26 +436,9 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		return ast::view_ast(call, path, source, pattern).await;
 	}
 
-	// Symbol navigation (`symbol`): exclusive of content search, ranges and
-	// outlines, so it is dispatched before every other mode. Trimmed once at
-	// the boundary: the trimmed name reaches the matcher and every message
-	// alike.
-	if let Some(symbol) = call.parameters.get("symbol").and_then(|v| v.as_str()).map(str::trim) {
-		if symbol.is_empty() {
-			bail!("`symbol` must be a non-empty symbol name — drop it or pass a name (`*` wildcards allowed, e.g. \"handle_*\").");
-		}
-		if has_content {
-			bail!("`symbol` cannot be combined with `content`: a symbol search is structural — drop `content`.");
-		}
-		if has_line_range(call) {
-			bail!("`symbol` cannot be combined with `start`/`end`/`ranges`: a symbol search returns whole definitions or references — drop them.");
-		}
-		return symbols::view_symbols(call, path, source, symbol).await;
-	}
-
 	// Structural outline (`s`): exclusive of content search, listings and
 	// ranges, so it is dispatched before every other mode.
-	if ViewFlags::parse(flags_param, has_content, false)?.structure {
+	if ViewFlags::parse(flags_param, has_content)?.structure {
 		if has_line_range(call) {
 			bail!("View flag s cannot be combined with `start`/`end`/`ranges`: an outline is not a line range — drop them.");
 		}
@@ -495,7 +470,7 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 		if !content_pattern.trim().is_empty() {
 			let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 			let regex_flag = call.parameters.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
-			let flags = ViewFlags::parse(flags_param, true, false)?;
+			let flags = ViewFlags::parse(flags_param, true)?;
 			return file_ops::view_file_with_content_search(
 				source,
 				path,
@@ -509,7 +484,7 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	}
 
 	// File + `l`: its size and modification time, without reading it.
-	if ViewFlags::parse(flags_param, false, false)?.long {
+	if ViewFlags::parse(flags_param, false)?.long {
 		let meta = io_metadata(source).await?;
 		return Ok(format!("{path}\t{}", directory::long_suffix(meta.size, meta.modified)));
 	}
@@ -538,7 +513,7 @@ fn path_error_preview(path: &str) -> String {
 
 async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
 	// Checked before any root is searched, like the roots themselves.
-	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true, false)?;
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true)?;
 	if path.len() > MAX_SEARCH_PATH_BYTES {
 		bail!(
 			"Invalid content-search path alternatives: {} bytes exceeds the {MAX_SEARCH_PATH_BYTES}-byte limit. Split the search into separate `view` calls.",
@@ -652,7 +627,33 @@ pub async fn execute_view_image(call: &McpToolCall) -> Result<Option<file_ops::I
 	file_ops::view_image_spec(&resolve_path_source(&path, &call.workdir), &path).await
 }
 
+/// Symbol navigation moved to the `symbol` tool. A `view` call that still
+/// carries `symbol` (or the `r` flag) gets the equivalent `symbol` call
+/// instead of a silent whole-file read.
+fn reject_moved_symbol_params(call: &McpToolCall) -> Result<()> {
+	let references = call
+		.parameters
+		.get("flags")
+		.and_then(|v| v.as_str())
+		.is_some_and(|flags| flags.contains('r'));
+	let relation = if references { ", relation: \"references\"" } else { "" };
+	if let Some(symbol) = call.parameters.get("symbol").filter(|value| !value.is_null()) {
+		let name = symbol.as_str().unwrap_or("<name>");
+		let path = call.parameters.get("path").and_then(|v| v.as_str()).unwrap_or("<path>");
+		bail!(
+			"`view` no longer takes `symbol`: symbol navigation moved to the `symbol` tool. Call `symbol` with name: {name:?}, path: {path:?}{relation}."
+		);
+	}
+	if references {
+		bail!(
+			"View flag r does not exist on `view`: symbol references are the `symbol` tool with name, path and relation: \"references\" — drop `r`."
+		);
+	}
+	Ok(())
+}
+
 async fn render_view(call: &McpToolCall) -> Result<String> {
+	reject_moved_symbol_params(call)?;
 	let path = view_path(call)?;
 
 	// A background job's resource link reads like a file. Models try `view` on it

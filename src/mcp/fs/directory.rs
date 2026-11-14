@@ -734,11 +734,7 @@ pub async fn list_directory(call: &McpToolCall, directory: &str) -> Result<Strin
 		.unwrap_or(false);
 	let context_lines = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 	let has_content = content.as_ref().is_some_and(|c| !c.trim().is_empty());
-	let flags = ViewFlags::parse(
-		call.parameters.get("flags").and_then(|v| v.as_str()),
-		has_content,
-		false,
-	)?;
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), has_content)?;
 	// Compile the matcher up front so an invalid regex fails before any tree is walked.
 	let content_matcher = match content {
 		Some(content_pattern) if has_content => {

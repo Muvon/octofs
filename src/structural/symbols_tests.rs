@@ -239,6 +239,7 @@ fn deep_nesting_rust_completes_all_walks() {
 		.any(|item| item.name == "deep"));
 }
 
+#[test]
 fn deep_nesting_javascript_completes_all_walks() {
 	let contents = format!("function deep() {}{}", "{".repeat(10_000), "}".repeat(10_000));
 	assert_deep_file_completes_all_walks("a.js", "javascript", &contents);

@@ -10,8 +10,8 @@ src/
   cli.rs               — clap CLI: `octofs mcp [--path PATH] [--bind HOST:PORT] [--ssh-key FILE] [--ssh-timeout SECS]`
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, text_editor, batch_edit, extract_lines, shell,
-                          workdir), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit, extract_lines,
+                          shell, workdir), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
     fs/
@@ -22,7 +22,10 @@ src/
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks
       search.rs        — literal/regex matcher with context blocks, enclosing-symbol breadcrumbs
       structure.rs     — structural outline mode (flags: "s"): file/directory walk, outline rendering
-      symbols.rs       — symbol navigation mode (symbol, flags: "r"): definitions, references, breadcrumbs
+      symbols.rs       — `symbol` tool: parameter validation, definitions/references (text-level), breadcrumbs
+      graph_scoped.rs  — query-scoped graph builds: parse only the files that mention the followed names
+      graph.rs         — `symbol` graph relations: workdir walk, per-workdir LRU graph cache (stamp of path/size/mtime/ctime/inode),
+                         traversal rendering; local only, scope is always the session workdir
       ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars
       delta.rs         — ViewCache (note_write/note_create/render_whole_file), Myers line diff, hunk rendering
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops
@@ -35,6 +38,7 @@ src/
     mod.rs             — outline entry point, extension → language map, supported-language list
     signature_extractor.rs — signature line spans per language, Markdown headings
     symbols.rs         — definitions/references by name, per-line enclosing-symbol breadcrumbs
+    graph/             — pure code graph: files, symbols, calls/imports/extends/implements, traversal (no I/O)
     ast_search.rs      — ast-grep pattern search over the grammars, expando rewrite, miss diagnostics
     languages/         — one tree-sitter grammar + outline/symbol rules per language
     *_tests.rs         — sibling unit tests (mod, signature_extractor, symbols, ast_search, per language)
@@ -50,10 +54,14 @@ function inside `request_ctx::with_request_context(view_cache, …)` → result 
 hint queue into the response. Tool methods return protocol content; one may attach a `ResourceLink` when a call
 promotes a job to background (see shell).
 
-`view` dispatches by mode in `fs/core.rs` (`view_existing_path`): `ast` → `symbol` → outline (`flags: "s"`) →
+`view` dispatches by mode in `fs/core.rs` (`view_existing_path`): `ast` → outline (`flags: "s"`) →
 listing/content search. Every mode bails on the other modes' parameters before dispatch, so the modes are
 mutually exclusive. The structural modes split pure parsing (`src/structural/`, content in — structured items
-out) from I/O and rendering (`fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`).
+out) from I/O and rendering (`fs/structure.rs`, `fs/ast.rs`). The `symbol` tool is separate: `execute_symbol`
+(`fs/symbols.rs`) validates the parameter combination for the `relation`, answers `definition`/`references`
+itself (local or ssh://) and hands the graph relations to `fs/graph.rs`, which walks the workdir, builds the
+graph with `structural::graph::build_graph_from_reader` in `spawn_blocking`, and reuses it while the stamp of the walked
+files is unchanged.
 
 ## State
 

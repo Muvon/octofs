@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! CSS grammar: rule sets and at-rules, named by their selectors.
+//! CSS grammar: rule sets and at-rules, named by their selectors, plus the
+//! graph facts (`@import` edges between stylesheets).
 
 use super::Language;
+use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
 pub(crate) struct Css {}
@@ -63,6 +65,81 @@ impl Language for Css {
 			}
 		}
 		None
+	}
+
+	fn get_symbol_kinds(&self) -> Vec<&'static str> {
+		// Same as the outline kinds minus `import_statement`: an import
+		// declares nothing, and a media-query identifier on it would otherwise
+		// become a bogus symbol.
+		vec!["rule_set", "at_rule", "keyframes_statement", "media_statement"]
+	}
+
+	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
+		let mut imports = Vec::new();
+		if node.kind() == "import_statement" {
+			if let Ok(import_text) = node.utf8_text(contents.as_bytes()) {
+				if let Some(url) = parse_css_import(import_text) {
+					imports.push(url);
+				}
+			}
+		}
+		// CSS has no exports.
+		(imports, Vec::new())
+	}
+
+	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		if import_path.starts_with("./") || import_path.starts_with("../") {
+			let relative_path = resolve_relative_path(source_file, import_path);
+			if let Some(found) = all_files.find_normalized(&relative_path) {
+				return Some(found.to_string());
+			}
+			// `@import "../shared/reset"` may omit the extension.
+			return all_files.find_file_with_extensions(strip_extension(&relative_path), &CSS_EXTENSIONS);
+		}
+
+		// A bare filename lives next to the importing stylesheet first.
+		let source_dir = source_file
+			.rsplit_once(['/', '\\'])
+			.map_or("", |(directory, _)| directory);
+		let sibling = if source_dir.is_empty() {
+			import_path.to_string()
+		} else {
+			format!("{source_dir}/{import_path}")
+		};
+		if let Some(found) = all_files.find_normalized(&sibling) {
+			return Some(found.to_string());
+		}
+		all_files.find_exact_file(import_path)
+	}
+}
+
+const CSS_EXTENSIONS: [&str; 3] = ["css", "scss", "sass"];
+
+/// `@import "file.css"`, `@import 'file.css'`, `@import url("file.css")` or
+/// the unquoted `@import url(file.css)`. The quote scan is not anchored to
+/// the start, so it also covers the quoted `url(...)` forms.
+fn parse_css_import(import_text: &str) -> Option<String> {
+	for quote in ['"', '\''] {
+		if let Some(start) = import_text.find(quote) {
+			let rest = &import_text[start + 1..];
+			if let Some(end) = rest.find(quote) {
+				return Some(rest[..end].to_string());
+			}
+		}
+	}
+	let url_start = import_text.find("url(")?;
+	let url_content = &import_text[url_start + "url(".len()..];
+	let close = url_content.find(')')?;
+	let unquoted = url_content[..close].trim();
+	(!unquoted.is_empty()).then(|| unquoted.to_string())
+}
+
+/// The path without the extension of its last component (`a/b.scss` -> `a/b`).
+fn strip_extension(path: &str) -> &str {
+	let name_start = path.rfind('/').map_or(0, |index| index + 1);
+	match path[name_start..].rfind('.') {
+		Some(dot) if dot > 0 => &path[..name_start + dot],
+		_ => path,
 	}
 }
 

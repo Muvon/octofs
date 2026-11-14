@@ -12,9 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Python outline extraction tests.
+//! Python outline and graph-extraction tests.
 
+use super::Python;
+use crate::structural::graph::registry::FileRegistry;
+use crate::structural::graph::{build_graph, CodeGraph, RelationType, SourceFile};
+use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
 use crate::structural::outline;
+use tree_sitter::{Node, Parser};
+
+/// Pre-order walk of the parsed source, calling `visit` on every node.
+fn for_each_node(source: &str, mut visit: impl FnMut(Node, &str)) {
+	let mut parser = Parser::new();
+	parser.set_language(&Python {}.get_ts_language()).unwrap();
+	let tree = parser.parse(source, None).unwrap();
+	let mut cursor = tree.walk();
+	loop {
+		visit(cursor.node(), source);
+		if cursor.goto_first_child() {
+			continue;
+		}
+		while !cursor.goto_next_sibling() {
+			if !cursor.goto_parent() {
+				return;
+			}
+		}
+	}
+}
+
+fn imports_exports_in(source: &str) -> (Vec<String>, Vec<String>) {
+	let (mut imports, mut exports) = (Vec::new(), Vec::new());
+	for_each_node(source, |node, contents| {
+		let (found_imports, found_exports) = Python {}.extract_imports_exports(node, contents);
+		imports.extend(found_imports);
+		exports.extend(found_exports);
+	});
+	(imports, exports)
+}
+
+fn registry(paths: &[&str]) -> FileRegistry {
+	FileRegistry::new(&paths.iter().map(|path| path.to_string()).collect::<Vec<_>>())
+}
+
+fn has_edge(graph: &CodeGraph, source: &str, target: &str, relation: RelationType) -> bool {
+	graph
+		.relationships
+		.iter()
+		.any(|edge| edge.source == source && edge.target == target && edge.relation == relation)
+}
 
 #[test]
 fn classes_and_nested_methods_are_items() {
@@ -28,4 +73,210 @@ fn classes_and_nested_methods_are_items() {
 		summary,
 		vec![("class", "Foo", 4), ("function", "bar", 5), ("function", "baz", 9)]
 	);
+}
+
+#[test]
+fn imports_yield_module_names() {
+	let (imports, _) =
+		imports_exports_in("import os, sys as system\nfrom pkg.mod import a, b\nfrom . import c\nfrom ..up import d\n");
+	// `from . import c` names a submodule of the package, so the imported
+	// name is part of the path.
+	assert_eq!(imports, vec!["os", "sys", "pkg.mod", ".c", "..up"]);
+}
+
+#[test]
+fn a_dots_only_from_import_yields_one_path_per_imported_name() {
+	let (imports, _) =
+		imports_exports_in("from . import a, b as c\nfrom .. import (\n\td,\n\te,\n)\nfrom . import *\n");
+	assert_eq!(imports, vec![".a", ".b", "..d", "..e", "."]);
+}
+
+#[test]
+fn from_dot_import_resolves_each_name_to_a_module_or_package() {
+	let files = registry(&[
+		"pkg/x.py",
+		"pkg/y/__init__.py",
+		"top.py",
+		"pkg/sub/mod.py",
+		"pkg/other.py",
+	]);
+	let py = Python {};
+	assert_eq!(
+		py.resolve_import(".x", "pkg/main.py", &files),
+		Some("pkg/x.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import(".y", "pkg/main.py", &files),
+		Some("pkg/y/__init__.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import("..other", "pkg/sub/mod.py", &files),
+		Some("pkg/other.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import(".mod", "pkg/sub/other.py", &files),
+		Some("pkg/sub/mod.py".to_string())
+	);
+}
+
+#[test]
+fn an_import_never_resolves_to_the_importing_file() {
+	let files = registry(&["pkg/__init__.py", "pkg/mod.py"]);
+	let py = Python {};
+	assert_eq!(py.resolve_import(".", "pkg/__init__.py", &files), None);
+	assert_eq!(py.resolve_import("pkg", "pkg/__init__.py", &files), None);
+	assert_eq!(py.resolve_import(".mod", "pkg/mod.py", &files), None);
+}
+
+#[test]
+fn module_level_definitions_are_exports_even_when_decorated() {
+	let src = "def top():\n\tpass\n\n@deco\nclass Wrapped:\n\tdef method(self):\n\t\tpass\n";
+	let (_, exports) = imports_exports_in(src);
+	assert_eq!(exports, vec!["top", "Wrapped"]);
+}
+
+#[test]
+fn calls_keep_qualifier() {
+	let mut calls = Vec::new();
+	for_each_node("foo()\nself.bar()\n", |node, contents| {
+		calls.extend(Python {}.extract_function_calls(node, contents));
+	});
+	assert_eq!(
+		calls,
+		vec![
+			CallTarget {
+				name: "foo".to_string(),
+				qualifier: None
+			},
+			CallTarget {
+				name: "bar".to_string(),
+				qualifier: Some("self".to_string())
+			},
+		]
+	);
+}
+
+#[test]
+fn base_classes_are_extends_relations() {
+	let mut relations = Vec::new();
+	for_each_node(
+		"class A(B, mod.C, Generic[T]):\n\tpass\n\nclass Plain:\n\tpass\n",
+		|node, contents| {
+			relations.extend(Python {}.extract_type_relations(node, contents));
+		},
+	);
+	assert_eq!(
+		relations,
+		vec![
+			(TypeRelationKind::Extends, "B".to_string()),
+			(TypeRelationKind::Extends, "C".to_string()),
+			(TypeRelationKind::Extends, "Generic".to_string()),
+		]
+	);
+}
+
+#[test]
+fn methods_are_owned_by_their_class() {
+	let mut owners = Vec::new();
+	for_each_node(
+		"class Foo:\n\tdef bar(self):\n\t\tpass\n\ndef free():\n\tpass\n",
+		|node, contents| {
+			if node.kind() == "function_definition" {
+				owners.push(Python {}.extract_symbol_owner(node, contents));
+			}
+		},
+	);
+	assert_eq!(owners, vec![Some("Foo".to_string()), None]);
+}
+
+#[test]
+fn a_name_imported_from_the_package_resolves_to_its_init_file() {
+	let files = registry(&["pkg/__init__.py", "pkg/main.py", "pkg/real.py"]);
+	let py = Python {};
+	// `from . import helper`: no `helper` module, so the name lives in `__init__.py`.
+	assert_eq!(
+		py.resolve_import(".helper", "pkg/main.py", &files),
+		Some("pkg/__init__.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import(".real", "pkg/main.py", &files),
+		Some("pkg/real.py".to_string())
+	);
+	// Inside `__init__.py` itself it would be a self-edge.
+	assert_eq!(py.resolve_import(".helper", "pkg/__init__.py", &files), None);
+	// A dotted module that does not exist stays unresolved.
+	assert_eq!(py.resolve_import(".a.b", "pkg/main.py", &files), None);
+}
+
+#[test]
+fn relative_imports_walk_up_by_dots() {
+	let files = registry(&["pkg/util.py", "pkg/sub/__init__.py", "top.py", "pkg/__init__.py"]);
+	let py = Python {};
+	assert_eq!(
+		py.resolve_import(".util", "pkg/main.py", &files),
+		Some("pkg/util.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import(".sub", "pkg/main.py", &files),
+		Some("pkg/sub/__init__.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import("..top", "pkg/main.py", &files),
+		Some("top.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import(".", "pkg/main.py", &files),
+		Some("pkg/__init__.py".to_string())
+	);
+	assert_eq!(py.resolve_import("...top", "pkg/main.py", &files), None);
+}
+
+#[test]
+fn absolute_imports_try_package_then_project_root() {
+	let files = registry(&["pkg/util.py", "pkg/deep/mod.py", "other.py"]);
+	let py = Python {};
+	assert_eq!(
+		py.resolve_import("util", "pkg/main.py", &files),
+		Some("pkg/util.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import("pkg.deep.mod", "pkg/main.py", &files),
+		Some("pkg/deep/mod.py".to_string())
+	);
+	assert_eq!(
+		py.resolve_import("other", "pkg/main.py", &files),
+		Some("other.py".to_string())
+	);
+	assert_eq!(py.resolve_import("os", "pkg/main.py", &files), None);
+}
+
+#[test]
+fn graph_links_calls_imports_and_inheritance_across_files() {
+	let graph = build_graph(vec![
+		SourceFile {
+			path: "pkg/util.py".to_string(),
+			language: "python",
+			contents: "def helper():\n    pass\n\n\nclass Base:\n    pass\n".to_string(),
+		},
+		SourceFile {
+			path: "pkg/main.py".to_string(),
+			language: "python",
+			contents:
+				"from .util import helper, Base\n\n\nclass Child(Base):\n    pass\n\n\ndef run():\n    helper()\n"
+					.to_string(),
+		},
+	]);
+	assert!(has_edge(
+		&graph,
+		"pkg/main.py::run",
+		"pkg/util.py::helper",
+		RelationType::Calls
+	));
+	assert!(has_edge(&graph, "pkg/main.py", "pkg/util.py", RelationType::Imports));
+	assert!(has_edge(
+		&graph,
+		"pkg/main.py::Child",
+		"pkg/util.py::Base",
+		RelationType::Extends
+	));
 }

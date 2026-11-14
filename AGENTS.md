@@ -1,6 +1,6 @@
 # Octofs — AGENTS.md
 
-Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit, extract_lines, shell, workdir) over MCP — stdio or streamable HTTP — with native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum.
+Standalone Rust binary exposing filesystem tools (view, symbol, text_editor, batch_edit, extract_lines, shell, workdir) over MCP — stdio or streamable HTTP — with native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum.
 
 ## Commands
 - Build: `cargo build` · Release: `cargo build --release` · Dev run: `cargo run -- mcp` (stdio; add `--bind 127.0.0.1:12345` for HTTP; `RUST_LOG=debug` for logs)
@@ -17,7 +17,8 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 | str_replace / batch_edit internals / file locking | `src/mcp/fs/text_editing.rs` |
 | Directory listing, glob + content filtering | `src/mcp/fs/directory.rs` + `src/mcp/fs/search.rs` |
 | Structural outline (`view` `flags: "s"`) | `src/mcp/fs/structure.rs` + `src/structural/` (grammars) |
-| Symbol navigation (`view` `symbol`, `flags: "r"`) | `src/mcp/fs/symbols.rs` + `src/structural/symbols.rs` |
+| Symbol navigation (`symbol` tool: definition, references) | `src/mcp/fs/symbols.rs` (validation + text lookup) + `src/structural/symbols.rs` |
+| Code graph relations (`symbol` callers, callees, imports, imported_by, supertypes, subtypes, path) | `src/mcp/fs/graph.rs` (walk, cache, rendering) + `src/structural/graph/` (pure graph, per-language extraction) |
 | AST-pattern search (`view` `ast: true`) | `src/mcp/fs/ast.rs` + `src/structural/ast_search.rs` |
 | Delta views / view cache | `src/mcp/fs/delta.rs` — `note_write`, `note_create`, `render_whole_file` |
 | Background jobs / MCP resources / subscriptions | `src/mcp/fs/background.rs` + handlers in `src/mcp/server.rs` |
@@ -48,7 +49,7 @@ Standalone Rust binary exposing filesystem tools (view, text_editor, batch_edit,
 - Outer `std::sync::Mutex` in `FILE_LOCKS` is never held across `.await`; `resolve_path` does not canonicalize (files may not exist yet) — canonicalize only for lock keys.
 - Tree-sitter walks must be iterative cursor walks — no depth recursion, no per-child `child(i)` loops: deep nesting overflowed the stack and wide files went quadratic.
 - ast-grep metavariable expando chars are per language (`µ` for rust/python/go/ruby/swift/php/elixir, `𐀀` for C/C++, `$` elsewhere) — see `src/structural/ast_search.rs`.
-- `view` mode exclusivity is enforced in `src/mcp/fs/core.rs` (`ast` → `symbol` → outline → listing/search): each mode bails on the others' parameters before dispatch.
+- `view` mode exclusivity is enforced in `src/mcp/fs/core.rs` (`ast` → outline → listing/search): each mode bails on the others' parameters before dispatch. Symbol navigation is the separate `symbol` tool, not a `view` mode. Its graph relations always cover the whole session workdir (`path` only picks start nodes), are local only, and reuse a small per-workdir LRU graph cache validated on every call by a stamp of (path, size, mtime, ctime, inode) of the walked files.
 - Register every spawned shell child via `register_child` so SIGTERM/EOF cleanup kills its process group; job output reads are tail-capped (`MAX_TAIL_BYTES`).
 - HTTP access control (`src/http_auth.rs`) is the only boundary in front of `shell` over `--bind`: a non-loopback bind without a token must stay refused, the token check must stay constant-time, and token-less servers keep rmcp's loopback Host allowlist plus enforced Origin validation. Don't weaken any of the three.
 

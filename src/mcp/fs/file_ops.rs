@@ -139,7 +139,7 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 		if served_full && content.lines().count() > LARGE_FILE_HINT_LINES && structural::is_supported(&source.display())
 		{
 			crate::mcp::request_ctx::push_hint(
-				"Large file: try flags: \"s\" for an outline, or `symbol: \"name\"` to jump to a definition.",
+				"Large file: try flags: \"s\" for an outline, or the `symbol` tool to jump to a definition.",
 			);
 		}
 		return Ok(super::delta::render_whole_file(source, &content, full));

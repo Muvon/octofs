@@ -45,6 +45,7 @@ base64 = "0.23.1"
 anyhow = "1.0.104"
 ignore = "0.4.34"
 regex = "1.13.1"
+aho-corasick = "1.1.5"
 rayon = "1.12.0"
 tracing = { version = "0.1", features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }

@@ -31,3 +31,13 @@ fn arrays_are_named_by_the_key_they_are_the_value_of() {
 	let summary: Vec<(&str, usize)> = items.iter().map(|i| (i.name.as_str(), i.start_line)).collect();
 	assert_eq!(summary, vec![("name", 1), ("items", 3)]);
 }
+
+#[test]
+fn json_declares_no_graph_symbols_and_resolves_no_imports() {
+	use crate::structural::languages::Language;
+	let json = super::Json {};
+	assert!(json.get_symbol_kinds().is_empty());
+	// JSON has no imports.
+	let files = crate::structural::graph::registry::FileRegistry::new(&["a.json".to_string()]);
+	assert_eq!(json.resolve_import("a.json", "b.json", &files), None);
+}

@@ -17,6 +17,7 @@
 #[cfg(test)]
 mod tests {
 	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view, execute_view_image};
+	use crate::mcp::fs::execute_symbol;
 
 	use crate::mcp::fs::remote::PathSource;
 	use crate::mcp::McpToolCall;
@@ -6531,10 +6532,6 @@ mod tests {
 				json!({ "ranges": [{ "start": 1, "end": 2 }], "flags": "s" }),
 				"`start`/`end`/`ranges`",
 			),
-			(
-				json!({ "ranges": [{ "start": 1, "end": 2 }], "symbol": "main" }),
-				"`start`/`end`/`ranges`",
-			),
 		];
 		for (extra, expected) in cases {
 			let err = execute_view(&view_ranges_call(&file, extra.clone()))
@@ -7322,15 +7319,15 @@ mod tests {
 		})
 	}
 
-	// ── Symbol navigation integration tests (`symbol` / flag `r`) ────────
+	// ── `symbol` tool: definition / references ───────────────────────────
 
 	#[tokio::test]
-	async fn view_symbol_definitions_single_file_renders_view_line_ids() {
+	async fn symbol_definitions_single_file_renders_view_line_ids() {
 		let src = "pub struct Store {\n\tdata: Vec<u8>,\n}\n\nimpl Store {\n\tpub fn flush(&mut self) {\n\t\tself.data.clear();\n\t}\n}\n";
 		let file = create_test_rs_file(src).await;
 		let path = file.path().to_string_lossy().to_string();
-		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush" }));
-		let result = execute_view(&call).await.unwrap();
+		let call = McpToolCall::test_call("symbol", json!({ "path": path, "name": "flush" }));
+		let result = execute_symbol(&call).await.unwrap();
 		// Exact name, definition ≤ 32 lines: the full body with the same ids a
 		// plain view renders, headed by the enclosing-symbol breadcrumb.
 		let expected = format!(
@@ -7340,15 +7337,25 @@ mod tests {
 			lid(src, 8)
 		);
 		assert_eq!(result, expected);
+
+		// `definition` is the default and can be spelled out.
+		let explicit = McpToolCall::test_call(
+			"symbol",
+			json!({ "path": path, "name": "flush", "relation": "definition" }),
+		);
+		assert_eq!(execute_symbol(&explicit).await.unwrap(), expected);
 	}
 
 	#[tokio::test]
-	async fn view_symbol_references_group_and_tag_definition_sites() {
+	async fn symbol_references_group_and_tag_definition_sites() {
 		let src = "impl Store {\n\tpub fn flush(&mut self) {\n\t\tOk(())\n\t}\n\tfn drain(&mut self) {\n\t\tself.flush();\n\t}\n}\n\nfn main() {\n\tstore.flush();\n}\n";
 		let file = create_test_rs_file(src).await;
 		let path = file.path().to_string_lossy().to_string();
-		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush", "flags": "r" }));
-		let result = execute_view(&call).await.unwrap();
+		let call = McpToolCall::test_call(
+			"symbol",
+			json!({ "path": path, "name": "flush", "relation": "references" }),
+		);
+		let result = execute_symbol(&call).await.unwrap();
 		let expected = format!(
 			"[impl Store › fn flush] [def]\n{}|\tpub fn flush(&mut self) {{\n\
 [impl Store › fn drain]\n{}|\t\tself.flush();\n\
@@ -7361,12 +7368,12 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn view_symbol_wildcard_previews_long_definitions() {
+	async fn symbol_wildcard_previews_long_definitions() {
 		let src = "fn handle_request() {\n\t1\n\t2\n\t3\n\t4\n\t5\n\t6\n}\n";
 		let file = create_test_rs_file(src).await;
 		let path = file.path().to_string_lossy().to_string();
-		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "handle_*" }));
-		let result = execute_view(&call).await.unwrap();
+		let call = McpToolCall::test_call("symbol", json!({ "path": path, "name": "handle_*" }));
+		let result = execute_symbol(&call).await.unwrap();
 		// Wildcards always preview: first 4 lines, the omitted marker, last line.
 		let expected = format!(
 			"{}|fn handle_request() {{\n{}|\t1\n{}|\t2\n{}|\t3\n… 3 lines omitted …\n{}|}}",
@@ -7380,54 +7387,102 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn view_symbol_count_and_files_only_flags() {
+	async fn symbol_count_and_files_only_flags() {
 		let src = "fn a() {}\nfn b() {}\n";
 		let file = create_test_rs_file(src).await;
 		let path = file.path().to_string_lossy().to_string();
-		let count = McpToolCall::test_call("view", json!({ "path": path, "symbol": "*", "flags": "c" }));
-		let result = execute_view(&count).await.unwrap();
+		let count = McpToolCall::test_call("symbol", json!({ "path": path, "name": "*", "flags": "c" }));
+		let result = execute_symbol(&count).await.unwrap();
 		assert_eq!(result, format!("{path}\t2"));
-		let files_only = McpToolCall::test_call("view", json!({ "path": path, "symbol": "*", "flags": "l" }));
-		let result = execute_view(&files_only).await.unwrap();
+		let files_only = McpToolCall::test_call("symbol", json!({ "path": path, "name": "*", "flags": "l" }));
+		let result = execute_symbol(&files_only).await.unwrap();
 		assert_eq!(result, path);
 	}
 
 	#[tokio::test]
-	async fn view_symbol_rejects_every_invalid_combination() {
+	async fn symbol_rejects_every_invalid_combination() {
 		let file = create_test_rs_file("fn a() {}\n").await;
 		let path = file.path().to_string_lossy().to_string();
-		let cases: [(serde_json::Value, &str); 8] = [
-			(json!({ "path": path, "symbol": "a", "content": "a" }), "drop `content`"),
-			(json!({ "path": path, "symbol": "a", "start": 1 }), "`start`/`end`"),
-			(json!({ "path": path, "symbol": "a", "end": 2 }), "`start`/`end`"),
+		let cases: Vec<(serde_json::Value, &str)> = vec![
+			// definition / references
 			(
-				json!({ "path": path, "symbol": "a", "flags": "o" }),
-				"o and v cannot be combined with `symbol`",
+				json!({ "path": path, "name": "a", "flags": "o" }),
+				"Unknown flag 'o' for `symbol`",
 			),
 			(
-				json!({ "path": path, "symbol": "a", "flags": "v" }),
-				"o and v cannot be combined with `symbol`",
+				json!({ "path": path, "name": "a", "flags": "v" }),
+				"Unknown flag 'v' for `symbol`",
 			),
 			(
-				json!({ "path": path, "symbol": "a", "flags": "s" }),
-				"s cannot be combined with `symbol`",
+				json!({ "path": path, "name": "a", "flags": "s" }),
+				"Unknown flag 's' for `symbol`",
 			),
-			(json!({ "path": path, "flags": "r" }), "requires `symbol`"),
-			(json!({ "path": path, "symbol": "  " }), "non-empty symbol name"),
+			(
+				json!({ "path": path, "name": "a", "flags": "cl" }),
+				"Flags c and l are alternatives",
+			),
+			(
+				json!({ "path": path, "name": "a", "flags": "r" }),
+				"relation \"references\"",
+			),
+			(json!({ "path": path, "name": "  " }), "needs `name`"),
+			(json!({ "path": path }), "needs `name`"),
+			(
+				json!({ "path": path, "name": "a", "to": "b" }),
+				"only valid with relation \"path\"",
+			),
+			(
+				json!({ "path": path, "name": "a", "depth": 2 }),
+				"`depth` applies to graph relations",
+			),
+			(json!({ "name": "a", "relation": "bogus" }), "Unknown relation"),
+			// graph relations
+			(json!({ "relation": "callers" }), "needs `name`"),
+			(json!({ "relation": "callers", "name": "a*" }), "cannot contain `*`"),
+			(
+				json!({ "relation": "callers", "name": "a", "flags": "c" }),
+				"definition and references only",
+			),
+			(
+				json!({ "relation": "callees", "name": "a", "pattern": "*.rs" }),
+				"definition and references only",
+			),
+			(
+				json!({ "relation": "callees", "name": "a", "context": 2 }),
+				"definition and references only",
+			),
+			(
+				json!({ "relation": "supertypes", "name": "a", "to": "b" }),
+				"only valid with relation \"path\"",
+			),
+			(json!({ "relation": "path", "name": "a" }), "needs `to`"),
+			(
+				json!({ "relation": "path", "name": "a", "to": "b*" }),
+				"cannot contain `*`",
+			),
+			(
+				json!({ "relation": "imports", "name": "a", "path": path }),
+				"drop `name`",
+			),
+			(json!({ "relation": "imported_by" }), "needs `path`"),
+			(
+				json!({ "relation": "callers", "name": "a", "depth": "x" }),
+				"`depth` must be",
+			),
 		];
 		for (args, needle) in cases {
-			let call = McpToolCall::test_call("view", args.clone());
-			let err = execute_view(&call).await.unwrap_err().to_string();
+			let call = McpToolCall::test_call("symbol", args.clone());
+			let err = execute_symbol(&call).await.unwrap_err().to_string();
 			assert!(err.contains(needle), "case {args}: got {err}");
 		}
 	}
 
 	#[tokio::test]
-	async fn view_symbol_no_match_suggests_wildcard_and_content() {
+	async fn symbol_no_match_suggests_wildcard_and_content() {
 		let file = create_test_rs_file("fn a() {}\n").await;
 		let path = file.path().to_string_lossy().to_string();
-		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "missing" }));
-		let result = execute_view(&call).await.unwrap();
+		let call = McpToolCall::test_call("symbol", json!({ "path": path, "name": "missing" }));
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(
 			result.starts_with(&format!("No definitions found for symbol \"missing\" in {path}.")),
 			"got: {result}"
@@ -7436,7 +7491,16 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn view_symbol_directory_honours_pattern_max_depth_and_gitignore() {
+	async fn symbol_missing_path_names_the_resolution() {
+		let root = tempfile::tempdir().unwrap();
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": "nope/a.rs", "name": "a" }));
+		call.workdir = root.path().to_path_buf();
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
+		assert!(err.contains("Path not found: nope/a.rs"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn symbol_directory_honours_pattern_max_depth_and_gitignore() {
 		let root = tempfile::tempdir().unwrap();
 		fs::create_dir(root.path().join("sub")).await.unwrap();
 		fs::write(root.path().join("a.rs"), "fn handle_a() {}\n").await.unwrap();
@@ -7454,53 +7518,54 @@ mod tests {
 			.await
 			.unwrap();
 
-		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "symbol": "handle_*" }));
+		// No `path`: the workdir is searched.
+		let mut call = McpToolCall::test_call("symbol", json!({ "name": "handle_*" }));
 		call.workdir = root.path().to_path_buf();
-		let result = execute_view(&call).await.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(result.contains("a.rs:"), "got: {result}");
 		assert!(result.contains("sub/b.rs:"), "got: {result}");
 		assert!(result.contains("handle_a"), "got: {result}");
 		assert!(!result.contains("ignored.rs"), "gitignored file listed: {result}");
 		assert!(!result.contains("c.txt"), "unsupported file listed: {result}");
 
-		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "symbol": "handle_*", "max_depth": 1 }));
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": ".", "name": "handle_*", "max_depth": 1 }));
 		call.workdir = root.path().to_path_buf();
-		let result = execute_view(&call).await.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(result.contains("a.rs:"), "got: {result}");
 		assert!(!result.contains("sub/b.rs"), "max_depth ignored: {result}");
 
 		let mut call = McpToolCall::test_call(
-			"view",
-			json!({ "path": ".", "symbol": "handle_*", "pattern": "**/*.rs" }),
+			"symbol",
+			json!({ "path": ".", "name": "handle_*", "pattern": "**/*.rs" }),
 		);
 		call.workdir = root.path().to_path_buf();
-		let result = execute_view(&call).await.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(result.contains("a.rs:"), "got: {result}");
 		assert!(!result.contains("e.py"), "pattern ignored: {result}");
 	}
 
 	#[tokio::test]
-	async fn view_symbol_trims_surrounding_whitespace() {
+	async fn symbol_trims_surrounding_whitespace() {
 		let src = "pub struct Store {\n\tdata: Vec<u8>,\n}\n\nimpl Store {\n\tpub fn flush(&mut self) {\n\t\tself.data.clear();\n\t}\n}\n";
 		let file = create_test_rs_file(src).await;
 		let path = file.path().to_string_lossy().to_string();
-		let padded = McpToolCall::test_call("view", json!({ "path": path, "symbol": "  flush  " }));
-		let padded_result = execute_view(&padded).await.unwrap();
-		let plain = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush" }));
-		let plain_result = execute_view(&plain).await.unwrap();
+		let padded = McpToolCall::test_call("symbol", json!({ "path": path, "name": "  flush  " }));
+		let padded_result = execute_symbol(&padded).await.unwrap();
+		let plain = McpToolCall::test_call("symbol", json!({ "path": path, "name": "flush" }));
+		let plain_result = execute_symbol(&plain).await.unwrap();
 		assert_eq!(padded_result, plain_result);
 		assert!(padded_result.contains("pub fn flush"), "got: {padded_result}");
 	}
 
 	#[tokio::test]
-	async fn view_symbol_css_and_json_files_error_with_guidance() {
+	async fn symbol_css_and_json_files_error_with_guidance() {
 		let css = tempfile::Builder::new().suffix(".css").tempfile().unwrap();
 		fs::write(css.path(), "body { color: red; }\n").await.unwrap();
 		let call = McpToolCall::test_call(
-			"view",
-			json!({ "path": css.path().to_string_lossy().to_string(), "symbol": "body" }),
+			"symbol",
+			json!({ "path": css.path().to_string_lossy().to_string(), "name": "body" }),
 		);
-		let err = execute_view(&call).await.unwrap_err().to_string();
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
 		assert!(
 			err.contains("symbol navigation is not supported for css files"),
 			"got: {err}"
@@ -7510,10 +7575,10 @@ mod tests {
 		let json = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
 		fs::write(json.path(), "{\"a\": 1}\n").await.unwrap();
 		let call = McpToolCall::test_call(
-			"view",
-			json!({ "path": json.path().to_string_lossy().to_string(), "symbol": "a" }),
+			"symbol",
+			json!({ "path": json.path().to_string_lossy().to_string(), "name": "a" }),
 		);
-		let err = execute_view(&call).await.unwrap_err().to_string();
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
 		assert!(
 			err.contains("symbol navigation is not supported for json files"),
 			"got: {err}"
@@ -7521,7 +7586,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn view_symbol_directory_skips_css_and_json_silently() {
+	async fn symbol_directory_skips_css_and_json_silently() {
 		let root = tempfile::tempdir().unwrap();
 		fs::write(root.path().join("a.css"), "body { color: red; }\n")
 			.await
@@ -7529,9 +7594,9 @@ mod tests {
 		fs::write(root.path().join("b.json"), "{\"a\": 1}\n").await.unwrap();
 		fs::write(root.path().join("c.rs"), "fn handle_c() {}\n").await.unwrap();
 
-		let mut call = McpToolCall::test_call("view", json!({ "path": ".", "symbol": "handle_*" }));
+		let mut call = McpToolCall::test_call("symbol", json!({ "path": ".", "name": "handle_*" }));
 		call.workdir = root.path().to_path_buf();
-		let result = execute_view(&call).await.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(result.contains("c.rs:"), "got: {result}");
 		assert!(result.contains("handle_c"), "got: {result}");
 		assert!(!result.contains("a.css"), "css file listed: {result}");
@@ -7539,16 +7604,16 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn view_symbol_works_on_markdown_and_svelte() {
+	async fn symbol_works_on_markdown_and_svelte() {
 		let md = tempfile::Builder::new().suffix(".md").tempfile().unwrap();
 		fs::write(md.path(), "# Installation\n\n## Setup\n\nRun the installer.\n")
 			.await
 			.unwrap();
 		let call = McpToolCall::test_call(
-			"view",
-			json!({ "path": md.path().to_string_lossy().to_string(), "symbol": "Installation" }),
+			"symbol",
+			json!({ "path": md.path().to_string_lossy().to_string(), "name": "Installation" }),
 		);
-		let result = execute_view(&call).await.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(result.contains("# Installation"), "got: {result}");
 
 		let svelte = tempfile::Builder::new().suffix(".svelte").tempfile().unwrap();
@@ -7559,21 +7624,21 @@ mod tests {
 		.await
 		.unwrap();
 		let call = McpToolCall::test_call(
-			"view",
-			json!({ "path": svelte.path().to_string_lossy().to_string(), "symbol": "greet" }),
+			"symbol",
+			json!({ "path": svelte.path().to_string_lossy().to_string(), "name": "greet" }),
 		);
-		let result = execute_view(&call).await.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
 		assert!(result.contains("function greet"), "got: {result}");
 	}
 
 	#[tokio::test]
-	async fn view_symbol_does_not_register_a_whole_file_view() {
+	async fn symbol_does_not_register_a_whole_file_view() {
 		let src = "fn main() {\n\tprintln!(\"body\");\n}\n";
 		let file = create_test_rs_file(src).await;
 		let path = file.path().to_string_lossy().to_string();
 		let cache = std::sync::Arc::new(crate::mcp::fs::delta::ViewCache::default());
-		let symbol_call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "main" }));
-		let symbol = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), execute_view(&symbol_call))
+		let symbol_call = McpToolCall::test_call("symbol", json!({ "path": path, "name": "main" }));
+		let symbol = crate::mcp::request_ctx::with_request_context(Some(cache.clone()), execute_symbol(&symbol_call))
 			.await
 			.unwrap();
 		assert!(symbol.contains("fn main()"));
@@ -7585,6 +7650,416 @@ mod tests {
 			.await
 			.unwrap();
 		assert!(full.contains("println!(\"body\");"), "full view: {full}");
+	}
+
+	#[tokio::test]
+	async fn view_rejects_symbol_and_the_r_flag_with_the_symbol_tool_call() {
+		let src = "pub struct Store;\n\nimpl Store {\n\tpub fn flush(&mut self) {}\n}\n";
+		let file = create_test_rs_file(src).await;
+		let path = file.path().to_string_lossy().to_string();
+
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush" }));
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("moved to the `symbol` tool") && err.contains("\"flush\""),
+			"got: {err}"
+		);
+		assert!(!err.contains("references"), "got: {err}");
+
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": "flush", "flags": "r" }));
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(err.contains("relation: \"references\""), "got: {err}");
+
+		let call = McpToolCall::test_call("view", json!({ "path": path, "flags": "r" }));
+		let err = execute_view(&call).await.unwrap_err().to_string();
+		assert!(
+			err.contains("`symbol` tool") && err.contains("references"),
+			"got: {err}"
+		);
+
+		let call = McpToolCall::test_call("view", json!({ "path": path, "symbol": null }));
+		assert!(execute_view(&call).await.is_ok(), "null symbol is an unset field");
+
+		let call = McpToolCall::test_call("view", json!({ "path": path, "unrelated": 1 }));
+		let result = execute_view(&call).await.unwrap();
+		assert!(result.contains("pub struct Store;"), "got: {result}");
+
+		let view_schema = serde_json::to_value(rmcp::schemars::schema_for!(crate::mcp::server::ViewParams)).unwrap();
+		assert!(view_schema["properties"].get("symbol").is_none(), "{view_schema}");
+		let symbol_schema =
+			serde_json::to_string(&rmcp::schemars::schema_for!(crate::mcp::server::SymbolParams)).unwrap();
+		for relation in [
+			"definition",
+			"references",
+			"callers",
+			"callees",
+			"imports",
+			"imported_by",
+			"supertypes",
+			"subtypes",
+			"path",
+		] {
+			assert!(
+				symbol_schema.contains(&format!("\"{relation}\"")),
+				"{relation} missing: {symbol_schema}"
+			);
+		}
+	}
+
+	// ── `symbol` tool: graph relations ───────────────────────────────────
+
+	async fn graph_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+		let root = tempfile::tempdir().unwrap();
+		for (relative, content) in files {
+			let full = root.path().join(relative);
+			fs::create_dir_all(full.parent().unwrap()).await.unwrap();
+			fs::write(full, content).await.unwrap();
+		}
+		root
+	}
+
+	fn symbol_in(root: &tempfile::TempDir, params: serde_json::Value) -> McpToolCall {
+		let mut call = McpToolCall::test_call("symbol", params);
+		call.workdir = root.path().to_path_buf();
+		call
+	}
+
+	const GRAPH_MAIN: &str = "mod util;\nuse crate::util::helper;\n\nfn main() {\n\thelper();\n}\n";
+	const GRAPH_UTIL: &str = "pub fn helper() {\n\tinner();\n}\n\nfn inner() {}\n";
+	const GRAPH_MODEL: &str = "pub trait Shape {\n\tfn area(&self) -> f64;\n}\n\npub struct Square;\n\nimpl Shape for Square {\n\tfn area(&self) -> f64 {\n\t\t1.0\n\t}\n}\n";
+
+	async fn rust_graph_project() -> tempfile::TempDir {
+		graph_project(&[
+			("src/main.rs", GRAPH_MAIN),
+			("src/util.rs", GRAPH_UTIL),
+			("src/model.rs", GRAPH_MODEL),
+		])
+		.await
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_callers_lists_calling_functions_by_depth() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "helper" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.starts_with("depth 1:\n"), "got: {result}");
+		assert!(result.contains("src/main.rs:4  function  main"), "got: {result}");
+
+		// Two levels up from `inner`: helper at depth 1, main at depth 2.
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "inner", "depth": 2 }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(
+			result.contains("depth 1:\n  src/util.rs:1  function  helper"),
+			"got: {result}"
+		);
+		assert!(
+			result.contains("depth 2:\n  src/main.rs:4  function  main"),
+			"got: {result}"
+		);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_callees_lists_called_functions() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "callees", "name": "main" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/util.rs:1  function  helper"), "got: {result}");
+		assert!(!result.contains("inner"), "depth 1 reached depth 2: {result}");
+
+		let call = symbol_in(&root, json!({ "relation": "callees", "name": "main", "depth": 2 }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(
+			result.contains("depth 2:\n  src/util.rs:5  function  inner"),
+			"got: {result}"
+		);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_imports_and_imported_by_follow_a_file() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "imports", "path": "src/main.rs" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/util.rs  file"), "got: {result}");
+
+		let call = symbol_in(&root, json!({ "relation": "imported_by", "path": "src/util.rs" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/main.rs  file"), "got: {result}");
+
+		// A directory is not a file node.
+		let call = symbol_in(&root, json!({ "relation": "imports", "path": "src" }));
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
+		assert!(err.contains("not a source file"), "got: {err}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_imports_render_external_imports_by_their_import_string() {
+		let root = graph_project(&[("src/main.rs", "use serde::Serialize;\n\nfn main() {}\n")]).await;
+		let call = symbol_in(&root, json!({ "relation": "imports", "path": "src/main.rs" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("external: serde"), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_supertypes_and_subtypes_follow_extends_and_implements() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "supertypes", "name": "Square" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/model.rs:1  trait  Shape"), "got: {result}");
+
+		let call = symbol_in(&root, json!({ "relation": "subtypes", "name": "Shape" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("Square"), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_path_renders_a_chain_between_two_symbols() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "path", "name": "main", "to": "inner" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(
+			result.contains("src/main.rs:4 main -calls-> src/util.rs:1 helper -calls-> src/util.rs:5 inner"),
+			"got: {result}"
+		);
+
+		// Too shallow to connect them: a diagnostic, not an empty string.
+		let call = symbol_in(
+			&root,
+			json!({ "relation": "path", "name": "main", "to": "inner", "depth": 1 }),
+		);
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(
+			result.starts_with("No path from \"main\" to \"inner\" within depth 1"),
+			"got: {result}"
+		);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_path_param_picks_which_same_name_definitions_start_the_query() {
+		let root = graph_project(&[
+			("src/a.rs", "pub fn dup() {}\n\npub fn call_a() {\n\tdup();\n}\n"),
+			("src/b.rs", "pub fn dup() {}\n\npub fn call_b() {\n\tdup();\n}\n"),
+		])
+		.await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "dup" }));
+		let result = execute_symbol(&call).await.unwrap();
+		// Ambiguous name: one section per definition, each headed by its location.
+		assert!(result.contains("src/a.rs:1 function dup"), "got: {result}");
+		assert!(result.contains("src/b.rs:1 function dup"), "got: {result}");
+		assert!(result.contains("call_a") && result.contains("call_b"), "got: {result}");
+
+		let call = symbol_in(
+			&root,
+			json!({ "relation": "callers", "name": "dup", "path": "src/a.rs" }),
+		);
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("call_a"), "got: {result}");
+		assert!(
+			!result.contains("call_b"),
+			"path did not narrow the start nodes: {result}"
+		);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_zero_results_name_the_target_and_suggest_references() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "missing_fn" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.starts_with("No definition of \"missing_fn\""), "got: {result}");
+		assert!(result.contains("relation \"references\""), "got: {result}");
+
+		// Defined, but nothing calls `main`.
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "main" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(
+			result.starts_with("No callers found for \"main\" within depth 1"),
+			"got: {result}"
+		);
+		assert!(result.contains("relation \"references\""), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_reports_oversized_files_it_skipped() {
+		let root = rust_graph_project().await;
+		let big = vec![b'a'; crate::mcp::fs::file_ops::MAX_VIEW_FILE_BYTES as usize + 1];
+		fs::write(root.path().join("src/big.rs"), big).await.unwrap();
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "helper" }));
+		let result = execute_symbol(&call).await.unwrap();
+		let last = result.lines().last().unwrap();
+		assert!(
+			last.starts_with("[1 file(s) not in the graph: src/big.rs (over the 5 MB limit)"),
+			"got: {result}"
+		);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_relations_accept_default_valued_parameters() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(
+			&root,
+			json!({
+				"relation": "callers", "name": "helper", "to": "", "path": "", "depth": 0,
+				"flags": "", "context": 0, "pattern": "", "max_depth": 0, "include_hidden": false
+			}),
+		);
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("main"), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_callers_lists_the_file_for_a_call_outside_any_function() {
+		let root = graph_project(&[("src/script.py", "def helper():\n\tpass\n\nhelper()\n")]).await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "helper" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/script.py:4  file"), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_imported_by_lists_the_importers_of_a_go_package_through_any_of_its_files() {
+		let root = graph_project(&[
+			("src/net/http/server.go", "package http\n\nfunc Serve() {}\n"),
+			("src/net/http/client.go", "package http\n\nfunc Do() {}\n"),
+			(
+				"cmd/app/main.go",
+				"package main\n\nimport \"net/http\"\n\nfunc main() {\n\thttp.Do()\n}\n",
+			),
+		])
+		.await;
+		for file in ["src/net/http/server.go", "src/net/http/client.go"] {
+			let call = symbol_in(&root, json!({ "relation": "imported_by", "path": file }));
+			let result = execute_symbol(&call).await.unwrap();
+			assert!(result.contains("cmd/app/main.go"), "{file}: {result}");
+		}
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_lists_the_definitions_of_a_name_that_has_too_many() {
+		let files: Vec<(String, String)> = (0..12)
+			.map(|n| (format!("src/m{n}.rs"), "pub fn new() {}\n".to_string()))
+			.collect();
+		let refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+		let root = graph_project(&refs).await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "new" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.starts_with("`new` has 12 definitions"), "{result}");
+		assert!(result.contains("src/m0.rs:1"), "{result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_sees_edits_between_calls() {
+		let root = rust_graph_project().await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "helper" }));
+		assert!(execute_symbol(&call).await.unwrap().contains("main"));
+
+		fs::write(
+			root.path().join("src/main.rs"),
+			"mod util;\nuse crate::util::helper;\n\nfn entry_point() {\n\thelper();\n}\n",
+		)
+		.await
+		.unwrap();
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("entry_point"), "stale graph served: {result}");
+		assert!(!result.contains("function  main"), "stale graph served: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_imports_resolve_rust_modules_relative_to_their_module_root() {
+		let root = graph_project(&[
+			(
+				"src/lib.rs",
+				"mod store;\nmod net;\nuse store::Item;\n\npub fn root() {}\n",
+			),
+			("src/store.rs", "pub struct Item;\n"),
+			(
+				"src/net/mod.rs",
+				"mod wire;\nuse super::store::Item;\nuse anyhow::Result;\n",
+			),
+			("src/net/wire.rs", "use super::Item;\n\npub fn send() {}\n"),
+		])
+		.await;
+
+		// The crate root lists the sibling module files, nothing external.
+		let call = symbol_in(&root, json!({ "relation": "imports", "path": "src/lib.rs" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/store.rs  file"), "got: {result}");
+		assert!(result.contains("src/net/mod.rs  file"), "got: {result}");
+		assert!(!result.contains("external:"), "got: {result}");
+
+		// A directory module: `mod wire;` and `super::store` resolve, a third-party crate stays external.
+		let call = symbol_in(&root, json!({ "relation": "imports", "path": "src/net/mod.rs" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/net/wire.rs  file"), "got: {result}");
+		assert!(result.contains("src/store.rs  file"), "got: {result}");
+		assert!(result.contains("external: anyhow::Result"), "got: {result}");
+
+		// A sibling lists the module root that declares it.
+		let call = symbol_in(&root, json!({ "relation": "imported_by", "path": "src/store.rs" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/lib.rs  file"), "got: {result}");
+		assert!(result.contains("src/net/mod.rs  file"), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_follows_a_svelte_script_into_a_typescript_module() {
+		let root = graph_project(&[
+			("src/lib/math.ts", "export function double(x: number): number {\n\treturn x * 2;\n}\n"),
+			(
+				"src/App.svelte",
+				"<script lang=\"ts\">\n\timport { double } from './lib/math';\n\n\tfunction run() {\n\t\treturn double(2);\n\t}\n</script>\n\n<p>{run()}</p>\n",
+			),
+		])
+		.await;
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "double" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/App.svelte:"), "got: {result}");
+
+		let call = symbol_in(&root, json!({ "relation": "imported_by", "path": "src/lib/math.ts" }));
+		let result = execute_symbol(&call).await.unwrap();
+		assert!(result.contains("src/App.svelte  file"), "got: {result}");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn symbol_graph_rejects_a_path_outside_the_workdir() {
+		let root = rust_graph_project().await;
+		let elsewhere = graph_project(&[("other.rs", "fn other() {}\n")]).await;
+		let path = elsewhere.path().join("other.rs").to_string_lossy().to_string();
+		let call = symbol_in(&root, json!({ "relation": "callers", "name": "other", "path": path }));
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
+		assert!(err.contains("outside the workdir"), "got: {err}");
+		assert!(err.contains("`workdir` tool"), "got: {err}");
+	}
+
+	#[tokio::test]
+	async fn symbol_graph_relations_bail_on_remote_paths_and_workdirs() {
+		let root = tempfile::tempdir().unwrap();
+		let call = symbol_in(
+			&root,
+			json!({ "relation": "callers", "name": "a", "path": "ssh://host/~/proj/a.rs" }),
+		);
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
+		assert!(err.contains("local machine"), "got: {err}");
+
+		let mut call = McpToolCall::test_call("symbol", json!({ "relation": "callees", "name": "a" }));
+		call.workdir = std::path::PathBuf::from("ssh://host/~/proj");
+		let err = execute_symbol(&call).await.unwrap_err().to_string();
+		assert!(err.contains("local machine"), "got: {err}");
+		assert!(err.contains("definition"), "got: {err}");
 	}
 
 	#[tokio::test]
@@ -7635,7 +8110,7 @@ mod tests {
 		assert_eq!(
 			hints,
 			vec![
-				"Large file: try flags: \"s\" for an outline, or `symbol: \"name\"` to jump to a definition."
+				"Large file: try flags: \"s\" for an outline, or the `symbol` tool to jump to a definition."
 					.to_string()
 			]
 		);
@@ -7686,13 +8161,16 @@ mod tests {
 		.await
 		.unwrap();
 
-			let call = McpToolCall::test_call("view", json!({ "path": file_path, "symbol": "flush" }));
-			let result = execute_view(&call).await.unwrap();
+			let call = McpToolCall::test_call("symbol", json!({ "path": file_path, "name": "flush" }));
+			let result = execute_symbol(&call).await.unwrap();
 			assert!(result.contains("[impl Store]"), "got: {result}");
 			assert!(result.contains("pub fn flush"), "got: {result}");
 
-			let call = McpToolCall::test_call("view", json!({ "path": file_path, "symbol": "flush", "flags": "r" }));
-			let result = execute_view(&call).await.unwrap();
+			let call = McpToolCall::test_call(
+				"symbol",
+				json!({ "path": file_path, "name": "flush", "relation": "references" }),
+			);
+			let result = execute_symbol(&call).await.unwrap();
 			assert!(result.contains("[def]"), "got: {result}");
 			assert!(result.contains("self.flush();"), "got: {result}");
 
@@ -7813,10 +8291,6 @@ mod tests {
 			(
 				json!({ "path": path, "ast": true, "content": "fn $F() {}", "regex": true }),
 				"combined with `regex`",
-			),
-			(
-				json!({ "path": path, "ast": true, "content": "fn $F() {}", "symbol": "a" }),
-				"combined with `symbol`",
 			),
 			(
 				json!({ "path": path, "ast": true, "content": "fn $F() {}", "start": 1 }),

@@ -16,7 +16,10 @@
 //! `call` nodes, so items are classified by their call target instead of by
 //! node kind.
 
-use super::{extract_call_target, Language};
+use super::{
+	extract_call_target, parse_call_target, path_ends_with_components, CallTarget, Language, TypeRelationKind,
+};
+use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
 const FUNCTION_DEFINITION_MACROS: &[&str] = &[
@@ -36,6 +39,39 @@ const FUNCTION_DEFINITION_MACROS: &[&str] = &[
 const CONTAINER_DEFINITION_MACROS: &[&str] = &["defmodule", "defprotocol", "defimpl"];
 const DATA_DEFINITION_MACROS: &[&str] = &["defstruct", "defexception"];
 const TEST_DEFINITION_MACROS: &[&str] = &["test", "property"];
+
+/// Special forms and control-flow macros that parse as `call` nodes but are
+/// not calls to a user function.
+const NON_CALL_MACROS: &[&str] = &[
+	"after",
+	"alias",
+	"case",
+	"catch",
+	"cond",
+	"else",
+	"for",
+	"if",
+	"import",
+	"quote",
+	"raise",
+	"receive",
+	"require",
+	"rescue",
+	"reraise",
+	"super",
+	"throw",
+	"try",
+	"unless",
+	"unquote",
+	"unquote_splicing",
+	"use",
+	"with",
+];
+
+/// Macros whose first argument names an import.
+const IMPORT_MACROS: &[&str] = &["alias", "import", "require", "use"];
+
+const ELIXIR_EXTENSIONS: [&str; 2] = ["ex", "exs"];
 
 pub(crate) struct Elixir {}
 
@@ -104,6 +140,121 @@ impl Language for Elixir {
 			return extract_symbol_owner(node, contents);
 		}
 		self.extract_declaration_name(node, contents)
+	}
+
+	fn get_symbol_kinds(&self) -> Vec<&'static str> {
+		// Every declaration is a `call`; `extract_declaration_name` filters the
+		// ones that are not definitions.
+		vec!["call"]
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		extract_symbol_owner(node, contents)
+	}
+
+	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
+		let Some(macro_name) = call_macro_name(node, contents) else {
+			return (Vec::new(), Vec::new());
+		};
+
+		let imports = if IMPORT_MACROS.contains(&macro_name.as_str()) {
+			first_argument(node)
+				.and_then(|argument| node_text(argument, contents))
+				.map(expand_module_aliases)
+				.unwrap_or_default()
+		} else {
+			Vec::new()
+		};
+
+		let exports =
+			if matches!(macro_name.as_str(), "defmodule" | "defprotocol") || is_public_definition_macro(&macro_name) {
+				self.extract_declaration_name(node, contents).into_iter().collect()
+			} else {
+				Vec::new()
+			};
+
+		(imports, exports)
+	}
+
+	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
+		if node.kind() == "binary_operator" {
+			// Only the right side of a pipe is a callee: `x |> run()`.
+			let operator = node
+				.child_by_field_name("operator")
+				.and_then(|operator| node_text(operator, contents));
+			if operator.as_deref() == Some("|>") {
+				if let Some(right) = node.child_by_field_name("right") {
+					if matches!(right.kind(), "identifier" | "dot") {
+						return node_text(right, contents)
+							.and_then(|target| parse_call_target(&target))
+							.into_iter()
+							.collect();
+					}
+				}
+			}
+			return Vec::new();
+		}
+
+		if node.kind() != "call" || is_definition_head_call(node, contents) {
+			return Vec::new();
+		}
+		let Some(target) = node.child_by_field_name("target") else {
+			return Vec::new();
+		};
+		let Some(target_text) = node_text(target, contents) else {
+			return Vec::new();
+		};
+		if target.kind() == "identifier"
+			&& (is_definition_macro(&target_text) || NON_CALL_MACROS.contains(&target_text.as_str()))
+		{
+			return Vec::new();
+		}
+		parse_call_target(&target_text).into_iter().collect()
+	}
+
+	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
+		if call_macro_name(node, contents).as_deref() != Some("defimpl") {
+			return Vec::new();
+		}
+		first_argument(node)
+			.and_then(|argument| node_text(argument, contents))
+			.map(normalize_module_name)
+			.map(|protocol| vec![(TypeRelationKind::Implements, protocol)])
+			.unwrap_or_default()
+	}
+
+	// The implementing type, not the `defimpl` name: octocode relates by type.
+	fn extract_type_relation_source(&self, node: Node, contents: &str) -> Option<String> {
+		implementation_type(node, contents)
+	}
+
+	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		if import_path.starts_with("./") || import_path.starts_with("../") {
+			let path = resolve_relative_path(source_file, import_path);
+			return all_files.find_file_with_extensions(&path, &ELIXIR_EXTENSIONS);
+		}
+
+		let module_path = module_to_file_path(import_path)?;
+		let last_segment = module_path.rsplit('/').next()?;
+		let mut matches: Vec<&String> = Vec::new();
+		for extension in ELIXIR_EXTENSIONS {
+			let relative_path = format!("{module_path}.{extension}");
+			let file_name = format!("{last_segment}.{extension}");
+			matches.extend(
+				all_files
+					.files_named(&file_name)
+					.iter()
+					.filter(|file| path_ends_with_components(file, &relative_path)),
+			);
+		}
+		// Path order first, so equal candidates resolve the same way every
+		// run; then the Mix convention (`lib/` copy), then the shortest path.
+		matches.sort();
+		let lib_path = format!("lib/{module_path}.ex");
+		matches
+			.into_iter()
+			.min_by_key(|file| (!path_ends_with_components(file, &lib_path), file.len()))
+			.cloned()
 	}
 }
 
@@ -253,6 +404,81 @@ fn extract_symbol_owner(node: Node, contents: &str) -> Option<String> {
 /// `self`).
 fn extract_declaration_name_of(node: Node, contents: &str) -> Option<String> {
 	Elixir {}.extract_declaration_name(node, contents)
+}
+
+fn is_public_definition_macro(name: &str) -> bool {
+	matches!(
+		name,
+		"def" | "defdelegate" | "defguard" | "defmacro" | "defn" | "defcallback" | "defmacrocallback"
+	)
+}
+
+/// `alias MyApp.{Repo, User}` becomes one import per member.
+fn expand_module_aliases(text: String) -> Vec<String> {
+	let normalized = normalize_module_name(text);
+	if let Some((prefix, tail)) = normalized.split_once(".{") {
+		if let Some(names) = tail.strip_suffix('}') {
+			return names
+				.split(',')
+				.map(str::trim)
+				.filter(|name| !name.is_empty())
+				.map(|name| format!("{prefix}.{name}"))
+				.collect();
+		}
+	}
+	(!normalized.is_empty()).then_some(normalized).into_iter().collect()
+}
+
+/// Whether `node` sits inside the head (first argument) of a `def`-family
+/// call: `fetch(id)` in `def fetch(id)` is a head, not a call.
+fn is_definition_head_call(node: Node, contents: &str) -> bool {
+	let start = node.start_byte();
+	let end = node.end_byte();
+	let mut ancestor = node.parent();
+	while let Some(candidate) = ancestor {
+		if candidate.kind() == "call" {
+			if call_macro_name(candidate, contents)
+				.is_some_and(|name| FUNCTION_DEFINITION_MACROS.contains(&name.as_str()))
+			{
+				return first_argument(candidate)
+					.is_some_and(|head| start >= head.start_byte() && end <= head.end_byte());
+			}
+			return false;
+		}
+		ancestor = candidate.parent();
+	}
+	false
+}
+
+/// `MyApp.HTTPClient` -> `my_app/http_client`, the Mix file layout.
+fn module_to_file_path(module: &str) -> Option<String> {
+	let module = module.trim().trim_start_matches(':').trim_start_matches("Elixir.");
+	if module.is_empty()
+		|| !module
+			.chars()
+			.all(|character| character.is_alphanumeric() || matches!(character, '.' | '_'))
+	{
+		return None;
+	}
+	Some(module.split('.').map(camel_to_snake).collect::<Vec<_>>().join("/"))
+}
+
+fn camel_to_snake(segment: &str) -> String {
+	let characters: Vec<char> = segment.chars().collect();
+	let mut output = String::with_capacity(segment.len() + 4);
+	for (index, character) in characters.iter().copied().enumerate() {
+		let previous = index.checked_sub(1).and_then(|i| characters.get(i)).copied();
+		let next = characters.get(index + 1).copied();
+		if character.is_uppercase()
+			&& index > 0
+			&& (previous.is_some_and(|previous| previous.is_lowercase() || previous.is_numeric())
+				|| (previous.is_some_and(char::is_uppercase) && next.is_some_and(char::is_lowercase)))
+		{
+			output.push('_');
+		}
+		output.extend(character.to_lowercase());
+	}
+	output
 }
 
 #[cfg(test)]

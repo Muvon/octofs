@@ -1053,7 +1053,7 @@ fn generator_noise_is_stripped_but_parameters_named_like_it_survive() {
 async fn served_tool_schemas_carry_no_generator_noise() {
 	let (client, _server_task, _unsolicited) = connect_legacy().await;
 	let tools = client.list_tools(None).await.expect("list tools");
-	assert_eq!(tools.tools.len(), 6);
+	assert_eq!(tools.tools.len(), 7);
 	for tool in &tools.tools {
 		let schema = serde_json::to_string(tool.input_schema.as_ref()).expect("schema json");
 		assert!(
@@ -1078,6 +1078,27 @@ async fn served_tool_schemas_carry_no_generator_noise() {
 	] {
 		assert!(properties.contains_key(name), "view keeps `{name}`");
 	}
+}
+
+/// Every parameter octofs runs as a shell command says so in its schema, and no other
+/// parameter does: a client reads the mark instead of knowing octofs's parameter names.
+#[tokio::test(flavor = "multi_thread")]
+async fn executed_parameters_are_marked_as_shell_commands() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+	let tools = client.list_tools(None).await.expect("list tools");
+	let mut marked = Vec::new();
+	for tool in &tools.tools {
+		let properties = tool.input_schema["properties"].as_object().expect("properties");
+		for (name, schema) in properties {
+			if schema.get("contentMediaType").and_then(|media| media.as_str()) == Some(super::SHELL_COMMAND_MEDIA_TYPE)
+			{
+				assert_eq!(schema["type"], "string", "{}.{name}", tool.name);
+				marked.push(format!("{}.{name}", tool.name));
+			}
+		}
+	}
+	marked.sort();
+	assert_eq!(marked, ["batch_edit.check", "shell.command", "text_editor.check"]);
 }
 
 fn context_with_session(

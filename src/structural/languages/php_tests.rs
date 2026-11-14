@@ -12,9 +12,62 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! PHP outline extraction tests.
+//! PHP outline and graph-extraction tests.
 
+use super::Php;
+use crate::structural::graph::registry::FileRegistry;
+use crate::structural::graph::{build_graph, CodeGraph, RelationType, SourceFile};
+use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
 use crate::structural::outline;
+use tree_sitter::{Node, Parser};
+
+/// Pre-order walk of the parsed source, calling `visit` on every node.
+fn for_each_node(source: &str, mut visit: impl FnMut(Node, &str)) {
+	let mut parser = Parser::new();
+	parser.set_language(&Php {}.get_ts_language()).unwrap();
+	let tree = parser.parse(source, None).unwrap();
+	let mut cursor = tree.walk();
+	loop {
+		visit(cursor.node(), source);
+		if cursor.goto_first_child() {
+			continue;
+		}
+		while !cursor.goto_next_sibling() {
+			if !cursor.goto_parent() {
+				return;
+			}
+		}
+	}
+}
+
+fn imports_exports_in(source: &str) -> (Vec<String>, Vec<String>) {
+	let (mut imports, mut exports) = (Vec::new(), Vec::new());
+	for_each_node(source, |node, contents| {
+		let (found_imports, found_exports) = Php {}.extract_imports_exports(node, contents);
+		imports.extend(found_imports);
+		exports.extend(found_exports);
+	});
+	(imports, exports)
+}
+
+fn relations_in(source: &str) -> Vec<(TypeRelationKind, String)> {
+	let mut relations = Vec::new();
+	for_each_node(source, |node, contents| {
+		relations.extend(Php {}.extract_type_relations(node, contents))
+	});
+	relations
+}
+
+fn registry(paths: &[&str]) -> FileRegistry {
+	FileRegistry::new(&paths.iter().map(|path| path.to_string()).collect::<Vec<_>>())
+}
+
+fn has_edge(graph: &CodeGraph, source: &str, target: &str, relation: RelationType) -> bool {
+	graph
+		.relationships
+		.iter()
+		.any(|edge| edge.source == source && edge.target == target && edge.relation == relation)
+}
 
 #[test]
 fn functions_classes_and_methods_are_items() {
@@ -22,4 +75,186 @@ fn functions_classes_and_methods_are_items() {
 	let items = outline("a.php", src).unwrap();
 	let summary: Vec<(&str, &str)> = items.iter().map(|i| (i.kind.as_str(), i.name.as_str())).collect();
 	assert_eq!(summary, vec![("function", "foo"), ("class", "Bar"), ("method", "baz")]);
+}
+
+#[test]
+fn use_statements_yield_slash_separated_namespace_paths() {
+	let src = "<?php\nuse App\\Models\\User;\nuse App\\Models\\Post as Article;\nuse function Util\\helper;\nuse App\\Services\\{Mailer, Queue as Jobs};\n";
+	let (imports, _) = imports_exports_in(src);
+	assert_eq!(
+		imports,
+		vec![
+			"App/Models/User",
+			"App/Models/Post",
+			"Util/helper",
+			"App/Services/Mailer",
+			"App/Services/Queue",
+		]
+	);
+}
+
+#[test]
+fn declarations_and_namespaces_are_exports() {
+	let (_, exports) = imports_exports_in("<?php\nnamespace App;\nclass Foo {}\nfunction bar() {}\n");
+	assert_eq!(exports, vec!["App", "Foo", "bar"]);
+}
+
+#[test]
+fn calls_keep_qualifier() {
+	let mut calls = Vec::new();
+	for_each_node("<?php\nfoo();\n$obj->method();\nUtil::run();\n", |node, contents| {
+		calls.extend(Php {}.extract_function_calls(node, contents));
+	});
+	assert_eq!(
+		calls,
+		vec![
+			CallTarget {
+				name: "foo".to_string(),
+				qualifier: None
+			},
+			CallTarget {
+				name: "method".to_string(),
+				qualifier: Some("$obj".to_string())
+			},
+			CallTarget {
+				name: "run".to_string(),
+				qualifier: Some("Util".to_string())
+			},
+		]
+	);
+}
+
+#[test]
+fn static_and_namespaced_calls_keep_the_method_name_and_class_qualifier() {
+	let mut calls = Vec::new();
+	for_each_node(
+		"<?php\n\\App\\Foo::bar();\nFoo::bar();\n\\App\\helper();\ngetRepo()->save();\n$this->repo->find();\n",
+		|node, contents| {
+			calls.extend(Php {}.extract_function_calls(node, contents));
+		},
+	);
+	let pairs: Vec<(&str, Option<&str>)> = calls
+		.iter()
+		.map(|call| (call.name.as_str(), call.qualifier.as_deref()))
+		.collect();
+	assert_eq!(
+		pairs,
+		vec![
+			("bar", Some("Foo")),
+			("bar", Some("Foo")),
+			("helper", None),
+			("save", None),
+			("getRepo", None),
+			("find", Some("$this::repo")),
+		]
+	);
+}
+
+#[test]
+fn extends_and_implements_are_type_relations() {
+	let relations = relations_in(
+		"<?php\nclass A extends \\App\\B implements C, D {}\ninterface I extends J, K {}\nenum E: string implements F {}\n",
+	);
+	assert_eq!(
+		relations,
+		vec![
+			(TypeRelationKind::Extends, "B".to_string()),
+			(TypeRelationKind::Implements, "C".to_string()),
+			(TypeRelationKind::Implements, "D".to_string()),
+			(TypeRelationKind::Extends, "J".to_string()),
+			(TypeRelationKind::Extends, "K".to_string()),
+			(TypeRelationKind::Implements, "F".to_string()),
+		]
+	);
+}
+
+#[test]
+fn methods_are_owned_by_their_class() {
+	let mut owners = Vec::new();
+	for_each_node(
+		"<?php\nclass Foo {\n\tpublic function bar() {}\n}\nfunction free() {}\n",
+		|node, contents| {
+			if matches!(node.kind(), "method_declaration" | "function_definition") {
+				owners.push(Php {}.extract_symbol_owner(node, contents));
+			}
+		},
+	);
+	assert_eq!(owners, vec![Some("Foo".to_string()), None]);
+}
+
+#[test]
+fn namespace_imports_resolve_through_psr4_style_paths() {
+	let files = registry(&["src/App/Config.php", "App/Models/User.php", "lib/other.php"]);
+	let php = Php {};
+	assert_eq!(
+		php.resolve_import("App/Config", "index.php", &files),
+		Some("src/App/Config.php".to_string())
+	);
+	assert_eq!(
+		php.resolve_import("App/Models/User", "index.php", &files),
+		Some("App/Models/User.php".to_string())
+	);
+	assert_eq!(php.resolve_import("Vendor/Missing", "index.php", &files), None);
+}
+
+#[test]
+fn a_namespace_resolves_by_its_path_suffix_wherever_the_source_root_is() {
+	let files = registry(&["lib/Domain/Models/User.php", "other/User.php", "src/xModels/User.php"]);
+	let php = Php {};
+	assert_eq!(
+		php.resolve_import("App/Models/User", "index.php", &files),
+		Some("lib/Domain/Models/User.php".to_string())
+	);
+	// A bare class name never matches by file name alone.
+	assert_eq!(php.resolve_import("User", "index.php", &files), None);
+	assert_eq!(php.resolve_import("App/Missing/User", "index.php", &files), None);
+}
+
+#[test]
+fn relative_and_bare_file_imports_resolve_next_to_the_source() {
+	let files = registry(&["app/Config.php", "app/sub/helpers.php"]);
+	let php = Php {};
+	assert_eq!(
+		php.resolve_import("./sub/helpers.php", "app/main.php", &files),
+		Some("app/sub/helpers.php".to_string())
+	);
+	assert_eq!(
+		php.resolve_import("Config.php", "app/main.php", &files),
+		Some("app/Config.php".to_string())
+	);
+}
+
+#[test]
+fn graph_links_calls_imports_and_inheritance_across_files() {
+	let graph = build_graph(vec![
+		SourceFile {
+			path: "App/Base.php".to_string(),
+			language: "php",
+			contents: "<?php\nnamespace App;\nclass Base {}\nfunction helper() {}\n".to_string(),
+		},
+		SourceFile {
+			path: "App/Service.php".to_string(),
+			language: "php",
+			contents: "<?php\nnamespace App;\nuse App\\Base;\nclass Service extends Base {\n\tpublic function run() {\n\t\thelper();\n\t}\n}\n"
+				.to_string(),
+		},
+	]);
+	assert!(has_edge(
+		&graph,
+		"App/Service.php::Service::run",
+		"App/Base.php::helper",
+		RelationType::Calls
+	));
+	assert!(has_edge(
+		&graph,
+		"App/Service.php",
+		"App/Base.php",
+		RelationType::Imports
+	));
+	assert!(has_edge(
+		&graph,
+		"App/Service.php::Service",
+		"App/Base.php::Base",
+		RelationType::Extends
+	));
 }

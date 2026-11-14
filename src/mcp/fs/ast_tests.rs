@@ -54,6 +54,7 @@ fn render_ast_body_dedupes_identical_spans() {
 		"got: {body}"
 	);
 }
+#[test]
 fn render_ast_body_count_and_files_only() {
 	let src = "fn a() {}\nfn b() {}\n";
 	let count = render_ast_body(

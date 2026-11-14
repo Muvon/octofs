@@ -46,7 +46,7 @@ const MAX_MATCH_LINES: usize = 30;
 
 /// Render the AST-pattern results for a file, or for every supported file
 /// under a directory. Parameter and flag exclusivity (`ast` requires
-/// `content`, no `regex`/`symbol`/`start`/`end`, no `s`/`v`/`o` flags) is
+/// `content`, no `regex`/`start`/`end`, no `s`/`v`/`o` flags) is
 /// validated upstream in `view_existing_path`.
 /// The search-wide parameters every AST mode carries: the pattern and the
 /// rendering knobs. Grouped so the directory helpers stay under the argument
@@ -58,7 +58,7 @@ struct AstQuery {
 }
 
 pub async fn view_ast(call: &McpToolCall, path: &str, source: &PathSource, pattern: &str) -> Result<String> {
-	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true, false)?;
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true)?;
 	let context = call.parameters.get("context").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
 	let query = AstQuery {
 		pattern: pattern.to_string(),

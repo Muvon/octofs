@@ -13,12 +13,42 @@
 // limitations under the License.
 
 //! TypeScript grammar: functions, methods, classes, interfaces, type aliases
-//! and enums.
+//! and enums, plus the graph methods. Imports, calls and resolution reuse the
+//! JavaScript ones; TypeScript adds `implements`, interface inheritance and
+//! type-declaration file lookups.
 
-use super::{extract_symbol_by_kinds, Language};
+use super::javascript::{
+	join_path, js_call_target, parse_js_export_statement, parse_js_import_statement_full_path, re_export_source,
+	JavaScript,
+};
+use super::{extract_symbol_by_kinds, simple_type_name, CallTarget, Language, TypeRelationKind};
+use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
 pub(crate) struct TypeScript {}
+
+/// Extensions tried when an import omits its own; TypeScript first so a
+/// TypeScript project resolves to its sources over compiled output.
+const RESOLVE_EXTENSIONS: [&str; 6] = ["ts", "tsx", "d.ts", "js", "jsx", "mjs"];
+/// Extension an import may name -> TypeScript extensions the file may really
+/// have, in preference order.
+const EMITTED_TO_SOURCE_EXTENSIONS: [(&str, &[&str]); 4] = [
+	(".js", &[".ts", ".tsx", ".d.ts"]),
+	(".jsx", &[".tsx", ".ts", ".d.ts"]),
+	(".mjs", &[".mts", ".d.ts"]),
+	(".cjs", &[".cts", ".d.ts"]),
+];
+const INDEX_FILES: [&str; 5] = ["index.ts", "index.tsx", "index.d.ts", "index.js", "index.jsx"];
+/// Directories a bare module specifier is tried under.
+const MODULE_SOURCE_DIRS: [&str; 6] = ["src", "lib", "types", "typings", "components", "utils"];
+/// Entry-point locations tried inside `node_modules/<package>/`.
+const PACKAGE_ENTRY_FILES: [&str; 5] = [
+	"index.d.ts",
+	"lib/index.d.ts",
+	"src/index.ts",
+	"dist/index.d.ts",
+	"types/index.d.ts",
+];
 
 impl Language for TypeScript {
 	fn name(&self) -> &'static str {
@@ -46,6 +76,20 @@ impl Language for TypeScript {
 		]
 	}
 
+	fn get_symbol_kinds(&self) -> Vec<&'static str> {
+		// The outline's namespace containers are not symbols of their own.
+		vec![
+			"function_declaration",
+			"method_definition",
+			"arrow_function",
+			"class_declaration",
+			"abstract_class_declaration",
+			"interface_declaration",
+			"type_alias_declaration",
+			"enum_declaration",
+		]
+	}
+
 	fn extract_declaration_name(&self, node: Node, contents: &str) -> Option<String> {
 		if node.kind() == "arrow_function" {
 			// An arrow function's name is the variable it is assigned to.
@@ -59,6 +103,221 @@ impl Language for TypeScript {
 				.map(str::to_string);
 		}
 		extract_symbol_by_kinds(node, contents, &["identifier", "name"])
+	}
+
+	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
+		let mut imports = Vec::new();
+		let mut exports = Vec::new();
+
+		match node.kind() {
+			"import_statement" => {
+				// The module path, not the bound names: the graph feeds it to
+				// `resolve_import`, which resolves a path to a file.
+				if let Ok(import_text) = node.utf8_text(contents.as_bytes()) {
+					if let Some(imported_items) = parse_js_import_statement_full_path(import_text) {
+						imports.extend(imported_items);
+					}
+				}
+			}
+			"export_statement" => {
+				// Same patterns as JavaScript plus `export type { Foo }`.
+				imports.extend(re_export_source(node, contents));
+				if let Ok(export_text) = node.utf8_text(contents.as_bytes()) {
+					exports.extend(parse_ts_export_statement(export_text));
+				}
+			}
+			"function_declaration"
+			| "method_definition"
+			| "arrow_function"
+			| "class_declaration"
+			| "abstract_class_declaration"
+			| "interface_declaration"
+			| "type_alias_declaration" => {
+				let is_exported = node.parent().is_some_and(|parent| parent.kind() == "export_statement");
+				if is_exported {
+					let mut cursor = node.walk();
+					let name_node = node
+						.children(&mut cursor)
+						.find(|child| matches!(child.kind(), "identifier" | "type_identifier"));
+					if let Some(name_node) = name_node {
+						if let Ok(name) = name_node.utf8_text(contents.as_bytes()) {
+							exports.push(name.to_string());
+						}
+					}
+				}
+			}
+			_ => {}
+		}
+
+		(imports, exports)
+	}
+
+	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
+		js_call_target(node, contents).into_iter().collect()
+	}
+
+	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
+		let mut relations = Vec::new();
+		match node.kind() {
+			// `class Foo extends Bar implements Baz, Qux { }`, also class
+			// expressions such as `const Foo = class extends Bar {}`.
+			"class_declaration" | "abstract_class_declaration" | "class" => {
+				let mut cursor = node.walk();
+				for child in node.children(&mut cursor) {
+					if child.kind() == "class_heritage" {
+						collect_heritage(child, contents, &mut relations);
+					}
+				}
+			}
+			// `interface A extends B, C { }`
+			"interface_declaration" => {
+				let mut cursor = node.walk();
+				for child in node.children(&mut cursor) {
+					if matches!(child.kind(), "extends_type_clause" | "extends_clause") {
+						collect_clause_names(child, contents, TypeRelationKind::Extends, &mut relations);
+					}
+				}
+			}
+			_ => {}
+		}
+		relations
+	}
+
+	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		if import_path.starts_with("./") || import_path.starts_with("../") {
+			return find_matching_ts_file(&resolve_relative_path(source_file, import_path), all_files);
+		}
+
+		// Absolute and module imports try the JavaScript resolution first, then
+		// the TypeScript-specific patterns.
+		let javascript = JavaScript {};
+		if let Some(found) = javascript.resolve_import(import_path, source_file, all_files) {
+			return Some(found);
+		}
+		resolve_ts_module_import(import_path, all_files)
+	}
+}
+
+/// Match `target` against the registry as is, as the TypeScript source of a
+/// `.js`-style specifier, with an extension, and as a directory index. Exact
+/// only: a file that merely shares the name of the import is not a match.
+fn find_matching_ts_file(target: &str, registry: &FileRegistry) -> Option<String> {
+	if let Some(found) = registry.find_normalized(target) {
+		return Some(found.to_string());
+	}
+
+	// ESM TypeScript imports name the compiled file (`./a.js`) while the
+	// repository holds `a.ts`.
+	for (emitted_extension, source_extensions) in EMITTED_TO_SOURCE_EXTENSIONS {
+		if let Some(stem) = target.strip_suffix(emitted_extension) {
+			for source_extension in source_extensions {
+				if let Some(found) = registry.find_normalized(&format!("{stem}{source_extension}")) {
+					return Some(found.to_string());
+				}
+			}
+		}
+	}
+
+	for extension in RESOLVE_EXTENSIONS {
+		if let Some(found) = registry.find_normalized(&format!("{target}.{extension}")) {
+			return Some(found.to_string());
+		}
+	}
+
+	INDEX_FILES
+		.iter()
+		.find_map(|index_file| registry.find_normalized(&join_path(target, index_file)))
+		.map(str::to_string)
+}
+
+/// Bare specifiers: `@types` packages, common source directories, then
+/// declaration files shipped inside `node_modules`.
+fn resolve_ts_module_import(import_path: &str, registry: &FileRegistry) -> Option<String> {
+	if !import_path.starts_with('@') {
+		let types_index = format!("node_modules/@types/{import_path}/index.d.ts");
+		if let Some(found) = find_matching_ts_file(&types_index, registry) {
+			return Some(found);
+		}
+	}
+
+	for source_dir in MODULE_SOURCE_DIRS {
+		if let Some(found) = find_matching_ts_file(&join_path(source_dir, import_path), registry) {
+			return Some(found);
+		}
+	}
+
+	for entry_file in PACKAGE_ENTRY_FILES {
+		let package_path = format!("node_modules/{import_path}/{entry_file}");
+		if let Some(found) = find_matching_ts_file(&package_path, registry) {
+			return Some(found);
+		}
+	}
+
+	None
+}
+
+/// Exported names of an export statement. Never fails: a statement that
+/// matches no pattern exports nothing.
+fn parse_ts_export_statement(export_text: &str) -> Vec<String> {
+	let cleaned = export_text.trim();
+
+	// `export type { Foo, Bar }`
+	if let Some(type_export) = cleaned.strip_prefix("export type ") {
+		if let (Some(start), Some(end)) = (type_export.find('{'), type_export.find('}')) {
+			let items = type_export.get(start + 1..end).unwrap_or_default();
+			return items
+				.split(',')
+				.map(str::trim)
+				.filter(|item| !item.is_empty())
+				.map(str::to_string)
+				.collect();
+		}
+	}
+
+	// `export interface Foo {}` / `export type Foo = ...`
+	if let Some(rest) = cleaned.strip_prefix("export ") {
+		if rest.starts_with("interface ") || rest.starts_with("type ") {
+			let parts: Vec<&str> = rest.split_whitespace().collect();
+			if let Some(token) = parts.get(1) {
+				return vec![token.trim_end_matches('=').trim_end_matches('{').to_string()];
+			}
+		}
+	}
+
+	parse_js_export_statement(export_text).unwrap_or_default()
+}
+
+/// Collect both extends and implements targets of a `class_heritage` node.
+fn collect_heritage(heritage: Node, contents: &str, relations: &mut Vec<(TypeRelationKind, String)>) {
+	let mut cursor = heritage.walk();
+	for child in heritage.children(&mut cursor) {
+		match child.kind() {
+			"extends_clause" => collect_clause_names(child, contents, TypeRelationKind::Extends, relations),
+			"implements_clause" => collect_clause_names(child, contents, TypeRelationKind::Implements, relations),
+			_ => {}
+		}
+	}
+}
+
+/// Pull type names out of an extends/implements clause under the given kind.
+fn collect_clause_names(
+	clause: Node,
+	contents: &str,
+	kind: TypeRelationKind,
+	relations: &mut Vec<(TypeRelationKind, String)>,
+) {
+	let mut cursor = clause.walk();
+	for child in clause.children(&mut cursor) {
+		if matches!(
+			child.kind(),
+			"identifier" | "type_identifier" | "nested_type_identifier" | "generic_type"
+		) {
+			if let Ok(text) = child.utf8_text(contents.as_bytes()) {
+				if let Some(name) = simple_type_name(text) {
+					relations.push((kind, name));
+				}
+			}
+		}
 	}
 }
 

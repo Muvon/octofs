@@ -595,6 +595,11 @@ const EDIT_CHECK_DESCRIPTION: &str = "Optional `check` (most edits omit it; on a
 const CHECK_NEEDS_SHELL: &str =
 	"`check` needs the `shell` tool, which this session does not grant; remove `check` and run the edit alone";
 
+/// JSON Schema `contentMediaType` of every parameter octofs runs as a shell command
+/// (`shell`'s `command`, an edit tool's `check`). The schema is the only place a client
+/// can learn that a call executes a command, whatever the parameter is named.
+pub(crate) const SHELL_COMMAND_MEDIA_TYPE: &str = "application/x-sh";
+
 /// Drop the `check` parameter from an edit tool's input schema.
 fn remove_check_property(schema: &mut JsonObject) {
 	if let Some(properties) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) {
@@ -625,8 +630,8 @@ impl OctofsServer {
 			`flags: \"s\"` returns a structural outline instead: the signature/declaration lines \
 			of a file, or of every supported file under a directory, with bodies elided — far \
 			fewer tokens than full content. \
-			`symbol: \"name\"` finds definitions (references with `r`) by name, and content-search \
-			groups carry their enclosing symbol. \
+			Content-search groups carry their enclosing symbol; to navigate by symbol name use the \
+			`symbol` tool. \
 			An image file (png, jpg, gif, webp by extension) comes back as the image itself; \
 			`start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
@@ -660,6 +665,51 @@ impl OctofsServer {
 			Ok::<CallToolResponse, String>(
 				CallToolResult::success(vec![ContentBlock::text(append_hints(result))]).into(),
 			)
+		})
+		.await
+	}
+
+	#[tool(
+		title = "Symbol",
+		annotations(
+			read_only_hint = true,
+			destructive_hint = false,
+			idempotent_hint = true,
+			open_world_hint = false
+		),
+		description = "Code navigation that starts from a symbol name. `relation` picks what \
+			comes back. `definition` (default) returns the symbol's source and `references` every \
+			use of it, both by name in a file or under a directory (`path`, default the workdir; \
+			`*` wildcards allowed; ssh:// paths work) as `N:hh|content` lines whose ids feed \
+			`batch_edit`; `flags` `c` counts per file, `l` lists files, `context` adds lines around \
+			references. The graph relations list one hop per line as `path:line  kind  Owner::name`, \
+			grouped by `depth N:`: `callers` and `callees` follow calls, `supertypes` and `subtypes` \
+			follow extends/implements, `imports` and `imported_by` follow the imports of the file in \
+			`path` (no `name`), `path` finds how `name` reaches `to` over calls, extends and implements (not imports). `depth` sets how far to follow \
+			(default 1, `path` 5, max 5). Graph relations are resolved by name and imports, not \
+			types, so same-name symbols can be confused and dynamic calls missed; `(guess)` marks a \
+			hop matched by name alone (repository-wide, ambiguous or unknown receiver). They are local only and search the whole session workdir; `path` \
+			only narrows which definitions of `name` start the query. All relations but `path` parse only the files that \
+			mention the names they follow; `path` builds the whole-repository graph, so its first call on a large \
+			repository takes seconds (later calls reuse it). For plain text use `view` \
+			with `content`."
+	)]
+	async fn symbol(
+		&self,
+		context: RequestContext<RoleServer>,
+		Parameters(params): Parameters<SymbolParams>,
+	) -> Result<String, String> {
+		let session = self.session(&context);
+		let workdir = session.workdir.get_current();
+		let call = McpToolCall {
+			tool_name: "symbol".to_string(),
+			parameters: serde_json::to_value(&params).unwrap_or_default(),
+			tool_id: String::new(),
+			workdir,
+		};
+		request_ctx::with_request_context(session.view_cache.clone(), async move {
+			let result = fs::execute_symbol(&call).await.map_err(|e| e.to_string())?;
+			Ok(append_hints(result))
 		})
 		.await
 	}
@@ -1272,10 +1322,6 @@ pub struct ViewParams {
 	/// Treat `content` as a regex. Default: false.
 	#[serde(default)]
 	pub regex: Option<bool>,
-	/// Symbol name to navigate by: its definitions in a file or directory
-	/// (`*` wildcards allowed), or its references with flags: "r".
-	#[serde(default)]
-	pub symbol: Option<String>,
 	/// Directory depth bound. Default: unlimited, except a bare remote listing (no
 	/// `pattern`/`content`) stops at the root entries. Searches walk the whole tree unless set.
 	#[serde(default)]
@@ -1292,7 +1338,6 @@ pub struct ViewParams {
 	/// time (UTC) to each listed file, or returns them for `path` itself when it is a file.
 	/// `s` (alone, no `content`/`start`/`end`/`ranges`): a structural outline — the signature
 	/// lines of the file, or of every supported file under a directory, with bodies elided.
-	/// With `symbol`: `r` references instead of definitions; `c`/`l` per-file counts/paths.
 	#[serde(default)]
 	pub flags: Option<String>,
 	/// Force the complete file when re-viewing a whole file (which may return only changed hunks),
@@ -1300,6 +1345,68 @@ pub struct ViewParams {
 	/// unchanged.
 	#[serde(default)]
 	pub full: Option<bool>,
+}
+
+/// What a `symbol` call returns about the symbol.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolRelation {
+	/// The symbol's source (default).
+	Definition,
+	/// Every use of the name.
+	References,
+	/// Functions that call the symbol.
+	Callers,
+	/// Functions the symbol calls.
+	Callees,
+	/// What the file in `path` imports.
+	Imports,
+	/// Files that import the file in `path`.
+	ImportedBy,
+	/// Types the symbol extends or implements.
+	Supertypes,
+	/// Types that extend or implement the symbol.
+	Subtypes,
+	/// How `name` reaches `to`.
+	Path,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct SymbolParams {
+	/// Symbol name, or `Owner::name`. `*` wildcards (e.g. "handle_*") work with `definition` and
+	/// `references` only. Required, except for `imports` and `imported_by`, which take a file.
+	#[serde(default)]
+	pub name: Option<String>,
+	/// `definition`/`references`: file or directory to search (default: the workdir; ssh:// works).
+	/// Graph relations: narrows which definitions of `name` start the query, or is the file for
+	/// `imports`/`imported_by`; must be inside the workdir, which is always the graph's scope.
+	#[serde(default)]
+	pub path: Option<String>,
+	/// What to return. Default: `definition`.
+	#[serde(default)]
+	pub relation: Option<SymbolRelation>,
+	/// Graph relations only: how many hops to follow, 1 to 5. Default: 1 (`path`: 5).
+	#[serde(default)]
+	pub depth: Option<usize>,
+	/// `path` only (and required there): the symbol to reach from `name`.
+	#[serde(default)]
+	pub to: Option<String>,
+	/// `definition`/`references` in a directory: ripgrep -g globs over the files searched, as in
+	/// `view`.
+	#[serde(default)]
+	pub pattern: Option<String>,
+	/// `definition`/`references` in a directory: directory depth bound. Default: unlimited.
+	#[serde(default)]
+	pub max_depth: Option<usize>,
+	/// `definition`/`references` in a directory: include dotfiles and dot-directories.
+	#[serde(default)]
+	pub include_hidden: Option<bool>,
+	/// `references`: lines around each reference. Default: 0.
+	#[serde(default)]
+	pub context: Option<usize>,
+	/// `definition`/`references`: `c` match count per file, `l` matching file paths only.
+	#[serde(default)]
+	pub flags: Option<String>,
 }
 
 /// One span of a multi-range `view` read.
@@ -1400,6 +1507,7 @@ pub struct TextEditorParams {
 	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
 	/// the cause instead of redoing the edit.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[schemars(extend("contentMediaType" = SHELL_COMMAND_MEDIA_TYPE))]
 	pub check: Option<String>,
 }
 
@@ -1464,6 +1572,7 @@ pub struct BatchEditParams {
 	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
 	/// the cause instead of redoing the edit.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[schemars(extend("contentMediaType" = SHELL_COMMAND_MEDIA_TYPE))]
 	pub check: Option<String>,
 }
 
@@ -1555,6 +1664,7 @@ pub struct ExtractLinesParams {
 pub struct ShellParams {
 	/// Command line for `sh -c` (`cmd /C` on Windows). No stdin or TTY is available;
 	/// commands requiring input need their non-interactive options.
+	#[schemars(extend("contentMediaType" = SHELL_COMMAND_MEDIA_TYPE))]
 	pub command: String,
 }
 

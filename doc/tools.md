@@ -20,12 +20,11 @@ Relative paths resolve against the session workdir (see
 
 ---
 
-## `view` — read files, list directories, search content, navigate code
+## `view` — read files, list directories, search content
 
 **Modules:** `fs/core.rs`, `fs/file_ops.rs`, `fs/directory.rs`, `fs/search.rs`,
-`fs/delta.rs`, `fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`; parsing lives in
-`src/structural/` (`mod.rs`, `signature_extractor.rs`, `symbols.rs`,
-`ast_search.rs`, `languages/`)
+`fs/delta.rs`, `fs/structure.rs`, `fs/ast.rs`; parsing lives in
+`src/structural/` (`mod.rs`, `signature_extractor.rs`, `ast_search.rs`, `languages/`)
 
 One tool, several read modes, selected by the parameters:
 
@@ -52,17 +51,6 @@ One tool, several read modes, selected by the parameters:
   like any other view. Markdown files yield their headings. A directory
   outline honours `pattern`, `max_depth` and `include_hidden`. Rejected
   together with `content`, `start`/`end` and the other flags.
-- **Symbol navigation** (`symbol: "<name>"`, `*` wildcards allowed) — the
-  definitions of a name in a file or under a directory; `flags: "r"` returns
-  its references instead, `c`/`l` give per-file counts and matching paths. An
-  exact name renders the whole definition when it is short enough, longer
-  ones and wildcard matches render a bounded preview. A directory lookup
-  honours `pattern`, `max_depth`, `include_hidden` and `context`. Markdown
-  files yield their headings, Svelte files the symbols of their `<script>`
-  blocks; CSS and JSON name no navigable symbol (a single file says so, a
-  directory skips them). Rejected together with `content` and `start`/`end`;
-  the `s`, `o` and `v` flags are rejected with it, `r` needs `symbol`, and
-  `c`/`l` keep their search meanings.
 - **AST search** (`ast: true`, with the ast-grep pattern in `content`) — the
   pattern is matched against the syntax tree instead of the text: `$NAME`
   matches one node, `$$$ARGS` a sequence, `$_` any single node. The pattern
@@ -70,23 +58,24 @@ One tool, several read modes, selected by the parameters:
   omit the body only together with the colon: `def $F($$$A):` without a body
   matches nothing, `def $F($$$A)` matches). Works on a file or a directory, locally or over `ssh://`, and
   honours `pattern`, `max_depth`, `include_hidden`, `context` and the `c`/`l`
-  flags. Rejected together with `regex`, `symbol`, `start`/`end` and the
+  flags. Rejected together with `regex`, `start`/`end` and the
   `s`/`v`/`o` flags. CSS, JSON and Markdown files are not AST-searchable.
   Zero matches return a diagnostic naming the parsed kind, the
   metavariables and the plain-text fallback.
 
 The modes are mutually exclusive: `view_existing_path` (`fs/core.rs`)
-dispatches `ast` → `symbol` → outline → listing/search and each mode bails on
-the other modes' parameters before dispatch. The three structural modes split
+dispatches `ast` → outline → listing/search and each mode bails on
+the other modes' parameters before dispatch. The two structural modes split
 pure parsing from I/O — `src/structural/` takes content in and returns
-structured items without touching the filesystem, while `fs/structure.rs`,
-`fs/symbols.rs` and `fs/ast.rs` own the walk, the reads and the rendering.
-Structural reads never register in the delta/view cache.
+structured items without touching the filesystem, while `fs/structure.rs`
+and `fs/ast.rs` own the walk, the reads and the rendering.
+Structural reads never register in the delta/view cache. Navigation by symbol
+name is the separate [`symbol`](#symbol--navigate-code-from-a-symbol-name) tool.
 
 **Supported languages.** The outline covers Rust, Python, JavaScript,
 TypeScript, Go, Java, C/C++, PHP, Bash, Ruby, Lua, JSON, Swift, Svelte, CSS,
-Elixir and Markdown (`src/structural/languages/`). Symbol navigation covers the
-same set except CSS and JSON; AST search covers the same set except CSS, JSON
+Elixir and Markdown (`src/structural/languages/`). The `symbol` tool's definition and
+references cover the same set except CSS and JSON; AST search covers the same set except CSS, JSON
 and Markdown, and searches a Svelte file through its `<script>` blocks.
 
 **Delta views.** Re-viewing a *whole* file returns only the hunks changed since
@@ -111,6 +100,83 @@ content, read a complete block in one call, never re-read overlapping ranges;
 re-read only when the file may have changed or output was truncated. Oversized
 output is truncated to a token budget (`utils/truncation.rs`) with the cut
 point reported.
+
+---
+
+## `symbol` — navigate code from a symbol name
+
+**Modules:** `fs/symbols.rs` (validation, `definition`/`references`), `fs/graph.rs` (graph
+relations); pure logic in `src/structural/symbols.rs` and `src/structural/graph/`
+
+`relation` selects what a call returns; `name` is the symbol (`Owner::name` also matches) and `path`
+scopes it:
+
+| `relation` | Returns | Parameters |
+|---|---|---|
+| `definition` (default) | Source of the symbol, by name | `name` (`*` wildcards), `path`, `pattern`, `max_depth`, `include_hidden`, `flags` |
+| `references` | Every use of the name, grouped by enclosing symbol | as `definition`, plus `context` |
+| `callers` / `callees` | Calls into / out of the symbol | `name`, `path`, `depth` |
+| `supertypes` / `subtypes` | Extends and implements, outgoing / incoming | `name`, `path`, `depth` |
+| `imports` / `imported_by` | Imports of / importers of the file in `path` | `path` (a file; `name` is rejected), `depth` |
+| `path` | Chains from `name` to `to` over calls, extends and implements (not imports) | `name`, `to` (required), `path`, `depth` |
+
+Parameter combinations that make no sense (`to` without `relation: "path"`, `depth` or `flags` on the
+wrong relation, `*` in a graph relation, `name` for `imports`) fail with a guided error.
+
+**`definition` and `references`** are the text-level lookup: definitions of a name in a file or under
+a directory (default the workdir), locally or over `ssh://`. `references` is the same lookup for
+uses. `flags: "c"`/`"l"` give per-file counts and matching paths; `o`, `v`, `s` and `r` are
+rejected. An exact name renders the whole definition when it is short enough, longer ones and
+wildcard matches a bounded preview. Every source line renders as `N:hh|content`, so the ids feed
+`batch_edit`. Markdown files yield their headings, Svelte files the symbols of their `<script>`
+blocks; CSS and JSON name no navigable symbol (a single file says so, a directory skips them).
+Symbol reads never register in the delta/view cache.
+
+**Graph relations** are answered from the code graph in `src/structural/graph/`: nodes are files,
+symbols and external imports; edges are `Contains`, `Imports`, `Calls`, `Extends` and `Implements`,
+resolved by name in a fixed order (same file, imported files, unique project-wide match), each with a
+confidence. Mapping: `callers` = incoming `Calls`; `callees` = outgoing `Calls`; `supertypes` =
+outgoing `Extends`+`Implements`; `subtypes` = incoming; `imports` = outgoing `Imports` of a file
+node; `imported_by` = incoming; `path` = one multi-source search over `Calls`, `Extends` and `Implements` between the definitions of `name` and `to`.
+They are resolved by name and imports, not types, and are local only (an `ssh://` path or remote
+workdir fails with guidance).
+
+- **Scoped builds.** `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by` parse
+  only the files that spell the names they follow (found with a whole-identifier byte search over the
+  gitignore-aware walk, level by level for `depth`); import resolution still looks paths up in the list of
+  every repository file, so the answer equals the whole-repository graph's. One difference: a callee name
+  spelled in more than `MAX_FILES_PER_FOLLOWED_NAME` (200) files (`get`, `push`) is not searched for
+  repository-wide, so a `(guess)` hop to it can be missing; calls that resolve through the imports of the
+  calling file still appear. A query that would need more than `MAX_SCOPED_FILES` (3,000) files falls back
+  to the cached whole-repository graph. `path` always uses the whole-repository graph (it needs global
+  reachability), so its first call on a large repository takes seconds and its graph stays in memory
+  (about 1.5 GB on the VS Code repository). A name with more than eight definitions is listed instead of
+  followed, from a declarations-only scan. Scoped builds ignore `MAX_GRAPH_FILES` and
+  `MAX_GRAPH_SOURCE_BYTES`: they read every walked file once per query and keep only the matches.
+- **Packages.** Go imports, Java wildcard imports and Swift module imports name a package of several files:
+  one `Imports` edge per importing file targets the package's canonical (alphabetically first) file, and
+  `imported_by` of any file of the package answers through it; calls through the import resolve against
+  every file of the package.
+- **Scope.** The graph covers every supported, gitignore-visible file under the session
+  workdir, because name resolution needs the whole repository. `path` only selects which
+  definitions of `name` start the query; a `path` outside the workdir fails and says to switch
+  workdir. When `name` is ambiguous the output has one section per start definition.
+- **Depth.** `depth` defaults to 1 (`path`: 5) and is capped at `MAX_GRAPH_DEPTH` (5).
+- **Cache.** `fs/graph.rs` keeps in-memory graphs for the last `MAX_CACHED_WORKDIRS` (4) workdir roots,
+  least recently used dropped first. Every call re-walks the tree and hashes (relative path, size,
+  mtime, and on unix ctime and inode) of each file, without reading any; a graph is rebuilt only when
+  that stamp changes. Concurrent calls for one root wait for a single build. Nothing is stored on disk.
+- **Limits.** The cached whole-repository graph (`path`, and queries that fall back to it) holds at most
+  `MAX_GRAPH_FILES` (20,000) files and `MAX_GRAPH_SOURCE_BYTES` (256 MB);
+  the rest are counted in a closing note. A traversal stops at `MAX_REPORTED_HOPS` and a path search at
+  `MAX_PATHS` paths or its work limit; each says so in the output instead of reporting an empty result.
+- **Skipped files.** Files over `MAX_VIEW_FILE_BYTES` (5 MB), unreadable files and files that fail to
+  parse are left out and named in a closing note. Markdown and JSON contribute nothing to the graph and
+  are not handed to it.
+- **Output.** Hops are grouped under `depth N:` lines as `path:line  kind  Owner::name`; `(guess)`
+  marks a hop matched only by a repository-wide name by name alone (repository-wide, ambiguous or unknown receiver); a call outside any function lists the file as `path:line  file`; unresolved imports read `external: <import>`; `path` prints
+  each chain as `a -calls-> b`. Output stops under the response budget with a truncation notice.
+  Zero results say what was looked for and suggest `relation: "references"`.
 
 ---
 

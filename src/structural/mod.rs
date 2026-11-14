@@ -18,6 +18,7 @@
 //! file contents, and get structured items back.
 
 pub mod ast_search;
+pub mod graph;
 mod languages;
 mod signature_extractor;
 pub mod symbols;

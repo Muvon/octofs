@@ -234,7 +234,7 @@ Ask your AI assistant to:
 
 - **Content Search** — Search for strings within files with context lines; plain line-mode matches carry their enclosing symbol
 - **Structural Outline** — `flags: "s"` lists the declarations of a file or tree, bodies elided
-- **Symbol Navigation** — `symbol: "name"` finds definitions, `flags: "r"` their references
+- **Symbol Navigation** — the `symbol` tool finds a symbol's definitions and references, its callers and callees, supertypes and subtypes, a file's imports and importers, or the path between two symbols
 - **AST Search** — `ast: true` matches an ast-grep pattern against the syntax tree
 - **Line Extraction** — Copy specific line ranges from one file to another
 
@@ -343,13 +343,13 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 - **RSA keys are not supported** — the Rust `rsa` crate has an unfixed timing side-channel (Marvin attack, [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071)), so octofs is built without RSA entirely. Use an ed25519 key instead (`ssh-keygen -t ed25519`); ecdsa also works. RSA-only setups fail with a clear error naming the key.
 - **Host keys** — verified against `~/.ssh/known_hosts` with the OpenSSH `accept-new` policy: unknown hosts are recorded on first use, a changed key fails closed.
 - **`--ssh-timeout SECS`** — connection timeout (default 30). Connections are pooled per host, kept alive with transport keepalives, and reconnected automatically if they drop.
-- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `workdir`) reach remote hosts.
+- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `workdir`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
 
 ---
 
 ## MCP Tools Reference
 
-### `view` — Read files, list directories, search content, navigate code
+### `view` — Read files, list directories, search content
 
 **File reading:** (`path` is a single path; `start`/`end` are line numbers or line ids)
 ```json
@@ -458,23 +458,6 @@ headings. A directory outline honours `pattern`, `max_depth` and `include_hidden
 Supported languages: Rust, Python, JavaScript, TypeScript, Go, Java,
 C/C++, PHP, Bash, Ruby, Lua, JSON, Swift, Svelte, CSS, Elixir, Markdown.
 
-**Symbol navigation:** (`symbol: "<name>"` — `*` wildcards allowed)
-```json
-{"path": "src", "symbol": "handle_*"}
-{"path": "src/main.rs", "symbol": "flush", "flags": "r"}
-{"path": "src", "symbol": "flush", "flags": "c"}
-```
-Returns the definitions of a name in a file or under a directory, locally or over
-`ssh://`; `flags: "r"` returns its references instead. `flags: "c"` counts the hits
-per file, `flags: "l"` lists the matching files. A directory lookup honours
-`pattern`, `max_depth`, `include_hidden` and `context`. An exact name renders the
-whole definition when it is short enough; wildcard matches render a preview with
-the omitted range. Markdown files yield their headings, Svelte files the symbols
-of their `<script>` blocks. CSS and JSON files name no navigable symbol: a single
-file fails with that guidance, a directory skips them. `symbol` cannot be combined
-with `content` or `start`/`end`/`ranges`, and the `s`, `o` and `v` flags are rejected with
-it; `r` needs `symbol`, and `c`/`l` keep their search meanings.
-
 **AST search:** (`ast: true` — `content` holds the ast-grep pattern)
 ```json
 {"path": "src", "ast": true, "content": "fn $NAME($$$ARGS)"}
@@ -486,12 +469,58 @@ code in the target language — a Python pattern may omit the body together with
 the colon (`def $F($$$A)`); a trailing colon without a body (`def $F($$$A):`)
 matches nothing. It works on a file or a directory, locally or over
 `ssh://`, and honours `pattern`, `max_depth`, `include_hidden`, `context` and the
-`c`/`l` flags. It cannot be combined with `regex`, `symbol`, `start`/`end`/`ranges` or the
+`c`/`l` flags. It cannot be combined with `regex`, `start`/`end`/`ranges` or the
 `s`/`v`/`o` flags. Zero matches return a diagnostic naming the parsed kind, the
 metavariables and the plain-text fallback. CSS, JSON and Markdown files are not
 AST-searchable.
 
 Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + estimated tokens) so you can budget reads before opening files; binary files show `path<TAB>(binary)`.
+
+---
+
+### `symbol` — Navigate code from a symbol name
+
+```json
+{"name": "handle_*", "path": "src"}                                  // definitions, `*` wildcards allowed
+{"name": "flush", "path": "src/main.rs", "relation": "references"}
+{"name": "flush", "path": "src", "flags": "c"}                       // hits per file
+{"relation": "callers", "name": "flush", "depth": 2}
+{"relation": "imported_by", "path": "src/util.rs"}
+{"relation": "path", "name": "main", "to": "flush"}
+```
+
+`relation` picks what comes back:
+
+| `relation` | Returns |
+|---|---|
+| `definition` (default) | The symbol's source, by name, in a file or under a directory (`path`, default the workdir) |
+| `references` | Every use of the name, grouped by enclosing symbol |
+| `callers` / `callees` | Functions that call the symbol / functions it calls |
+| `supertypes` / `subtypes` | Types it extends or implements / types that extend or implement it |
+| `imports` / `imported_by` | What the file in `path` imports / the files that import it (no `name`) |
+| `path` | How `name` reaches `to` through calls, extends and implements (imports are not followed) |
+
+`definition` and `references` work locally or over `ssh://`, render `N:hh|content` lines whose
+ids feed `batch_edit`, and honour `pattern`, `max_depth`, `include_hidden`, `context` (references)
+and `flags` (`c` counts per file, `l` lists files). An exact name renders the whole definition
+when it is short enough; wildcard matches render a preview with the omitted range. Markdown files
+yield their headings, Svelte files the symbols of their `<script>` blocks. CSS and JSON files name
+no navigable symbol: a single file fails with that guidance, a directory skips them. The `s`, `o`,
+`v` and `r` flags are rejected.
+
+The graph relations (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`,
+`path`) print one hop per line as `path:line  kind  Owner::name`, grouped under `depth N:` (`depth`
+defaults to 1, `path` searches to 5, the maximum is 5). They are resolved by name and imports, not
+types: same-name symbols can be confused and dynamic calls missed, and `(guess)` marks a hop matched
+by name alone (repository-wide, ambiguous or unknown receiver). A call outside any function shows as `path:line  file`.
+External imports show as `external: <import>`. Every relation except `path` parses only the files that
+spell the names it follows, so it answers in well under a second on most repositories; `path` builds
+the graph of the whole workdir, which takes seconds on a large repository, and that graph stays cached
+(the last 4 workdirs). A `path` argument only narrows which definitions of `name` start the
+query, and must be inside the workdir. Files over 5 MB or that fail to parse are left out and named
+in a closing note, as are files cut by the whole-repository graph limits (20,000 files or 256 MB of source); a query that hits its
+hop or work limit says so instead of reporting "no path". Graph relations are local only. Zero results explain what was looked for and
+suggest `relation: "references"`.
 
 ---
 
@@ -680,7 +709,8 @@ octofs/
 │   │       ├── directory.rs     # Directory listing + content search
 │   │       ├── search.rs        # literal/regex matcher, symbol breadcrumbs
 │   │       ├── structure.rs     # Structural outline mode (flags: "s")
-│   │       ├── symbols.rs       # Symbol navigation mode (symbol, flags: "r")
+│   │       ├── symbols.rs       # `symbol` tool: definitions, references, parameter validation
+│   │       ├── graph.rs         # `symbol` graph relations: walk, cached graph build, rendering
 │   │       ├── ast.rs           # AST-pattern search mode (ast: true)
 │   │       ├── shell.rs         # Command execution, background, process cleanup
 │   │       ├── workdir.rs       # Working directory management

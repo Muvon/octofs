@@ -35,6 +35,40 @@ pub(crate) mod typescript;
 
 use tree_sitter::Node;
 
+use crate::structural::graph::registry::FileRegistry;
+
+/// Kind of type-level relationship a language may report from an AST node,
+/// emitted as an extends or implements edge between symbols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeRelationKind {
+	/// Inheritance: subclass extends superclass; trait/interface inherits from another.
+	Extends,
+	/// Interface or trait implementation: a concrete type satisfies an interface/trait.
+	Implements,
+}
+
+/// A callable reference extracted from a language AST.
+///
+/// `name` is always the terminal callable (`run` in `service.run()`), while
+/// `qualifier` preserves the receiver/module/type (`service`). Keeping both
+/// avoids turning every segment of a qualified expression into a bogus call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallTarget {
+	pub name: String,
+	pub qualifier: Option<String>,
+}
+
+/// A code region embedded in another supported language (for example a
+/// JavaScript/TypeScript `<script>` inside Svelte).
+#[derive(Debug, Clone)]
+pub struct EmbeddedSource {
+	pub language: &'static str,
+	pub contents: String,
+	/// 0-based line of the file where `contents` begins; added to every line
+	/// the embedded block reports.
+	pub start_line: u32,
+}
+
 /// A tree-sitter grammar plus the outline decisions for it.
 pub(crate) trait Language: Send + Sync {
 	/// Name of the language.
@@ -77,6 +111,73 @@ pub(crate) trait Language: Send + Sync {
 		let _ = (node, contents);
 		None
 	}
+
+	/// Node kinds that become symbol-level graph nodes. Empty by default, so a
+	/// language contributes no symbols until it opts in; kinds listed here must
+	/// declare something (not imports, calls or statements).
+	fn get_symbol_kinds(&self) -> Vec<&'static str> {
+		Vec::new()
+	}
+
+	/// Import and export names declared at this node, as `(imports, exports)`.
+	/// The caller walks the tree; this inspects one node.
+	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
+		let _ = (node, contents);
+		(Vec::new(), Vec::new())
+	}
+
+	/// Callees invoked at this node, empty unless the node is a call. The
+	/// caller walks the tree and tracks the line.
+	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
+		let _ = (node, contents);
+		Vec::new()
+	}
+
+	/// Owning type/module for a declared symbol, when it is syntactically known.
+	/// The default handles the common class/module/impl ancestor shapes;
+	/// languages with receiver syntax on the declaration itself (notably Go)
+	/// override it.
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		find_graph_symbol_owner(node, contents)
+	}
+
+	/// Code regions embedded in another language that should join the graph.
+	fn extract_embedded_sources(&self, root: Node, contents: &str) -> Vec<EmbeddedSource> {
+		let _ = (root, contents);
+		Vec::new()
+	}
+
+	/// Extends/implements relations declared at this node as `(kind, target
+	/// name)` pairs: `class Foo extends Bar implements Baz` yields
+	/// `[(Extends, "Bar"), (Implements, "Baz")]`. The caller walks the tree.
+	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
+		let _ = (node, contents);
+		Vec::new()
+	}
+
+	/// Name of the declaration that owns relations emitted for this node. Most
+	/// languages name it on the same node; languages with separate
+	/// implementation blocks override this.
+	fn extract_type_relation_source(&self, node: Node, contents: &str) -> Option<String> {
+		self.extract_declaration_name(node, contents)
+	}
+
+	/// Resolve an import string to a path in `all_files`, or None when it does
+	/// not point at a file of the repository (an external dependency).
+	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
+		let _ = (import_path, source_file, all_files);
+		None
+	}
+
+	/// Every repository file an import names; empty for an external
+	/// dependency. Languages whose imports name a package or directory rather
+	/// than one file (Go, Java wildcards, Swift modules) override this with
+	/// all the files of that package; everything else names at most one file.
+	fn resolve_import_files(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Vec<String> {
+		self.resolve_import(import_path, source_file, all_files)
+			.into_iter()
+			.collect()
+	}
 }
 
 /// Gets a language implementation by its name.
@@ -97,6 +198,7 @@ pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
 		"swift" => Some(Box::new(swift::Swift {})),
 		"css" => Some(Box::new(css::Css {})),
 		"elixir" => Some(Box::new(elixir::Elixir {})),
+		"svelte" => Some(Box::new(svelte::Svelte {})),
 		_ => None,
 	}
 }
@@ -141,13 +243,37 @@ pub(crate) fn simple_type_name(text: &str) -> Option<String> {
 	}
 }
 
-/// Parse a textual callee expression to its simple (unqualified) name.
+/// Whether `path` ends with `suffix` on a path-component boundary:
+/// `a/b/c.go` ends with `b/c.go` and `c.go`, but `abc.go` does not end with
+/// `c.go`.
+pub(crate) fn path_ends_with_components(path: &str, suffix: &str) -> bool {
+	path.strip_suffix(suffix)
+		.is_some_and(|head| head.is_empty() || head.ends_with('/'))
+}
+
+/// Every file directly in `directory` that `accept`s, in alphabetical order.
+pub(crate) fn files_in_dir_matching(
+	registry: &FileRegistry,
+	directory: &str,
+	accept: impl Fn(&str) -> bool,
+) -> Vec<String> {
+	let mut files: Vec<String> = registry
+		.files_in_dir(directory)
+		.iter()
+		.filter(|file| accept(file.as_str()))
+		.cloned()
+		.collect();
+	files.sort();
+	files
+}
+
+/// Parse a textual callee expression into its terminal name and qualifier.
 /// Handles the shared forms used by the supported languages: `foo`,
 /// `module.foo`, `Type::method`, `ptr->method`, and optional chaining. Generic
 /// arguments on the callable are removed before splitting. Returns None when
 /// the callee is not a plain identifier path — the qualifier segments must be
 /// identifier-like too, so expressions like `1 + 2` never name an item.
-pub(crate) fn extract_call_target(text: &str) -> Option<String> {
+pub(crate) fn parse_call_target(text: &str) -> Option<CallTarget> {
 	let mut trimmed = text.trim().trim_start_matches('&').trim_start_matches('*');
 	if trimmed.is_empty() {
 		return None;
@@ -186,5 +312,54 @@ pub(crate) fn extract_call_target(text: &str) -> Option<String> {
 	}) {
 		return None;
 	}
-	Some(name.to_string())
+	let qualifier = if qualifier_segments.is_empty() {
+		None
+	} else {
+		Some(qualifier_segments.join("::"))
+	};
+	Some(CallTarget {
+		name: name.to_string(),
+		qualifier,
+	})
+}
+
+/// The simple (unqualified) name of a textual callee expression: the terminal
+/// segment of [`parse_call_target`], for callers that do not need the
+/// qualifier.
+pub(crate) fn extract_call_target(text: &str) -> Option<String> {
+	parse_call_target(text).map(|target| target.name)
+}
+
+/// Nearest enclosing declaration that provides a stable method owner: a
+/// class, struct, interface, trait, module, namespace, extension or `impl`.
+pub(crate) fn find_graph_symbol_owner(node: Node, contents: &str) -> Option<String> {
+	let mut current = node.parent();
+	while let Some(parent) = current {
+		let kind = parent.kind();
+		let is_owner = !kind.contains("body")
+			&& (kind.contains("class")
+				|| kind.contains("struct")
+				|| kind.contains("interface")
+				|| kind.contains("trait")
+				|| kind.contains("module")
+				|| kind.contains("namespace")
+				|| kind.contains("extension")
+				|| kind == "impl_item");
+		if is_owner {
+			// `type` first: it names the receiver of `impl Trait for Foo`.
+			for field in ["type", "name"] {
+				if let Some(name_node) = parent.child_by_field_name(field) {
+					if let Ok(text) = name_node.utf8_text(contents.as_bytes()) {
+						if let Some(name) = simple_type_name(text) {
+							return Some(name);
+						}
+					}
+				}
+			}
+			return extract_symbol_by_kinds(parent, contents, &["identifier", "name", "type_identifier", "constant"])
+				.and_then(|name| simple_type_name(&name));
+		}
+		current = parent.parent();
+	}
+	None
 }

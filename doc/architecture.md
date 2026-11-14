@@ -14,8 +14,8 @@ src/
   http_auth.rs         — HTTP access control: bind policy, bearer-token layer, Host/Origin config
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, text_editor, batch_edit, extract_lines, shell,
-                          workdir), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit, extract_lines,
+                          shell, workdir), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
     fs/
@@ -26,7 +26,8 @@ src/
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks
       search.rs        — literal/regex matcher with context blocks, enclosing-symbol breadcrumbs
       structure.rs     — structural outline mode (flags: "s"): file/directory walk, outline rendering
-      symbols.rs       — symbol navigation mode (symbol, flags: "r"): definitions, references, breadcrumbs
+      symbols.rs       — `symbol` tool: parameter validation, definitions/references (text-level), breadcrumbs
+      graph.rs         — `symbol` graph relations: workdir walk, single-entry graph cache, traversal rendering
       ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars
       delta.rs         — ViewCache (note_write/note_create/render_whole_file), Myers line diff, hunk rendering
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops
@@ -39,6 +40,7 @@ src/
     mod.rs             — outline entry point, extension → language map, supported-language list
     signature_extractor.rs — signature line spans per language, Markdown headings
     symbols.rs         — definitions/references by name, per-line enclosing-symbol breadcrumbs
+    graph/             — pure code graph: files, symbols, calls/imports/extends/implements, traversal (no I/O)
     ast_search.rs      — ast-grep pattern search over the grammars, expando rewrite, miss diagnostics
     languages/         — one tree-sitter grammar + outline/symbol rules per language
     *_tests.rs         — sibling unit tests (mod, signature_extractor, symbols, ast_search, per language)
@@ -63,10 +65,15 @@ state they touch is the explicit registries below. A background job outlives
 its call; its completion path is injected as an opaque callback so the fs layer
 never sees MCP types.
 
-`view` dispatches by mode in `fs/core.rs` (`view_existing_path`): `ast` → `symbol` → outline (`flags: "s"`) →
+`view` dispatches by mode in `fs/core.rs` (`view_existing_path`): `ast` → outline (`flags: "s"`) →
 listing/content search. Every mode bails on the other modes' parameters before dispatch, so the modes are
 mutually exclusive. The structural modes split pure parsing (`src/structural/`, content in — structured items
-out) from I/O and rendering (`fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`).
+out) from I/O and rendering (`fs/structure.rs`, `fs/ast.rs`).
+
+The `symbol` tool is separate. `execute_symbol` (`fs/symbols.rs`) validates the parameter combination for the
+`relation`, answers `definition`/`references` itself (local or `ssh://`) and hands the graph relations to
+`fs/graph.rs`. That module walks the session workdir, builds the graph with `structural::graph::build_graph`
+inside `spawn_blocking`, and renders the hops under the response budget; it is local only.
 
 ## State
 
@@ -84,6 +91,13 @@ out) from I/O and rendering (`fs/structure.rs`, `fs/symbols.rs`, `fs/ast.rs`).
   held across `.await`.
 - **FILE_HISTORY** — content snapshot before every write; powers `undo_edit`
   (max 10 levels per file, in-memory only).
+- **Scoped graph builds** (`fs/graph_scoped.rs`) — not cached: `callers`, `callees`, `supertypes`, `subtypes`,
+  `imports` and `imported_by` parse only the files that mention the names they follow; `path` uses the cache below.
+- **GRAPH_CACHE** (`fs/graph.rs`) — an LRU of up to 4 entries, one code graph per workdir root, each with a
+  stamp (hash of relative path, size, mtime, and on unix ctime and inode of every walked file). The stamp is
+  recomputed on every `symbol` graph call and a graph is rebuilt only when it differs. `BUILD_LOCKS` holds one
+  async lock per root so concurrent cold calls share one build. In-memory only; the std mutexes are never held
+  across `.await`.
 - **ViewCache** (`delta.rs`) — per client session and file, the last content the
   model saw in full. Whole-file views return only hunks changed since; the
   server's own writes keep the cache in step via `note_write` (only if the
