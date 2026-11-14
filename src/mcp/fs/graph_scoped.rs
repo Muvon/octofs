@@ -53,7 +53,7 @@ use crate::structural::graph::{
 	Direction, GraphIndex, ParsedSource, RelationFilter, RelationType, SkippedFile,
 };
 use anyhow::{anyhow, bail, Result};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -108,14 +108,19 @@ struct Query {
 	deadline: Option<Instant>,
 	/// What of the call and type relations the answer needs resolved.
 	filter: RelationFilter,
-	/// By label, so a repeated round replaces its notice.
-	notices: BTreeMap<String, String>,
+	/// Every file a rule asked to examine, over all names and levels.
+	considered: HashSet<FileId>,
+	/// The name whose files the cap or the clock cut first.
+	cut_at: Option<String>,
 }
 
 impl Query {
 	async fn new(index: Arc<CodeIndex>, budget: Option<Duration>) -> Result<Self> {
+		let span_started = std::time::Instant::now(); // SPANTMP
+		let registry = index.registry().await?;
+		eprintln!("SPAN registry {:?}", span_started.elapsed()); // SPANTMP
 		Ok(Self {
-			registry: index.registry().await?,
+			registry,
 			index,
 			sources: Vec::new(),
 			by_path: HashMap::new(),
@@ -124,7 +129,8 @@ impl Query {
 			fresh: 0,
 			deadline: budget.map(|budget| Instant::now() + budget),
 			filter: RelationFilter::default(),
-			notices: BTreeMap::new(),
+			considered: HashSet::new(),
+			cut_at: None,
 		})
 	}
 
@@ -133,11 +139,11 @@ impl Query {
 	}
 
 	/// Parse `ids` in the given order, within what is left of the per-query
-	/// cap. `total` is how many candidate files the rule found, for the
-	/// notice when the cap cut the list.
-	async fn ensure(&mut self, ids: &[FileId], label: &str, total: usize) -> Result<()> {
-		let mut listed = HashSet::new();
+	/// cap and clock. `label` names the cut in the progress notice.
+	async fn ensure(&mut self, ids: &[FileId], label: &str) -> Result<()> {
+		self.considered.extend(ids.iter().copied());
 		let mut wanted: Vec<FileId> = Vec::new();
+		let mut listed = HashSet::new();
 		for id in ids {
 			if listed.insert(*id) && !self.have.contains(id) {
 				wanted.push(*id);
@@ -182,21 +188,27 @@ impl Query {
 				self.skipped.push(skipped);
 			}
 		}
-		if batch.left_over > 0 {
-			let examined = self.have.iter().filter(|id| listed.contains(id)).count();
-			self.notices.insert(
-				label.to_string(),
-				format!(
-					"[`{label}` appears in {total} candidate files, {examined} examined; repeat the query to examine the rest (parsed files are kept), or narrow it with `path` or `Owner::name`]"
-				),
-			);
+		if batch.left_over > 0 && self.cut_at.is_none() {
+			self.cut_at = Some(label.to_string());
 		}
 		Ok(())
 	}
 
 	async fn ensure_paths(&mut self, paths: &[String], label: &str) -> Result<()> {
 		let ids: Vec<FileId> = paths.iter().filter_map(|path| self.index.file_id(path)).collect();
-		self.ensure(&ids, label, ids.len()).await
+		self.ensure(&ids, label).await
+	}
+
+	/// What is left when a call stopped at the cap or the clock. Counted over
+	/// the whole query (every name and level followed), so repeating it shows
+	/// how far the answer has come.
+	fn progress_notice(&self) -> Option<String> {
+		let label = self.cut_at.as_ref()?;
+		let examined = self.considered.iter().filter(|id| self.have.contains(id)).count();
+		Some(format!(
+			"[`{label}` and what it leads to span {} candidate files, {examined} examined; repeat the query to examine the rest (parsed files are kept), or narrow it with `path` or `Owner::name`]",
+			self.considered.len()
+		))
 	}
 
 	/// What the next answer reads of the calls and type relations grows with
@@ -228,7 +240,9 @@ impl Query {
 	}
 
 	fn finish(&self, graph: CodeGraph) -> Answer {
+		let span_started = std::time::Instant::now(); // SPANTMP
 		self.index.account_memos(self.have.iter().copied());
+		eprintln!("SPAN account_memos {:?}", span_started.elapsed()); // SPANTMP
 		let index = GraphIndex::new(&graph);
 		Answer::Graph {
 			snapshot: Box::new(GraphSnapshot {
@@ -246,7 +260,7 @@ impl Query {
 				left_out: 0,
 				scoped: true,
 			}),
-			notices: self.notices.values().cloned().collect(),
+			notices: self.progress_notice().into_iter().collect(),
 		}
 	}
 
@@ -325,7 +339,7 @@ impl Query {
 				}
 				self.index.verify_spelling(near, &[&name]).await?
 			};
-			self.ensure(&wanted, &name, wanted.len()).await?;
+			self.ensure(&wanted, &name).await?;
 		}
 		Ok(())
 	}
@@ -351,7 +365,7 @@ impl Query {
 			} else {
 				self.index.marked_lines(&name, LineKind::Inheritance).await?.to_vec()
 			};
-			self.ensure(&candidates, &name, candidates.len()).await?;
+			self.ensure(&candidates, &name).await?;
 		}
 		Ok(())
 	}
@@ -370,7 +384,18 @@ impl Query {
 		// header imported by thousands of files is not searched for importers.
 		let mut importing: HashSet<FileId> = HashSet::new();
 		for token in file_tokens(definition_path) {
-			importing.extend(self.index.marked_among(&set.files, &token, LineKind::Import).await?);
+			let span_started = std::time::Instant::now(); // SPANTMP
+			importing.extend(
+				self.index
+					.marked_among(name, &set.files, &token, LineKind::Import)
+					.await?
+					.iter(),
+			);
+			eprintln!(
+				"SPAN marked_among {:?} ({} spelling)",
+				span_started.elapsed(),
+				set.files.len()
+			); // SPANTMP
 		}
 		let mut ordered: Vec<FileId> = self.index.file_id(definition_path).into_iter().collect();
 		ordered.extend(set.files.iter().filter(|id| importing.contains(id)));
@@ -458,8 +483,15 @@ fn too_common_message(name: &str, files: usize) -> String {
 
 /// The index of `root`, refreshed.
 pub(super) async fn open(root: &Path) -> Result<Arc<CodeIndex>> {
+	eprintln!(
+		"SPAN baseline malloc in use {} MB",
+		super::code_index::spantmp_malloc_in_use_mb()
+	); // SPANTMP
 	let index = CodeIndexes::global().index(root);
 	index.refresh().await?;
+	// The token filters of a cold process are built here, before the query's
+	// clock starts: they are one-time work no deadline can cut short.
+	index.ensure_ready().await?;
 	Ok(index)
 }
 
@@ -557,7 +589,9 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 			candidates.extend(query.sorted_by_path(nameless_ids));
 		}
 		let label = tokens.iter().next().cloned().unwrap_or_default();
-		query.ensure(&candidates, &label, candidates.len()).await?;
+		eprintln!("SPAN imported_by_candidates ready {}", candidates.len()); // SPANTMP
+		query.ensure(&candidates, &label).await?;
+		let span_started = std::time::Instant::now(); // SPANTMP
 		let mut frontier: Vec<String> = Vec::new();
 		for id in &candidates {
 			let Some(source) = query.parsed_source(*id) else {
@@ -576,6 +610,12 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 				importers.push(source.clone());
 			}
 		}
+		eprintln!(
+			"SPAN imported_by_resolve {:?} ({} candidates, {} have)",
+			span_started.elapsed(),
+			candidates.len(),
+			query.have.len()
+		); // SPANTMP
 		if level == depth || frontier.is_empty() {
 			break;
 		}
@@ -598,7 +638,9 @@ async fn symbol_query(
 	let scope = scope.filter(|path| !path.is_empty());
 	let narrowed = scope.is_some() || name.contains("::");
 	// Counted from the filters alone: nothing is read to say "too common".
+	let span_started = std::time::Instant::now(); // SPANTMP
 	let filter_hits = query.index.files_spelling(&[name]).await?.len();
+	eprintln!("SPAN files_spelling {:?} ({filter_hits})", span_started.elapsed()); // SPANTMP
 	if !narrowed && filter_hits > MAX_FILES_SPELLING_TO_TRACE {
 		return Ok(Answer::Message(too_common_message(name, filter_hits)));
 	}
@@ -626,7 +668,7 @@ async fn symbol_query(
 	let mut starts;
 	loop {
 		examined = (examined + round).min(ordered.len());
-		query.ensure(&ordered[..examined], name, ordered.len()).await?;
+		query.ensure(&ordered[..examined], name).await?;
 		round = DEFINITION_SEARCH_CHUNK;
 		// Declarations are all the search for a definition needs.
 		graph = declaration_graph(&query.sources);

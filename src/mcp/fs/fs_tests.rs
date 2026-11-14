@@ -7889,13 +7889,13 @@ mod tests {
 	#[serial_test::serial]
 	async fn symbol_graph_reports_oversized_files_it_skipped() {
 		let root = rust_graph_project().await;
-		let big = vec![b'a'; crate::mcp::fs::file_ops::MAX_VIEW_FILE_BYTES as usize + 1];
+		let big = vec![b'a'; crate::mcp::fs::graph::MAX_GRAPH_FILE_BYTES as usize + 1];
 		fs::write(root.path().join("src/big.rs"), big).await.unwrap();
 		let call = symbol_in(&root, json!({ "relation": "callers", "name": "helper" }));
 		let result = execute_symbol(&call).await.unwrap();
 		let last = result.lines().last().unwrap();
 		assert!(
-			last.starts_with("[1 file(s) not in the graph: src/big.rs (over the 5 MB limit)"),
+			last.starts_with("[1 file(s) not in the graph: src/big.rs (over the 1 MB limit)"),
 			"got: {result}"
 		);
 	}

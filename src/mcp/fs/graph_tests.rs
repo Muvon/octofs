@@ -194,7 +194,7 @@ async fn concurrent_calls_build_the_graph_once() {
 fn oversized_file_is_reported_not_parsed() {
 	let root = tempfile::tempdir().unwrap();
 	std::fs::write(root.path().join("small.rs"), "fn small() {}\n").unwrap();
-	let big = vec![b'a'; MAX_VIEW_FILE_BYTES as usize + 1];
+	let big = vec![b'a'; MAX_GRAPH_FILE_BYTES as usize + 1];
 	std::fs::write(root.path().join("big.rs"), big).unwrap();
 
 	let snapshot = load_graph_blocking(root.path()).unwrap();

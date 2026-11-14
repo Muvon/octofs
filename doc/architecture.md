@@ -95,7 +95,7 @@ inside `spawn_blocking`, and renders the hops under the response budget; it is l
   memory ceiling): Bloom filters of file identifiers and a parsed-file cache keyed by file stamp; what each
   parsed file's imports resolved to is kept with it and counted in the ceiling.
   `fs/graph_scoped.rs` answers `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by`
-  on it, parsing at most 600 files and for at most 800 ms per query (after the refresh); `imported_by`
+  on it, parsing at most 600 files and for at most 800 ms per query (counted after the refresh and the filter build); `imported_by`
   builds no graph; `path` uses the cache below.
 - **GRAPH_CACHE** (`fs/graph.rs`) — an LRU of up to 4 entries, one code graph per workdir root, each with a
   stamp (hash of relative path, size, mtime, and on unix ctime and inode of every walked file). The stamp is

@@ -22,7 +22,6 @@
 //! picks which definitions are start nodes. Local workdirs only.
 
 use super::directory::read_capped;
-use super::file_ops::MAX_VIEW_FILE_BYTES;
 use super::graph_scoped;
 use super::remote::{parse_path_source, resolve_path_source, PathSource};
 use super::structure::supported_files_under;
@@ -84,6 +83,13 @@ const SKIPPED_PREVIEW: usize = 3;
 const NOTES_RESERVE: usize = 1024;
 
 const BYTES_PER_MB: u64 = 1024 * 1024;
+
+/// Largest source file the graph parses. A syntax tree weighs many times the
+/// text, and one parse cannot be interrupted, so a larger file would blow the
+/// time budget and the memory peak of a query on its own. Larger files are
+/// named in a closing note; `definition`, `references` and `view` are not
+/// bound by this limit.
+pub(super) const MAX_GRAPH_FILE_BYTES: u64 = BYTES_PER_MB;
 
 /// Most source files one graph holds; the rest of a huge tree is left out.
 const MAX_GRAPH_FILES: usize = 20_000;
@@ -319,7 +325,12 @@ pub async fn execute_graph(call: &McpToolCall, request: &GraphRequest<'_>) -> Re
 			.filter(|l| l.starts_with("VmRSS") || l.starts_with("VmHWM"))
 			.collect::<Vec<_>>()
 			.join(" "); // SPANTMP
-		eprintln!("SPAN memory accounted {} | {}", index.spantmp_memory(), rss); // SPANTMP
+		eprintln!(
+			"SPAN memory accounted {} | malloc in use {} MB | {}",
+			index.spantmp_memory(),
+			super::code_index::spantmp_malloc_in_use_mb(),
+			rss
+		); // SPANTMP
 	} // SPANTMP
    // A partial answer is not kept: repeating the query continues it.
 	if let Some((index, key, generation)) = cache_slot.filter(|_| complete) {
@@ -500,7 +511,7 @@ fn stamp_of(files: &[WalkedFile]) -> u64 {
 }
 
 pub(super) fn oversize_reason() -> String {
-	format!("over the {} MB limit", MAX_VIEW_FILE_BYTES / BYTES_PER_MB)
+	format!("over the {} MB limit", MAX_GRAPH_FILE_BYTES / BYTES_PER_MB)
 }
 
 pub(super) fn read_source(root: &Path, path: &str) -> Result<String> {
@@ -518,9 +529,9 @@ fn build_snapshot(root: &Path, files: &[WalkedFile]) -> GraphSnapshot {
 	let mut left_out = 0usize;
 	let mut total_bytes = 0u64;
 	for file in files {
-		// Same bound as every other tree read: a generated megabyte-scale file
-		// would cost more to parse than it can tell.
-		if file.size > MAX_VIEW_FILE_BYTES {
+		// A megabyte-scale file (generated code, test fixtures) costs more to
+		// parse, in time and in tree memory, than it can tell.
+		if file.size > MAX_GRAPH_FILE_BYTES {
 			unread.push(SkippedFile {
 				path: file.path.clone(),
 				reason: oversize_reason(),

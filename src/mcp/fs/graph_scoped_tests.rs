@@ -647,7 +647,10 @@ fn with_a_path_the_cap_cuts_the_list_and_the_notice_says_how_to_continue() {
 	assert!(text.contains("src/user0000.ts:2  function  f0"), "{text}");
 	assert!(!text.contains("f649"), "files past the cap must not be parsed");
 	let notice = notices.join("\n");
-	assert!(notice.contains("`shared` appears in 651 candidate files"), "{notice}");
+	assert!(
+		notice.contains("`shared` and what it leads to span 651 candidate files"),
+		"{notice}"
+	);
 	assert!(notice.contains("narrow it with `path` or `Owner::name`"), "{notice}");
 }
 
@@ -678,7 +681,10 @@ fn a_single_definition_is_traced_past_the_cap_and_repeating_completes_the_answer
 	let (first, first_notices) = scoped(root.path(), GraphRelation::Callers, Some("shared"), None, 1);
 	assert!(!first.contains(&last_caller), "files past the cap must not be parsed");
 	let notice = first_notices.join("\n");
-	assert!(notice.contains("`shared` appears in 651 candidate files"), "{notice}");
+	assert!(
+		notice.contains("`shared` and what it leads to span 651 candidate files"),
+		"{notice}"
+	);
 	assert!(notice.contains("repeat the query"), "{notice}");
 	let mut answer = (first, first_notices);
 	for _ in 0..2 {
@@ -702,6 +708,12 @@ fn an_expired_time_budget_answers_with_what_was_examined_and_repeating_goes_on()
 	assert!(!answer.0.contains(&last_caller), "{}", answer.0);
 	let notice = answer.1.join("\n");
 	assert!(notice.contains("repeat the query"), "{notice}");
+	// The notice counts what the query examined: every file this call parsed.
+	let parsed = CodeIndexes::global().index(root.path()).parse_count();
+	assert!(
+		notice.contains(&format!("{} candidate files, {parsed} examined", users + 1)),
+		"{notice}"
+	);
 	for _ in 0..=users / PARSE_CHUNK {
 		if answer.1.is_empty() {
 			break;

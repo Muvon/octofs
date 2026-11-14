@@ -66,6 +66,16 @@ pub fn resolve_relative_path(source_file: &str, relative_path: &str) -> String {
 	}
 }
 
+/// Bytes the allocator really holds for a block of `bytes`: a header and the
+/// rounding to 16 (glibc), at least 32. Many short strings cost this much
+/// each beyond their length.
+pub fn heap_chunk(bytes: usize) -> usize {
+	if bytes == 0 {
+		return 0;
+	}
+	(bytes + std::mem::size_of::<usize>()).next_multiple_of(16).max(32)
+}
+
 /// File registry for efficient file lookup by path, directory and name.
 pub struct FileRegistry {
 	id: u64,
@@ -90,6 +100,34 @@ impl FileRegistry {
 	pub fn id(&self) -> u64 {
 		self.id
 	}
+	/// Heap bytes held, by capacity, with the allocator's per-block overhead:
+	/// the paths are stored in several maps, one copy each.
+	pub fn heap_bytes(&self) -> usize {
+		let text = |paths: &[String]| paths.iter().map(|path| heap_chunk(path.capacity())).sum::<usize>();
+		let keyed = |map: &HashMap<String, usize>| {
+			map.capacity() * (std::mem::size_of::<(String, usize)>() + 1)
+				+ map.keys().map(|key| heap_chunk(key.capacity())).sum::<usize>()
+		};
+		let grouped = |map: &HashMap<String, Vec<String>>| {
+			map.capacity() * (std::mem::size_of::<(String, Vec<String>)>() + 1)
+				+ map
+					.iter()
+					.map(|(key, paths)| {
+						heap_chunk(key.capacity())
+							+ heap_chunk(paths.capacity() * std::mem::size_of::<String>())
+							+ text(paths)
+					})
+					.sum::<usize>()
+		};
+		heap_chunk(self.all_files.capacity() * std::mem::size_of::<String>())
+			+ text(&self.all_files)
+			+ keyed(&self.normalized_index)
+			+ keyed(&self.exact_index)
+			+ grouped(&self.files_by_dir)
+			+ grouped(&self.files_by_name)
+			+ grouped(&self.dirs_by_name)
+	}
+
 	pub fn new(all_files: &[String]) -> Self {
 		let mut normalized_index = HashMap::with_capacity(all_files.len());
 		let mut exact_index = HashMap::with_capacity(all_files.len());

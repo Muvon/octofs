@@ -516,7 +516,9 @@ by name alone (repository-wide, ambiguous or unknown receiver). A call outside a
 External imports show as `external: <import>`. Every relation except `path` is answered from a per-workdir
 code index (a compact table of which files spell which names, built on the first call and refreshed from
 file stamps on every call, so a file edited by any program is seen by the next query) and parses only the
-files that can matter, at most 600 per query and for at most 800 ms after the refresh; files parsed once are
+files that can matter, at most 600 per query and for at most 800 ms (counted after the refresh and, on a cold
+process, after the one-time build of the name table); parsing runs at about 10 MB of source per second on 6 threads, so
+a query examines roughly 150 to 400 files before the clock stops it; files parsed once are
 kept in memory (with what their imports resolved to) under a 192 MB ceiling shared by all indexes. When a
 name is spelled in more files than the cap or the time allows, the answer covers the files examined, and a
 closing line says how many candidates exist and that repeating the query examines the rest (parsed files do
@@ -525,7 +527,7 @@ narrowing is not traced: the reply gives the file count. A list shows at most 10
 first, then a closing line counts the rest.
 `path` builds the graph of the whole workdir, which takes seconds on a large repository, and that graph
 stays cached (the last 4 workdirs). A `path` argument only narrows which definitions of `name` start the
-query, and must be inside the workdir. Files over 5 MB or that fail to parse are left out and named
+query, and must be inside the workdir. Files over 1 MB (the view commands keep their 5 MB limit) or that fail to parse are left out and named
 in a closing note, as are files cut by the whole-repository graph limits (20,000 files or 256 MB of source); a query that hits its
 hop or work limit says so instead of reporting "no path". Graph relations are local only. Zero results explain what was looked for and
 suggest `relation: "references"`.

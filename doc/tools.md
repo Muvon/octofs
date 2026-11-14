@@ -151,7 +151,12 @@ workdir fails with guidance).
   files spell a name, which have an import or inheritance line, and finished complete answers are cached
   until a file changes. Only the files a rule picks are parsed, level by level for `depth`, on a pool of at
   most 6 threads, at most `MAX_PARSED_FILES_PER_QUERY` (600) files and for at most `QUERY_TIME_BUDGET_MS`
-  (800 ms, counted after the refresh; one chunk of files is always parsed so a repeat gets further) per query (cached files are free):
+  (800 ms, counted after the refresh and the one-time filter build of a cold process, which the first symbol
+  query of a process pays once: 1.1 s on the 67,000-file Linux tree on an idle 12-core machine; at least one chunk of
+  files is always parsed so a repeat gets further) per query (cached files are free). Measured on 6 threads:
+  about 10 MB of source per second, 72 % of it tree-sitter parsing and 25 % symbol extraction, so a query
+  examines roughly 150 to 400 files. The closing line counts over the whole query (every name and level
+  followed): its candidates and the files examined so far.
   - definitions of `name`: the files that look like declaring it first (the files under `path` when given),
     then the other files spelling it; `Owner::name` needs both names. A name spelled in more than
     `MAX_FILES_SPELLING_TO_TRACE` (3000) files with no `path` or `Owner::name` is not traced: the reply
@@ -196,7 +201,8 @@ workdir fails with guidance).
   `MAX_GRAPH_FILES` (20,000) files and `MAX_GRAPH_SOURCE_BYTES` (256 MB);
   the rest are counted in a closing note. A traversal stops at `MAX_REPORTED_HOPS` and a path search at
   `MAX_PATHS` paths or its work limit; each says so in the output instead of reporting an empty result.
-- **Skipped files.** Files over `MAX_VIEW_FILE_BYTES` (5 MB), unreadable files and files that fail to
+- **Skipped files.** Files over `MAX_GRAPH_FILE_BYTES` (1 MB: a syntax tree weighs many times the text and one
+  parse cannot be interrupted; `definition`, `references` and `view` keep the 5 MB `MAX_VIEW_FILE_BYTES`), unreadable files and files that fail to
   parse are left out and named in a closing note. Markdown and JSON contribute nothing to the graph and
   are not handed to it.
 - **Output.** Hops are grouped under `depth N:` lines as `path:line  kind  Owner::name`; `(guess)`

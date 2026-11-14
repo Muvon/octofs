@@ -30,8 +30,8 @@
 //! caller falls back to the stateless path. An index nobody used for
 //! `INDEX_IDLE_SECS` is dropped by one sweeper task.
 
-use super::graph::walk_supported;
-use crate::structural::graph::registry::FileRegistry;
+use super::graph::{walk_supported, MAX_GRAPH_FILE_BYTES};
+use crate::structural::graph::registry::{heap_chunk, FileRegistry};
 use crate::structural::graph::{parse_files, FileSpec, ParsedSource, SkippedFile};
 use crate::structural::{line_may_import, line_may_inherit};
 use anyhow::{anyhow, Result};
@@ -41,7 +41,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 /// Workdirs indexed at once; the least recently used one is dropped.
@@ -49,7 +49,7 @@ pub(super) const MAX_INDEXED_WORKDIRS: usize = 2;
 
 /// Heap bytes the token filters, parsed caches and file tables of ALL indexed
 /// roots may hold together.
-pub(super) const INDEX_MEMORY_BYTES: usize = 192 * 1024 * 1024;
+pub(super) const INDEX_MEMORY_BYTES: usize = 176 * 1024 * 1024;
 
 /// Seconds an index may stay unused before the sweeper drops it.
 pub(super) const INDEX_IDLE_SECS: u64 = 600;
@@ -60,10 +60,6 @@ const MAX_CACHED_LOOKUPS: usize = 64;
 
 /// Finished answers kept per index generation.
 pub(super) const MAX_CACHED_ANSWERS: usize = 16;
-
-/// Heap bytes the file registry holds per path, besides the path text (kept
-/// in three maps).
-const REGISTRY_BYTES_PER_PATH: usize = 192;
 
 /// Filter bits per distinct token: about 0.07% false positives with
 /// `HASHES_PER_BIT_PERCENT` of hashes per bit.
@@ -90,7 +86,41 @@ pub(super) const PARSE_CHUNK: usize = 24;
 
 /// A batch that really parses at least this many files hands freed memory
 /// back to the operating system afterwards (glibc keeps it otherwise).
-const PARSE_TRIM_THRESHOLD: usize = 64;
+const PARSE_TRIM_THRESHOLD: usize = 16;
+
+/// Source text the parse threads may hold at once. A syntax tree weighs many
+/// times the text it came from, so a few large C files in flight at once set
+/// the memory peak; a file larger than this parses alone.
+const MAX_INFLIGHT_SOURCE_BYTES: u64 = 4 * 1024 * 1024;
+
+static INFLIGHT_SOURCE: (Mutex<u64>, Condvar) = (Mutex::new(0), Condvar::new());
+
+/// Holds a share of `MAX_INFLIGHT_SOURCE_BYTES` while a file is parsed.
+struct InflightPermit(u64);
+
+impl InflightPermit {
+	fn acquire(bytes: u64) -> Self {
+		let (held, released) = &INFLIGHT_SOURCE;
+		let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+		while *held > 0 && *held + bytes > MAX_INFLIGHT_SOURCE_BYTES {
+			held = released.wait(held).unwrap_or_else(PoisonError::into_inner);
+		}
+		*held += bytes;
+		Self(bytes)
+	}
+}
+
+impl Drop for InflightPermit {
+	fn drop(&mut self) {
+		let (held, released) = &INFLIGHT_SOURCE;
+		*held.lock().unwrap_or_else(PoisonError::into_inner) -= self.0;
+		released.notify_all();
+	}
+}
+
+static SPAN_THREADS: AtomicUsize = AtomicUsize::new(0); // SPANTMP
+static SPAN_FILE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // SPANTMP
+static SPAN_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // SPANTMP
 
 /// Capacity a per-thread read buffer keeps between files.
 const KEPT_BUFFER_BYTES: usize = 1024 * 1024;
@@ -345,7 +375,7 @@ impl TokenFilter {
 	}
 
 	fn heap_bytes(&self) -> usize {
-		self.bits.len() * std::mem::size_of::<u64>()
+		heap_chunk(self.bits.len() * std::mem::size_of::<u64>())
 	}
 }
 
@@ -395,53 +425,54 @@ fn token_hashes(bytes: &[u8]) -> Vec<u64> {
 
 // ── Estimated size of parsed data ──────────────────────────────────────────
 
-fn string_bytes(text: &str) -> usize {
-	std::mem::size_of::<String>() + text.len()
+fn text_bytes(text: &String) -> usize {
+	heap_chunk(text.capacity())
 }
 
-fn optional_string_bytes(text: &Option<String>) -> usize {
-	std::mem::size_of::<Option<String>>() + text.as_ref().map_or(0, String::len)
+fn optional_text_bytes(text: &Option<String>) -> usize {
+	text.as_ref().map_or(0, text_bytes)
 }
 
-/// Heap and inline bytes of the extracted data of one file. Lengths, not
-/// capacities: the data is built once and not grown afterwards.
+/// The allocation behind a vector, by capacity; its elements' own heap data
+/// is counted separately.
+fn vec_bytes<T>(items: &Vec<T>) -> usize {
+	heap_chunk(items.capacity() * std::mem::size_of::<T>())
+}
+
+/// Heap bytes of the extracted data of one file, by capacity and with the
+/// allocator's per-block overhead (a short string costs a 32-byte block).
 fn parsed_bytes(source: &ParsedSource) -> usize {
 	let data = source.data();
-	let mut bytes = std::mem::size_of::<ParsedSource>() + data.path.len() + data.language.len();
-	bytes += data.imports.iter().map(|import| string_bytes(import)).sum::<usize>();
-	bytes += data
-		.import_bindings
-		.iter()
-		.map(|binding| {
-			string_bytes(&binding.local_name)
-				+ optional_string_bytes(&binding.imported_name)
-				+ string_bytes(&binding.import_path)
-		})
-		.sum::<usize>();
-	bytes += data
-		.calls
-		.iter()
-		.map(|call| std::mem::size_of_val(call) + call.1.name.len() + call.1.qualifier.as_ref().map_or(0, String::len))
-		.sum::<usize>();
-	bytes += data
-		.type_relations
-		.iter()
-		.map(|relation| {
-			std::mem::size_of_val(relation)
-				+ relation.target_name.len()
-				+ relation.source_name.as_ref().map_or(0, String::len)
-		})
-		.sum::<usize>();
-	bytes += data
-		.symbols
-		.iter()
-		.map(|symbol| {
-			std::mem::size_of_val(symbol)
-				+ symbol.name.len()
-				+ symbol.kind.len()
-				+ symbol.owner.as_ref().map_or(0, String::len)
-		})
-		.sum::<usize>();
+	let mut bytes = std::mem::size_of::<ParsedSource>() + text_bytes(&data.path) + text_bytes(&data.language);
+	bytes += vec_bytes(&data.imports) + data.imports.iter().map(text_bytes).sum::<usize>();
+	bytes += vec_bytes(&data.import_bindings)
+		+ data
+			.import_bindings
+			.iter()
+			.map(|binding| {
+				text_bytes(&binding.local_name)
+					+ optional_text_bytes(&binding.imported_name)
+					+ text_bytes(&binding.import_path)
+			})
+			.sum::<usize>();
+	bytes += vec_bytes(&data.calls)
+		+ data
+			.calls
+			.iter()
+			.map(|(_, call)| text_bytes(&call.name) + optional_text_bytes(&call.qualifier))
+			.sum::<usize>();
+	bytes += vec_bytes(&data.type_relations)
+		+ data
+			.type_relations
+			.iter()
+			.map(|relation| text_bytes(&relation.target_name) + optional_text_bytes(&relation.source_name))
+			.sum::<usize>();
+	bytes += vec_bytes(&data.symbols)
+		+ data
+			.symbols
+			.iter()
+			.map(|symbol| text_bytes(&symbol.name) + text_bytes(&symbol.kind) + optional_text_bytes(&symbol.owner))
+			.sum::<usize>();
 	bytes
 }
 
@@ -553,14 +584,40 @@ impl State {
 		}
 	}
 
-	/// Heap bytes of the file table: slots, the path of each file (kept twice,
-	/// as entry and as map key) and the map itself, by capacity.
+	/// Heap bytes of the file table and the lookups kept between queries, by
+	/// capacity and with the allocator's per-block overhead: slots, the path of
+	/// each file (kept twice, as entry and as map key), the map itself, the
+	/// examined-file map and the cached lookups and answers.
 	fn table_bytes(&self) -> usize {
 		let slots = self.files.capacity() * std::mem::size_of::<Option<FileEntry>>()
 			+ self.filters.capacity() * std::mem::size_of::<Option<TokenFilter>>();
-		let paths: usize = self.files.iter().flatten().map(|entry| entry.path.capacity() * 2).sum();
+		let paths: usize = self
+			.files
+			.iter()
+			.flatten()
+			.map(|entry| heap_chunk(entry.path.capacity()) * 2)
+			.sum();
 		let map = self.by_path.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<FileId>() + 1);
-		slots + paths + map
+		let examined = self.examined.capacity() * (std::mem::size_of::<(FileId, Stamp)>() + 1);
+		// Per cached lookup: the map slot, the Arc block and its key text.
+		let entry = std::mem::size_of::<(String, usize)>() + 1 + heap_chunk(std::mem::size_of::<usize>() * 2);
+		let ids = |files: &Vec<FileId>| heap_chunk(files.capacity() * std::mem::size_of::<FileId>());
+		let spelling: usize = self
+			.spelling
+			.iter()
+			.map(|(name, set)| entry + heap_chunk(name.capacity()) + ids(&set.files) + ids(&set.declaring))
+			.sum();
+		let marked: usize = self
+			.marked
+			.iter()
+			.map(|((token, _), files)| entry + heap_chunk(token.capacity()) + ids(files))
+			.sum();
+		let answers: usize = self
+			.answers
+			.iter()
+			.map(|(key, text)| entry + heap_chunk(key.capacity()) + heap_chunk(text.capacity()))
+			.sum();
+		slots + paths + map + examined + spelling + marked + answers
 	}
 }
 
@@ -622,14 +679,14 @@ impl CodeIndex {
 		}
 	}
 
-	/// Indexed files over the view size cap: never read, so never spelled or
-	/// parsed; queries name them so the answer does not silently miss them.
+	/// Indexed files over the graph's size limit: never parsed; queries name
+	/// them so the answer does not silently miss them.
 	pub(super) fn oversized_paths(&self) -> Vec<String> {
 		let mut paths: Vec<String> = lock(&self.state)
 			.files
 			.iter()
 			.flatten()
-			.filter(|entry| entry.stamp.size > super::file_ops::MAX_VIEW_FILE_BYTES)
+			.filter(|entry| entry.stamp.size > MAX_GRAPH_FILE_BYTES)
 			.map(|entry| entry.path.clone())
 			.collect();
 		paths.sort_unstable();
@@ -842,7 +899,20 @@ impl CodeIndex {
 	/// Build the filter of every file that has none, reading each once and in
 	/// parallel. Out of memory: first the parsed cache goes, then the filters
 	/// get smaller, then the root is given up.
+	pub(super) async fn ensure_ready(self: &Arc<Self>) -> Result<()> {
+		let this = self.clone();
+		blocking(move || this.ensure_filters()).await
+	}
+
 	fn ensure_filters(&self) -> Result<()> {
+		let span_started = Instant::now(); // SPANTMP
+		let built = self.build_missing_filters();
+		eprintln!("SPAN ensure_filters {:?}", span_started.elapsed()); // SPANTMP
+		release_freed_memory();
+		built
+	}
+
+	fn build_missing_filters(&self) -> Result<()> {
 		loop {
 			let (pending, bits_per_token) = {
 				let state = lock(&self.state);
@@ -1035,7 +1105,7 @@ impl CodeIndex {
 			let mut paths: Vec<String> = state.by_path.keys().cloned().collect();
 			paths.sort_unstable();
 			let registry = Arc::new(FileRegistry::new(&paths));
-			let bytes: usize = paths.iter().map(|path| path.len() + REGISTRY_BYTES_PER_PATH).sum();
+			let bytes = registry.heap_bytes();
 			// Over the ceiling the registry still serves this query, uncached.
 			if this.budget.try_add(bytes) {
 				state.use_bytes.registry = bytes;
@@ -1084,6 +1154,7 @@ impl CodeIndex {
 			state.answers.clear();
 		}
 		state.answers.insert(key, Arc::new(answer));
+		self.recharge_table(&mut state);
 	}
 
 	/// The files that really spell `name` and the ones of them that look like
@@ -1106,6 +1177,7 @@ impl CodeIndex {
 				state.spelling.clear();
 			}
 			state.spelling.insert(name.to_string(), set.clone());
+			self.recharge_table(&mut state);
 		}
 		Ok(set)
 	}
@@ -1193,6 +1265,10 @@ impl CodeIndex {
 					continue;
 				};
 				let (path, language, stamp) = (entry.path.clone(), entry.language, entry.stamp);
+				// Reported by `oversized_paths`, never parsed.
+				if stamp.size > MAX_GRAPH_FILE_BYTES {
+					continue;
+				}
 				state.tick += 1;
 				let tick = state.tick;
 				match state.parsed.get_mut(id).filter(|cached| cached.stamp == stamp) {
@@ -1207,15 +1283,18 @@ impl CodeIndex {
 		let total_missing = missing.len();
 		let affordable = total_missing.min(limit.max_fresh);
 		missing.truncate(affordable);
+		missing.sort_by_key(|(_, _, _, stamp)| stamp.size);
 		if missing.is_empty() {
 			batch.left_over = total_missing;
 			return Ok(batch);
 		}
 
 		let pool = parse_pool().ok_or_else(|| anyhow!("The parse thread pool did not start"))?;
-		// Every thread takes the next outstanding file until none is left or the
-		// deadline has passed; at least `min_fresh` files are taken whatever the
-		// clock says. Files are taken in order, so what is parsed is a prefix.
+		// Smallest files first, so one large file cannot use the budget before
+		// the small ones are done. Every thread takes the next outstanding file
+		// until none is left or the deadline has passed; at least `min_fresh`
+		// files are taken whatever the clock says.
+		let span_batch_started = Instant::now(); // SPANTMP
 		let next = AtomicUsize::new(0);
 		let per_thread = pool.broadcast(|_| {
 			let mut done: Vec<(usize, FreshParse)> = Vec::new();
@@ -1228,8 +1307,18 @@ impl CodeIndex {
 				if out_of_time && position >= limit.min_fresh {
 					break;
 				}
+				let span_file_started = Instant::now(); // SPANTMP
+				SPAN_BYTES.fetch_add(
+					std::fs::metadata(self.root.join(path)).map_or(0, |m| m.len()),
+					Ordering::Relaxed,
+				); // SPANTMP
 				done.push((position, (*id, *stamp, self.parse_file(path, language))));
+				SPAN_FILE_NS.fetch_add(span_file_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+				// SPANTMP
 			}
+			if !done.is_empty() {
+				SPAN_THREADS.fetch_add(1, Ordering::Relaxed);
+			} // SPANTMP
 			done
 		});
 		let mut taken: Vec<(usize, FreshParse)> = per_thread.into_iter().flatten().collect();
@@ -1249,6 +1338,16 @@ impl CodeIndex {
 			}
 		}
 		drop(state);
+		eprintln!(
+			"SPAN parse_batch wall {:?}, threads used {}, summed file time {} ms, bytes {}, ts parse {} ms, extraction {} ms, files {}",
+			span_batch_started.elapsed(),
+			SPAN_THREADS.swap(0, Ordering::Relaxed),
+			SPAN_FILE_NS.swap(0, Ordering::Relaxed) / 1_000_000,
+			SPAN_BYTES.swap(0, Ordering::Relaxed),
+			crate::structural::graph::symbols::SPAN_TS_NS.swap(0, Ordering::Relaxed) / 1_000_000,
+			crate::structural::graph::symbols::SPAN_WALK_NS.swap(0, Ordering::Relaxed) / 1_000_000,
+			batch.fresh
+		); // SPANTMP
 		if batch.fresh >= PARSE_TRIM_THRESHOLD {
 			release_freed_memory();
 		}
@@ -1258,11 +1357,16 @@ impl CodeIndex {
 	fn parse_file(&self, path: &str, language: &'static str) -> Result<Arc<ParsedSource>, SkippedFile> {
 		#[cfg(test)]
 		self.parses.fetch_add(1, Ordering::Relaxed);
+		// Bytes become the text without a second copy: both alive at once is
+		// twice the file in memory, per parsing thread.
 		let read = |relative: &str| -> Result<String> {
-			self.read_file(relative)
-				.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-				.ok_or_else(|| anyhow!("{relative} cannot be read"))
+			let bytes = self
+				.read_file(relative)
+				.ok_or_else(|| anyhow!("{relative} cannot be read"))?;
+			Ok(String::from_utf8(bytes).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 		};
+		let size = std::fs::metadata(self.root.join(path)).map_or(0, |metadata| metadata.len());
+		let _permit = InflightPermit::acquire(size);
 		let (mut sources, mut skipped) = parse_files(
 			vec![FileSpec {
 				path: path.to_string(),
@@ -1338,6 +1442,7 @@ impl CodeIndex {
 				state.examined.insert(id, stamp);
 			}
 		}
+		self.recharge_table(&mut state);
 	}
 
 	/// Reserve `bytes` of the budget, evicting the least recently used parsed
@@ -1416,23 +1521,44 @@ impl CodeIndex {
 				state.marked.clear();
 			}
 			state.marked.insert(key, files.clone());
+			self.recharge_table(&mut state);
 		}
 		Ok(files)
 	}
 
-	/// The files among `ids` with a line that holds the identifier `token` and
-	/// may be an import (or parent-type line): only those files are read, so
-	/// it is cheap when `ids` is short even if `token` is spelled everywhere.
+	/// The files among the ones that spell `name` with a line that holds the
+	/// identifier `token` and may be an import (or parent-type line): only
+	/// those files are read, so it is cheap even if `token` is spelled
+	/// everywhere. Cached with the other line lookups until a file changes.
 	pub(super) async fn marked_among(
 		self: &Arc<Self>,
-		ids: &[FileId],
+		name: &str,
+		spelling: &[FileId],
 		token: &str,
 		kind: LineKind,
-	) -> Result<Vec<FileId>> {
+	) -> Result<Arc<Vec<FileId>>> {
+		// A key no plain token can have: identifiers hold no `>`.
+		let key = (format!("{name}>{token}"), kind);
+		let generation = {
+			let state = lock(&self.state);
+			if let Some(files) = state.marked.get(&key) {
+				return Ok(files.clone());
+			}
+			state.generation
+		};
 		let this = self.clone();
-		let ids = ids.to_vec();
+		let ids = spelling.to_vec();
 		let token = token.to_string();
-		blocking(move || this.marked_in(&ids, &token, kind)).await
+		let files = Arc::new(blocking(move || this.marked_in(&ids, &token, kind)).await?);
+		let mut state = lock(&self.state);
+		if state.generation == generation {
+			if state.marked.len() >= MAX_CACHED_LOOKUPS {
+				state.marked.clear();
+			}
+			state.marked.insert(key, files.clone());
+			self.recharge_table(&mut state);
+		}
+		Ok(files)
 	}
 
 	fn marked_lines_blocking(&self, token: &str, kind: LineKind) -> Result<Vec<FileId>> {
@@ -1645,6 +1771,27 @@ fn parse_pool() -> Option<&'static rayon::ThreadPool> {
 extern "C" {
 	fn malloc_trim(pad: usize) -> i32;
 }
+
+#[repr(C)] // SPANTMP
+struct Mallinfo2 {
+	arena: usize,
+	ordblks: usize,
+	smblks: usize,
+	hblks: usize,
+	hblkhd: usize,
+	usmblks: usize,
+	fsmblks: usize,
+	uordblks: usize,
+	fordblks: usize,
+	keepcost: usize,
+} // SPANTMP
+extern "C" {
+	fn mallinfo2() -> Mallinfo2;
+} // SPANTMP
+pub(super) fn spantmp_malloc_in_use_mb() -> usize {
+	let info = unsafe { mallinfo2() };
+	(info.uordblks + info.hblkhd) / (1024 * 1024)
+} // SPANTMP
 
 /// glibc keeps freed memory in its arenas; give it back.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
