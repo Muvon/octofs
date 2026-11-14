@@ -1047,8 +1047,10 @@ impl ServerHandler for OctofsServer {
 		.with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
-			"Tools for file reading, search, editing, copying, shell execution, and the session \
-				 working directory. File lines render as `N:hh|content`; copy `N:hh` verbatim \
+			"Tools for file reading, search, editing, copying, shell execution, the session working \
+				 directory, and code exploration (outlines, syntax-tree search, and the `symbol` tool for \
+				 definitions, references, callers, callees, imports and type hierarchies, computed from \
+				 the files on disk). File lines render as `N:hh|content`; copy `N:hh` verbatim \
 				 for line-addressed edits; content sent to edit tools is raw text without `N:hh|` \
 				 prefixes. Edit results include fresh ids and line shifts for \
 				 follow-up edits. Relative paths resolve against the session's workdir."

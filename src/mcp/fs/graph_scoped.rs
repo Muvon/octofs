@@ -13,7 +13,8 @@
 // limitations under the License.
 
 //! Query-scoped graphs for the relations that start at one name or one file
-//! (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`),
+//! (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`)
+//! or connect two names (`path`),
 //! built on the code index: the index says which files spell a name, and only
 //! the files a rule picks are parsed, level by level.
 //!
@@ -40,17 +41,25 @@
 //!   inheritance line of their language;
 //! * `imported_by`: the files with a line naming the file (its stem, or its
 //!   directory for package files) that may be an import line of their
-//!   language.
+//!   language;
+//! * `path`: both ends at once, one level at a time. The forward side
+//!   follows what the bodies of its frontier call (as `callees`), the
+//!   backward side what spells the names of its frontier (as `callers`);
+//!   each round takes the side whose next level needs fewer unparsed files,
+//!   and the search stops when the two sides meet, when `depth`
+//!   levels are used up, when a side has nothing left or when the budget ends.
 
 use super::code_index::{CodeIndex, CodeIndexes, FileId, LineKind, ParseLimit, SpellingSet, PARSE_CHUNK};
 use super::graph::{
-	oversize_reason, start_nodes, GraphRelation, GraphSnapshot, MAX_EXPANDED_DEFINITIONS, MAX_REPORTED_HOPS,
+	oversize_reason, path_endpoints, start_nodes, GraphRelation, GraphSnapshot, MAX_EXPANDED_DEFINITIONS,
+	MAX_REPORTED_HOPS, PATH_RELATIONS,
 };
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::types::{EXTERNAL_KIND, FILE_KIND};
 use crate::structural::graph::{
-	assemble_filtered_graph_in, declaration_graph, import_edge_graph, neighbors, resolved_imports, CodeGraph,
-	Direction, GraphIndex, ParsedSource, RelationFilter, RelationType, SkippedFile,
+	assemble_filtered_graph_in, declaration_graph, find_paths, import_edge_graph, neighbors, reexport_sources,
+	reexported_as, resolved_imports, CodeGraph, Direction, GraphIndex, ParsedSource, RelationFilter, RelationType,
+	SkippedFile,
 };
 use anyhow::{anyhow, bail, Result};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -75,6 +84,9 @@ pub(super) const MAX_FILES_SPELLING_TO_TRACE: usize = 3000;
 /// still resolves through the imports of the calling file and the file itself.
 const MAX_FILES_PER_FOLLOWED_NAME: usize = 200;
 
+/// Files a name is followed through when a file only re-exports it.
+const REEXPORT_HOPS: usize = 3;
+
 /// Files parsed per round while no definition of the name has been found.
 const DEFINITION_SEARCH_CHUNK: usize = 100;
 
@@ -96,6 +108,13 @@ pub(super) enum Answer {
 	Message(String),
 }
 
+/// The two ends of a `path` search and how far each side went.
+struct PathProgress {
+	from: String,
+	to: String,
+	forward: usize,
+	backward: usize,
+}
 struct Query {
 	index: Arc<CodeIndex>,
 	registry: Arc<FileRegistry>,
@@ -112,6 +131,8 @@ struct Query {
 	considered: HashSet<FileId>,
 	/// The name whose files the cap or the clock cut first.
 	cut_at: Option<String>,
+	/// Set by a `path` search: its two ends and the levels explored from each.
+	path_progress: Option<PathProgress>,
 }
 
 impl Query {
@@ -129,6 +150,7 @@ impl Query {
 			filter: RelationFilter::default(),
 			considered: HashSet::new(),
 			cut_at: None,
+			path_progress: None,
 		})
 	}
 
@@ -195,37 +217,54 @@ impl Query {
 		self.ensure(&ids, label).await
 	}
 
+	/// Records that a step could not finish: the search is partial.
+	fn note_cut(&mut self, label: &str) {
+		if self.cut_at.is_none() {
+			self.cut_at = Some(label.to_string());
+		}
+	}
+
 	/// What is left when a call stopped at the cap or the clock. Counted over
 	/// the whole query (every name and level followed), so repeating it shows
 	/// how far the answer has come.
 	fn progress_notice(&self) -> Option<String> {
 		let label = self.cut_at.as_ref()?;
 		let examined = self.considered.iter().filter(|id| self.have.contains(id)).count();
-		Some(format!(
-			"[`{label}` and what it leads to span {} candidate files, {examined} examined; repeat the query to examine the rest (parsed files are kept), or narrow it with `path` or `Owner::name`]",
-			self.considered.len()
-		))
+		let candidates = self.considered.len();
+		Some(match &self.path_progress {
+			Some(path) => format!(
+				"[the search from `{}` to `{}` went {} level(s) forward and {} back over {candidates} candidate files, {examined} examined; repeat the query to examine the rest (parsed files are kept), or narrow it with `path` or `Owner::name`]",
+				path.from, path.to, path.forward, path.backward
+			),
+			None => format!(
+				"[`{label}` and what it leads to span {candidates} candidate files, {examined} examined; repeat the query to examine the rest (parsed files are kept), or narrow it with `path` or `Owner::name`]"
+			),
+		})
 	}
 
 	/// What the next answer reads of the calls and type relations grows with
 	/// every level: the names (callers, subtypes) or the bodies (callees,
 	/// supertypes) of the definitions reached so far.
-	fn widen_filter(&mut self, graph: &CodeGraph, direction: Direction, frontier: &[String]) {
+	/// Whether it asked for something new.
+	fn widen_filter(&mut self, graph: &CodeGraph, direction: Direction, frontier: &[String]) -> bool {
+		let mut widened = false;
 		for node in frontier.iter().filter_map(|id| graph.nodes.get(id)) {
 			if node.kind == FILE_KIND || node.kind == EXTERNAL_KIND {
 				continue;
 			}
 			if direction == Direction::Outgoing {
-				self.filter.declared_types.insert(node.name.clone());
-				self.filter
-					.bodies
-					.entry(node.path.clone())
-					.or_default()
-					.push((node.start_line, node.end_line));
+				widened |= self.filter.declared_types.insert(node.name.clone());
+				let bodies = self.filter.bodies.entry(node.path.clone()).or_default();
+				let body = (node.start_line, node.end_line);
+				if !bodies.contains(&body) {
+					bodies.push(body);
+					widened = true;
+				}
 			} else {
-				self.filter.names.insert(node.name.clone());
+				widened |= self.filter.names.insert(node.name.clone());
 			}
 		}
+		widened
 	}
 
 	fn graph(&self) -> CodeGraph {
@@ -248,8 +287,6 @@ impl Query {
 						reason: oversize_reason(),
 					})
 					.collect(),
-				left_out: 0,
-				scoped: true,
 			}),
 			notices: self.progress_notice().into_iter().collect(),
 		}
@@ -291,7 +328,8 @@ impl Query {
 							.filter_map(|binding| binding.imported_name.clone()),
 					);
 				}
-			} else {
+			}
+			if relations.contains(&RelationType::Extends) || relations.contains(&RelationType::Implements) {
 				names.extend(
 					source
 						.data()
@@ -305,10 +343,17 @@ impl Query {
 		names
 	}
 
-	/// The names `frontier` follows (callees or parent types): each is looked
-	/// for in the files the frontier files import, and repository-wide only
-	/// when few files spell it.
-	async fn add_followed(&mut self, graph: &CodeGraph, relations: &[RelationType], frontier: &[String]) -> Result<()> {
+	/// The names `frontier` follows (callees or parent types), each with the
+	/// files that may define it: the files the frontier files import, and
+	/// repository-wide only when few files spell it. `bounded`: stop looking
+	/// names up once the budget is spent; the flag says whether every name was.
+	async fn followed_candidates(
+		&self,
+		graph: &CodeGraph,
+		relations: &[RelationType],
+		frontier: &[String],
+		bounded: bool,
+	) -> Result<(Vec<(String, Vec<FileId>)>, bool)> {
 		let names = self.body_names(graph, relations, frontier);
 		let from_paths: HashSet<&str> = frontier
 			.iter()
@@ -319,7 +364,18 @@ impl Query {
 			.iter()
 			.filter_map(|path| self.index.file_id(path))
 			.collect();
+		let mut followed = Vec::new();
+		let mut looked_up = 0usize;
 		for name in names {
+			// Looking a name up reads the files that may spell it. Past the
+			// budget a step stops there and goes on in the next call, which
+			// finds what was read already cached.
+			if bounded && looked_up > 0 && self.is_capped() {
+				return Ok((followed, false));
+			}
+			if !self.index.spelling_known(&name) {
+				looked_up += 1;
+			}
 			let candidates = self.index.files_spelling(&[&name]).await?;
 			let wanted: Vec<FileId> = if candidates.len() <= MAX_FILES_PER_FOLLOWED_NAME {
 				declaring_first(&*self.index.spelling(&name).await?)
@@ -330,12 +386,48 @@ impl Query {
 				}
 				self.index.verify_spelling(near, &[&name]).await?
 			};
-			self.ensure(&wanted, &name).await?;
+			followed.push((name, wanted));
+		}
+		Ok((followed, true))
+	}
+
+	async fn add_followed(&mut self, graph: &CodeGraph, relations: &[RelationType], frontier: &[String]) -> Result<()> {
+		let (followed, _) = self.followed_candidates(graph, relations, frontier, false).await?;
+		for (name, wanted) in followed {
+			self.ensure_followed(&name, &wanted).await?;
 		}
 		Ok(())
 	}
 
-	/// Candidates for the callers (or, for type edges, the subtypes) of the
+	/// Examine the candidates of a followed `name`, then the files they take
+	/// the name from without declaring it: a name imported through a barrel
+	/// file (`__init__.py`, `index.ts`) is declared further on.
+	async fn ensure_followed(&mut self, name: &str, wanted: &[FileId]) -> Result<()> {
+		self.ensure(wanted, name).await?;
+		let mut pending: Vec<FileId> = wanted.to_vec();
+		let mut seen: HashSet<FileId> = pending.iter().copied().collect();
+		for _ in 0..REEXPORT_HOPS {
+			let mut next = Vec::new();
+			for id in &pending {
+				let Some(source) = self.parsed_source(*id) else {
+					continue;
+				};
+				for path in reexport_sources(&self.registry, &source, name) {
+					if let Some(target) = self.index.file_id(&path).filter(|target| seen.insert(*target)) {
+						next.push(target);
+					}
+				}
+			}
+			if next.is_empty() {
+				break;
+			}
+			self.ensure(&next, name).await?;
+			pending = next;
+		}
+		Ok(())
+	}
+
+	/// Candidates for the callers (and, for type edges, the subtypes) of the
 	/// definitions in `frontier`.
 	async fn add_dependents(
 		&mut self,
@@ -343,7 +435,6 @@ impl Query {
 		relations: &[RelationType],
 		frontier: &[String],
 	) -> Result<()> {
-		let is_calls = relations.contains(&RelationType::Calls);
 		let targets: BTreeSet<(String, String)> = frontier
 			.iter()
 			.filter_map(|id| graph.nodes.get(id))
@@ -351,19 +442,78 @@ impl Query {
 			.map(|node| (node.name.clone(), node.path.clone()))
 			.collect();
 		for (name, definition_path) in targets {
-			let candidates = if is_calls {
-				self.call_candidates(graph, &name, &definition_path).await?
-			} else {
-				self.index.marked_lines(&name, LineKind::Inheritance).await?.to_vec()
-			};
+			let mut candidates = Vec::new();
+			if relations.contains(&RelationType::Calls) {
+				candidates = self.call_candidates(graph, &name, &definition_path).await?;
+			}
+			if relations.contains(&RelationType::Extends) || relations.contains(&RelationType::Implements) {
+				candidates.extend(self.index.marked_lines(&name, LineKind::Inheritance).await?.iter());
+			}
 			self.ensure(&candidates, &name).await?;
 		}
 		Ok(())
 	}
 
+	/// How many of `files` no query has examined yet, each counted once. A
+	/// file an earlier call of a repeated query parsed is free.
+	fn unparsed<'a>(&self, files: impl Iterator<Item = &'a FileId>) -> usize {
+		let wanted: Vec<FileId> = files
+			.filter(|id| !self.have.contains(id))
+			.collect::<HashSet<_>>()
+			.into_iter()
+			.copied()
+			.collect();
+		self.index.split_examined(&wanted).0.len()
+	}
+
+	/// Every file that spells one of the names of `frontier`: the files a
+	/// backward step from it would look at.
+	async fn spelling_files(&self, graph: &CodeGraph, frontier: &[String]) -> Result<HashSet<FileId>> {
+		let names: BTreeSet<&str> = frontier
+			.iter()
+			.filter_map(|id| graph.nodes.get(id))
+			.filter(|node| node.kind != FILE_KIND && node.kind != EXTERNAL_KIND)
+			.map(|node| node.name.as_str())
+			.collect();
+		let mut files = HashSet::new();
+		for name in names {
+			files.extend(self.index.files_spelling(&[name]).await?);
+		}
+		Ok(files)
+	}
+
+	/// Follow the chains the parsed files already hold, in both directions,
+	/// before anything new is read: widening the filter makes the next graph
+	/// show the calls and type relations of the files parsed so far one more
+	/// level out. Rebuilds `graph` while that reveals more.
+	fn take_parsed_hops(&mut self, graph: &mut CodeGraph, starts: &[String], ends: &[String], depth: usize) {
+		for _ in 0..depth {
+			let mut widened = false;
+			for level in 0..depth {
+				let forward = level_frontier(graph, starts, Direction::Outgoing, level);
+				let backward = level_frontier(graph, ends, Direction::Incoming, level);
+				if forward.is_empty() && backward.is_empty() {
+					break;
+				}
+				widened |= self.widen_filter(graph, Direction::Outgoing, &forward);
+				widened |= self.widen_filter(graph, Direction::Incoming, &backward);
+			}
+			if !widened {
+				return;
+			}
+			*graph = self.graph();
+		}
+	}
+
 	/// The files that can call a definition, in the order they are parsed:
-	/// its own file, the files importing it, then (for a name with one
-	/// definition) every other file spelling the name in path order.
+	/// its own file, the files that re-export it, the files importing it or a
+	/// re-exporter, then (for a name with one definition) every other file
+	/// spelling the name in path order.
+	///
+	/// A re-exporter of a file is a file whose line re-exports from it (the
+	/// language says what such a line looks like) and whose parse confirms the
+	/// import edge; the name it passes on may be an alias, which the importers
+	/// spell. The chain is followed `REEXPORT_HOPS` times.
 	async fn call_candidates(&mut self, graph: &CodeGraph, name: &str, definition_path: &str) -> Result<Vec<FileId>> {
 		let set = self.index.spelling(name).await?;
 		let definitions = graph
@@ -371,19 +521,59 @@ impl Query {
 			.values()
 			.filter(|node| node.name == name && node.kind != FILE_KIND && node.kind != EXTERNAL_KIND)
 			.count();
-		// Only the files that spell the name are read for an import line: a
-		// header imported by thousands of files is not searched for importers.
-		let mut importing: HashSet<FileId> = HashSet::new();
-		for token in file_tokens(definition_path) {
-			importing.extend(
-				self.index
-					.marked_among(name, &set.files, &token, LineKind::Import)
-					.await?
-					.iter(),
-			);
+		// Only the files that spell the followed name are read for an import
+		// line: a header imported by thousands of files is not searched for
+		// importers.
+		let mut importing: Vec<FileId> = Vec::new();
+		let mut reexporters: Vec<FileId> = Vec::new();
+		let mut level: Vec<(String, String)> = vec![(definition_path.to_string(), name.to_string())];
+		let mut visited: HashSet<(String, String)> = level.iter().cloned().collect();
+		for _ in 0..=REEXPORT_HOPS {
+			let mut next = Vec::new();
+			for (path, followed) in &level {
+				let followed_set = self.index.spelling(followed).await?;
+				let mut candidates: Vec<FileId> = Vec::new();
+				for token in file_tokens(path) {
+					importing.extend(
+						self.index
+							.marked_among(followed, &followed_set.files, &token, LineKind::Import)
+							.await?
+							.iter(),
+					);
+					// A module spelled everywhere is not searched for re-exports.
+					if self.index.files_spelling(&[token.as_str()]).await?.len() <= MAX_FILES_SPELLING_TO_TRACE {
+						candidates.extend(self.index.marked_lines(&token, LineKind::ReExport).await?.iter());
+					}
+				}
+				let candidates: Vec<FileId> = candidates
+					.into_iter()
+					.collect::<BTreeSet<_>>()
+					.into_iter()
+					.filter(|id| self.index.path_of(*id).is_some_and(|other| other != *path))
+					.collect();
+				self.ensure(&candidates, name).await?;
+				for id in candidates {
+					let (Some(source), Some(other)) = (self.parsed_source(id), self.index.path_of(id)) else {
+						continue;
+					};
+					for alias in reexported_as(&self.registry, &source, path, followed) {
+						if visited.insert((other.clone(), alias.clone())) {
+							reexporters.push(id);
+							// The callers spell the alias, so the call filter keeps it too.
+							self.filter.names.insert(alias.clone());
+							next.push((other.clone(), alias));
+						}
+					}
+				}
+			}
+			if next.is_empty() {
+				break;
+			}
+			level = next;
 		}
 		let mut ordered: Vec<FileId> = self.index.file_id(definition_path).into_iter().collect();
-		ordered.extend(set.files.iter().filter(|id| importing.contains(id)));
+		ordered.extend(self.sorted_by_path(reexporters));
+		ordered.extend(self.sorted_by_path(importing));
 		if definitions <= 1 {
 			ordered.extend(set.files.iter());
 		}
@@ -481,6 +671,7 @@ pub(super) async fn build(
 	index: Arc<CodeIndex>,
 	relation: GraphRelation,
 	name: Option<&str>,
+	to: Option<&str>,
 	scope: Option<&str>,
 	depth: usize,
 	budget: Option<Duration>,
@@ -502,6 +693,10 @@ pub(super) async fn build(
 		};
 	}
 	let name = name.ok_or_else(|| anyhow!("relation \"{}\" needs `name`.", relation.noun()))?;
+	if relation == GraphRelation::Path {
+		let to = to.ok_or_else(|| anyhow!("relation \"path\" needs `to`."))?;
+		return path_query(&mut query, name, to, scope, depth).await;
+	}
 	symbol_query(&mut query, relation, name, scope, depth).await
 }
 
@@ -598,6 +793,54 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 	Ok(query.finish(import_edge_graph(&importers, &edges)))
 }
 
+/// What a search for definitions found: the declaration graph of every file
+/// examined, the matching nodes and whether every candidate file was looked at.
+struct Definitions {
+	graph: CodeGraph,
+	starts: Vec<String>,
+	searched_all: bool,
+}
+
+/// Look for the definitions of `name`: the files that look like declarations
+/// first (those under `scope` when given) and, while none holds one, the rest
+/// in rounds. The first round takes at most `first_round_limit` files.
+async fn find_definitions(
+	query: &mut Query,
+	name: &str,
+	scope: Option<&str>,
+	first_round_limit: usize,
+) -> Result<Definitions> {
+	let set = query.index.spelling(name).await?;
+	let mut ordered = declaring_first(&set);
+	if let Some(scope) = scope {
+		ordered.retain(|id| query.index.path_of(*id).is_some_and(|path| in_scope(&path, scope)));
+	}
+	// The files that look like declarations are examined first and, when
+	// they hold no definition, the rest in rounds.
+	let mut round = match scope {
+		Some(_) => ordered.len(),
+		None if set.declaring.is_empty() => DEFINITION_SEARCH_CHUNK,
+		None => set.declaring.len(),
+	}
+	.min(first_round_limit);
+	let mut examined = 0;
+	loop {
+		examined = (examined + round).min(ordered.len());
+		query.ensure(&ordered[..examined], name).await?;
+		round = DEFINITION_SEARCH_CHUNK;
+		// Declarations are all the search for a definition needs.
+		let graph = declaration_graph(&query.sources);
+		let starts = start_nodes(&graph, name, scope);
+		if !starts.is_empty() || examined >= ordered.len() || query.is_capped() {
+			return Ok(Definitions {
+				graph,
+				starts,
+				searched_all: examined >= ordered.len(),
+			});
+		}
+	}
+}
+
 async fn symbol_query(
 	query: &mut Query,
 	relation: GraphRelation,
@@ -615,32 +858,7 @@ async fn symbol_query(
 	if !narrowed && filter_hits > MAX_FILES_SPELLING_TO_TRACE {
 		return Ok(Answer::Message(too_common_message(name, filter_hits)));
 	}
-	let set = query.index.spelling(name).await?;
-	let mut ordered = declaring_first(&set);
-	if let Some(scope) = scope {
-		ordered.retain(|id| query.index.path_of(*id).is_some_and(|path| in_scope(&path, scope)));
-	}
-	// The files that look like declarations are examined first and, when
-	// they hold no definition, the rest in rounds.
-	let mut round = match scope {
-		Some(_) => ordered.len(),
-		None if set.declaring.is_empty() => DEFINITION_SEARCH_CHUNK,
-		None => set.declaring.len(),
-	};
-	let mut examined = 0;
-	let mut graph;
-	let mut starts;
-	loop {
-		examined = (examined + round).min(ordered.len());
-		query.ensure(&ordered[..examined], name).await?;
-		round = DEFINITION_SEARCH_CHUNK;
-		// Declarations are all the search for a definition needs.
-		graph = declaration_graph(&query.sources);
-		starts = start_nodes(&graph, name, scope);
-		if !starts.is_empty() || examined >= ordered.len() || query.is_capped() {
-			break;
-		}
-	}
+	let Definitions { mut graph, starts, .. } = find_definitions(query, name, scope, usize::MAX).await?;
 	if starts.len() > MAX_EXPANDED_DEFINITIONS {
 		// Listed, not followed: no relations needed.
 		return Ok(query.finish(graph));
@@ -665,6 +883,131 @@ async fn symbol_query(
 		let found = neighbors(&graph, &index, &starts, relations, direction, level, MAX_REPORTED_HOPS);
 		frontier = last_level_ids(&found);
 	}
+	Ok(query.finish(graph))
+}
+
+/// The nodes first reached `level` steps from `ids`: the ends themselves at
+/// level 0, nothing once the walk ran out before that level.
+fn level_frontier(graph: &CodeGraph, ids: &[String], direction: Direction, level: usize) -> Vec<String> {
+	if level == 0 {
+		return ids.to_vec();
+	}
+	let index = GraphIndex::new(graph);
+	let found = neighbors(graph, &index, ids, &PATH_RELATIONS, direction, level, MAX_REPORTED_HOPS);
+	if found.levels.len() < level {
+		return Vec::new();
+	}
+	last_level_ids(&found)
+}
+
+/// A chain from `name` to `to`, searched from both ends one level at a time.
+/// Forward steps examine the files that define what the frontier's bodies
+/// call; backward steps examine the files that spell the frontier's names. Each
+/// round takes the side that needs fewer files, and the search stops when
+/// the two sides meet, when `depth` levels are used up, when a side has
+/// nothing left to explore or when the budget ends.
+async fn path_query(query: &mut Query, name: &str, to: &str, scope: Option<&str>, depth: usize) -> Result<Answer> {
+	let scope = scope.filter(|path| !path.is_empty());
+	let narrowed = scope.is_some() || name.contains("::");
+	let filter_hits = query.index.files_spelling(&[name]).await?.len();
+	if !narrowed && filter_hits > MAX_FILES_SPELLING_TO_TRACE {
+		return Ok(Answer::Message(too_common_message(name, filter_hits)));
+	}
+	let from = find_definitions(query, name, scope, usize::MAX).await?;
+	if from.starts.is_empty() {
+		return Ok(query.finish(from.graph));
+	}
+	// A common `to` has too many definitions to look all of them up: the
+	// first round is one chunk, and a definition the forward side reaches is
+	// an end like any other.
+	let end = find_definitions(query, to, None, DEFINITION_SEARCH_CHUNK).await?;
+	if end.starts.is_empty() && end.searched_all {
+		return Ok(query.finish(end.graph));
+	}
+
+	let mut graph = query.graph();
+	// Levels explored from each end by steps that looked at every file they
+	// needed: with `depth` of them in all, no chain is left unsearched.
+	let (mut forward, mut backward) = (0usize, 0usize);
+	let mut parsing_steps = 0usize;
+	loop {
+		let (starts, _) = path_endpoints(&graph, name, scope);
+		let (ends, _) = path_endpoints(&graph, to, None);
+		query.take_parsed_hops(&mut graph, &starts, &ends, depth);
+		let index = GraphIndex::new(&graph);
+		let found = find_paths(&graph, &index, &starts, &ends, &PATH_RELATIONS, depth);
+		// The two sides met, or every level is used.
+		if !found.paths.is_empty() || forward + backward >= depth {
+			break;
+		}
+		let forward_frontier = level_frontier(&graph, &starts, Direction::Outgoing, forward);
+		let backward_frontier =
+			(!ends.is_empty()).then(|| level_frontier(&graph, &ends, Direction::Incoming, backward));
+		if forward_frontier.is_empty() || backward_frontier.as_ref().is_some_and(Vec::is_empty) {
+			// One side reaches nothing new: no further chain can appear.
+			break;
+		}
+		let (followed, complete) = query
+			.followed_candidates(&graph, &PATH_RELATIONS, &forward_frontier, true)
+			.await?;
+		let forward_files: HashSet<FileId> = followed.iter().flat_map(|(_, files)| files.iter().copied()).collect();
+		let forward_cost = query.unparsed(forward_files.iter());
+		let backward_files = match &backward_frontier {
+			Some(frontier) => Some(query.spelling_files(&graph, frontier).await?),
+			None => None,
+		};
+		let backward_cost = backward_files.as_ref().map(|files| query.unparsed(files.iter()));
+		let (backward_is_cheaper, cost) = match backward_cost {
+			Some(backward_cost) if backward_cost < forward_cost => (true, backward_cost),
+			_ => (false, forward_cost),
+		};
+		if !complete && !backward_is_cheaper {
+			// Looking up what the forward step needs ran out of time: parse
+			// what was found (in the first parsing step of a call only) and
+			// go on in the next call, which finds the lookups cached.
+			if parsing_steps == 0 {
+				for (label, files) in &followed {
+					query.ensure_followed(label, files).await?;
+				}
+			}
+			query.considered.extend(forward_files);
+			query.note_cut(name);
+			break;
+		}
+		// A step over files that are all parsed already is free whatever the
+		// clock says. One that parses stops at the budget, except the first of
+		// a call: a repeated query always gets further.
+		if cost > 0 {
+			if parsing_steps > 0 && query.is_capped() {
+				query.considered.extend(if backward_is_cheaper {
+					backward_files.unwrap_or_default()
+				} else {
+					forward_files
+				});
+				query.note_cut(name);
+				break;
+			}
+			parsing_steps += 1;
+		}
+		if let (true, Some(frontier)) = (backward_is_cheaper, &backward_frontier) {
+			query.add_dependents(&graph, &PATH_RELATIONS, frontier).await?;
+			query.widen_filter(&graph, Direction::Incoming, frontier);
+			backward += 1;
+		} else {
+			for (label, files) in &followed {
+				query.ensure_followed(label, files).await?;
+			}
+			query.widen_filter(&graph, Direction::Outgoing, &forward_frontier);
+			forward += 1;
+		}
+		graph = query.graph();
+	}
+	query.path_progress = Some(PathProgress {
+		from: name.to_string(),
+		to: to.to_string(),
+		forward,
+		backward,
+	});
 	Ok(query.finish(graph))
 }
 

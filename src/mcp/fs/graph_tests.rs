@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Unit tests for the graph loader (walk, stamp, cache, skipped files) and
-//! the rendering helpers.
+//! Unit tests for the file walk, the skipped-file note and the rendering
+//! helpers.
 
 use super::*;
 use crate::structural::graph::CodeRelationship;
-use serial_test::serial;
-use std::sync::atomic::Ordering;
 
 fn node(id: &str, name: &str, kind: &str, path: &str, owner: Option<&str>, line: u32) -> CodeNode {
 	CodeNode {
@@ -53,27 +51,6 @@ fn graph_of(nodes: Vec<CodeNode>, relationships: Vec<CodeRelationship>) -> CodeG
 }
 
 #[test]
-fn stamp_changes_when_a_file_is_edited_added_or_removed() {
-	let root = tempfile::tempdir().unwrap();
-	let file = root.path().join("a.rs");
-	std::fs::write(&file, "fn a() {}\n").unwrap();
-	let before = stamp_of(&walk_source_files(root.path()).unwrap());
-	assert_eq!(before, stamp_of(&walk_source_files(root.path()).unwrap()));
-
-	// A longer body changes the size even when the clock does not tick.
-	std::fs::write(&file, "fn a() {}\nfn b() {}\n").unwrap();
-	let edited = stamp_of(&walk_source_files(root.path()).unwrap());
-	assert_ne!(before, edited);
-
-	std::fs::write(root.path().join("b.rs"), "fn c() {}\n").unwrap();
-	let added = stamp_of(&walk_source_files(root.path()).unwrap());
-	assert_ne!(edited, added);
-
-	std::fs::remove_file(root.path().join("b.rs")).unwrap();
-	assert_eq!(edited, stamp_of(&walk_source_files(root.path()).unwrap()));
-}
-
-#[test]
 fn walk_skips_unsupported_gitignored_and_non_graph_languages() {
 	let root = tempfile::tempdir().unwrap();
 	std::fs::write(root.path().join("a.rs"), "fn a() {}\n").unwrap();
@@ -83,134 +60,12 @@ fn walk_skips_unsupported_gitignored_and_non_graph_languages() {
 	std::fs::write(root.path().join(".gitignore"), "ignored.rs\n").unwrap();
 	std::fs::write(root.path().join("ignored.rs"), "fn x() {}\n").unwrap();
 
-	let walked: Vec<String> = walk_source_files(root.path())
+	let walked: Vec<String> = walk_supported(root.path())
 		.unwrap()
 		.into_iter()
-		.map(|file| file.path)
+		.map(|(path, _)| path)
 		.collect();
 	assert_eq!(walked, vec!["a.rs".to_string()]);
-}
-
-#[test]
-#[serial]
-fn cache_is_reused_while_unchanged_and_rebuilt_after_an_edit() {
-	let root = tempfile::tempdir().unwrap();
-	let file = root.path().join("a.rs");
-	std::fs::write(&file, "fn a() {}\n").unwrap();
-
-	let first = load_graph_blocking(root.path()).unwrap();
-	let second = load_graph_blocking(root.path()).unwrap();
-	assert!(
-		Arc::ptr_eq(&first, &second),
-		"unchanged tree must reuse the cached graph"
-	);
-	assert!(first.graph.nodes.contains_key("a.rs"));
-
-	std::fs::write(&file, "fn a() {}\nfn b() {}\n").unwrap();
-	let third = load_graph_blocking(root.path()).unwrap();
-	assert!(!Arc::ptr_eq(&first, &third), "an edit must rebuild the graph");
-}
-
-#[test]
-#[serial]
-fn two_workdirs_do_not_evict_each_other() {
-	let first_root = tempfile::tempdir().unwrap();
-	let second_root = tempfile::tempdir().unwrap();
-	std::fs::write(first_root.path().join("a.rs"), "fn a() {}\n").unwrap();
-	std::fs::write(second_root.path().join("b.rs"), "fn b() {}\n").unwrap();
-
-	let first = load_graph_blocking(first_root.path()).unwrap();
-	let second = load_graph_blocking(second_root.path()).unwrap();
-	assert!(first.graph.nodes.contains_key("a.rs") && !first.graph.nodes.contains_key("b.rs"));
-	assert!(second.graph.nodes.contains_key("b.rs") && !second.graph.nodes.contains_key("a.rs"));
-	assert!(Arc::ptr_eq(&first, &load_graph_blocking(first_root.path()).unwrap()));
-	assert!(Arc::ptr_eq(&second, &load_graph_blocking(second_root.path()).unwrap()));
-}
-
-#[test]
-#[serial]
-fn the_least_recently_used_workdir_is_evicted_past_the_limit() {
-	let roots: Vec<_> = (0..=MAX_CACHED_WORKDIRS)
-		.map(|_| tempfile::tempdir().unwrap())
-		.collect();
-	let mut snapshots = Vec::new();
-	for root in &roots {
-		std::fs::write(root.path().join("a.rs"), "fn a() {}\n").unwrap();
-		snapshots.push(load_graph_blocking(root.path()).unwrap());
-	}
-	let newest = load_graph_blocking(roots[MAX_CACHED_WORKDIRS].path()).unwrap();
-	assert!(Arc::ptr_eq(&snapshots[MAX_CACHED_WORKDIRS], &newest));
-	let oldest = load_graph_blocking(roots[0].path()).unwrap();
-	assert!(
-		!Arc::ptr_eq(&snapshots[0], &oldest),
-		"the oldest entry must have been dropped"
-	);
-}
-
-#[test]
-#[serial]
-fn a_same_size_edit_with_a_bumped_mtime_invalidates_the_cache() {
-	let root = tempfile::tempdir().unwrap();
-	let file = root.path().join("a.rs");
-	std::fs::write(&file, "fn a() {}\n").unwrap();
-	let first = load_graph_blocking(root.path()).unwrap();
-
-	std::fs::write(&file, "fn b() {}\n").unwrap();
-	let bumped = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-	std::fs::File::options()
-		.write(true)
-		.open(&file)
-		.unwrap()
-		.set_modified(bumped)
-		.unwrap();
-	let second = load_graph_blocking(root.path()).unwrap();
-	assert!(!Arc::ptr_eq(&first, &second), "a same-size edit must rebuild the graph");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[serial]
-async fn concurrent_calls_build_the_graph_once() {
-	let root = tempfile::tempdir().unwrap();
-	std::fs::write(root.path().join("a.rs"), "fn a() {}\n").unwrap();
-	let path = root.path().to_path_buf();
-	let before = GRAPH_BUILDS.load(Ordering::SeqCst);
-
-	let calls: Vec<_> = (0..8)
-		.map(|_| {
-			let path = path.clone();
-			tokio::spawn(async move { load_graph(&path).await.unwrap() })
-		})
-		.collect();
-	let mut snapshots = Vec::new();
-	for call in calls {
-		snapshots.push(call.await.unwrap());
-	}
-	assert_eq!(GRAPH_BUILDS.load(Ordering::SeqCst) - before, 1);
-	assert!(snapshots.iter().all(|snapshot| Arc::ptr_eq(snapshot, &snapshots[0])));
-}
-
-#[test]
-#[serial]
-fn oversized_file_is_reported_not_parsed() {
-	let root = tempfile::tempdir().unwrap();
-	std::fs::write(root.path().join("small.rs"), "fn small() {}\n").unwrap();
-	let big = vec![b'a'; MAX_GRAPH_FILE_BYTES as usize + 1];
-	std::fs::write(root.path().join("big.rs"), big).unwrap();
-
-	let snapshot = load_graph_blocking(root.path()).unwrap();
-	assert!(snapshot.graph.nodes.contains_key("small.rs"));
-	assert!(!snapshot.graph.nodes.contains_key("big.rs"));
-	assert_eq!(snapshot.unread.len(), 1);
-	assert_eq!(snapshot.unread[0].path, "big.rs");
-	assert!(
-		snapshot.unread[0].reason.contains("MB limit"),
-		"{}",
-		snapshot.unread[0].reason
-	);
-
-	let note = skipped_note(&snapshot).expect("skipped note");
-	assert!(note.contains("big.rs"), "{note}");
-	assert!(note.contains("1 file(s)"), "{note}");
 }
 
 #[test]
@@ -226,8 +81,6 @@ fn skipped_note_names_the_first_files_and_counts_the_rest() {
 		},
 		index: GraphIndex::new(&CodeGraph::default()),
 		unread: vec![skipped("a.rs", "big"), skipped("b.rs", "big"), skipped("c.rs", "big")],
-		left_out: 0,
-		scoped: false,
 	};
 	let note = skipped_note(&snapshot).unwrap();
 	assert_eq!(
@@ -244,20 +97,6 @@ fn skipped_note_names_the_first_files_and_counts_the_rest() {
 		note.contains("d.rs (unreadable)") && note.contains("e.rs (failed to parse)"),
 		"{note}"
 	);
-}
-
-#[test]
-fn the_cap_note_counts_left_out_files() {
-	let snapshot = GraphSnapshot {
-		graph: CodeGraph::default(),
-		index: GraphIndex::new(&CodeGraph::default()),
-		unread: Vec::new(),
-		left_out: 7,
-		scoped: false,
-	};
-	let lines = notes(&snapshot);
-	assert_eq!(lines.len(), 1);
-	assert!(lines[0].contains("7 more file(s) left out"), "{}", lines[0]);
 }
 
 #[test]
@@ -363,6 +202,24 @@ fn chain_label_names_each_edge_type() {
 		chain_label(&graph, &path),
 		"a.rs:4 run -calls-> a.rs:1 Store -implements-> b.rs:2 Base"
 	);
+}
+
+#[test]
+fn a_chain_marks_a_hop_that_rests_on_a_name_match_alone() {
+	let graph = graph_of(
+		vec![
+			node("a.rs::run", "run", "function", "a.rs", None, 4),
+			node("b.rs::go", "go", "function", "b.rs", None, 2),
+		],
+		vec![edge(
+			"a.rs::run",
+			"b.rs::go",
+			RelationType::Calls,
+			CONFIDENCE_NAME_ONLY_MAX,
+		)],
+	);
+	let path = vec!["a.rs::run".to_string(), "b.rs::go".to_string()];
+	assert_eq!(chain_label(&graph, &path), "a.rs:4 run -calls-> b.rs:2 go (guess)");
 }
 
 #[test]

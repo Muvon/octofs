@@ -517,6 +517,13 @@ fn extract_import_bindings(
 				.next()
 				.unwrap_or_default()
 				.trim();
+			if clause == "export *" {
+				bindings.push(ImportBinding {
+					local_name: WILDCARD.to_string(),
+					imported_name: Some(WILDCARD.to_string()),
+					import_path: path.clone(),
+				});
+			}
 			if let Some(alias) = clause.strip_prefix("* as ") {
 				bindings.push(ImportBinding {
 					local_name: alias.trim().to_string(),
@@ -582,6 +589,28 @@ fn extract_import_bindings(
 /// A resolved reference: the target symbol id and how sure the match is.
 type Resolved<'a> = (&'a str, f32);
 
+/// Files a lookup follows from one that only re-exports a name (`from .base
+/// import reverse` in an `__init__.py`, `export { f } from './a'` in an
+/// `index.ts`) before it gives up.
+const MAX_REEXPORT_HOPS: usize = 3;
+
+/// A name a file takes in: its name in the other file and the files the
+/// import resolved to.
+type TakenName = (String, Arc<Vec<String>>);
+
+/// The names one file takes in from other files, so a lookup that lands on it
+/// can go on to the file that declares the name.
+#[derive(Default)]
+struct ReExports {
+	/// Local name -> what it is taken from.
+	named: HashMap<String, Vec<TakenName>>,
+	/// Files a wildcard import (`from .x import *`, `export * from './x'`) names.
+	wildcard: Vec<Arc<Vec<String>>>,
+}
+
+/// What a wildcard import binds instead of a name.
+pub(super) const WILDCARD: &str = "*";
+
 /// Symbol lookup structures shared by symbol-edge discovery.
 struct SymbolIndex {
 	/// Symbol name -> symbol node ids declaring it (project-wide).
@@ -603,6 +632,9 @@ struct SymbolIndex {
 	/// Symbol name -> the files declaring it, so a lookup visits those and not
 	/// every file the caller imports.
 	files_by_name: HashMap<String, Vec<String>>,
+	/// File path -> what it brings in from other files, for the files that
+	/// import names or everything of another file.
+	reexports: HashMap<String, ReExports>,
 }
 
 impl SymbolIndex {
@@ -616,6 +648,7 @@ impl SymbolIndex {
 			free_by_file: HashMap::new(),
 			method_by_file: HashMap::new(),
 			files_by_name: HashMap::new(),
+			reexports: HashMap::new(),
 		};
 		for file in files {
 			let ids = symbol_node_ids(&file.path, &file.symbols);
@@ -667,6 +700,77 @@ impl SymbolIndex {
 		index
 	}
 
+	/// What each file takes in from other files, for [`Self::declared_or_reexported`].
+	fn set_reexports(&mut self, files: &[&SymbolFileData], resolver: &mut ImportResolver) {
+		for file in files {
+			if !resolver.has_language(&file.language) {
+				continue;
+			}
+			let mut reexports = ReExports::default();
+			for binding in &file.import_bindings {
+				let Some(imported) = binding.imported_name.as_deref() else {
+					continue;
+				};
+				let resolved = resolver.resolve_for(file, &binding.import_path);
+				if resolved.is_empty() {
+					continue;
+				}
+				if binding.local_name == WILDCARD {
+					reexports.wildcard.push(resolved);
+				} else {
+					reexports
+						.named
+						.entry(binding.local_name.clone())
+						.or_default()
+						.push((imported.to_string(), resolved));
+				}
+			}
+			if !reexports.named.is_empty() || !reexports.wildcard.is_empty() {
+				self.reexports.insert(file.path.clone(), reexports);
+			}
+		}
+	}
+
+	/// The symbols `name` is in `path`: its own declarations or, when it
+	/// declares none, what the files it takes the name from declare (a barrel
+	/// file such as an `__init__.py` or an `index.ts`).
+	fn declared_or_reexported(&self, path: &str, name: &str) -> Vec<&String> {
+		let mut found = Vec::new();
+		let mut seen = HashSet::new();
+		self.collect_declared(path, name, MAX_REEXPORT_HOPS, &mut seen, &mut found);
+		found
+	}
+
+	fn collect_declared<'a>(
+		&'a self,
+		path: &str,
+		name: &str,
+		hops: usize,
+		seen: &mut HashSet<(String, String)>,
+		found: &mut Vec<&'a String>,
+	) {
+		if !seen.insert((path.to_string(), name.to_string())) {
+			return;
+		}
+		if let Some(ids) = self.by_file.get(path).and_then(|symbols| symbols.get(name)) {
+			found.extend(ids);
+			return;
+		}
+		let Some(reexports) = self.reexports.get(path).filter(|_| hops > 0) else {
+			return;
+		};
+		for (imported, files) in reexports.named.get(name).into_iter().flatten() {
+			for file in files.iter() {
+				self.collect_declared(file, imported, hops - 1, seen, found);
+			}
+		}
+		for files in &reexports.wildcard {
+			for file in files.iter() {
+				self.collect_declared(file, name, hops - 1, seen, found);
+			}
+		}
+	}
+
 	/// The imported files that declare `name`: only the declaring files are
 	/// visited, not every imported file (a Go package import names hundreds).
 	fn imported_declaring<'a>(&'a self, imported: &'a ImportedFiles, name: &str) -> impl Iterator<Item = &'a str> + 'a {
@@ -710,6 +814,17 @@ impl SymbolIndex {
 				imported_targets.extend(targets);
 			}
 		}
+		if imported_targets.is_empty() {
+			// An imported file that only re-exports the name leads to its declaration.
+			for path in &imported.list {
+				let takes_the_name = self.reexports.get(path).is_some_and(|reexports| {
+					reexports.named.contains_key(target_name) || !reexports.wildcard.is_empty()
+				});
+				if takes_the_name {
+					imported_targets.extend(self.declared_or_reexported(path, target_name));
+				}
+			}
+		}
 		imported_targets.sort_unstable();
 		imported_targets.dedup();
 		if imported_targets.len() == 1 {
@@ -751,19 +866,18 @@ impl SymbolIndex {
 		for (binding, path) in bindings {
 			if target.qualifier.is_none() && binding.local_name == target.name {
 				let imported_name = binding.imported_name.as_deref().unwrap_or(&target.name);
-				if let Some(ids) = self.by_file.get(path).and_then(|symbols| symbols.get(imported_name)) {
-					bound_targets.extend(ids);
-				}
+				bound_targets.extend(self.declared_or_reexported(path, imported_name));
 			}
 			if target.qualifier.as_deref() == Some(binding.local_name.as_str()) {
-				let ids = if let Some(owner) = &binding.imported_name {
-					self.by_file_owner
+				if let Some(owner) = &binding.imported_name {
+					if let Some(ids) = self
+						.by_file_owner
 						.get(&(path.clone(), owner.clone(), target.name.clone()))
+					{
+						bound_targets.extend(ids);
+					}
 				} else {
-					self.by_file.get(path).and_then(|symbols| symbols.get(&target.name))
-				};
-				if let Some(ids) = ids {
-					bound_targets.extend(ids);
+					bound_targets.extend(self.declared_or_reexported(path, &target.name));
 				}
 			}
 		}
@@ -895,6 +1009,8 @@ pub(crate) struct ImportResolver<'a> {
 }
 
 impl<'a> ImportResolver<'a> {
+	/// A resolver over the given paths, for tests that build a registry per call.
+	#[cfg(test)]
 	pub(crate) fn new(paths: &[String], lookup: LanguageLookup<'a>) -> Self {
 		Self::with_registry(Arc::new(FileRegistry::new(paths)), lookup)
 	}
@@ -1005,7 +1121,8 @@ pub(crate) fn discover_symbol_relationships(
 	resolver: &mut ImportResolver,
 	filter: Option<&RelationFilter>,
 ) -> Vec<CodeRelationship> {
-	let index = SymbolIndex::build(files);
+	let mut index = SymbolIndex::build(files);
+	index.set_reexports(files, resolver);
 
 	// Import resolution memoizes through `&mut resolver`, so it runs first and
 	// serially (cheap: one lookup per distinct import); the per-call matching

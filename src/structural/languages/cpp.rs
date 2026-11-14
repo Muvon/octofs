@@ -178,6 +178,14 @@ impl Language for Cpp {
 	}
 
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
+		if is_misparsed_call(node) {
+			return node
+				.child_by_field_name("declarator")
+				.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
+				.and_then(parse_call_target)
+				.into_iter()
+				.collect();
+		}
 		if node.kind() != "call_expression" {
 			return Vec::new();
 		}
@@ -290,6 +298,20 @@ fn function_declarator_of(node: Node) -> Option<Node> {
 fn function_name(node: Node, contents: &str) -> Option<String> {
 	let declarator = function_declarator_of(node)?;
 	declarator_name(declarator, contents).map(str::to_string)
+}
+
+/// A call statement the C++ grammar could not read: C code that names a
+/// variable `new` (`__list_add(new, prev, next);`) parses as an error node
+/// holding a function declarator directly inside a function body. A real
+/// declaration in a body is a `declaration` node, never an error node.
+fn is_misparsed_call(node: Node) -> bool {
+	node.kind() == "function_declarator"
+		&& node
+			.child_by_field_name("declarator")
+			.is_some_and(|callee| callee.kind() == "identifier")
+		&& node.parent().is_some_and(|parent| {
+			parent.kind() == "ERROR" && parent.parent().is_some_and(|body| body.kind() == "compound_statement")
+		})
 }
 
 /// Variable names of a declaration (`int a, *b;`).

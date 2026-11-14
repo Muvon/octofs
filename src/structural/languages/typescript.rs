@@ -64,6 +64,10 @@ impl Language for TypeScript {
 		JavaScript {}.line_may_import(line, name)
 	}
 
+	fn line_may_reexport(&self, line: &str, name: &str, path: &str) -> bool {
+		JavaScript {}.line_may_reexport(line, name, path)
+	}
+
 	// `implements A,` newline `B` and multi-parent `interface X extends A,`
 	// newline `B` leave a bare name on its own line, which the default
 	// name-list rule accepts.

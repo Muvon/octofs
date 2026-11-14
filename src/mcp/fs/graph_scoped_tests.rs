@@ -15,7 +15,8 @@
 //! A scoped query must answer exactly what the whole-repository graph does.
 
 use super::*;
-use crate::mcp::fs::graph::{load_graph_blocking, render_traversal, GraphRequest, MAX_LISTED_RESULTS};
+use crate::mcp::fs::graph::{render_paths, render_traversal, walk_supported, GraphRequest, MAX_LISTED_RESULTS};
+use crate::structural::graph::{build_graph, SourceFile};
 use serial_test::serial;
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -52,7 +53,7 @@ fn scoped_with_budget(
 ) -> (String, Vec<String>) {
 	let answer = block_on(async {
 		let index = open(root).await?;
-		build(index, relation, name, scope, depth, budget).await
+		build(index, relation, name, None, scope, depth, budget).await
 	});
 	match answer.unwrap() {
 		Answer::Graph { snapshot, notices } => (render(&snapshot, relation, name, scope, depth), notices),
@@ -88,6 +89,27 @@ fn render(
 	render_traversal(snapshot, &request, scope, relations, direction, depth).unwrap()
 }
 
+/// The graph of every supported file of `root`: the oracle a scoped answer
+/// is compared with. Only tests build it.
+fn whole_repository(root: &Path) -> GraphSnapshot {
+	let files: Vec<SourceFile> = walk_supported(root)
+		.unwrap()
+		.into_iter()
+		.map(|(path, language)| SourceFile {
+			contents: std::fs::read_to_string(root.join(&path)).unwrap(),
+			path,
+			language,
+		})
+		.collect();
+	let graph = build_graph(files);
+	let index = GraphIndex::new(&graph);
+	GraphSnapshot {
+		graph,
+		index,
+		unread: Vec::new(),
+	}
+}
+
 /// The answer from the whole-repository graph and from the scoped build; both
 /// must be the same text, and `expected` must be in it so an empty answer on
 /// both sides cannot pass.
@@ -99,10 +121,62 @@ fn assert_same(
 	depth: usize,
 	expected: &[&str],
 ) {
-	let full = load_graph_blocking(root).unwrap();
+	let full = whole_repository(root);
 	let from_full = render(&full, relation, name, scope, depth);
 	let (from_scoped, _) = scoped(root, relation, name, scope, depth);
 	assert_eq!(from_full, from_scoped, "{relation:?} {name:?} depth {depth}");
+	for needle in expected {
+		assert!(from_full.contains(needle), "{needle} missing from:\n{from_full}");
+	}
+}
+
+/// The `path` answer of a scoped search under a time budget, and its notices.
+fn scoped_path(
+	root: &Path,
+	name: &str,
+	to: &str,
+	scope: Option<&str>,
+	depth: usize,
+	budget: Option<Duration>,
+) -> (String, Vec<String>) {
+	let answer = block_on(async {
+		let index = open(root).await?;
+		build(index, GraphRelation::Path, Some(name), Some(to), scope, depth, budget).await
+	});
+	match answer.unwrap() {
+		Answer::Graph { snapshot, notices } => (
+			render_path(&snapshot, name, to, scope, depth, !notices.is_empty()),
+			notices,
+		),
+		Answer::Message(text) => (text, Vec::new()),
+	}
+}
+
+fn render_path(
+	snapshot: &GraphSnapshot,
+	name: &str,
+	to: &str,
+	scope: Option<&str>,
+	depth: usize,
+	partial: bool,
+) -> String {
+	let request = GraphRequest {
+		relation: GraphRelation::Path,
+		name: Some(name),
+		to: Some(to),
+		path: None,
+		depth: None,
+	};
+	render_paths(snapshot, &request, scope, depth, partial).unwrap()
+}
+
+/// The chains from the whole-repository graph and from the scoped search must
+/// be the same text; `expected` must be in it.
+fn assert_same_path(root: &Path, name: &str, to: &str, depth: usize, expected: &[&str]) {
+	let from_full = render_path(&whole_repository(root), name, to, None, depth, false);
+	let (from_scoped, notices) = scoped_path(root, name, to, None, depth, None);
+	assert!(notices.is_empty(), "{notices:?}");
+	assert_eq!(from_full, from_scoped, "path {name} -> {to} depth {depth}");
 	for needle in expected {
 		assert!(from_full.contains(needle), "{needle} missing from:\n{from_full}");
 	}
@@ -372,6 +446,147 @@ fn re_exports_and_default_exports_keep_their_callers() {
 		Some("src/a.ts"),
 		1,
 		&["src/index.ts"],
+	);
+}
+
+#[test]
+#[serial]
+fn a_python_package_init_re_export_leads_callers_and_paths_to_the_definition() {
+	// `reverse` is defined twice, so the call cannot be matched by name
+	// alone: only the import through `pkg/__init__.py` points at one of them.
+	let root = project(&[
+		("pkg/base.py", "def reverse():\n    pass\n"),
+		("pkg/__init__.py", "from .base import reverse\n"),
+		("other/base.py", "def reverse():\n    pass\n"),
+		(
+			"app/shortcuts.py",
+			"from pkg import reverse\n\n\ndef resolve_url():\n    reverse()\n\n\ndef redirect():\n    resolve_url()\n",
+		),
+		NOISE,
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("reverse"),
+		Some("pkg/base.py"),
+		1,
+		&["app/shortcuts.py:4  function  resolve_url"],
+	);
+	assert_same_path(
+		root.path(),
+		"redirect",
+		"reverse",
+		5,
+		&["app/shortcuts.py:8 redirect -calls-> app/shortcuts.py:4 resolve_url -calls-> pkg/base.py:1 reverse"],
+	);
+}
+
+#[test]
+#[serial]
+fn a_typescript_index_re_export_leads_callers_and_paths_to_the_definition() {
+	let root = project(&[
+		("src/lib/a.ts", "export function f() {}\nexport function w() {}\n"),
+		("src/lib/index.ts", "export { f } from './a';\nexport * from './a';\n"),
+		("src/other/b.ts", "export function f() {}\nexport function w() {}\n"),
+		(
+			"src/user.ts",
+			"import { f, w } from './lib';\nexport function g() {\n\tf();\n}\nexport function h() {\n\tw();\n}\n",
+		),
+		NOISE,
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("f"),
+		Some("src/lib/a.ts"),
+		1,
+		&["src/user.ts:2  function  g"],
+	);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("w"),
+		Some("src/lib/a.ts"),
+		1,
+		&["src/user.ts:5  function  h"],
+	);
+	assert_same_path(root.path(), "g", "f", 5, &["src/user.ts:2 g -calls-> src/lib/a.ts:1 f"]);
+}
+
+#[test]
+#[serial]
+fn a_re_exporter_in_a_parent_directory_leads_callers_and_paths_to_the_definition() {
+	let root = project(&[
+		("src/lib/a.ts", "export function pd() {}\n"),
+		("src/other/b.ts", "export function pd() {}\n"),
+		("src/barrel.ts", "export * from './lib/a';\n"),
+		(
+			"src/user.ts",
+			"import { pd } from './barrel';\nexport function g() {\n\tpd();\n}\n",
+		),
+		NOISE,
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("pd"),
+		Some("src/lib/a.ts"),
+		1,
+		&["src/user.ts:2  function  g"],
+	);
+	assert_same_path(
+		root.path(),
+		"g",
+		"pd",
+		5,
+		&["src/user.ts:2 g -calls-> src/lib/a.ts:1 pd"],
+	);
+}
+
+#[test]
+#[serial]
+fn an_aliased_re_export_is_followed_under_its_new_name() {
+	let root = project(&[
+		("src/lib/c.ts", "export function orig() {}\n"),
+		("src/other/d.ts", "export function orig() {}\n"),
+		("src/lib/exports.ts", "export { orig as renamed } from './c';\n"),
+		(
+			"src/user.ts",
+			"import { renamed } from './lib/exports';\nexport function g() {\n\trenamed();\n}\n",
+		),
+		NOISE,
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("orig"),
+		Some("src/lib/c.ts"),
+		1,
+		&["src/user.ts:2  function  g"],
+	);
+}
+
+#[test]
+#[serial]
+fn a_chain_of_two_re_exports_leads_callers_to_the_definition() {
+	let root = project(&[
+		("src/lib/a.ts", "export function deep() {}\n"),
+		("src/other/b.ts", "export function deep() {}\n"),
+		("src/lib/first.ts", "export * from './a';\n"),
+		("src/second.ts", "export * from './lib/first';\n"),
+		(
+			"src/user.ts",
+			"import { deep } from './second';\nexport function g() {\n\tdeep();\n}\n",
+		),
+		NOISE,
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callers,
+		Some("deep"),
+		Some("src/lib/a.ts"),
+		1,
+		&["src/user.ts:2  function  g"],
 	);
 }
 
@@ -660,7 +875,7 @@ fn an_unnarrowed_name_spelled_past_the_trace_limit_is_not_traced_and_nothing_is_
 	let root = crowd(MAX_FILES_SPELLING_TO_TRACE + 50);
 	let answer = block_on(async {
 		let index = open(root.path()).await?;
-		build(index, GraphRelation::Callers, Some("shared"), None, 1, None).await
+		build(index, GraphRelation::Callers, Some("shared"), None, None, 1, None).await
 	})
 	.unwrap();
 	let Answer::Message(text) = answer else {
@@ -777,4 +992,269 @@ fn an_edited_file_is_parsed_again_and_nothing_else() {
 	let (after, _) = scoped(root.path(), GraphRelation::Callers, Some("helper"), None, 1);
 	assert!(after.contains("src/b.ts:5  function  again"), "{after}");
 	assert_eq!(index.parse_count(), parsed + 1);
+}
+
+#[test]
+#[serial]
+fn a_path_runs_through_files_of_one_language_and_matches_the_whole_repository() {
+	let root = project(&[
+		(
+			"src/a.ts",
+			"import { b } from './b';\nexport function a1() {\n\tb();\n}\n",
+		),
+		(
+			"src/b.ts",
+			"import { c } from './c';\nexport function b() {\n\tc();\n}\n",
+		),
+		("src/c.ts", "export function c() {}\n"),
+		NOISE,
+	]);
+	assert_same_path(
+		root.path(),
+		"a1",
+		"c",
+		5,
+		&["src/a.ts:2 a1 -calls-> src/b.ts:2 b -calls-> src/c.ts:1 c"],
+	);
+}
+
+#[test]
+#[serial]
+fn a_path_follows_go_package_calls_python_package_imports_and_type_edges() {
+	let go = project(&[
+		(
+			"pkg/svc/svc.go",
+			"package svc\n\ntype Worker struct{}\n\nfunc (w *Worker) Run() {}\n\nfunc (w *Worker) Stop() {}\n\nfunc Helper() {}\n",
+		),
+		(
+			"cmd/app/main.go",
+			"package main\n\nimport \"app/pkg/svc\"\n\nfunc main() {\n\tw := &svc.Worker{}\n\tgo w.Run()\n\tw.Stop()\n\tsvc.Helper()\n}\n",
+		),
+	]);
+	assert_same_path(
+		go.path(),
+		"main",
+		"Helper",
+		5,
+		&["cmd/app/main.go:5 main -calls-> pkg/svc/svc.go:9 Helper"],
+	);
+
+	let python = project(&[
+		("pkg/__init__.py", "def helper():\n    pass\n"),
+		("pkg/main.py", "from . import helper\n\n\ndef run():\n    helper()\n"),
+		NOISE,
+	]);
+	assert_same_path(
+		python.path(),
+		"run",
+		"helper",
+		5,
+		&["pkg/main.py:4 run -calls-> pkg/__init__.py:1 helper"],
+	);
+
+	let types = project(&[
+		("src/base.ts", "export class Base {}\n"),
+		(
+			"src/mid.ts",
+			"import { Base } from './base';\nexport class Mid extends Base {}\n",
+		),
+		(
+			"src/leaf.ts",
+			"import { Mid } from './mid';\nexport class Leaf extends Mid {}\n",
+		),
+		NOISE,
+	]);
+	assert_same_path(
+		types.path(),
+		"Leaf",
+		"Base",
+		5,
+		&["src/leaf.ts:2 Leaf -extends-> src/mid.ts:2 Mid -extends-> src/base.ts:1 Base"],
+	);
+}
+
+#[test]
+#[serial]
+fn the_shortest_of_two_chains_is_the_answer() {
+	let root = project(&[
+		("src/t.ts", "export function t() {}\n"),
+		(
+			"src/a.ts",
+			"import { t } from './t';\nexport function a() {\n\tt();\n}\n",
+		),
+		(
+			"src/d.ts",
+			"import { t } from './t';\nexport function d() {\n\tt();\n}\n",
+		),
+		(
+			"src/c.ts",
+			"import { d } from './d';\nexport function c() {\n\td();\n}\n",
+		),
+		(
+			"src/s.ts",
+			"import { a } from './a';\nimport { c } from './c';\nexport function s() {\n\ta();\n\tc();\n}\n",
+		),
+	]);
+	assert_same_path(
+		root.path(),
+		"s",
+		"t",
+		5,
+		&["src/s.ts:3 s -calls-> src/a.ts:2 a -calls-> src/t.ts:1 t"],
+	);
+	let (text, _) = scoped_path(root.path(), "s", "t", None, 5, None);
+	assert_eq!(text.lines().count(), 1, "{text}");
+}
+
+#[test]
+#[serial]
+fn without_a_chain_the_answer_says_so_and_nothing_cut_the_search_short() {
+	let root = project(&[
+		("src/a.ts", "export function a() {}\n"),
+		("src/b.ts", "export function b() {}\n"),
+	]);
+	let (text, notices) = scoped_path(root.path(), "a", "b", None, 5, None);
+	assert!(text.starts_with("No path from \"a\" to \"b\" within depth 5"), "{text}");
+	assert!(notices.is_empty(), "{notices:?}");
+	assert_eq!(
+		text,
+		render_path(&whole_repository(root.path()), "a", "b", None, 5, false)
+	);
+
+	let (text, _) = scoped_path(root.path(), "a", "missing", None, 5, None);
+	assert!(text.starts_with("No definition of \"missing\""), "{text}");
+}
+
+/// `n0` calls `n1`, which calls `n2` and so on, each in a file of its own.
+fn relay(length: usize) -> tempfile::TempDir {
+	let files: Vec<(String, String)> = (0..=length)
+		.map(|n| {
+			let body = if n < length {
+				format!(
+					"import {{ n{} }} from './n{}';\nexport function n{n}() {{\n\tn{}();\n}}\n",
+					n + 1,
+					n + 1,
+					n + 1
+				)
+			} else {
+				format!("export function n{n}() {{}}\n")
+			};
+			(format!("src/n{n}.ts"), body)
+		})
+		.collect();
+	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+	project(&borrowed)
+}
+
+#[test]
+#[serial]
+fn an_expired_budget_gives_a_partial_notice_and_repeating_goes_on_to_the_chain() {
+	let root = relay(4);
+	let (first, notices) = scoped_path(root.path(), "n0", "n4", None, 5, Some(Duration::ZERO));
+	assert!(
+		!first.contains("within depth"),
+		"a cut search must not claim there is no path: {first}"
+	);
+	assert!(first.contains("found in the files examined so far"), "{first}");
+	let notice = notices.join("\n");
+	assert!(notice.contains("repeat the query"), "{notice}");
+	assert!(notice.contains("level(s) forward and"), "{notice}");
+
+	let mut answer = (first, notices);
+	for _ in 0..8 {
+		if answer.1.is_empty() {
+			break;
+		}
+		answer = scoped_path(root.path(), "n0", "n4", None, 5, Some(Duration::ZERO));
+	}
+	assert!(answer.1.is_empty(), "still partial after repeating: {:?}", answer.1);
+	assert!(
+		answer.0.contains("src/n0.ts:2 n0 -calls-> src/n1.ts:2 n1 -calls-> src/n2.ts:2 n2 -calls-> src/n3.ts:2 n3 -calls-> src/n4.ts:1 n4"),
+		"{}",
+		answer.0
+	);
+}
+
+#[test]
+#[serial]
+fn the_levels_run_out_before_the_chain_and_the_answer_says_how_deep_it_looked() {
+	let root = relay(4);
+	let (text, notices) = scoped_path(root.path(), "n0", "n4", None, 3, None);
+	assert!(
+		text.starts_with("No path from \"n0\" to \"n4\" within depth 3"),
+		"{text}"
+	);
+	assert!(notices.is_empty(), "{notices:?}");
+}
+
+#[test]
+#[serial]
+fn a_target_spelled_in_thousands_of_files_is_still_reached_from_the_start() {
+	let root = crowd(MAX_FILES_SPELLING_TO_TRACE + 50);
+	std::fs::write(
+		root.path().join("src/top.ts"),
+		"import { f0 } from './user0000';\nexport function top() {\n\tf0();\n}\n",
+	)
+	.unwrap();
+	let (text, notices) = scoped_path(root.path(), "top", "shared", None, 5, None);
+	assert!(notices.is_empty(), "{notices:?}");
+	assert!(
+		text.contains("src/top.ts:2 top -calls-> src/user0000.ts:2 f0 -calls-> src/def.ts:1 shared"),
+		"{text}"
+	);
+}
+
+#[test]
+#[serial]
+fn a_search_from_the_cheaper_end_leaves_the_wide_side_unparsed() {
+	let calls: String = (0..30).map(|n| format!("\tg{n}();\n")).collect();
+	let mut files: Vec<(String, String)> = (0..30)
+		.map(|n| (format!("src/g{n}.ts"), format!("export function g{n}() {{}}\n")))
+		.collect();
+	files.push((
+		"src/top.ts".into(),
+		format!("import {{ mid }} from './mid';\nexport function top() {{\n{calls}\tmid();\n}}\n"),
+	));
+	files.push((
+		"src/mid.ts".into(),
+		"import { target } from './target';\nexport function mid() {\n\ttarget();\n}\n".into(),
+	));
+	files.push(("src/target.ts".into(), "export function target() {}\n".into()));
+	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+	let root = project(&borrowed);
+	let index = CodeIndexes::global().index(root.path());
+	let (text, notices) = scoped_path(root.path(), "top", "target", None, 5, None);
+	assert!(notices.is_empty(), "{notices:?}");
+	assert!(
+		text.contains("src/top.ts:2 top -calls-> src/mid.ts:2 mid -calls-> src/target.ts:1 target"),
+		"{text}"
+	);
+	let parsed = index.parse_count();
+	assert!(parsed < 10, "the thirty callees of `top` were parsed: {parsed}");
+}
+
+#[test]
+#[serial]
+fn an_edit_between_two_path_calls_is_seen() {
+	let root = project(&[
+		(
+			"src/a.ts",
+			"import { b } from './b';\nexport function a() {\n\tb();\n}\n",
+		),
+		("src/b.ts", "export function b() {}\n"),
+	]);
+	let (before, _) = scoped_path(root.path(), "a", "b", None, 5, None);
+	assert!(before.contains("src/a.ts:2 a -calls-> src/b.ts:1 b"), "{before}");
+
+	std::fs::write(
+		root.path().join("src/a.ts"),
+		"import { b } from './b';\nexport function a() {\n\t// no longer calls it\n}\n",
+	)
+	.unwrap();
+	let (after, notices) = scoped_path(root.path(), "a", "b", None, 5, None);
+	assert!(
+		after.starts_with("No path from \"a\" to \"b\" within depth 5"),
+		"{after}"
+	);
+	assert!(notices.is_empty(), "{notices:?}");
 }

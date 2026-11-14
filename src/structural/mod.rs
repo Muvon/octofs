@@ -77,6 +77,12 @@ pub(crate) fn line_may_import(language: &str, line: &str, name: &str) -> bool {
 	languages::get_language(language).is_none_or(|language| language.line_may_import(line, name))
 }
 
+/// Whether `line` of the file `path` may re-export what the module `name`
+/// declares, in `language`. A language without an implementation has none.
+pub(crate) fn line_may_reexport(language: &str, line: &str, name: &str, path: &str) -> bool {
+	languages::get_language(language).is_some_and(|language| language.line_may_reexport(line, name, path))
+}
+
 /// Same for the line that names the parent type `name` of a declaration
 /// (`extends`, `implements`, ...).
 pub(crate) fn line_may_inherit(language: &str, line: &str, name: &str) -> bool {

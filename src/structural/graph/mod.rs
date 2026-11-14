@@ -17,7 +17,7 @@
 //! No index, no embeddings, no model, no database.
 //!
 //! The graph is pure: callers list the files (workdir-relative, forward-slash
-//! paths) and supply a reader; [`build_graph_from_reader`] reads, parses and
+//! paths) and supply a reader; [`parse_files`] reads, parses and
 //! drops each file's text inside one parallel pass, so only the extracted
 //! symbols stay in memory. Edges are resolved by name in a fixed order (same
 //! file, then imported files, then a unique project-wide match), and each
@@ -45,7 +45,7 @@ use std::sync::Arc;
 pub use symbols::RelationFilter;
 use symbols::{
 	discover_symbol_relationships, extract_symbols_from_contents, sort_and_dedup, symbol_node_ids, FileAstData,
-	ImportResolver, LanguageLookup, SymbolDecl, SymbolFileData, CONFIDENCE_CERTAIN,
+	ImportResolver, LanguageLookup, SymbolDecl, SymbolFileData, CONFIDENCE_CERTAIN, WILDCARD,
 };
 use types::{EXTERNAL_KIND, FILE_KIND};
 
@@ -118,15 +118,6 @@ pub fn parse_files(
 	)
 }
 
-/// Build the graph of `files`. Each file is read, parsed and released inside
-/// the parallel map; a file `read` fails on is listed in `skipped`. The result
-/// does not depend on the order of `files`.
-pub fn build_graph_from_reader(files: Vec<FileSpec>, read: &(dyn Fn(&str) -> Result<String> + Sync)) -> CodeGraph {
-	let (sources, skipped) = parse_files(files, read);
-	let paths: Vec<String> = sources.iter().map(|source| source.data.path.clone()).collect();
-	assemble_graph(&sources, &paths, skipped, &get_language)
-}
-
 /// Build the graph of in-memory `files`.
 #[cfg(test)]
 pub fn build_graph(files: Vec<SourceFile>) -> CodeGraph {
@@ -194,32 +185,9 @@ fn parse_contents(language_name: &str, contents: &str, lookup: LanguageLookup) -
 	extract_symbols_from_contents(contents, language.as_ref(), lookup)
 }
 
-/// [`assemble_graph`] with the shipped languages.
-pub fn assemble_repository_graph<S: AsRef<ParsedSource>>(
-	sources: &[S],
-	all_paths: &[String],
-	skipped: Vec<SkippedFile>,
-) -> CodeGraph {
-	assemble_graph(sources, all_paths, skipped, &get_language)
-}
-
-/// [`assemble_graph`] over a registry of every repository path that the
-/// caller built once and keeps, with the shipped languages.
-pub fn assemble_repository_graph_in<S: AsRef<ParsedSource>>(
-	sources: &[S],
-	registry: Arc<FileRegistry>,
-	skipped: Vec<SkippedFile>,
-) -> CodeGraph {
-	assemble_with_resolver(
-		sources,
-		skipped,
-		ImportResolver::with_registry(registry, &get_language),
-		None,
-	)
-}
-
-/// [`assemble_repository_graph_in`] with call and type relations resolved
-/// only as far as `filter` asks: what a callers or callees query reads.
+/// The graph over `sources` over a registry of every repository path that the
+/// caller built once and keeps, with call and type relations resolved
+/// only as far as `filter` asks: what a scoped query reads.
 pub fn assemble_filtered_graph_in<S: AsRef<ParsedSource>>(
 	sources: &[S],
 	registry: Arc<FileRegistry>,
@@ -234,11 +202,11 @@ pub fn assemble_filtered_graph_in<S: AsRef<ParsedSource>>(
 	)
 }
 
-/// The graph over `sources`. Import resolution looks paths up in `all_paths`,
-/// which may name more files than were parsed: a graph over a subset of the
-/// repository still resolves every import the way the full graph would, and
-/// an import of an unparsed file points at a stub file node. The result does
-/// not depend on the order of `sources`.
+/// The graph over `sources`, as a test oracle: import resolution looks paths
+/// up in `all_paths`, which may name more files than were parsed. An import of
+/// an unparsed file points at a stub file node. The result does not depend on
+/// the order of `sources`.
+#[cfg(test)]
 pub(crate) fn assemble_graph<S: AsRef<ParsedSource>>(
 	sources: &[S],
 	all_paths: &[String],
@@ -328,6 +296,57 @@ pub fn resolved_imports(registry: &Arc<FileRegistry>, source: &ParsedSource) -> 
 		.map(|import| resolver.resolve_for(data, import))
 		.filter(|resolved| !resolved.iter().any(|member| member == &data.path))
 		.collect()
+}
+
+/// The repository files `source` takes `name` in from without declaring it
+/// (the named import of `name` and every wildcard import): where a barrel
+/// file such as an `__init__.py` or an `index.ts` sends a lookup next.
+pub fn reexport_sources(registry: &Arc<FileRegistry>, source: &ParsedSource, name: &str) -> Vec<String> {
+	let data = &source.data;
+	if data.symbols.iter().any(|symbol| symbol.name == name) {
+		return Vec::new();
+	}
+	let mut resolver = ImportResolver::with_registry(registry.clone(), &get_language);
+	let mut files = Vec::new();
+	for binding in &data.import_bindings {
+		let takes_the_name =
+			binding.imported_name.is_some() && (binding.local_name == name || binding.local_name == WILDCARD);
+		if takes_the_name {
+			files.extend(resolver.resolve_for(data, &binding.import_path).iter().cloned());
+		}
+	}
+	files
+}
+
+/// The names under which `source` passes on `name` of the file `from`: the
+/// local name of a named import of it (`export { a as b } from './a'` gives
+/// `b`) and `name` itself for a wildcard import. Empty when `source` takes
+/// nothing of that name from `from`.
+pub fn reexported_as(registry: &Arc<FileRegistry>, source: &ParsedSource, from: &str, name: &str) -> Vec<String> {
+	let data = &source.data;
+	let mut resolver = ImportResolver::with_registry(registry.clone(), &get_language);
+	let mut names = Vec::new();
+	for binding in &data.import_bindings {
+		let Some(imported) = binding.imported_name.as_deref() else {
+			continue;
+		};
+		let wildcard = binding.local_name == WILDCARD;
+		if !wildcard && imported != name {
+			continue;
+		}
+		if resolver
+			.resolve_for(data, &binding.import_path)
+			.iter()
+			.any(|path| path == from)
+		{
+			names.push(if wildcard {
+				name.to_string()
+			} else {
+				binding.local_name.clone()
+			});
+		}
+	}
+	names
 }
 
 /// [`declaration_graph`] of `sources` plus the given `(importer, imported)`

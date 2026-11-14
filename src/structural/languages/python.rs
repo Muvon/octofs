@@ -37,6 +37,15 @@ impl Language for Python {
 		&["import", "from"]
 	}
 
+	// A package's `__init__.py` passes on what it imports; any other file
+	// only with a wildcard import.
+	fn line_may_reexport(&self, line: &str, name: &str, path: &str) -> bool {
+		let text = line.trim_start();
+		text.starts_with("from")
+			&& self.line_may_import(line, name)
+			&& (path.rsplit('/').next() == Some("__init__.py") || text.contains("import *"))
+	}
+
 	// `class A(Base):`; further bases may sit on lines of their own.
 	fn inheritance_line_markers(&self) -> &'static [&'static str] {
 		&["class"]

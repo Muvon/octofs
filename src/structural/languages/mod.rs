@@ -197,6 +197,14 @@ pub(crate) trait Language: Send + Sync {
 				|| name_list_line(line, name, ""))
 	}
 
+	/// Whether `line` of the file `path` may re-export what the module `name`
+	/// declares (`export * from './name'`, `from .name import *`), so the
+	/// files importing this one reach the declarations through it. Sound, not
+	/// exact, like `line_may_import`; a language without re-exports says no.
+	fn line_may_reexport(&self, _line: &str, _name: &str, _path: &str) -> bool {
+		false
+	}
+
 	/// Whether `line` may name the parent type `name` of a declaration, with
 	/// the same soundness rule as `line_may_import`.
 	fn line_may_inherit(&self, line: &str, name: &str) -> bool {

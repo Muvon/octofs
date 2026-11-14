@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🐙 Octofs
+# Octofs: MCP Filesystem Server and Code Search
 
-**Give your AI assistant filesystem superpowers**
+Filesystem MCP server and code navigation for AI assistants: file outlines, ast-grep style search, find references and call graphs, over the Model Context Protocol
 
 [![CI](https://github.com/muvon/octofs/actions/workflows/ci.yml/badge.svg)](https://github.com/muvon/octofs/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmuvon%2Foctofs%2Fbadges%2Fcoverage.json&style=flat-square)](https://github.com/muvon/octofs/actions/workflows/ci.yml)
@@ -11,9 +11,9 @@
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-green.svg)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/crates/v/octofs.svg)](https://crates.io/crates/octofs)
 
-*Standalone Rust binary that exposes filesystem tools over the Model Context Protocol. Built on `rmcp` 3.x, `tokio`, and `axum`.*
+*Standalone Rust binary that serves filesystem and code-exploration tools over the Model Context Protocol (MCP). Built on `rmcp` 3.x, `tokio`, and `axum`.*
 
-[Installation](#installation) · [Quick Start](#quick-start) · [Features](#features) · [Tools Reference](#mcp-tools-reference) · [Docs](doc/tools.md) · [Architecture](#architecture) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/Muvon/octofs/contribute)
+[Overview](#overview) · [Installation](#installation) · [Quick Start](#quick-start) · [Filesystem tools](#filesystem-tools) · [Code exploration](#code-exploration) · [Tools Reference](#mcp-tools-reference) · [Docs](doc/tools.md) · [Architecture](#architecture) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/Muvon/octofs/contribute)
 
 MCP Registry: [`io.github.Muvon/octofs`](https://registry.modelcontextprotocol.io)
 
@@ -21,45 +21,52 @@ MCP Registry: [`io.github.Muvon/octofs`](https://registry.modelcontextprotocol.i
 
 ---
 
-## Why Octofs?
+## Overview
 
-Your AI coding assistant (Cursor, Claude, Windsurf, etc.) is smart — but it's **blind to your filesystem**. Octofs bridges that gap, giving your AI:
+Octofs is a single binary that gives an AI assistant two things over MCP: tools to read, search, edit and copy files, run shell commands and reach remote hosts over SSH, and tools to explore code — file outlines, syntax-tree search and a `symbol` tool that finds definitions, references, callers, callees, imports and type hierarchies. Code-navigation tools often need a separate indexing step, and an index can fall behind files edited by another program. Octofs computes the answers from the files on disk, using an in-memory table that is built on the first query and refreshed from file metadata on every call, so there is no indexing command and no database. Measured: the first symbol query of a process builds that table in 1.1 s on the 67,000-file Linux tree on an idle 12-core machine; after that a query parses about 10 MB of source per second on 6 threads and stops after 800 ms, and a name too common to finish in that time gets a partial answer that a repeated query extends.
 
-- **Eyes** — Read files, search content, explore directories
-- **Hands** — Create, edit, batch-modify files atomically
-- **Context** — Execute commands, manage working directories
-- **Reach** — Transparent SSH/SFTP: every file tool accepts `ssh://` URLs
+## Filesystem tools
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  You: "Refactor all error handling to use anyhow::Context" │
-├─────────────────────────────────────────────────────────────┤
-│  AI without Octofs:                                         │
-│  • "I can't see your project structure"                     │
-│  • "Please paste the relevant files"                        │
-│  • *Wastes 10 minutes on back-and-forth*                    │
-├─────────────────────────────────────────────────────────────┤
-│  AI with Octofs:                                            │
-│  • Reads your codebase directly                             │
-│  • Finds all error handling patterns                         │
-│  • Suggests atomic batch edits                              │
-│  • Applies changes with your approval                       │
-└─────────────────────────────────────────────────────────────┘
-```
+With these tools an assistant can work in a project without the user pasting files: it reads and searches the tree, edits files in ways that fail loudly instead of landing on the wrong line, and runs commands. The same file tools work on a remote host when a path is an `ssh://` URL.
 
-## What Makes It Different
+- `view` reads a file (whole, a line range, or several ranges), lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
+- `text_editor` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
+- `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved.
+- `extract_lines` copies a line range from one file into another.
+- `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. By default, standalone `cat`, `grep`, `find`, `ls` and similar reads are rejected with a pointer to `view`.
+- `workdir` gets, sets or resets the directory that relative paths resolve against.
+- Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
+- Remote files use SSH/SFTP with your OpenSSH config. `shell` always runs locally. RSA keys are not supported (see [Remote Filesystem](#remote-filesystem-sshsftp)).
 
-| Feature | Octofs | Typical Alternatives |
-|---------|--------|---------------------|
-| **Implementation** | Compiled Rust binary, no runtime | Python/Node script |
-| **Content Search** | Built-in search with context lines | String matching only |
-| **Batch Operations** | Atomic multi-edit on single file | One-at-a-time |
-| **Line Addressing** | Composite `N:hh` ids — hash-verified at apply time; stale edits fail with relocation hints | Number-only |
-| **Transport** | STDIO + Streamable HTTP | STDIO only |
-| **Shell Integration** | Automatic foreground-to-background handoff | Limited or none |
-| **Remote Files** | Transparent SSH/SFTP on every file tool | None |
-| **Re-reads** | Delta views — re-viewing a file returns only the hunks changed since (clients that report a context epoch) | Full file every time |
-| **Safety** | Gitignore-aware, stale-write detection, path validation | Full filesystem access |
+## Code exploration
+
+With these tools an assistant can ask what a file declares, where a symbol is defined and used, who calls a function, what implements a type and which files import a file, and get line ids it can pass straight to `batch_edit`.
+
+- **Outline.** `view` with `flags: "s"` lists the declarations of a file or a directory, bodies elided.
+- **Syntax-tree search.** `view` with `ast: true` matches an ast-grep pattern such as `$OBJ.unwrap()` against the syntax tree instead of the text.
+- **Symbol lookups.** The `symbol` tool takes a `relation`: `definition` (default), `references`, `callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`, or `path` (how one symbol reaches another).
+- **Search with context.** In files that have a grammar, plain `view` content search labels each match with its enclosing symbol, for example `[impl Store › fn flush]`.
+
+The outline, syntax-tree search, `definition` and `references` also work over `ssh://`. One worked example per relation, how the in-memory table behaves and the full limits are in [doc/code-exploration.md](doc/code-exploration.md).
+
+### Supported languages
+
+Rust, Python, JavaScript, TypeScript, Go, Java, C/C++, PHP, Bash, Ruby, Lua, JSON, Swift, Svelte, CSS, Elixir and Markdown. Support is not the same for every feature:
+
+- CSS and JSON have an outline but name no symbol for `symbol` lookups and cannot be syntax-tree searched.
+- Markdown yields its headings for the outline and for `symbol` lookups, but cannot be syntax-tree searched and contributes nothing to the graph relations (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`, `path`). JSON contributes nothing to them either.
+- Svelte files are read through their `<script>` blocks.
+- Bash and Lua define no extends or implements extraction, so `supertypes` and `subtypes` find nothing in them.
+
+### Limits
+
+- Results from the graph relations come from names and imports, not types: same-name symbols can be confused and dynamic calls missed. A `(guess)` mark flags a hop matched by name alone.
+- The graph relations are local only. They do not work over `ssh://`, and they always search the whole session workdir; `path` only narrows which definitions of `name` start the query.
+- Files over 1 MB are skipped for the graph relations and named in a closing note. `view` and the text-level `symbol` lookups keep a 5 MB limit.
+- A query parses at most 600 files and runs at most 800 ms. When a name is spelled in more files than that, the answer covers the files examined, and a closing line says to repeat the query to examine the rest.
+- A name that is spelled in more than 3000 files needs a `path` or an `Owner::name` form; without one it is not traced.
+- A list shows at most 100 results, most certain first.
+- All parsed files share one 160 MB memory ceiling. The `path` relation builds a graph of the whole workdir, which takes seconds on a large repository, covers at most 20,000 files or 256 MB of source, and stays in memory (about 1.5 GB on the VS Code repository).
 
 ---
 
@@ -208,41 +215,9 @@ Ask your AI assistant to:
 - "Read the main.rs file"
 - "Search for all uses of `unwrap()` in the codebase"
 - "Create a new file called `test.rs`"
-
----
-
-## Features
-
-### 📁 Filesystem Operations
-
-- **View Files & Directories** — Read a single file (call `view` in parallel for several), list directories with glob patterns, search content
-- **Smart Truncation** — Large files are truncated intelligently to avoid overwhelming context windows
-- **Gitignore-Aware** — Respects `.gitignore` patterns during directory traversal
-- **Line Ranges** — Read specific line ranges with negative indexing (`-1` = last line)
-- **Remote Files (SSH/SFTP)** — Every file tool accepts `ssh://user@host:port/path` URLs (see [Remote Filesystem](#remote-filesystem-sshsftp))
-
-### ✏️ Text Editing
-
-- **Create Files** — Create new files with automatic parent directory creation
-- **String Replace** — Replace exact string matches with fuzzy fallback for whitespace
-- **Delete** — Remove a file (recoverable via undo)
-- **Undo** — Revert last edit (up to 10 undo levels per file, in-memory)
-- **Batch Edit** — Perform multiple insert/replace operations atomically on a single file
-- **Stale-Write Protection** — Every edit target's `N:hh` id is verified against the file at apply time; a stale id fails with the current content and where it moved, instead of editing the wrong line
-
-### 🔍 Code Intelligence
-
-- **Content Search** — Search for strings within files with context lines; plain line-mode matches carry their enclosing symbol
-- **Structural Outline** — `flags: "s"` lists the declarations of a file or tree, bodies elided
-- **Symbol Navigation** — the `symbol` tool finds a symbol's definitions and references, its callers and callees, supertypes and subtypes, a file's imports and importers, or the path between two symbols
-- **AST Search** — `ast: true` matches an ast-grep pattern against the syntax tree
-- **Line Extraction** — Copy specific line ranges from one file to another
-
-### 🖥️ Shell & System
-
-- **Command Execution** — Run shell commands with output capture
-- **Background Processes** — Long commands automatically continue in background with completion notifications
-- **Working Directory** — Set/get/reset working directory context for operations
+- "List what `src/main.rs` declares"
+- "Who calls `flush`, two levels up?"
+- "Which files import `src/util.rs`?"
 
 ---
 
@@ -503,34 +478,14 @@ Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + est
 `definition` and `references` work locally or over `ssh://`, render `N:hh|content` lines whose
 ids feed `batch_edit`, and honour `pattern`, `max_depth`, `include_hidden`, `context` (references)
 and `flags` (`c` counts per file, `l` lists files). An exact name renders the whole definition
-when it is short enough; wildcard matches render a preview with the omitted range. Markdown files
-yield their headings, Svelte files the symbols of their `<script>` blocks. CSS and JSON files name
-no navigable symbol: a single file fails with that guidance, a directory skips them. The `s`, `o`,
+when it is short enough; wildcard matches render a preview with the omitted range. The `s`, `o`,
 `v` and `r` flags are rejected.
 
 The graph relations (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`,
-`path`) print one hop per line as `path:line  kind  Owner::name`, grouped under `depth N:` (`depth`
-defaults to 1, `path` searches to 5, the maximum is 5). They are resolved by name and imports, not
-types: same-name symbols can be confused and dynamic calls missed, and `(guess)` marks a hop matched
-by name alone (repository-wide, ambiguous or unknown receiver). A call outside any function shows as `path:line  file`.
-External imports show as `external: <import>`. Every relation except `path` is answered from a per-workdir
-code index (a compact table of which files spell which names, built on the first call and refreshed from
-file stamps on every call, so a file edited by any program is seen by the next query) and parses only the
-files that can matter, at most 600 per query and for at most 800 ms (counted after the refresh and, on a cold
-process, after the one-time build of the name table); parsing runs at about 10 MB of source per second on 6 threads, so
-a query examines roughly 150 to 400 files before the clock stops it; files parsed once are
-kept in memory (with what their imports resolved to) under a 160 MB ceiling shared by all indexes. When a
-name is spelled in more files than the cap or the time allows, the answer covers the files examined, and a
-closing line says how many candidates exist and that repeating the query examines the rest (parsed files do
-not count again); `path` or `Owner::name` narrows it. A name spelled in more than 3000 files with no such
-narrowing is not traced: the reply gives the file count. A list shows at most 100 results, most certain
-first, then a closing line counts the rest.
-`path` builds the graph of the whole workdir, which takes seconds on a large repository, and that graph
-stays cached (the last 4 workdirs). A `path` argument only narrows which definitions of `name` start the
-query, and must be inside the workdir. Files over 1 MB (the view commands keep their 5 MB limit) or that fail to parse are left out and named
-in a closing note, as are files cut by the whole-repository graph limits (20,000 files or 256 MB of source); a query that hits its
-hop or work limit says so instead of reporting "no path". Graph relations are local only. Zero results explain what was looked for and
-suggest `relation: "references"`.
+`path`) are local only. They print one hop per line as `path:line  kind  Owner::name`, grouped
+under `depth N:` (`depth` defaults to 1, `path` searches to 5, the maximum is 5), and are resolved
+by name and imports, not types. Limits, the in-memory index and one worked example per relation:
+[doc/code-exploration.md](doc/code-exploration.md).
 
 ---
 
@@ -559,6 +514,18 @@ suggest `relation: "references"`.
   "old_text": "old_name",
   "new_text": "new_name",
   "replace_all": true
+}
+```
+
+**Several replacements, possibly in several files** (`edits` apply in order, atomically across files; each `path` defaults to the call's `path`):
+```json
+{
+  "command": "str_replace",
+  "path": "src/main.rs",
+  "edits": [
+    {"old_text": "fn old()", "new_text": "fn new()"},
+    {"path": "src/lib.rs", "old_text": "old()", "new_text": "new()", "replace_all": true}
+  ]
 }
 ```
 
@@ -719,8 +686,10 @@ octofs/
 │   │       ├── directory.rs     # Directory listing + content search
 │   │       ├── search.rs        # literal/regex matcher, symbol breadcrumbs
 │   │       ├── structure.rs     # Structural outline mode (flags: "s")
-│   │       ├── symbols.rs       # `symbol` tool: definitions, references, parameter validation
-│   │       ├── graph.rs         # `symbol` graph relations: walk, cached graph build, rendering
+│   │   │   ├── symbols.rs       # `symbol` tool: definitions, references, parameter validation
+│   │   │   ├── code_index.rs    # Per-workdir in-memory code index: name filters, parsed-file cache
+│   │   │   ├── graph_scoped.rs  # `symbol` graph relations answered on the code index
+│   │   │   ├── graph.rs         # `symbol` `path` relation: whole-workdir graph cache, rendering
 │   │       ├── ast.rs           # AST-pattern search mode (ast: true)
 │   │       ├── shell.rs         # Command execution, background, process cleanup
 │   │       ├── workdir.rs       # Working directory management
@@ -730,6 +699,7 @@ octofs/
 │   │   ├── mod.rs               # Outline entry point, extension → language map
 │   │   ├── signature_extractor.rs # Signature spans, Markdown headings
 │   │   ├── symbols.rs           # Definitions, references, symbol breadcrumbs
+│   │   ├── graph/               # Code graph: files, symbols, calls, imports, extends, implements (no I/O)
 │   │   ├── ast_search.rs        # ast-grep pattern search over the grammars
 │   │   └── languages/           # One grammar + outline rules per language
 │   └── utils/
@@ -746,6 +716,7 @@ octofs/
 - **Undo history** — Up to 10 snapshots per file, in-memory (lost on restart)
 - **Path resolution** — Relative paths resolve against the session workdir; no canonicalization (files may not exist yet)
 - **Stale-write detection** — every edit target's `N:hh` id is verified against the file at apply time; a stale id fails with the current content instead of editing the wrong line
+- **Code index in memory** — code-exploration answers are computed from the files on disk with an in-memory table refreshed from file metadata on every call; nothing is written to disk (see [doc/code-exploration.md](doc/code-exploration.md))
 
 ---
 
@@ -816,8 +787,8 @@ Apache-2.0 — See [LICENSE](LICENSE)
 
 <div align="center">
 
-**Built with 🦀 by [Muvon](https://muvon.io)**
+**Built by [Muvon](https://muvon.io)**
 
-*Star us on GitHub if Octofs helps you ship faster! ⭐*
+*Star the project on GitHub if Octofs is useful to you.*
 
 </div>

@@ -223,7 +223,7 @@ fn the_reader_supplies_each_files_text_and_a_failed_read_is_skipped() {
 			language: "rust",
 		},
 	];
-	let graph = build_graph_from_reader(specs, &|path: &str| {
+	let (sources, skipped) = parse_files(specs, &|path: &str| {
 		if path == "a.rs" {
 			Ok("fn a() {}\n".to_string())
 		} else {
@@ -231,9 +231,10 @@ fn the_reader_supplies_each_files_text_and_a_failed_read_is_skipped() {
 		}
 	});
 
-	assert!(graph.nodes.contains_key("a.rs"));
-	assert!(graph.nodes.contains_key("a.rs::a"));
-	assert_eq!(graph.skipped.len(), 1);
-	assert_eq!(graph.skipped[0].path, "gone.rs");
-	assert_eq!(graph.skipped[0].reason, "unreadable");
+	assert_eq!(sources.len(), 1);
+	assert_eq!(sources[0].data().path, "a.rs");
+	assert_eq!(sources[0].data().symbols[0].name, "a");
+	assert_eq!(skipped.len(), 1);
+	assert_eq!(skipped[0].path, "gone.rs");
+	assert_eq!(skipped[0].reason, "unreadable");
 }

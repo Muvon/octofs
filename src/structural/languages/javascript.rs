@@ -50,6 +50,13 @@ impl Language for JavaScript {
 		path_ends_with_name(line, name, SCRIPT_PATH_END)
 	}
 
+	// `export { a } from './m'` and `export * from './m'`; the closing line of
+	// a multi-line list starts with `}`.
+	fn line_may_reexport(&self, line: &str, name: &str, _path: &str) -> bool {
+		let text = line.trim_start();
+		(text.starts_with("export") || text.starts_with('}')) && self.line_may_import(line, name)
+	}
+
 	// JavaScript has a single parent, and `extends` stays on the parent's line.
 	fn inheritance_line_markers(&self) -> &'static [&'static str] {
 		&["extends"]

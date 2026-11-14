@@ -33,7 +33,7 @@
 use super::graph::{walk_supported, MAX_GRAPH_FILE_BYTES};
 use crate::structural::graph::registry::{heap_chunk, FileRegistry};
 use crate::structural::graph::{parse_files, FileSpec, ParsedSource, SkippedFile};
-use crate::structural::{line_may_import, line_may_inherit};
+use crate::structural::{line_may_import, line_may_inherit, line_may_reexport};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -1147,6 +1147,11 @@ impl CodeIndex {
 		self.recharge_table(&mut state);
 	}
 
+	/// Whether `spelling(name)` is answered from the cache.
+	pub(super) fn spelling_known(&self, name: &str) -> bool {
+		lock(&self.state).spelling.contains_key(name)
+	}
+
 	/// The files that really spell `name` and the ones of them that look like
 	/// they declare it, both in path order. Cached until a file changes, so a
 	/// repeated query does not read the files again.
@@ -1554,7 +1559,7 @@ impl CodeIndex {
 					self.reads.fetch_add(1, Ordering::Relaxed);
 					let full_path = self.root.join(path);
 					READ_BUFFER.with_borrow_mut(|buffer| {
-						read_capped_into(&full_path, buffer) && has_marked_line(buffer, token, language, kind)
+						read_capped_into(&full_path, buffer) && has_marked_line(buffer, token, language, path, kind)
 					})
 				})
 				.map(|(id, path, _)| (*id, path))
@@ -1570,6 +1575,8 @@ impl CodeIndex {
 pub(super) enum LineKind {
 	Import,
 	Inheritance,
+	/// A line that may re-export what a module declares.
+	ReExport,
 }
 
 /// A file parsed by this call, with the stamp it had when it was read.
@@ -1600,15 +1607,16 @@ pub(super) struct ParseBatch {
 	pub(super) left_over: usize,
 }
 
-/// Whether some line holds the whole identifier `token` and may be an import
-/// (or a parent-type line) of the file's language.
-fn has_marked_line(bytes: &[u8], token: &str, language: &str, kind: LineKind) -> bool {
+/// Whether some line holds the whole identifier `token` and may be an import,
+/// a re-export or a parent-type line of the file's language.
+fn has_marked_line(bytes: &[u8], token: &str, language: &str, path: &str, kind: LineKind) -> bool {
 	bytes.split(|byte| *byte == b'\n').any(|line| {
 		contains_identifier(line, token.as_bytes()) && {
 			let text = String::from_utf8_lossy(line);
 			match kind {
 				LineKind::Import => line_may_import(language, &text, token),
 				LineKind::Inheritance => line_may_inherit(language, &text, token),
+				LineKind::ReExport => line_may_reexport(language, &text, token, path),
 			}
 		}
 	})

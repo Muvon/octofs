@@ -353,3 +353,47 @@ fn build_graph_links_calls_includes_and_bases_across_cpp_and_c_files() {
 	)
 	.is_some());
 }
+
+#[test]
+fn c_call_with_a_variable_named_new_is_still_a_call() {
+	// `new` is a C++ keyword: the grammar reads this statement as an error
+	// node, which must not lose the call.
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "cpp",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file(
+			"list.h",
+			"static inline void list_add_tail(struct list_head *new, struct list_head *head)\n{\n\t__list_add(new, head->prev, head);\n}\n",
+		),
+		file(
+			"add.h",
+			"static inline void __list_add(struct list_head *n, struct list_head *prev, struct list_head *next)\n{\n}\n",
+		),
+	]);
+
+	assert!(edge(
+		&graph,
+		"list.h::list_add_tail",
+		"add.h::__list_add",
+		RelationType::Calls
+	)
+	.is_some());
+}
+
+#[test]
+fn a_prototype_inside_a_body_is_not_a_call() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "cpp",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("main.c", "void run(void)\n{\n\tint helper(int);\n}\n"),
+		file("helper.c", "int helper(int value)\n{\n\treturn value;\n}\n"),
+	]);
+
+	assert!(edge(&graph, "main.c::run", "helper.c::helper", RelationType::Calls).is_none());
+}
