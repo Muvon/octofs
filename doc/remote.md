@@ -63,4 +63,6 @@ structural read modes work remotely too — outline (`flags: "s"`), AST search
 (`ast: true`) and the `symbol` tool's `definition`/`references` each walk the remote tree
 (`fs/structure.rs`, `fs/ast.rs`, `fs/symbols.rs`); like every search, they
 walk the whole tree unless `max_depth` bounds them. The `symbol` graph relations
-(`callers`, `callees`, ...) are local only.
+(`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`, `path`)
+are local only and fail with guidance on an `ssh://` path or remote workdir. See
+[code-exploration.md](code-exploration.md#limits).

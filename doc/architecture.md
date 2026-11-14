@@ -2,7 +2,10 @@
 
 How Octofs is put together: module map, execution flow, shared state, and the
 cross-cutting mechanisms (line ids, delta views, shell lifecycle, transport).
-For per-tool behavior see [tools.md](tools.md); for remote files
+Octofs has two halves that share this machinery: filesystem tools and code
+exploration. For per-tool behavior see [tools.md](tools.md); for the outline, AST
+search, `symbol` tool and the in-memory index see
+[code-exploration.md](code-exploration.md); for remote files
 [remote.md](remote.md); for contributing [development.md](development.md).
 
 ## Module map
@@ -28,6 +31,8 @@ src/
       structure.rs     — structural outline mode (flags: "s"): file/directory walk, outline rendering
       symbols.rs       — `symbol` tool: parameter validation, definitions/references (text-level), breadcrumbs
       graph.rs         — `symbol` graph relations: workdir walk, single-entry graph cache, traversal rendering
+      code_index.rs    — per-workdir code index: Bloom token filters, stamp refresh, parsed-file cache under one memory ceiling
+      graph_scoped.rs  — query-scoped graph relations on the code index (at most 600 parsed files, 800 ms per query)
       ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars
       delta.rs         — ViewCache (note_write/note_create/render_whole_file), Myers line diff, hunk rendering
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops

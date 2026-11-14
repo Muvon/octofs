@@ -1,8 +1,12 @@
 # MCP Tools Reference
 
-Every tool Octofs exposes, what it does, and how it works internally. The
-model-facing contract (schemas, descriptions, defaults) lives in
-`src/mcp/server.rs` — `Params` structs and `#[tool(...)]` blocks; this document
+Every tool Octofs exposes, what it does, and how it works internally. The tools
+fall into two groups: filesystem work (`view`, `text_editor`, `batch_edit`,
+`extract_lines`, `shell`, `workdir`) and code exploration (the outline and AST
+modes of `view`, and `symbol`), which is described in full in
+[code-exploration.md](code-exploration.md). The model-facing contract (schemas,
+descriptions, defaults) lives in `src/mcp/server.rs` — `Params` structs and
+`#[tool(...)]` blocks; this document
 explains the behavior behind those schemas. All tools share one execution
 pipeline (see [architecture.md](architecture.md)):
 
@@ -76,7 +80,9 @@ name is the separate [`symbol`](#symbol--navigate-code-from-a-symbol-name) tool.
 TypeScript, Go, Java, C/C++, PHP, Bash, Ruby, Lua, JSON, Swift, Svelte, CSS,
 Elixir and Markdown (`src/structural/languages/`). The `symbol` tool's definition and
 references cover the same set except CSS and JSON; AST search covers the same set except CSS, JSON
-and Markdown, and searches a Svelte file through its `<script>` blocks.
+and Markdown, and searches a Svelte file through its `<script>` blocks. Per-feature
+support, including the graph relations, is tabulated in
+[code-exploration.md](code-exploration.md#languages).
 
 **Delta views.** Re-viewing a *whole* file returns only the hunks changed since
 the last full view of that file in the same session (or an unchanged marker).
@@ -105,8 +111,9 @@ point reported.
 
 ## `symbol` — navigate code from a symbol name
 
-**Modules:** `fs/symbols.rs` (validation, `definition`/`references`), `fs/graph.rs` (graph
-relations); pure logic in `src/structural/symbols.rs` and `src/structural/graph/`
+**Modules:** `fs/symbols.rs` (validation, `definition`/`references`), `fs/code_index.rs` and
+`fs/graph_scoped.rs` (index and query-scoped graph relations), `fs/graph.rs` (whole-repository graph
+for `path`, rendering); pure logic in `src/structural/symbols.rs` and `src/structural/graph/`
 
 `relation` selects what a call returns; `name` is the symbol (`Owner::name` also matches) and `path`
 scopes it:
@@ -123,93 +130,29 @@ scopes it:
 Parameter combinations that make no sense (`to` without `relation: "path"`, `depth` or `flags` on the
 wrong relation, `*` in a graph relation, `name` for `imports`) fail with a guided error.
 
-**`definition` and `references`** are the text-level lookup: definitions of a name in a file or under
-a directory (default the workdir), locally or over `ssh://`. `references` is the same lookup for
-uses. `flags: "c"`/`"l"` give per-file counts and matching paths; `o`, `v`, `s` and `r` are
-rejected. An exact name renders the whole definition when it is short enough, longer ones and
-wildcard matches a bounded preview. Every source line renders as `N:hh|content`, so the ids feed
-`batch_edit`. Markdown files yield their headings, Svelte files the symbols of their `<script>`
-blocks; CSS and JSON name no navigable symbol (a single file says so, a directory skips them).
-Symbol reads never register in the delta/view cache.
+`definition` and `references` are the text-level lookup: definitions or uses of a name in a file or
+under a directory (default the workdir), locally or over `ssh://`. `flags: "c"`/`"l"` give per-file
+counts and matching paths; `o`, `v`, `s` and `r` are rejected. Every source line renders as
+`N:hh|content`, so the ids feed `batch_edit`. Symbol reads never register in the delta/view cache.
 
-**Graph relations** are answered from the code graph in `src/structural/graph/`: nodes are files,
+The graph relations are answered from a code graph in `src/structural/graph/`: nodes are files,
 symbols and external imports; edges are `Contains`, `Imports`, `Calls`, `Extends` and `Implements`,
 resolved by name in a fixed order (same file, imported files, unique project-wide match), each with a
 confidence. Mapping: `callers` = incoming `Calls`; `callees` = outgoing `Calls`; `supertypes` =
 outgoing `Extends`+`Implements`; `subtypes` = incoming; `imports` = outgoing `Imports` of a file
-node; `imported_by` = incoming; `path` = one multi-source search over `Calls`, `Extends` and `Implements` between the definitions of `name` and `to`.
-They are resolved by name and imports, not types, and are local only (an `ssh://` path or remote
-workdir fails with guidance).
+node; `imported_by` = incoming; `path` = one multi-source search over `Calls`, `Extends` and
+`Implements` between the definitions of `name` and `to`. They are resolved by name and imports, not
+types, and are local only (an `ssh://` path or remote workdir fails with guidance).
 
-- **Code index queries.** `callers`, `callees`, `supertypes`, `subtypes`, `imports` and `imported_by` are
-  answered from the per-workdir code index (`fs/code_index.rs`): a Bloom filter of the identifiers of every
-  file, plus a parsed-file cache under a 160 MB ceiling shared by all indexes (at most 2 workdirs; idle ones
-  are dropped after 10 minutes). The ceiling counts the parsed data, what each file's imports resolved to
-  (kept per file, dropped when the file or the set of files changes), the path table and the cached
-  lookups. Each call refreshes the index from file stamps, so a file changed by any program is seen by
-  the next call. Lookups of which
-  files spell a name, which have an import or inheritance line, and finished complete answers are cached
-  until a file changes. Only the files a rule picks are parsed, level by level for `depth`, on a pool of at
-  most 6 threads, at most `MAX_PARSED_FILES_PER_QUERY` (600) files and for at most `QUERY_TIME_BUDGET_MS`
-  (800 ms, counted after the refresh and the one-time filter build of a cold process, which the first symbol
-  query of a process pays once: 1.1 s on the 67,000-file Linux tree on an idle 12-core machine; at least one chunk of
-  files is always parsed so a repeat gets further) per query (cached files are free). Measured on 6 threads:
-  about 10 MB of source per second, 72 % of it tree-sitter parsing and 25 % symbol extraction, so a query
-  examines roughly 150 to 400 files. The closing line counts over the whole query (every name and level
-  followed): its candidates and the files examined so far. Graph parsing skips files over
-  `MAX_GRAPH_FILE_BYTES` (1 MB) and names them in a closing note; the view commands keep their 5 MB limit.
-  - definitions of `name`: the files that look like declaring it first (the files under `path` when given),
-    then the other files spelling it; `Owner::name` needs both names. A name spelled in more than
-    `MAX_FILES_SPELLING_TO_TRACE` (3000) files with no `path` or `Owner::name` is not traced: the reply
-    says "about N files" (counted from the filters, nothing is read) and to give `path` or `Owner::name`.
-  - `callers`: the files spelling the name, the importers of the definition file first; with several
-    definitions only the definition files and their importers.
-  - `callees`, `supertypes`: the definition file, then each followed name in the files the definition file
-    imports, and repository-wide only when at most `MAX_FILES_PER_FOLLOWED_NAME` (200) files spell it
-    (`get`, `push` are not searched repository-wide, so a `(guess)` hop to them can be missing).
-  - `subtypes`, `imported_by`: files with a line that names the type or the file and may be an inheritance
-    or import line in their language (`Language::line_may_inherit` / `line_may_import`: the marker keyword
-    of the language, a line holding only names, and for quoted paths the name before the closing quote).
-    `imported_by` builds no graph: each candidate's imports are resolved through the file registry once,
-    kept with the parsed file, and a candidate stays when one of them names the file (or a package that
-    holds it).
-  A list shows at most `MAX_LISTED_RESULTS` (100) results, most certain first, then a closing line
-  counts the rest.
-  When the cap or the time budget cuts the candidates, the answer comes from the files examined and a closing line says
-  "N candidate files, M examined; repeat the query to examine the rest". Parsed files are kept and do not
-  count against the cap, so repeating the same query examines further files until the answer is complete
-  and the line is gone; partial answers are never cached. Narrowing with `path` or `Owner::name` ends it
-  sooner. `path` always uses the whole-repository graph (it needs global
-  reachability), so its first call on a large repository takes seconds and its graph stays in memory
-  (about 1.5 GB on the VS Code repository). A name with more than eight definitions is listed instead of
-  followed, from a declarations-only scan. Re-exports through barrel files are not followed by
-  `imported_by`. Local `definition` and `references` of an exact name over a directory parse only the
-  files the index says spell the name.
-- **Packages.** Go imports, Java wildcard imports and Swift module imports name a package of several files:
-  one `Imports` edge per importing file targets the package's canonical (alphabetically first) file, and
-  `imported_by` of any file of the package answers through it; calls through the import resolve against
-  every file of the package.
-- **Scope.** The graph covers every supported, gitignore-visible file under the session
-  workdir, because name resolution needs the whole repository. `path` only selects which
-  definitions of `name` start the query; a `path` outside the workdir fails and says to switch
-  workdir. When `name` is ambiguous the output has one section per start definition.
-- **Depth.** `depth` defaults to 1 (`path`: 5) and is capped at `MAX_GRAPH_DEPTH` (5).
-- **Cache.** `fs/graph.rs` keeps in-memory graphs for the last `MAX_CACHED_WORKDIRS` (4) workdir roots,
-  least recently used dropped first. Every call re-walks the tree and hashes (relative path, size,
-  mtime, and on unix ctime and inode) of each file, without reading any; a graph is rebuilt only when
-  that stamp changes. Concurrent calls for one root wait for a single build. Nothing is stored on disk.
-- **Limits.** The cached whole-repository graph (`path`) holds at most
-  `MAX_GRAPH_FILES` (20,000) files and `MAX_GRAPH_SOURCE_BYTES` (256 MB);
-  the rest are counted in a closing note. A traversal stops at `MAX_REPORTED_HOPS` and a path search at
-  `MAX_PATHS` paths or its work limit; each says so in the output instead of reporting an empty result.
-- **Skipped files.** Files over `MAX_GRAPH_FILE_BYTES` (1 MB: a syntax tree weighs many times the text and one
-  parse cannot be interrupted; `definition`, `references` and `view` keep the 5 MB `MAX_VIEW_FILE_BYTES`), unreadable files and files that fail to
-  parse are left out and named in a closing note. Markdown and JSON contribute nothing to the graph and
-  are not handed to it.
-- **Output.** Hops are grouped under `depth N:` lines as `path:line  kind  Owner::name`; `(guess)`
-  marks a hop matched only by a repository-wide name by name alone (repository-wide, ambiguous or unknown receiver); a call outside any function lists the file as `path:line  file`; unresolved imports read `external: <import>`; `path` prints
-  each chain as `a -calls-> b`. Output stops under the response budget with a truncation notice.
-  Zero results say what was looked for and suggest `relation: "references"`.
+All relations except `path` run on the per-workdir code index (`fs/code_index.rs`, queries in
+`fs/graph_scoped.rs`); `path` uses the whole-repository graph cached in `fs/graph.rs`. Constants
+that bound a query: `MAX_PARSED_FILES_PER_QUERY` (600), `QUERY_TIME_BUDGET_MS` (800),
+`MAX_FILES_SPELLING_TO_TRACE` (3000), `MAX_FILES_PER_FOLLOWED_NAME` (200), `MAX_LISTED_RESULTS` (100),
+`MAX_GRAPH_DEPTH` (5), `MAX_GRAPH_FILE_BYTES` (1 MB), `MAX_GRAPH_FILES` (20,000),
+`MAX_GRAPH_SOURCE_BYTES` (256 MB), `MAX_CACHED_WORKDIRS` (4), `MAX_REPORTED_HOPS` and `MAX_PATHS`.
+What each limit means for a reader, how the index refreshes and what a partial answer looks like are
+in [code-exploration.md](code-exploration.md#how-the-index-behaves), with one worked example per
+relation in [Symbol lookups](code-exploration.md#symbol-lookups).
 
 ---
 
@@ -224,7 +167,10 @@ A multi-command tool (`command` + operands):
   `old_text` must match exactly once, or set `replace_all: true`. Multiple
   matches return an error listing their line ids, no match the closest matches, for `batch_edit`.
   Matching is progressive (fuzzy-anchored) and happens in LF space; the file's
-  dominant line ending is recorded and CRLF is restored on write.
+  dominant line ending is recorded and CRLF is restored on write. Several
+  replacements can be given as `edits` (`path?`, `old_text`, `new_text`,
+  `replace_all?`): they apply in order, atomically across files, and each `path`
+  defaults to the call's `path`.
 - **delete** — remove a file (not a directory).
 - **undo_edit** — revert the last edit to `path`; up to 10 levels per file,
   in-memory only, delete included. Powered by `FILE_HISTORY`: a content
