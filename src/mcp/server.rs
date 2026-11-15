@@ -1668,8 +1668,8 @@ pub struct ExtractLinesParams {
 	pub from_end: Option<serde_json::Value>,
 	/// Target file the lines are appended to (ssh://user@host:port/path for remote).
 	pub append_path: String,
-	/// Where to append in the target: a line id to insert after (verified against the
-	/// target), or 0 = beginning, -1 = end.
+	/// Where to append in the target: a full line id like "12:a3" to insert after (verified
+	/// against the target), or 0 = beginning, -1 = end.
 	#[schemars(schema_with = "edit_anchor_schema")]
 	pub append_line: serde_json::Value,
 }
