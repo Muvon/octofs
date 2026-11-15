@@ -17,6 +17,8 @@
 
 use super::SymbolKind;
 use super::{parse_call_target, path_ends_with_name, CallTarget, CalleeSyntax, Language};
+use super::{PatternGrammar, DOLLAR_EXPANDO};
+use super::{FUNCTION_KEYWORD, HASH_COMMENTS};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
@@ -30,8 +32,28 @@ impl Language for Bash {
 		"bash"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["sh", "bash"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[("function_definition", "function")]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&["function_definition"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_bash::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: DOLLAR_EXPANDO,
+		})
 	}
 
 	// `source file` or `. file`: the file is the command's first argument, so
@@ -61,16 +83,11 @@ impl Language for Bash {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["#"]
+		HASH_COMMENTS
 	}
 
 	fn callable_keywords(&self) -> &'static [&'static str] {
-		&["function"]
-	}
-
-	// Variables are `$name`.
-	fn identifier_prefix(&self) -> Option<u8> {
-		Some(b'$')
+		FUNCTION_KEYWORD
 	}
 
 	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {

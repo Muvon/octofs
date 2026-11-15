@@ -15,11 +15,13 @@
 //! Rust grammar: items, types, traits, modules, constants and macros.
 
 use super::use_alias::aliased_use_bindings;
+use super::C_STYLE_COMMENTS;
 use super::{enclosing_owner, CalleeSyntax, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, parse_call_target, simple_type_name, stem_and_directory, CallTarget, Language,
 	TypeRelationKind, UNKNOWN_RECEIVER,
 };
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -44,8 +46,47 @@ impl Language for Rust {
 		"rust"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["rs"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("function_item", "fn"),
+			("impl_item", "impl"),
+			("trait_item", "trait"),
+			("struct_item", "struct"),
+			("enum_item", "enum"),
+			("mod_item", "mod"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"function_item",
+			"struct_item",
+			"enum_item",
+			"trait_item",
+			"impl_item",
+			"mod_item",
+			"const_item",
+			"static_item",
+			"type_item",
+			"union_item",
+			"macro_definition",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_rust::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// `use a::b;`, `mod b;`, `extern crate b;`; the names of a nested group
@@ -60,7 +101,7 @@ impl Language for Rust {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	// Trait bounds (`T: A + B`), lifetimes, `?Sized`, generic arguments.

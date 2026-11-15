@@ -16,8 +16,10 @@
 //! plus the graph methods (imports, calls, base classes, module resolution).
 
 use super::javascript::{join_path, parent_dir};
+use super::HASH_COMMENTS;
 use super::{enclosing_owner, BodyOpen, CalleeSyntax, SymbolKind};
 use super::{parse_call_target, simple_type_name, CallTarget, Language, TypeRelationKind};
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -37,8 +39,28 @@ impl Language for Python {
 		"python"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["py"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[("function_definition", "def"), ("class_definition", "class")]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&["function_definition", "class_definition"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_python::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// `import a.b`, `from a import b`; the names of a parenthesised group sit
@@ -68,7 +90,7 @@ impl Language for Python {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["#"]
+		HASH_COMMENTS
 	}
 
 	// The `:` that ends a multi-line base list.

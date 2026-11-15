@@ -435,4 +435,11 @@ fn a_call_that_names_a_type_reaches_the_type_it_constructs() {
 	)
 	.expect("call of the type");
 	assert_eq!(call.line, Some(2));
+	assert!(edge(
+		&graph,
+		"Sources/App/Main.swift::build",
+		"Sources/Kit/Widget.swift::Widget::init",
+		RelationType::Calls,
+	)
+	.is_some());
 }

@@ -14,11 +14,13 @@
 
 //! Go grammar: functions, methods and type specs.
 
+use super::C_STYLE_COMMENTS;
 use super::{
 	files_in_dir_matching, parse_call_target, path_ends_with_components, path_ends_with_name, simple_type_name,
 	CallTarget, Language, TypeRelationKind,
 };
 use super::{CalleeSyntax, PackageScope, SymbolKind};
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -40,8 +42,38 @@ impl Language for Go {
 		"go"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["go"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("function_declaration", "func"),
+			("method_declaration", "method"),
+			("type_declaration", "type"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"function_declaration",
+			"method_declaration",
+			"type_spec",
+			"const_spec",
+			"var_spec",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_go::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// The path is a string literal, so even in a `import (` block (no `import`
@@ -62,7 +94,7 @@ impl Language for Go {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	fn declaration_keywords(&self) -> &'static [&'static str] {

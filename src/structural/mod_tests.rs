@@ -184,6 +184,16 @@ fn rust_outline_includes_impl_headers() {
 }
 
 #[test]
+fn cpp_header_conventions_get_an_outline() {
+	let src = "inline int add(int a, int b) {\n\treturn a + b;\n}\n";
+	for label in ["a.hh", "a.h++", "a.ipp", "a.tpp", "a.inl"] {
+		let items = outline(label, src).unwrap();
+		let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+		assert_eq!(names, ["add"], "{label}");
+	}
+}
+
+#[test]
 fn typescript_outline_includes_namespace_containers() {
 	let src = "namespace Util {\n\texport function load(): void {\n\t}\n}\n";
 	let items = outline("a.ts", src).unwrap();

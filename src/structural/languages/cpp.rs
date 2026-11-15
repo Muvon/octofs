@@ -15,18 +15,29 @@
 //! C++ grammar: function definitions and type/namespace containers.
 
 use super::SymbolKind;
+use super::C_STYLE_COMMENTS;
 use super::{
 	enclosing_owner, extract_call_target, extract_symbol_by_kinds, parse_call_target, path_ends_with_name,
 	simple_type_name, CallTarget, CalleeSyntax, Language, TypeRelationKind,
 };
+use super::{PatternGrammar, C_EXPANDO};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
+use std::sync::OnceLock;
 use tree_sitter::Node;
 
 pub(crate) struct Cpp {}
 
-/// Extensions of the files an `#include` names.
-const HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hxx"];
+/// Extensions of the files an `#include` names: the C and C++ header
+/// conventions (`.ipp`, `.tpp` and `.inl` hold template and inline bodies the
+/// header includes at its end).
+const HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hxx", "hh", "h++", "ipp", "tpp", "inl"];
+
+/// Extensions of the files that are compiled, module interfaces included.
+const SOURCE_EXTENSIONS: &[&str] = &["cpp", "cc", "cxx", "c++", "c", "cppm", "ixx", "mxx", "ccm", "cxxm"];
+
+/// Extensions the grammar parses as plain C rather than C++.
+const C_EXTENSIONS: &[&str] = &["c", "h"];
 
 const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
 	member_separators: &["->", "::", "."],
@@ -41,8 +52,57 @@ impl Language for Cpp {
 		"cpp"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		static ALL: OnceLock<Vec<&'static str>> = OnceLock::new();
+		ALL.get_or_init(|| [SOURCE_EXTENSIONS, HEADER_EXTENSIONS].concat())
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("function_definition", "fn"),
+			("class_specifier", "class"),
+			("struct_specifier", "struct"),
+			("union_specifier", "union"),
+			("namespace_definition", "namespace"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"function_definition",
+			"class_specifier",
+			"struct_specifier",
+			"enum_specifier",
+			"namespace_definition",
+			"type_definition",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_cpp::LANGUAGE.into()
+	}
+
+	// The C++ grammar parses a .c file into `declaration` nodes that
+	// ellipsis-body patterns never match, while the C grammar yields
+	// `function_definition` like upstream ast-grep's `--lang c`; the outline
+	// and symbol modes keep the C++ grammar, which serves .c files correctly.
+	fn pattern_grammar_for_extension(&self, extension: &str) -> Option<PatternGrammar> {
+		if C_EXTENSIONS.contains(&extension) {
+			return Some(PatternGrammar {
+				name: "c",
+				grammar: tree_sitter_c::LANGUAGE.into(),
+				expando: C_EXPANDO,
+			});
+		}
+		self.pattern_grammar()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: C_EXPANDO,
+		})
 	}
 
 	// The header is quoted or angle-bracketed on a preprocessor line; the name
@@ -58,7 +118,7 @@ impl Language for Cpp {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	// Template arguments and `::` in a base class.

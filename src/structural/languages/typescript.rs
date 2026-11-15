@@ -23,6 +23,8 @@ use super::javascript::{
 };
 use super::{enclosing_owner, SymbolKind};
 use super::{extract_symbol_by_kinds, simple_type_name, CallTarget, Language, TypeRelationKind};
+use super::{PatternGrammar, DOLLAR_EXPANDO};
+use super::{C_STYLE_COMMENTS, FUNCTION_KEYWORD};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -57,8 +59,40 @@ impl Language for TypeScript {
 		"typescript"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["ts"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		super::javascript::CONTAINER_KINDS
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"function_declaration",
+			"generator_function_declaration",
+			"class_declaration",
+			"abstract_class_declaration",
+			"method_definition",
+			"interface_declaration",
+			"type_alias_declaration",
+			"enum_declaration",
+			"internal_module",
+			"module",
+			"variable_declarator",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: DOLLAR_EXPANDO,
+		})
 	}
 
 	// Same string-literal module path as JavaScript.
@@ -111,7 +145,7 @@ impl Language for TypeScript {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	// Generic arguments of a parent (`extends Base<T>`).
@@ -134,23 +168,17 @@ impl Language for TypeScript {
 	}
 
 	fn callable_keywords(&self) -> &'static [&'static str] {
-		&["function"]
+		FUNCTION_KEYWORD
 	}
 
-	fn identifier_prefix(&self) -> Option<u8> {
-		Some(b'$')
-	}
-
-	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+	// The kinds TypeScript shares with JavaScript are JavaScript's.
+	fn symbol_kind(&self, node: Node, contents: &str) -> SymbolKind {
 		match node.kind() {
-			"function_declaration" | "method_definition" | "arrow_function" | "function_expression" => {
-				SymbolKind::Function
-			}
-			"class_declaration" | "abstract_class_declaration" => SymbolKind::Class,
+			"abstract_class_declaration" => SymbolKind::Class,
 			"interface_declaration" => SymbolKind::Interface,
 			"type_alias_declaration" => SymbolKind::Type,
 			"enum_declaration" => SymbolKind::Enum,
-			_ => SymbolKind::Other,
+			_ => JavaScript {}.symbol_kind(node, contents),
 		}
 	}
 
@@ -293,8 +321,30 @@ impl Language for Tsx {
 		"tsx"
 	}
 
+	// JSX needs the TSX grammar: the TypeScript one reads `<div>` as a type
+	// assertion and loses the components and calls inside it.
+	fn extensions(&self) -> &'static [&'static str] {
+		&["tsx"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		TypeScript {}.container_kinds()
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		TypeScript {}.definition_kinds()
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_typescript::LANGUAGE_TSX.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: DOLLAR_EXPANDO,
+		})
 	}
 
 	fn line_may_import(&self, line: &str, name: &str) -> bool {
@@ -331,10 +381,6 @@ impl Language for Tsx {
 
 	fn callable_keywords(&self) -> &'static [&'static str] {
 		TypeScript {}.callable_keywords()
-	}
-
-	fn identifier_prefix(&self) -> Option<u8> {
-		TypeScript {}.identifier_prefix()
 	}
 
 	fn symbol_kind(&self, node: Node, contents: &str) -> SymbolKind {

@@ -19,7 +19,7 @@
 
 use tree_sitter::{Node, Parser};
 
-use crate::structural::languages::{self, Language};
+use crate::structural::languages::{self, Language, ScriptBlock};
 use crate::structural::signature_extractor;
 use crate::structural::{language_for_extension, path_extension, unsupported_message};
 
@@ -89,32 +89,30 @@ pub fn find_references(path_label: &str, contents: &str, matcher: &NameMatcher) 
 	symbol_hits_by_language(language(path_label)?, contents, matcher, true)
 }
 
-/// Definitions or references of `matcher`, by language. The languages without
-/// a navigable symbol grammar (markdown, svelte, css, json) never reach the
-/// tree walk.
+/// Definitions or references of `matcher`, by language. Markdown has no
+/// grammar (its headings are the definitions); a language with nothing to
+/// navigate is an error, and one that holds the code of others (a Svelte
+/// component) searches those blocks.
 fn symbol_hits_by_language(
 	language: &str,
 	contents: &str,
 	matcher: &NameMatcher,
 	references: bool,
 ) -> Result<Vec<SymbolHit>, String> {
-	match language {
-		// Markdown has no grammar: its headings are the definitions.
-		"markdown" => return Ok(markdown_heading_hits(contents, matcher)),
-		// Svelte code lives in <script> blocks, re-parsed with the JS/TS
-		// grammar and mapped back to file coordinates.
-		"svelte" => return Ok(svelte_symbol_hits(contents, matcher, references)),
-		// css/json outlines are structural but name no navigable symbols: say
-		// so instead of reporting a miss indistinguishable from a wrong name.
-		"css" | "json" => {
-			return Err(format!(
-				"symbol navigation is not supported for {language} files — use flags: \"s\" for an outline or `content` for text"
-			))
-		}
-		_ => {}
+	if language == "markdown" {
+		return Ok(markdown_heading_hits(contents, matcher));
 	}
 	let lang = languages::get_language(language)
 		.ok_or_else(|| format!("No grammar implementation for language '{language}'."))?;
+	if !lang.has_navigable_symbols() {
+		// Say so instead of reporting a miss indistinguishable from a wrong name.
+		return Err(format!(
+			"symbol navigation is not supported for {language} files — use flags: \"s\" for an outline or `content` for text"
+		));
+	}
+	if let Some(blocks) = lang.script_blocks(contents) {
+		return Ok(script_block_hits(blocks, matcher, references));
+	}
 	let Some(tree) = parse_tree(lang.as_ref(), contents)? else {
 		return Ok(Vec::new());
 	};
@@ -131,8 +129,8 @@ fn definition_hits(
 	contents: &str,
 	matcher: &NameMatcher,
 ) -> Vec<SymbolHit> {
-	let def_kinds = definition_kinds(lang.name());
-	let containers = container_kinds(lang.name());
+	let def_kinds = lang.definition_kinds();
+	let containers = lang.container_kinds();
 	let mut hits = Vec::new();
 	for node in descendants(tree.root_node()) {
 		if !def_kinds.contains(&node.kind()) {
@@ -165,8 +163,7 @@ fn reference_hits(
 	contents: &str,
 	matcher: &NameMatcher,
 ) -> Vec<SymbolHit> {
-	let def_kinds = definition_kinds(lang.name());
-	let containers = container_kinds(lang.name());
+	let containers = lang.container_kinds();
 	let mut hits = Vec::new();
 	for node in descendants(tree.root_node()) {
 		// Identifier usages are named leaf tokens; interior nodes carry
@@ -185,7 +182,7 @@ fn reference_hits(
 			line: start.row + 1,
 			line_count: 1,
 			column: start.column,
-			is_definition: is_definition_site(lang, node, text, def_kinds, contents),
+			is_definition: lang.is_definition_name(node, text, contents),
 			breadcrumb: breadcrumb_for(lang, node, contents, containers),
 		});
 	}
@@ -198,11 +195,11 @@ fn reference_hits(
 /// and must never fail the search that asked for them.
 pub fn line_breadcrumbs(path_label: &str, contents: &str) -> Option<Vec<Option<String>>> {
 	let language = language(path_label).ok()?;
-	let containers = container_kinds(language);
+	let lang = languages::get_language(language)?;
+	let containers = lang.container_kinds();
 	if containers.is_empty() {
 		return None;
 	}
-	let lang = languages::get_language(language)?;
 	let tree = parse_tree(lang.as_ref(), contents).ok()??;
 	let line_count = contents.lines().count();
 	// One pass: collect the containers with their breadcrumb (pre-order, so
@@ -308,12 +305,13 @@ fn markdown_heading_hits(contents: &str, matcher: &NameMatcher) -> Vec<SymbolHit
 		.collect()
 }
 
-/// Svelte symbols live in the `<script>` blocks: each block's text is
-/// searched with its own grammar and the hits mapped back to the file's
-/// coordinates (the block is a contiguous slice of the file).
-fn svelte_symbol_hits(contents: &str, matcher: &NameMatcher, references: bool) -> Vec<SymbolHit> {
+/// The blocks of other languages a file holds (a Svelte component's
+/// scripts): each block's text is searched with its own grammar and the hits
+/// mapped back to the file's coordinates (the block is a contiguous slice of
+/// the file).
+fn script_block_hits(blocks: Vec<ScriptBlock>, matcher: &NameMatcher, references: bool) -> Vec<SymbolHit> {
 	let mut hits = Vec::new();
-	for (language, script, start_row, start_column) in languages::svelte::script_sources(contents) {
+	for (language, script, start_row, start_column) in blocks {
 		let Ok(block_hits) = symbol_hits_by_language(language, &script, matcher, references) else {
 			continue;
 		};
@@ -329,28 +327,6 @@ fn svelte_symbol_hits(contents: &str, matcher: &NameMatcher, references: bool) -
 	}
 	hits.sort_by_key(|hit| hit.line);
 	hits
-}
-
-/// Whether an identifier node is the defining name of a declaration. Elixir
-/// has no `name` field, so any enclosing declaration naming the identifier
-/// counts.
-fn is_definition_site(lang: &dyn Language, node: Node, text: &str, def_kinds: &[&str], contents: &str) -> bool {
-	if lang.name() == "elixir" {
-		let mut ancestor = node.parent();
-		while let Some(current) = ancestor {
-			if lang.extract_declaration_name(current, contents).as_deref() == Some(text) {
-				return true;
-			}
-			ancestor = current.parent();
-		}
-		return false;
-	}
-	node.parent().is_some_and(|parent| {
-		def_kinds.contains(&parent.kind())
-			&& parent
-				.child_by_field_name("name")
-				.is_some_and(|name| name.id() == node.id())
-	})
 }
 
 /// Breadcrumb of the containers enclosing `node` (not `node` itself),
@@ -401,155 +377,6 @@ fn container_breadcrumb(
 		.unwrap_or_else(|| "_".to_string());
 	parts.push(format!("{label} {name}"));
 	parts.join(" › ")
-}
-
-/// (tree-sitter kind, short display label) pairs that form symbol breadcrumbs
-/// for the given language.
-fn container_kinds(language: &str) -> &'static [(&'static str, &'static str)] {
-	match language {
-		"rust" => &[
-			("function_item", "fn"),
-			("impl_item", "impl"),
-			("trait_item", "trait"),
-			("struct_item", "struct"),
-			("enum_item", "enum"),
-			("mod_item", "mod"),
-		],
-		"python" => &[("function_definition", "def"), ("class_definition", "class")],
-		"javascript" | "typescript" | "tsx" => &[
-			("function_declaration", "function"),
-			("generator_function_declaration", "function"),
-			("method_definition", "method"),
-			("class_declaration", "class"),
-			("interface_declaration", "interface"),
-			("enum_declaration", "enum"),
-			// tree-sitter-typescript's namespace/module containers.
-			("internal_module", "namespace"),
-			("module", "module"),
-		],
-		"go" => &[
-			("function_declaration", "func"),
-			("method_declaration", "method"),
-			("type_declaration", "type"),
-		],
-		"java" => &[
-			("class_declaration", "class"),
-			("interface_declaration", "interface"),
-			("enum_declaration", "enum"),
-			("record_declaration", "record"),
-			("annotation_type_declaration", "annotation"),
-			("method_declaration", "method"),
-			("constructor_declaration", "constructor"),
-		],
-		"cpp" => &[
-			("function_definition", "fn"),
-			("class_specifier", "class"),
-			("struct_specifier", "struct"),
-			("union_specifier", "union"),
-			("namespace_definition", "namespace"),
-		],
-		"php" => &[
-			("function_definition", "function"),
-			("method_declaration", "method"),
-			("class_declaration", "class"),
-			("interface_declaration", "interface"),
-			("trait_declaration", "trait"),
-			("enum_declaration", "enum"),
-		],
-		"ruby" => &[
-			("method", "def"),
-			("singleton_method", "def"),
-			("class", "class"),
-			("module", "module"),
-		],
-		"lua" => &[("function_declaration", "function")],
-		"bash" => &[("function_definition", "function")],
-		"swift" => &[
-			("function_declaration", "func"),
-			("class_declaration", "class"),
-			("protocol_declaration", "protocol"),
-		],
-		// Elixir declarations all use the generic `call` node. Adding `call`
-		// here would make every nested invocation look like a container.
-		"elixir" => &[],
-		_ => &[],
-	}
-}
-
-/// Tree-sitter kinds that define named symbols, per language.
-fn definition_kinds(language: &str) -> &'static [&'static str] {
-	match language {
-		"rust" => &[
-			"function_item",
-			"struct_item",
-			"enum_item",
-			"trait_item",
-			"impl_item",
-			"mod_item",
-			"const_item",
-			"static_item",
-			"type_item",
-			"union_item",
-			"macro_definition",
-		],
-		"javascript" => &[
-			"function_declaration",
-			"generator_function_declaration",
-			"class_declaration",
-			"method_definition",
-			"variable_declarator",
-		],
-		"typescript" | "tsx" => &[
-			"function_declaration",
-			"generator_function_declaration",
-			"class_declaration",
-			"abstract_class_declaration",
-			"method_definition",
-			"interface_declaration",
-			"type_alias_declaration",
-			"enum_declaration",
-			"internal_module",
-			"module",
-			"variable_declarator",
-		],
-		"python" => &["function_definition", "class_definition"],
-		"go" => &[
-			"function_declaration",
-			"method_declaration",
-			"type_spec",
-			"const_spec",
-			"var_spec",
-		],
-		"java" => &[
-			"class_declaration",
-			"interface_declaration",
-			"enum_declaration",
-			"record_declaration",
-			"method_declaration",
-			"constructor_declaration",
-		],
-		"cpp" => &[
-			"function_definition",
-			"class_specifier",
-			"struct_specifier",
-			"enum_specifier",
-			"namespace_definition",
-			"type_definition",
-		],
-		"php" => &[
-			"function_definition",
-			"method_declaration",
-			"class_declaration",
-			"interface_declaration",
-			"trait_declaration",
-		],
-		"ruby" => &["method", "singleton_method", "class", "module"],
-		"lua" => &["function_declaration"],
-		"bash" => &["function_definition"],
-		"swift" => &["function_declaration", "class_declaration", "protocol_declaration"],
-		"elixir" => &["call"],
-		_ => &[],
-	}
 }
 
 #[cfg(test)]

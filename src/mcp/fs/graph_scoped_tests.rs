@@ -738,25 +738,27 @@ fn a_callee_name_spelled_everywhere_resolves_through_the_imports_of_the_caller()
 	assert!(answer.contains("src/lib.ts:1  function  get"), "{answer}");
 }
 
+/// The names importers of `path` spell, as a set.
+fn importer_set(path: &str, declared: &[&str]) -> BTreeSet<String> {
+	structural::importer_names(path, declared).into_iter().collect()
+}
+
 #[test]
 fn files_are_found_by_their_name_and_their_directory() {
-	let tokens = importer_tokens("src/net/http/server.go", &[]);
+	let tokens = importer_set("src/net/http/server.go", &[]);
 	assert_eq!(tokens, BTreeSet::from(["server".to_string(), "http".to_string()]));
 	// A crate root is also what `crate::` names in the importers.
 	assert_eq!(
-		importer_tokens("lib.rs", &[]),
+		importer_set("lib.rs", &[]),
 		BTreeSet::from(["lib".to_string(), "crate".to_string()])
 	);
+	assert_eq!(importer_set("src/foo.d.ts", &[]), BTreeSet::from(["foo".to_string()]));
 	assert_eq!(
-		importer_tokens("src/foo.d.ts", &[]),
-		BTreeSet::from(["foo".to_string()])
-	);
-	assert_eq!(
-		importer_tokens("src/common/util.ts", &[]),
+		importer_set("src/common/util.ts", &[]),
 		BTreeSet::from(["util".to_string()])
 	);
 	assert_eq!(
-		importer_tokens("src/components/index.ts", &[]),
+		importer_set("src/components/index.ts", &[]),
 		BTreeSet::from(["index".to_string(), "components".to_string()])
 	);
 }
@@ -1544,6 +1546,51 @@ fn a_call_reaches_a_name_of_its_declared_package_in_another_directory() {
 	);
 	let other = callers_in(root.path(), "Widget", Some("other/Widget.php"), &[]);
 	assert!(!other.contains("tests/WidgetTest.php"), "{other}");
+}
+
+#[test]
+#[serial]
+fn a_call_reaches_a_name_of_the_unnamed_package_of_its_directory() {
+	let root = project(&[
+		("src/Helper.java", "public class Helper {}\n"),
+		("other/Helper.java", "public class Helper {}\n"),
+		(
+			"src/Caller.java",
+			"public class Caller {\n\tvoid run() {\n\t\tnew Helper();\n\t}\n}\n",
+		),
+	]);
+	callers_in(root.path(), "Helper", Some("src/Helper.java"), &["src/Caller.java"]);
+	let other = callers_in(root.path(), "Helper", Some("other/Helper.java"), &[]);
+	assert!(!other.contains("src/Caller.java"), "{other}");
+}
+
+#[test]
+#[serial]
+fn package_mates_that_do_not_spell_the_name_do_not_use_up_the_cap_before_the_caller() {
+	// More files of the package than a query parses, none but the caller
+	// spelling the name, the caller last in path order.
+	let mut files: Vec<(String, String)> = (0..MAX_PARSED_FILES_PER_QUERY + 50)
+		.map(|n| (format!("pkg/a{n:04}.go"), format!("package pkg\n\nfunc f{n}() {{}}\n")))
+		.collect();
+	files.push((
+		"pkg/def.go".to_string(),
+		"package pkg\n\nfunc shared() {}\n".to_string(),
+	));
+	files.push((
+		"pkg/zz.go".to_string(),
+		"package pkg\n\nfunc use() {\n\tshared()\n}\n".to_string(),
+	));
+	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+	let root = project(&borrowed);
+	let (text, notices) = scoped(
+		root.path(),
+		GraphRelation::Callers,
+		Some("shared"),
+		Some("pkg/def.go"),
+		1,
+	);
+	assert!(text.contains("pkg/zz.go:3  function  use"), "{text}");
+	assert!(notices.is_empty(), "{notices:?}");
 }
 
 #[test]

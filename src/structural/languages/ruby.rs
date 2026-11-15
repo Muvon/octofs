@@ -15,11 +15,13 @@
 //! Ruby grammar: methods, singleton methods, classes and modules, plus the
 //! graph facts (require imports, calls, superclass relations).
 
+use super::HASH_COMMENTS;
 use super::{enclosing_owner, BodyOpen, CalleeSyntax, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, parse_call_target, path_ends_with_components, path_ends_with_name, simple_type_name,
 	CallTarget, Language, TypeRelationKind,
 };
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
@@ -38,8 +40,33 @@ impl Language for Ruby {
 		"ruby"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["rb"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("method", "def"),
+			("singleton_method", "def"),
+			("class", "class"),
+			("module", "module"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&["method", "singleton_method", "class", "module"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_ruby::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// `require` / `require_relative` / `load` take a quoted literal ending in
@@ -88,7 +115,7 @@ impl Language for Ruby {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["#"]
+		HASH_COMMENTS
 	}
 
 	fn declaration_keywords(&self) -> &'static [&'static str] {
@@ -97,11 +124,6 @@ impl Language for Ruby {
 
 	fn callable_keywords(&self) -> &'static [&'static str] {
 		&["def"]
-	}
-
-	// Globals are `$name`.
-	fn identifier_prefix(&self) -> Option<u8> {
-		Some(b'$')
 	}
 
 	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {

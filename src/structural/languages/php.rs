@@ -18,8 +18,10 @@
 
 use super::javascript::{join_path, parent_dir};
 use super::use_alias::aliased_use_bindings;
+use super::FUNCTION_KEYWORD;
 use super::{enclosing_owner, CalleeSyntax, PackageScope, SymbolKind};
 use super::{parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language, TypeRelationKind};
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -43,8 +45,44 @@ impl Language for Php {
 		"php"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["php"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("function_definition", "function"),
+			("method_declaration", "method"),
+			("class_declaration", "class"),
+			("interface_declaration", "interface"),
+			("trait_declaration", "trait"),
+			("enum_declaration", "enum"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"function_definition",
+			"method_declaration",
+			"class_declaration",
+			"interface_declaration",
+			"trait_declaration",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_php::LANGUAGE_PHP.into()
+	}
+
+	// PHP patterns carry no `<?php` prologue, so they parse with the tagless
+	// PHP-only grammar (ast-grep's own choice); a prologue in the file itself
+	// recovers as an error node that matching simply walks past.
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: tree_sitter_php::LANGUAGE_PHP_ONLY.into(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// `use App\Models\User;`; the names of a group `use App\{` sit on lines
@@ -81,11 +119,7 @@ impl Language for Php {
 	}
 
 	fn callable_keywords(&self) -> &'static [&'static str] {
-		&["function"]
-	}
-
-	fn identifier_prefix(&self) -> Option<u8> {
-		Some(b'$')
+		FUNCTION_KEYWORD
 	}
 
 	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {

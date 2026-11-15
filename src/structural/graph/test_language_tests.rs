@@ -45,6 +45,11 @@ impl Language for TestLanguage {
 		"rust"
 	}
 
+	// A test language is reached by name, never by a file extension.
+	fn extensions(&self) -> &'static [&'static str] {
+		&[]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_rust::LANGUAGE.into()
 	}
@@ -140,6 +145,11 @@ impl Language for EmbeddingLanguage {
 		"host"
 	}
 
+	// A test language is reached by name, never by a file extension.
+	fn extensions(&self) -> &'static [&'static str] {
+		&[]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_rust::LANGUAGE.into()
 	}
@@ -164,6 +174,11 @@ pub(super) struct BareLanguage;
 impl Language for BareLanguage {
 	fn name(&self) -> &'static str {
 		"bare"
+	}
+
+	// A test language is reached by name, never by a file extension.
+	fn extensions(&self) -> &'static [&'static str] {
+		&[]
 	}
 
 	fn get_ts_language(&self) -> tree_sitter::Language {

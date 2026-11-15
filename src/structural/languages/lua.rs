@@ -17,6 +17,7 @@
 
 use super::{extract_call_target, parse_call_target, path_ends_with_name, CallTarget, CalleeSyntax, Language};
 use super::{BodyOpen, SymbolKind};
+use super::{PatternGrammar, DOLLAR_EXPANDO};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -35,8 +36,28 @@ impl Language for Lua {
 		"lua"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["lua"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[("function_declaration", "function")]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&["function_declaration"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_lua::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: DOLLAR_EXPANDO,
+		})
 	}
 
 	// `require("m")`, `require 'm'` and the long-string form `require [[m]]`:

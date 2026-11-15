@@ -576,7 +576,17 @@ fn an_include_binds_every_name_of_the_header_and_passes_it_on() {
 #[test]
 fn only_a_header_passes_an_included_header_on() {
 	let include = "#include \"inner.h\"";
-	for header in ["include/outer.h", "include/outer.hpp", "include/outer.hxx"] {
+	let headers = [
+		"include/outer.h",
+		"include/outer.hpp",
+		"include/outer.hxx",
+		"include/outer.hh",
+		"include/outer.h++",
+		"include/outer.ipp",
+		"include/outer.tpp",
+		"include/outer.inl",
+	];
+	for header in headers {
 		assert!(Cpp {}.line_may_reexport(include, "inner", header), "{header}");
 	}
 	// No file includes a source file, so its includes reach nothing further.

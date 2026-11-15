@@ -14,11 +14,13 @@
 
 //! Java grammar: types, records, methods and constructors.
 
+use super::C_STYLE_COMMENTS;
 use super::{enclosing_owner, CalleeSyntax, PackageScope, SymbolKind};
 use super::{
 	files_in_dir_matching, parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language,
 	TypeRelationKind,
 };
+use super::{PatternGrammar, DOLLAR_EXPANDO};
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -36,8 +38,43 @@ impl Language for Java {
 		"java"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["java"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("class_declaration", "class"),
+			("interface_declaration", "interface"),
+			("enum_declaration", "enum"),
+			("record_declaration", "record"),
+			("annotation_type_declaration", "annotation"),
+			("method_declaration", "method"),
+			("constructor_declaration", "constructor"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"class_declaration",
+			"interface_declaration",
+			"enum_declaration",
+			"record_declaration",
+			"method_declaration",
+			"constructor_declaration",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_java::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: DOLLAR_EXPANDO,
+		})
 	}
 
 	// A Java import is one statement with the whole qualified name after
@@ -87,7 +124,7 @@ impl Language for Java {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	// Generic bounds (`T extends A & B`) and wildcards.

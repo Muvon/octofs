@@ -18,12 +18,28 @@
 
 use super::{enclosing_owner, CalleeSyntax, SymbolKind};
 use super::{parse_call_target, path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind};
+use super::{PatternGrammar, DOLLAR_EXPANDO};
+use super::{C_STYLE_COMMENTS, FUNCTION_KEYWORD};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
 use tree_sitter::Node;
 
 /// What closes the module path of a JavaScript or TypeScript import.
 pub(super) const SCRIPT_PATH_END: &str = "'\"`";
+
+/// The nodes that enclose a symbol in a breadcrumb, shared with TypeScript:
+/// its namespace and module containers come with its grammar and match
+/// nothing in a JavaScript tree.
+pub(crate) const CONTAINER_KINDS: &[(&str, &str)] = &[
+	("function_declaration", "function"),
+	("generator_function_declaration", "function"),
+	("method_definition", "method"),
+	("class_declaration", "class"),
+	("interface_declaration", "interface"),
+	("enum_declaration", "enum"),
+	("internal_module", "namespace"),
+	("module", "module"),
+];
 
 // `$` and `#` (private members) are identifier characters; `?.` chains.
 const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
@@ -50,8 +66,34 @@ impl Language for JavaScript {
 		"javascript"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["js", "mjs", "jsx"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		CONTAINER_KINDS
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[
+			"function_declaration",
+			"generator_function_declaration",
+			"class_declaration",
+			"method_definition",
+			"variable_declarator",
+		]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_javascript::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: DOLLAR_EXPANDO,
+		})
 	}
 
 	// The module path is a string literal: the name is its last segment,
@@ -86,7 +128,7 @@ impl Language for JavaScript {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	fn declaration_keywords(&self) -> &'static [&'static str] {
@@ -94,12 +136,7 @@ impl Language for JavaScript {
 	}
 
 	fn callable_keywords(&self) -> &'static [&'static str] {
-		&["function"]
-	}
-
-	// `$el`, `$store`: the `$` is part of the name.
-	fn identifier_prefix(&self) -> Option<u8> {
-		Some(b'$')
+		FUNCTION_KEYWORD
 	}
 
 	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {

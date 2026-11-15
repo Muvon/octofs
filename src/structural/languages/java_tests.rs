@@ -515,6 +515,22 @@ fn a_class_of_the_same_package_is_reached_without_an_import() {
 }
 
 #[test]
+fn files_that_declare_no_package_are_one_package_per_directory() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("src/A.java", "public class A {\n\tvoid run() {\n\t\tnew B();\n\t}\n}\n"),
+		file("src/B.java", "public class B {}\n"),
+		file("other/B.java", "public class B {}\n"),
+	]);
+	assert!(edge(&graph, "src/A.java::A::run", "src/B.java::B", RelationType::Calls).is_some());
+	assert!(edge(&graph, "src/A.java::A::run", "other/B.java::B", RelationType::Calls).is_none());
+}
+
+#[test]
 fn the_package_a_file_declares_is_its_package_scope() {
 	let source = "package com.example.app;\n\nimport com.example.util.Tool;\n\npublic class Main {}\n";
 	let tree = parse(source);

@@ -254,9 +254,8 @@ fn is_identifier_byte(byte: u8) -> bool {
 	byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 
-/// Calls `visit(run, after_prefix)` for every maximal identifier run;
-/// `after_prefix` is whether the byte `prefix` sits right before it.
-fn for_each_identifier_run<'a>(bytes: &'a [u8], prefix: Option<u8>, mut visit: impl FnMut(&'a [u8], bool)) {
+/// Calls `visit(run)` for every maximal identifier run.
+fn for_each_identifier_run<'a>(bytes: &'a [u8], mut visit: impl FnMut(&'a [u8])) {
 	let mut index = 0;
 	while index < bytes.len() {
 		if !is_identifier_byte(bytes[index]) {
@@ -267,10 +266,7 @@ fn for_each_identifier_run<'a>(bytes: &'a [u8], prefix: Option<u8>, mut visit: i
 		while index < bytes.len() && is_identifier_byte(bytes[index]) {
 			index += 1;
 		}
-		visit(
-			&bytes[start..index],
-			start > 0 && prefix.is_some_and(|prefix| bytes[start - 1] == prefix),
-		);
+		visit(&bytes[start..index]);
 	}
 }
 
@@ -278,7 +274,7 @@ fn for_each_identifier_run<'a>(bytes: &'a [u8], prefix: Option<u8>, mut visit: i
 /// `my` and `func`. Each distinct run once.
 pub(super) fn identifier_runs(name: &str) -> Vec<&str> {
 	let mut runs: Vec<&str> = Vec::new();
-	for_each_identifier_run(name.as_bytes(), None, |run, _| {
+	for_each_identifier_run(name.as_bytes(), |run| {
 		// A run of identifier bytes is whole UTF-8 sequences, so it is valid text.
 		if let Ok(text) = std::str::from_utf8(run) {
 			if !runs.contains(&text) {
@@ -289,12 +285,9 @@ pub(super) fn identifier_runs(name: &str) -> Vec<&str> {
 	runs
 }
 
-/// The hash of a run, or of the run with the prefix byte in front of it.
-fn hash_run(run: &[u8], prefix: Option<u8>) -> u64 {
+/// The hash of a run.
+fn hash_run(run: &[u8]) -> u64 {
 	let mut hash = FNV_OFFSET;
-	if let Some(prefix) = prefix {
-		hash = (hash ^ u64::from(prefix)).wrapping_mul(FNV_PRIME);
-	}
 	for byte in run {
 		hash = (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME);
 	}
@@ -392,17 +385,11 @@ fn read_capped_into(path: &Path, buffer: &mut Vec<u8>) -> bool {
 }
 
 /// Calls `use_hashes` with the sorted distinct hashes of every token of
-/// `bytes`, plus the form with `prefix` in front of a token written that way
-/// (a sigil such as `$`).
-fn with_token_hashes<T>(bytes: &[u8], prefix: Option<u8>, use_hashes: impl FnOnce(&[u64]) -> T) -> T {
+/// `bytes`.
+fn with_token_hashes<T>(bytes: &[u8], use_hashes: impl FnOnce(&[u64]) -> T) -> T {
 	HASH_BUFFER.with_borrow_mut(|hashes| {
 		hashes.clear();
-		for_each_identifier_run(bytes, prefix, |run, after_prefix| {
-			hashes.push(hash_run(run, None));
-			if after_prefix {
-				hashes.push(hash_run(run, prefix));
-			}
-		});
+		for_each_identifier_run(bytes, |run| hashes.push(hash_run(run)));
 		hashes.sort_unstable();
 		hashes.dedup();
 		let result = use_hashes(hashes);
@@ -412,8 +399,8 @@ fn with_token_hashes<T>(bytes: &[u8], prefix: Option<u8>, use_hashes: impl FnOnc
 }
 
 #[cfg(test)]
-fn token_hashes(bytes: &[u8], prefix: Option<u8>) -> Vec<u64> {
-	with_token_hashes(bytes, prefix, <[u64]>::to_vec)
+fn token_hashes(bytes: &[u8]) -> Vec<u64> {
+	with_token_hashes(bytes, <[u64]>::to_vec)
 }
 
 // ── Estimated size of parsed data ──────────────────────────────────────────
@@ -953,14 +940,12 @@ impl CodeIndex {
 		state.parsed.clear();
 	}
 
-	fn build_filter(&self, path: &str, language: &str, bits_per_token: usize) -> FilterOutcome {
+	fn build_filter(&self, path: &str, bits_per_token: usize) -> FilterOutcome {
 		self.work.count_read();
 		let full_path = self.root.join(path);
 		let filter = READ_BUFFER.with_borrow_mut(|buffer| {
 			if read_capped_into(&full_path, buffer) {
-				with_token_hashes(buffer, spelling_rules(language).identifier_prefix, |hashes| {
-					TokenFilter::build(hashes, bits_per_token)
-				})
+				with_token_hashes(buffer, |hashes| TokenFilter::build(hashes, bits_per_token))
 			} else {
 				TokenFilter::empty()
 			}
@@ -1001,14 +986,14 @@ impl CodeIndex {
 				if !state.indexed {
 					return Err(IndexUnavailable.into());
 				}
-				let pending: Vec<(FileId, String, &'static str, Stamp)> = state
+				let pending: Vec<(FileId, String, Stamp)> = state
 					.files
 					.iter()
 					.enumerate()
 					.filter(|(index, entry)| entry.is_some() && state.filters[*index].is_none())
 					.filter_map(|(index, entry)| {
 						let entry = entry.as_ref()?;
-						Some((index as FileId, entry.path.clone(), entry.language, entry.stamp))
+						Some((index as FileId, entry.path.clone(), entry.stamp))
 					})
 					.collect();
 				(pending, state.bits_per_token)
@@ -1018,7 +1003,7 @@ impl CodeIndex {
 			}
 			let outcomes: Vec<(FileId, Stamp, FilterOutcome)> = pending
 				.into_par_iter()
-				.map(|(id, path, language, stamp)| (id, stamp, self.build_filter(&path, language, bits_per_token)))
+				.map(|(id, path, stamp)| (id, stamp, self.build_filter(&path, bits_per_token)))
 				.collect();
 			let mut out_of_memory = false;
 			let mut state = lock(&self.state);
@@ -1085,7 +1070,7 @@ impl CodeIndex {
 			return Ok((Vec::new(), runs));
 		}
 		self.ensure_filters()?;
-		let hashes: Vec<u64> = runs.iter().map(|run| hash_run(run.as_bytes(), None)).collect();
+		let hashes: Vec<u64> = runs.iter().map(|run| hash_run(run.as_bytes())).collect();
 		let state = lock(&self.state);
 		let hits = state
 			.filters
@@ -1163,7 +1148,7 @@ impl CodeIndex {
 					}
 					let mut found = 0;
 					let mut seen: HashSet<&[u8]> = HashSet::new();
-					for_each_identifier_run(buffer, None, |run, _| {
+					for_each_identifier_run(buffer, |run| {
 						if let Some(token) = wanted.get(run) {
 							if seen.insert(token) {
 								found += 1;
@@ -1943,7 +1928,7 @@ fn looks_like_declaration(bytes: &[u8], start: usize, end: usize, rules: &Spelli
 fn scan_spelling(bytes: &[u8], wanted: &HashSet<&[u8]>, simple: &[u8], rules: &SpellingRules) -> Option<bool> {
 	let mut seen: HashSet<&[u8]> = HashSet::new();
 	let mut declares = false;
-	for_each_identifier_run(bytes, None, |run, _| {
+	for_each_identifier_run(bytes, |run| {
 		if let Some(token) = wanted.get(run) {
 			seen.insert(token);
 		}

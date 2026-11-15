@@ -31,12 +31,20 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// resolves imports. `Sync` because files are parsed in parallel.
 pub(crate) type LanguageLookup<'a> = &'a (dyn Fn(&str) -> Option<Box<dyn Language>> + Sync);
 
+/// What names a package: the package a file declares, or the directory of a
+/// file that declares none (its unnamed package). The two never meet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PackageName {
+	Declared(String),
+	Directory(String),
+}
+
 /// The package a file belongs to: its members see each other's top-level
 /// names without importing them. A package never spans two languages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Package {
 	language: String,
-	name: String,
+	name: PackageName,
 }
 
 /// Confidence of a fact read straight from the syntax (a symbol calling
@@ -241,6 +249,16 @@ fn declaration_base_id(path: &str, symbol: &SymbolDecl) -> String {
 	} else {
 		format!("{}::{}", path, symbol.name)
 	}
+}
+
+/// The type a constructor builds when the declaration is not named after it
+/// (a Swift `init`); a constructor named after its type is found by that name
+/// already.
+fn constructed_type(symbol: &SymbolDecl) -> Option<&str> {
+	symbol
+		.owner
+		.as_deref()
+		.filter(|owner| symbol.is_constructor && *owner != symbol.name)
 }
 
 /// Generate stable, human-readable symbol ids for one file. Only true
@@ -557,6 +575,19 @@ impl SymbolIndex {
 				if symbol.is_constructor {
 					index.constructors.insert(id.clone());
 				}
+				// A call that names a type builds it through its constructor,
+				// whatever the language calls that declaration (`init`): the
+				// type's name reaches the constructor as well.
+				if let Some(type_name) = constructed_type(symbol) {
+					index.by_name.entry(type_name.to_string()).or_default().push(id.clone());
+					index
+						.by_file
+						.entry(file.path.clone())
+						.or_default()
+						.entry(type_name.to_string())
+						.or_default()
+						.push(id.clone());
+				}
 				index
 					.by_file
 					.entry(file.path.clone())
@@ -589,7 +620,11 @@ impl SymbolIndex {
 				}
 			}
 			index.by_file_symbol_ids.insert(file.path.clone(), ids);
-			let mut names: Vec<&str> = file.symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+			let mut names: Vec<&str> = file
+				.symbols
+				.iter()
+				.flat_map(|symbol| std::iter::once(symbol.name.as_str()).chain(constructed_type(symbol)))
+				.collect();
 			names.sort_unstable();
 			names.dedup();
 			for name in names {
@@ -1012,14 +1047,21 @@ impl<'a> ImportResolver<'a> {
 	/// The package `file` belongs to, with the language in it: files of two
 	/// languages never share one.
 	fn package_of(&self, file: &SymbolFileData) -> Option<Package> {
+		let directory = || {
+			PackageName::Directory(
+				file.path
+					.rsplit_once('/')
+					.map_or("", |(directory, _)| directory)
+					.to_string(),
+			)
+		};
 		let name = match (self.lookup)(&file.language)?.package_scope() {
 			PackageScope::NoPackage => return None,
-			PackageScope::Directory => file
-				.path
-				.rsplit_once('/')
-				.map_or("", |(directory, _)| directory)
-				.to_string(),
-			PackageScope::Declared => file.declared_package.clone()?,
+			PackageScope::Directory => directory(),
+			PackageScope::Declared => file
+				.declared_package
+				.clone()
+				.map_or_else(directory, PackageName::Declared),
 		};
 		Some(Package {
 			language: file.language.clone(),

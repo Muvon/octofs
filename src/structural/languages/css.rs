@@ -26,6 +26,15 @@ impl Language for Css {
 		"css"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["css", "scss", "sass"]
+	}
+
+	// Selectors and at-rules are not symbols a name can be looked up by.
+	fn has_navigable_symbols(&self) -> bool {
+		false
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		// The CSS parser also handles SCSS/SASS syntax.
 		tree_sitter_css::LANGUAGE.into()

@@ -46,7 +46,14 @@ layout is in [architecture.md](architecture.md).
 Outline: Rust, Python, JavaScript, TypeScript, Go, Java, C/C++, PHP, Bash, Ruby,
 Lua, JSON, Swift, Svelte, CSS, Elixir, Markdown (`src/structural/languages/`,
 `SUPPORTED_LANGUAGES` in `src/structural/mod.rs`). The extension picks the
-grammar; a file with another extension fails with this list.
+grammar; a file with another extension fails with this list. Extensions:
+
+- Rust `rs`; Python `py`; Go `go`; Java `java`; PHP `php`; Ruby `rb`; Lua `lua`;
+  Swift `swift`; Svelte `svelte`; JSON `json`; Markdown `md`, `markdown`.
+- JavaScript `js`, `mjs`, `jsx`; TypeScript `ts`; TSX `tsx`; Elixir `ex`, `exs`.
+- Bash `sh`, `bash`; CSS `css`, `scss`, `sass`.
+- C and C++ sources `c`, `cc`, `cpp`, `cxx`, `c++`, `cppm`, `ixx`, `mxx`, `ccm`,
+  `cxxm`; headers `h`, `hpp`, `hxx`, `hh`, `h++`, `ipp`, `tpp`, `inl`.
 
 Support differs by feature. Outline works for all of the above. AST search covers
 all except CSS, JSON and Markdown (a Svelte file is searched through its
@@ -76,7 +83,10 @@ says why.
 "Package scope" means that files of one package see each other's names without an
 import, so a call to such a name resolves to the other file: Go and Swift treat
 the files of one directory as a package, Java and PHP use the declared package or
-namespace.
+namespace. A Java or PHP file with no `package` or namespace line belongs to the
+unnamed package of its directory.
+
+In Swift, a call that names a type (`Widget()`) reaches the `init` of that type.
 
 Three resolution rules are worth knowing:
 
@@ -371,16 +381,15 @@ disk.
 - **Parsing.** Only the files a query can need are parsed, level by level for
   `depth`, on a pool of at most 6 threads. A cap of 600 files and 800 ms applies
   per query; cached files are free, and at least one chunk of files is always
-  parsed so a repeat gets further. Measured on 6 threads: about 10 MB of source
-  per second, 72 % of it tree-sitter parsing and 25 % symbol extraction, so a
-  query examines roughly 150 to 400 files before the clock stops it.
+  parsed so a repeat gets further.
 - **Which files a relation reads.**
   - Definitions of `name`: files that look like declaring it first (the files
     under `path` when given), then the others that spell it. `Owner::name` needs
     both names.
   - `callers`: files spelling the name, the importers of the definition file
     first. With several definitions, only the definition files and their
-    importers.
+    importers. The other files of the definition's package are read only when
+    they spell the name.
   - `callees`, `supertypes`: the definition file, then each followed name in the
     files it imports, and repository-wide only when at most 200 files spell it.
     `get` and `push` are not searched repository-wide, so a `(guess)` hop to
@@ -418,48 +427,46 @@ resident memory of the process, which is larger than the 160 MB of index data.
 
 | Repository | From, to | First call | Repeated call | Peak memory (MB) |
 |---|---|---|---|---|
-| go | `ListenAndServe`, `readRequest` | 208 / 212 | 41 / 44 | 49 / 50 |
-| go | `ListenAndServe`, `Errorf` | 326 / 331 | 37 / 40 | 55 / 59 |
-| vscode | `createDecorator`, `storeServiceDependency` | 283 / 293 | 72 / 75 | 65 / 65 |
-| django | `redirect`, `reverse` | 1118 / 1171 | 33 / 35 | 74 / 74 |
-| tokio | `spawn_blocking_inner`, `spawn_thread` | 23 / 30 | 3 / 3 | 15 / 15 |
-| cargo | `compile`, `create_bcx` | 76 / 77 | 17 / 19 | 22 / 22 |
-| Linux tree | `list_add_tail`, `__list_add_valid` | 1255 / 1317 | 209 / 224 | 165 / 169 |
+| go | `ListenAndServe`, `readRequest` | 200 / 206 | 40 / 44 | 50 / 51 |
+| go | `ListenAndServe`, `Errorf` | 319 / 326 | 39 / 42 | 55 / 55 |
+| vscode | `createDecorator`, `storeServiceDependency` | 278 / 281 | 72 / 74 | 64 / 65 |
+| django | `redirect`, `reverse` | 1124 / 1147 | 32 / 35 | 74 / 75 |
+| tokio | `spawn_blocking_inner`, `spawn_thread` | 24 / 30 | 3 / 4 | 15 / 15 |
+| cargo | `compile`, `create_bcx` | 76 / 78 | 17 / 19 | 22 / 23 |
+| Linux tree | `list_add_tail`, `__list_add_valid` | 1244 / 1253 | 215 / 232 | 158 / 190 |
 
 Sequences of `callers` and `imported_by` queries in one process (first call /
 repeated call):
 
 | Repository | Query | First call | Repeated call |
 |---|---|---|---|
-| vscode | `callers createDecorator` | 911 / 925 | 74 / 178 |
-| vscode | `callers dispose` | 78 / 79 | 71 / 77 |
-| vscode | `imported_by src/vs/base/common/lifecycle.ts` | 697 / 748 | 1184 / 1199 |
-| go | `callers ListenAndServe` | 482 / 501 | 41 / 42 |
-| go | `callers Close` | 508 / 531 | 40 / 42 |
-| go | `imported_by src/net/http/server.go` | 189 / 194 | 40 / 41 |
-| django | `callers get_object_or_404` | 59 / 60 | 33 / 35 |
-| django | `callers get` | 135 / 143 | 33 / 39 |
-| django | `imported_by django/db/models/query.py` | 172 / 189 | 33 / 34 |
-| tokio | `callers spawn_blocking` | 21 / 22 | 3 / 4 |
-| tokio | `callers poll` | 68 / 69 | 3 / 4 |
-| tokio | `imported_by tokio/src/runtime/mod.rs` | 171 / 184 | 3 / 4 |
-| cargo | `callers compile` | 397 / 404 | 18 / 19 |
-| cargo | `callers new` | 140 / 161 | 18 / 19 |
-| cargo | `imported_by src/util/mod.rs` | 167 / 170 | 18 / 18 |
-| Linux tree | `callers kmalloc` | 2068 / 2166 | 1313 / 1376 |
-| Linux tree | `callers list_add_tail` | 1168 / 1182 | 657 / 950 |
-| Linux tree | `callers init` | 206 / 218 | 204 / 222 |
-| Linux tree | `imported_by include/linux/list.h` | 1119 / 1157 | 1028 / 1195 |
+| vscode | `callers createDecorator` | 845 / 873 | 72 / 179 |
+| vscode | `callers dispose` | 77 / 80 | 74 / 79 |
+| vscode | `imported_by src/vs/base/common/lifecycle.ts` | 686 / 714 | 1091 / 1132 |
+| go | `callers ListenAndServe` | 405 / 419 | 42 / 42 |
+| go | `callers Close` | 578 / 595 | 41 / 42 |
+| go | `imported_by src/net/http/server.go` | 197 / 208 | 40 / 43 |
+| django | `callers get_object_or_404` | 57 / 58 | 34 / 35 |
+| django | `callers get` | 127 / 129 | 33 / 37 |
+| django | `imported_by django/db/models/query.py` | 155 / 160 | 34 / 35 |
+| tokio | `callers spawn_blocking` | 21 / 25 | 3 / 4 |
+| tokio | `callers poll` | 62 / 69 | 3 / 3 |
+| tokio | `imported_by tokio/src/runtime/mod.rs` | 164 / 166 | 3 / 4 |
+| cargo | `callers compile` | 377 / 395 | 18 / 21 |
+| cargo | `callers new` | 140 / 149 | 18 / 21 |
+| cargo | `imported_by src/util/mod.rs` | 167 / 171 | 18 / 21 |
+| Linux tree | `callers kmalloc` | 2069 / 2078 | 1324 / 1370 |
+| Linux tree | `callers list_add_tail` | 1155 / 1166 | 210 / 941 |
+| Linux tree | `callers init` | 212 / 215 | 212 / 229 |
+| Linux tree | `imported_by include/linux/list.h` | 1126 / 1127 | 1016 / 1185 |
 
-Peak memory of those sequences (MB): vscode 238 / 243, go 98 / 99, django 50 / 51,
-tokio 37 / 37, cargo 45 / 46, Linux tree 336 / 351. The Linux tree peak ranged
+Peak memory of those sequences (MB): vscode 239 / 242, go 98 / 100, django 49 / 50,
+tokio 37 / 38, cargo 46 / 47, Linux tree 345 / 359. The Linux tree peak ranged
 from 280 to 370 MB across runs, depending on machine load.
 
 A repeated query is fast only when its answer is complete. A query that still has
 files to examine, such as `callers kmalloc` on the Linux tree, spends its 800 ms
 budget again on every repeat, which is why some repeated times above stay high.
-
-Files skipped by the 1 MB limit: 6 in vscode, 4 in go, 117 in the Linux tree.
 
 ## Limits
 

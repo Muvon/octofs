@@ -676,3 +676,29 @@ fn only_languages_with_packages_declare_a_package_scope() {
 		assert_eq!(get_language(name).unwrap().package_scope(), scope, "{name}");
 	}
 }
+
+/// The languages that offer no AST pattern search: a syntax-tree pattern buys
+/// nothing over their outline, symbol and content modes.
+const WITHOUT_PATTERN_GRAMMAR: [&str; 2] = ["css", "json"];
+
+#[test]
+fn every_language_offers_a_pattern_grammar_except_css_and_json() {
+	for (name, make) in super::LANGUAGES {
+		let grammar = make().pattern_grammar();
+		assert_eq!(grammar.is_some(), !WITHOUT_PATTERN_GRAMMAR.contains(&name), "{name}");
+		if let Some(grammar) = grammar {
+			let found = super::pattern_grammar_named(grammar.name).expect(name);
+			assert_eq!(found.name, grammar.name, "{name}");
+		}
+	}
+}
+
+#[test]
+fn plain_c_files_are_parsed_with_their_own_grammar_and_other_extensions_with_the_language() {
+	let c = super::pattern_grammar_for_extension("c").unwrap();
+	let header = super::pattern_grammar_for_extension("h").unwrap();
+	let cpp = super::pattern_grammar_for_extension("hpp").unwrap();
+	assert_eq!((c.name, header.name, cpp.name), ("c", "c", "cpp"));
+	assert!(super::pattern_grammar_for_extension("json").is_none());
+	assert!(super::pattern_grammar_for_extension("md").is_none());
+}

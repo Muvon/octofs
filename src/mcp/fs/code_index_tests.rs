@@ -83,32 +83,15 @@ fn identifier_runs_split_names_at_non_identifier_bytes() {
 fn non_ascii_identifiers_are_single_tokens() {
 	assert_eq!(identifier_runs("größe_x"), vec!["größe_x"]);
 	assert_eq!(identifier_runs("名前 変数"), vec!["名前", "変数"]);
-	let hashes = token_hashes("let größe = 1;".as_bytes(), None);
-	assert!(hashes.contains(&hash_run("größe".as_bytes(), None)));
-	assert!(!hashes.contains(&hash_run("gr".as_bytes(), None)));
-}
-
-#[test]
-fn a_dollar_prefixed_token_is_also_stored_with_its_dollar() {
-	let prefix = spelling_rules("bash").identifier_prefix;
-	assert_eq!(prefix, Some(b'$'));
-	let hashes = token_hashes(b"echo $name; name2", prefix);
-	assert!(hashes.contains(&hash_run(b"name", None)));
-	assert!(hashes.contains(&hash_run(b"name", prefix)));
-	assert!(!hashes.contains(&hash_run(b"name2", prefix)));
-
-	// A language whose identifiers have no prefix stores the plain token only.
-	assert_eq!(spelling_rules("rust").identifier_prefix, None);
-	let plain = token_hashes(b"echo $name", None);
-	assert!(!plain.contains(&hash_run(b"name", Some(b'$'))));
+	let hashes = token_hashes("let größe = 1;".as_bytes());
+	assert!(hashes.contains(&hash_run("größe".as_bytes())));
+	assert!(!hashes.contains(&hash_run("gr".as_bytes())));
 }
 
 #[test]
 fn the_filter_has_no_false_negatives_and_few_false_positives() {
 	let present: Vec<u64> = {
-		let mut hashes: Vec<u64> = (0..5000)
-			.map(|n| hash_run(format!("token{n}").as_bytes(), None))
-			.collect();
+		let mut hashes: Vec<u64> = (0..5000).map(|n| hash_run(format!("token{n}").as_bytes())).collect();
 		hashes.sort_unstable();
 		hashes.dedup();
 		hashes
@@ -116,14 +99,14 @@ fn the_filter_has_no_false_negatives_and_few_false_positives() {
 	let filter = TokenFilter::build(&present, BITS_PER_TOKEN);
 	assert!(present.iter().all(|hash| filter.contains(*hash)));
 	let false_positives = (0..20_000)
-		.filter(|n| filter.contains(hash_run(format!("absent{n}").as_bytes(), None)))
+		.filter(|n| filter.contains(hash_run(format!("absent{n}").as_bytes())))
 		.count();
 	assert!(false_positives < 100, "{false_positives} of 20000 absent tokens hit");
 }
 
 #[test]
 fn a_smaller_filter_still_has_no_false_negatives() {
-	let mut hashes: Vec<u64> = (0..2000).map(|n| hash_run(format!("t{n}").as_bytes(), None)).collect();
+	let mut hashes: Vec<u64> = (0..2000).map(|n| hash_run(format!("t{n}").as_bytes())).collect();
 	hashes.sort_unstable();
 	let filter = TokenFilter::build(&hashes, MIN_BITS_PER_TOKEN);
 	assert!(hashes.iter().all(|hash| filter.contains(*hash)));

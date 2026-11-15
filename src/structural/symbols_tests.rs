@@ -293,6 +293,16 @@ fn cpp_names_are_the_declared_symbol_not_the_return_type() {
 }
 
 #[test]
+fn cpp_header_conventions_are_searched_for_definitions() {
+	let src = "inline int add(int a, int b) {\n\treturn a + b;\n}\n";
+	for label in ["a.hh", "a.h++", "a.ipp", "a.tpp", "a.inl"] {
+		let hits = find_definitions(label, src, &NameMatcher::new("add").unwrap()).unwrap();
+		assert_eq!(hits.len(), 1, "{label}");
+		assert_eq!(hits[0].line, 1, "{label}");
+	}
+}
+
+#[test]
 fn cpp_qualified_operator_and_destructor_names() {
 	let src = "int Foo::bar() {\n\treturn 0;\n}\n\nFoo::~Foo() {\n}\n\nFoo Foo::operator+(const Foo& other) {\n\treturn *this;\n}\n";
 	for name in ["bar", "~Foo", "operator+"] {

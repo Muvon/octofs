@@ -15,11 +15,13 @@
 //! Swift grammar: functions, classes, protocols, initializers and type
 //! aliases.
 
+use super::C_STYLE_COMMENTS;
 use super::{enclosing_owner, CalleeSyntax, PackageScope, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, files_in_dir_matching, parse_call_target, simple_type_name, CallTarget, Language,
 	TypeRelationKind,
 };
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
 use tree_sitter::Node;
@@ -42,8 +44,32 @@ impl Language for Swift {
 		"swift"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["swift"]
+	}
+
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[
+			("function_declaration", "func"),
+			("class_declaration", "class"),
+			("protocol_declaration", "protocol"),
+		]
+	}
+
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&["function_declaration", "class_declaration", "protocol_declaration"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_swift::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// An import is one line: the module path follows `import` (after any
@@ -69,7 +95,7 @@ impl Language for Swift {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["//", "/*"]
+		C_STYLE_COMMENTS
 	}
 
 	// Protocol composition (`A & B`) and generic arguments.

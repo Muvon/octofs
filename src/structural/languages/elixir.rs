@@ -16,11 +16,13 @@
 //! `call` nodes, so items are classified by their call target instead of by
 //! node kind.
 
+use super::HASH_COMMENTS;
 use super::{
 	extract_call_target, parse_call_target, path_ends_with_components, CallTarget, CalleeSyntax, Language,
 	TypeRelationKind,
 };
 use super::{stem_and_directory, BodyOpen, SymbolKind};
+use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -95,8 +97,20 @@ impl Language for Elixir {
 		"elixir"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["ex", "exs"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_elixir::LANGUAGE.into()
+	}
+
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		Some(PatternGrammar {
+			name: self.name(),
+			grammar: self.get_ts_language(),
+			expando: IDENTIFIER_EXPANDO,
+		})
 	}
 
 	// `alias MyApp.{` newline `Repo,` newline `User` leaves a bare module name
@@ -145,17 +159,11 @@ impl Language for Elixir {
 		None
 	}
 
+	// The outline words the kinds the graph does.
 	fn extract_declaration_kind(&self, node: Node, contents: &str) -> Option<&'static str> {
-		match call_macro_name(node, contents)?.as_str() {
-			"defmodule" => Some("module"),
-			"defprotocol" => Some("interface"),
-			"defimpl" => Some("implementation"),
-			"defstruct" => Some("struct"),
-			"defexception" => Some("class"),
-			name if TEST_DEFINITION_MACROS.contains(&name) => Some("function"),
-			"defmacro" | "defmacrop" | "defmacrocallback" => Some("macro"),
-			name if FUNCTION_DEFINITION_MACROS.contains(&name) => Some("function"),
-			_ => None,
+		match self.symbol_kind(node, contents) {
+			SymbolKind::Other => None,
+			kind => Some(kind.as_str()),
 		}
 	}
 
@@ -190,7 +198,7 @@ impl Language for Elixir {
 	}
 
 	fn comment_starts(&self) -> &'static [&'static str] {
-		&["#"]
+		HASH_COMMENTS
 	}
 
 	fn import_name_separators(&self) -> &'static [char] {
@@ -218,6 +226,25 @@ impl Language for Elixir {
 			}
 			_ => SymbolKind::Other,
 		}
+	}
+
+	// Every declaration is a `call`; the declaration name rules tell the
+	// definitions from the other calls.
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&["call"]
+	}
+
+	// Elixir has no `name` field: any enclosing declaration that names the
+	// identifier makes it a definition site.
+	fn is_definition_name(&self, node: Node, text: &str, contents: &str) -> bool {
+		let mut ancestor = node.parent();
+		while let Some(current) = ancestor {
+			if self.extract_declaration_name(current, contents).as_deref() == Some(text) {
+				return true;
+			}
+			ancestor = current.parent();
+		}
+		false
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {

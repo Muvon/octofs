@@ -25,15 +25,14 @@ use ast_grep_core::tree_sitter::{LanguageExt, StrDoc};
 use ast_grep_core::{Pattern, PatternError};
 use std::borrow::Cow;
 
-use super::languages;
+use super::languages::{self, PatternGrammar};
 
 /// Rewrite `$` metavariables to `expando` before parsing, mirroring
 /// ast-grep's own language configs: languages whose identifiers cannot start
-/// with `$` (rust, python, go, ruby, swift, php, elixir use `µ`, C and C++
-/// `𐀀`) would otherwise parse `$NAME` into error nodes that match nothing.
-/// `$`s that are not metavariable-shaped — lowercase names, `$` inside
-/// literals — are left alone. With `expando == '$'` this is the identity
-/// rewrite.
+/// with `$` would otherwise parse `$NAME` into error nodes that match
+/// nothing. `$`s that are not metavariable-shaped — lowercase names, `$`
+/// inside literals — are left alone. With `expando == '$'` this is the
+/// identity rewrite.
 fn expand_pattern(expando: char, query: &str) -> Cow<'_, str> {
 	let mut ret = Vec::with_capacity(query.len());
 	let mut dollar_count = 0;
@@ -55,151 +54,41 @@ fn expand_pattern(expando: char, query: &str) -> Cow<'_, str> {
 	Cow::Owned(ret.into_iter().collect())
 }
 
-/// Bridge the tree-sitter grammar crates to ast-grep's language traits. The
+/// Bridge a language's pattern grammar to ast-grep's language traits. The
 /// expando char replaces metavariable `$`s at parse time for languages whose
-/// identifiers may not start with `$` (ast-grep's configs use `µ` for them,
-/// `𐀀` for C/C++); languages where `$` is a valid identifier character keep
-/// `$`, making the rewrite a no-op.
-macro_rules! define_ast_grep_lang {
-	($name:ident, $ts_lang:expr, $expando:expr) => {
-		#[derive(Clone, Copy)]
-		pub struct $name;
+/// identifiers may not start with `$`; where `$` is a valid identifier
+/// character the rewrite is a no-op.
+impl AstGrepLanguage for PatternGrammar {
+	fn expando_char(&self) -> char {
+		self.expando
+	}
 
-		impl AstGrepLanguage for $name {
-			fn expando_char(&self) -> char {
-				$expando
-			}
+	fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
+		expand_pattern(self.expando, query)
+	}
 
-			fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
-				expand_pattern($expando, query)
-			}
+	fn kind_to_id(&self, kind: &str) -> u16 {
+		self.grammar.id_for_node_kind(kind, true)
+	}
 
-			fn kind_to_id(&self, kind: &str) -> u16 {
-				let ts_lang: tree_sitter::Language = $ts_lang.into();
-				ts_lang.id_for_node_kind(kind, true)
-			}
+	fn field_to_id(&self, field: &str) -> Option<u16> {
+		self.grammar.field_id_for_name(field).map(|f| f.get())
+	}
 
-			fn field_to_id(&self, field: &str) -> Option<u16> {
-				self.get_ts_language().field_id_for_name(field).map(|f| f.get())
-			}
-
-			fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-				builder.build(|src| StrDoc::try_new(src, self.clone()))
-			}
-		}
-
-		impl LanguageExt for $name {
-			fn get_ts_language(&self) -> tree_sitter::Language {
-				$ts_lang.into()
-			}
-		}
-	};
+	fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
+		builder.build(|src| StrDoc::try_new(src, self.clone()))
+	}
 }
 
-define_ast_grep_lang!(AstRust, tree_sitter_rust::LANGUAGE, 'µ');
-define_ast_grep_lang!(AstJavaScript, tree_sitter_javascript::LANGUAGE, '$');
-define_ast_grep_lang!(AstTypeScript, tree_sitter_typescript::LANGUAGE_TYPESCRIPT, '$');
-define_ast_grep_lang!(AstTsx, tree_sitter_typescript::LANGUAGE_TSX, '$');
-define_ast_grep_lang!(AstPython, tree_sitter_python::LANGUAGE, 'µ');
-define_ast_grep_lang!(AstGo, tree_sitter_go::LANGUAGE, 'µ');
-define_ast_grep_lang!(AstJava, tree_sitter_java::LANGUAGE, '$');
-define_ast_grep_lang!(AstCpp, tree_sitter_cpp::LANGUAGE, '𐀀');
-// Plain C gets its own grammar: the C++ grammar parses .c files into
-// `declaration` nodes that ellipsis-body patterns never match, while the C
-// grammar yields `function_definition` like upstream ast-grep's `--lang c`.
-define_ast_grep_lang!(AstC, tree_sitter_c::LANGUAGE, '𐀀');
-// PHP patterns carry no `<?php` prologue, so they parse with the tagless
-// PHP-only grammar (ast-grep's own choice); a prologue in the file itself
-// recovers as an error node that matching simply walks past.
-define_ast_grep_lang!(AstPhp, tree_sitter_php::LANGUAGE_PHP_ONLY, 'µ');
-define_ast_grep_lang!(AstRuby, tree_sitter_ruby::LANGUAGE, 'µ');
-define_ast_grep_lang!(AstSwift, tree_sitter_swift::LANGUAGE, 'µ');
-define_ast_grep_lang!(AstLua, tree_sitter_lua::LANGUAGE, '$');
-define_ast_grep_lang!(AstBash, tree_sitter_bash::LANGUAGE, '$');
-define_ast_grep_lang!(AstElixir, tree_sitter_elixir::LANGUAGE, 'µ');
+impl LanguageExt for PatternGrammar {
+	fn get_ts_language(&self) -> tree_sitter::Language {
+		self.grammar.clone()
+	}
+}
 
-/// Dispatch a search by language string. Each arm binds the `Ast*` type and
-/// monomorphizes the generic helper for it.
-macro_rules! dispatch_lang {
-	($lang_str:expr, |$lang:ident| $body:expr) => {
-		match $lang_str {
-			"rust" => {
-				#[allow(unused_variables)]
-				let $lang = AstRust;
-				$body
-			}
-			"javascript" => {
-				#[allow(unused_variables)]
-				let $lang = AstJavaScript;
-				$body
-			}
-			"typescript" => {
-				#[allow(unused_variables)]
-				let $lang = AstTypeScript;
-				$body
-			}
-			"tsx" => {
-				let $lang = AstTsx;
-				$body
-			}
-			"python" => {
-				#[allow(unused_variables)]
-				let $lang = AstPython;
-				$body
-			}
-			"go" => {
-				#[allow(unused_variables)]
-				let $lang = AstGo;
-				$body
-			}
-			"java" => {
-				#[allow(unused_variables)]
-				let $lang = AstJava;
-				$body
-			}
-			"cpp" => {
-				#[allow(unused_variables)]
-				let $lang = AstCpp;
-				$body
-			}
-			"c" => {
-				#[allow(unused_variables)]
-				let $lang = AstC;
-				$body
-			}
-			"php" => {
-				#[allow(unused_variables)]
-				let $lang = AstPhp;
-				$body
-			}
-			"ruby" => {
-				#[allow(unused_variables)]
-				let $lang = AstRuby;
-				$body
-			}
-			"swift" => {
-				#[allow(unused_variables)]
-				let $lang = AstSwift;
-				$body
-			}
-			"lua" => {
-				#[allow(unused_variables)]
-				let $lang = AstLua;
-				$body
-			}
-			"bash" => {
-				#[allow(unused_variables)]
-				let $lang = AstBash;
-				$body
-			}
-			"elixir" => {
-				#[allow(unused_variables)]
-				let $lang = AstElixir;
-				$body
-			}
-			_ => Err(format!("No grammar implementation for language '{}'.", $lang_str)),
-		}
-	};
+fn grammar_named(language: &str) -> Result<PatternGrammar, String> {
+	languages::pattern_grammar_named(language)
+		.ok_or_else(|| format!("No grammar implementation for language '{language}'."))
 }
 
 /// One match: the 1-based line the matched node starts at, and how many
@@ -223,23 +112,11 @@ pub struct PatternInfo {
 }
 
 /// The language an AST-pattern search uses for a path label. None for files
-/// without a grammar and for css/json/markdown, where a syntax-tree pattern
-/// buys nothing over the outline, symbol and content modes. `.c`/`.h` use the
-/// C grammar — upstream ast-grep's own mapping; the C++ grammar mis-parses
-/// plain C so ellipsis-body patterns miss. The outline and symbol modes keep
-/// `language_for_extension`'s C++ mapping for `.c`/`.h`, which serves them
-/// correctly.
+/// without a grammar and for the languages that offer no pattern search,
+/// where a syntax-tree pattern buys nothing over the outline, symbol and
+/// content modes.
 pub fn ast_language(path_label: &str) -> Option<&'static str> {
-	let extension = super::path_extension(path_label);
-	let language = super::language_for_extension(&extension)?;
-	let language = match extension.as_str() {
-		"c" | "h" => "c",
-		_ => language,
-	};
-	match language {
-		"css" | "json" | "markdown" => None,
-		language => Some(language),
-	}
+	languages::pattern_grammar_for_extension(&super::path_extension(path_label)).map(|grammar| grammar.name)
 }
 
 /// The error a single-file AST search on an unsupported file reports. Mirrors
@@ -253,18 +130,21 @@ pub fn unsupported_message(language: &str) -> String {
 
 /// Search one source for every node matching the ast-grep pattern. The error
 /// is the pattern's parse error for the language; callers wrap it with the
-/// language name. Svelte searches each `<script>` block with the JS/TS
-/// grammar and offsets hits back to file coordinates.
+/// language name. A file that holds code of other languages (Svelte
+/// scripts) is searched block by block with each block's own grammar, and
+/// hits are offset back to file coordinates.
 pub fn search_source(language: &str, source: &str, pattern: &str) -> Result<Vec<AstMatch>, String> {
-	if language == "svelte" {
-		return search_svelte(source, pattern);
+	let grammar = grammar_named(language)?;
+	let blocks = languages::get_language(language).and_then(|owner| owner.script_blocks(source));
+	match blocks {
+		Some(blocks) => search_script_blocks(blocks, pattern),
+		None => search_with_grammar(grammar, source, pattern),
 	}
-	dispatch_lang!(language, |lang| search_with_lang(lang, source, pattern))
 }
 
-fn search_svelte(source: &str, pattern: &str) -> Result<Vec<AstMatch>, String> {
+fn search_script_blocks(blocks: Vec<languages::ScriptBlock>, pattern: &str) -> Result<Vec<AstMatch>, String> {
 	let mut matches = Vec::new();
-	for (language, script, start_row, _) in languages::svelte::script_sources(source) {
+	for (language, script, start_row, _) in blocks {
 		let script_matches = search_source(language, &script, pattern)?;
 		// The script text is a contiguous slice of the file, so its line k is
 		// the file's line start_row + k.
@@ -280,20 +160,16 @@ fn search_svelte(source: &str, pattern: &str) -> Result<Vec<AstMatch>, String> {
 /// the expando char instead of `$`. Swap that exact substring back for the
 /// user's pattern so every diagnostic echoes what was typed — a blanket char
 /// replace would corrupt user patterns that legitimately contain the char.
-fn demangle_pattern_error<L: AstGrepLanguage>(lang: &L, pattern: &str, error: PatternError) -> String {
+fn demangle_pattern_error(grammar: &PatternGrammar, pattern: &str, error: PatternError) -> String {
 	let message = error.to_string();
-	let expanded = expand_pattern(lang.expando_char(), pattern);
+	let expanded = expand_pattern(grammar.expando, pattern);
 	if expanded.as_ref() != pattern {
 		return message.replacen(expanded.as_ref(), pattern, 1);
 	}
 	message
 }
 
-fn search_with_lang<L: LanguageExt + AstGrepLanguage + Clone>(
-	lang: L,
-	source: &str,
-	pattern_str: &str,
-) -> Result<Vec<AstMatch>, String> {
+fn search_with_grammar(lang: PatternGrammar, source: &str, pattern_str: &str) -> Result<Vec<AstMatch>, String> {
 	let grep = lang.ast_grep(source);
 	let pattern =
 		Pattern::try_new(pattern_str, lang.clone()).map_err(|e| demangle_pattern_error(&lang, pattern_str, e))?;
@@ -314,18 +190,10 @@ fn search_with_lang<L: LanguageExt + AstGrepLanguage + Clone>(
 /// Inspect what a pattern parses to: the root node kind, the parse-error
 /// flag and the named metavariables. Cheap — no corpus needed.
 pub fn pattern_info(pattern: &str, language: &str) -> Result<PatternInfo, String> {
-	if language == "svelte" {
-		// A svelte pattern is JavaScript/TypeScript code; report it as the
-		// language the pattern actually parses as.
-		return pattern_info(pattern, "javascript");
-	}
-	dispatch_lang!(language, |lang| pattern_info_with_lang(lang, pattern))
+	pattern_info_with_grammar(grammar_named(language)?, pattern)
 }
 
-fn pattern_info_with_lang<L: LanguageExt + AstGrepLanguage + Clone>(
-	lang: L,
-	pattern_str: &str,
-) -> Result<PatternInfo, String> {
+fn pattern_info_with_grammar(lang: PatternGrammar, pattern_str: &str) -> Result<PatternInfo, String> {
 	let pattern =
 		Pattern::try_new(pattern_str, lang.clone()).map_err(|e| demangle_pattern_error(&lang, pattern_str, e))?;
 	let has_error = pattern.has_error();

@@ -426,14 +426,9 @@ impl Query {
 			.filter_map(|id| graph.nodes.get(id))
 			.map(|node| node.path.as_str())
 			.collect();
-		let mut imported: HashSet<FileId> = imported_paths(graph, &from_paths)
-			.iter()
-			.filter_map(|path| self.index.file_id(path))
-			.collect();
-		// A package sees its own names without importing them.
-		for path in &from_paths {
-			imported.extend(self.package_mates(path).await?);
-		}
+		// Only a name spelled in many files is narrowed to the files the
+		// frontier can see, so they are worked out when one comes up.
+		let mut imported: Option<HashSet<FileId>> = None;
 		let mut followed = Vec::new();
 		let mut looked_up = 0usize;
 		for name in names {
@@ -450,7 +445,12 @@ impl Query {
 			let wanted: Vec<FileId> = if candidates.len() <= MAX_FILES_PER_FOLLOWED_NAME {
 				declaring_first(&*self.spelling(&name).await?)
 			} else {
-				let near: Vec<FileId> = candidates.into_iter().filter(|id| imported.contains(id)).collect();
+				let visible = match imported.take() {
+					Some(visible) => visible,
+					None => self.visible_files(graph, &from_paths).await?,
+				};
+				let near: Vec<FileId> = candidates.into_iter().filter(|id| visible.contains(id)).collect();
+				imported = Some(visible);
 				if near.is_empty() {
 					continue;
 				}
@@ -459,6 +459,19 @@ impl Query {
 			followed.push((name, wanted));
 		}
 		Ok((followed, true))
+	}
+
+	/// The files the files `from_paths` see: those they import and, since a
+	/// package sees its own names without importing them, their package mates.
+	async fn visible_files(&self, graph: &CodeGraph, from_paths: &HashSet<&str>) -> Result<HashSet<FileId>> {
+		let mut visible: HashSet<FileId> = imported_paths(graph, from_paths)
+			.iter()
+			.filter_map(|path| self.index.file_id(path))
+			.collect();
+		for path in from_paths {
+			visible.extend(self.package_mates(path).await?);
+		}
+		Ok(visible)
 	}
 
 	async fn add_followed(&mut self, graph: &CodeGraph, relations: &[RelationType], frontier: &[String]) -> Result<()> {
@@ -643,7 +656,15 @@ impl Query {
 		let mut ordered: Vec<FileId> = self.index.file_id(definition_path).into_iter().collect();
 		ordered.extend(self.sorted_by_path(reexporters));
 		ordered.extend(self.sorted_by_path(importing));
-		ordered.extend(self.package_mates(definition_path).await?);
+		// A mate that does not spell the name cannot call it: it would only
+		// use up the parse cap before the files that do.
+		let spelling: HashSet<FileId> = set.files.iter().chain(&set.unread).copied().collect();
+		ordered.extend(
+			self.package_mates(definition_path)
+				.await?
+				.into_iter()
+				.filter(|id| spelling.contains(id)),
+		);
 		if definitions <= 1 {
 			ordered.extend(set.files.iter());
 		}
@@ -656,30 +677,32 @@ impl Query {
 
 	/// The other files that may be in the package of the file `path`: the
 	/// callers of a name its package declares need no import. Where the
-	/// package is the directory they are its files; where files declare their
-	/// package, the files that spell the last segment of its name (a
-	/// superset the parse confirms).
+	/// package is the directory, or the file declares none, they are the
+	/// files of its directory; where files declare their package, the files
+	/// that spell the last segment of its name (a superset the parse
+	/// confirms).
 	async fn package_mates(&self, path: &str) -> Result<Vec<FileId>> {
 		let own = self.index.file_id(path);
+		let directory = path.rsplit_once('/').map_or("", |(directory, _)| directory);
 		let mates = match structural::package_scope(path) {
 			structural::PackageScope::NoPackage => return Ok(Vec::new()),
-			structural::PackageScope::Directory => self
-				.index
-				.files_in_directory(path.rsplit_once('/').map_or("", |(directory, _)| directory)),
+			structural::PackageScope::Directory => self.index.files_in_directory(directory),
 			structural::PackageScope::Declared => {
 				let package = own
 					.and_then(|id| self.parsed_source(id))
 					.and_then(|source| source.data().declared_package.clone());
-				let segment = package
-					.as_deref()
-					.and_then(|name| {
-						name.rsplit(|character: char| !character.is_alphanumeric() && character != '_')
+				match package {
+					None => self.index.files_in_directory(directory),
+					Some(package) => {
+						let segment = package
+							.rsplit(|character: char| !character.is_alphanumeric() && character != '_')
 							.next()
-					})
-					.filter(|segment| !segment.is_empty());
-				match segment {
-					Some(segment) => self.index.files_spelling(&[segment]).await?,
-					None => return Ok(Vec::new()),
+							.filter(|segment| !segment.is_empty());
+						match segment {
+							Some(segment) => self.index.files_spelling(&[segment]).await?,
+							None => return Ok(Vec::new()),
+						}
+					}
 				}
 			}
 		};
@@ -728,12 +751,7 @@ fn file_tokens(query: &Query, path: &str) -> BTreeSet<String> {
 			.map(|symbol| symbol.name.as_str())
 			.collect()
 	});
-	importer_tokens(path, &declared)
-}
-
-/// The names importers of the file spell, deduplicated, in order.
-fn importer_tokens(path: &str, declared: &[&str]) -> BTreeSet<String> {
-	structural::importer_names(path, declared).into_iter().collect()
+	structural::importer_names(path, &declared).into_iter().collect()
 }
 
 fn last_level_ids(found: &crate::structural::graph::traverse::Neighborhood) -> Vec<String> {

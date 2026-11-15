@@ -24,6 +24,15 @@ impl Language for Json {
 		"json"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["json"]
+	}
+
+	// Keys are data, not symbols a name can be looked up by.
+	fn has_navigable_symbols(&self) -> bool {
+		false
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_json::LANGUAGE.into()
 	}

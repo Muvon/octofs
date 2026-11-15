@@ -92,8 +92,44 @@ pub enum PackageScope {
 	NoPackage,
 	/// The files of one directory are one package.
 	Directory,
-	/// The files that declare the same package name are one package.
+	/// The files that declare the same package name are one package; the
+	/// files that declare none are one package per directory.
 	Declared,
+}
+
+/// Comment starts of the languages that write `//` and `/* */`.
+pub(crate) const C_STYLE_COMMENTS: &[&str] = &["//", "/*"];
+
+/// Comment starts of the languages that write `#`.
+pub(crate) const HASH_COMMENTS: &[&str] = &["#"];
+
+/// The keyword that declares a function in the languages that write `function`.
+pub(crate) const FUNCTION_KEYWORD: &[&str] = &["function"];
+
+/// One block of another language inside a file: (language, text, 0-based row
+/// and column the text starts at).
+pub(crate) type ScriptBlock = (&'static str, String, usize, usize);
+
+/// Metavariable stand-in for the languages whose identifiers may not start
+/// with `$`: a pattern's `$NAME` is rewritten to it before parsing, as
+/// ast-grep's own language configs do.
+pub(crate) const IDENTIFIER_EXPANDO: char = 'µ';
+
+/// The stand-in ast-grep's configs use for C and C++.
+pub(crate) const C_EXPANDO: char = '𐀀';
+
+/// The stand-in for the languages where `$` is a valid identifier character,
+/// which makes the rewrite a no-op.
+pub(crate) const DOLLAR_EXPANDO: char = '$';
+
+/// A grammar AST patterns are parsed and matched with.
+#[derive(Clone)]
+pub(crate) struct PatternGrammar {
+	/// The language name callers and messages use for it.
+	pub name: &'static str,
+	pub grammar: tree_sitter::Language,
+	/// What a pattern's `$` metavariable sigil becomes before parsing.
+	pub expando: char,
 }
 
 /// What a graph symbol is, in the words the graph output shows.
@@ -141,6 +177,9 @@ impl SymbolKind {
 pub(crate) trait Language: Send + Sync {
 	/// Name of the language.
 	fn name(&self) -> &'static str;
+
+	/// The lowercase file extensions of the language, without the dot.
+	fn extensions(&self) -> &'static [&'static str];
 
 	/// The tree-sitter grammar to parse with.
 	fn get_ts_language(&self) -> tree_sitter::Language;
@@ -193,6 +232,58 @@ pub(crate) trait Language: Send + Sync {
 	fn is_constructor(&self, node: Node, contents: &str) -> bool {
 		let _ = (node, contents);
 		false
+	}
+
+	/// (node kind, short display label) pairs of the nodes that enclose a
+	/// symbol and show in its breadcrumb. Empty for a language whose
+	/// declarations are not told apart by node kind.
+	fn container_kinds(&self) -> &'static [(&'static str, &'static str)] {
+		&[]
+	}
+
+	/// Node kinds that define a named symbol for symbol navigation.
+	fn definition_kinds(&self) -> &'static [&'static str] {
+		&[]
+	}
+
+	/// Whether the identifier `node` (with the text `text`) is the defining
+	/// name of a declaration: by default the `name` field of a definition.
+	fn is_definition_name(&self, node: Node, text: &str, contents: &str) -> bool {
+		let _ = (text, contents);
+		node.parent().is_some_and(|parent| {
+			self.definition_kinds().contains(&parent.kind())
+				&& parent
+					.child_by_field_name("name")
+					.is_some_and(|name| name.id() == node.id())
+		})
+	}
+
+	/// Whether symbol navigation (definitions, references) has anything to
+	/// find in the language.
+	fn has_navigable_symbols(&self) -> bool {
+		true
+	}
+
+	/// The code blocks of other languages a file holds, when the file is a
+	/// container of them (a Svelte component's scripts); each is searched
+	/// with its own language and its hits mapped back to the file.
+	fn script_blocks(&self, contents: &str) -> Option<Vec<ScriptBlock>> {
+		let _ = contents;
+		None
+	}
+
+	/// The grammar AST patterns are parsed with, or None when the language
+	/// offers no pattern search (a syntax-tree pattern buys nothing over its
+	/// outline, symbol and content modes).
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		None
+	}
+
+	/// The pattern grammar for a file with this extension, for a language
+	/// whose extensions are not all parsed by one grammar.
+	fn pattern_grammar_for_extension(&self, extension: &str) -> Option<PatternGrammar> {
+		let _ = extension;
+		self.pattern_grammar()
 	}
 
 	/// Node kinds that become symbol-level graph nodes. Empty by default, so a
@@ -421,12 +512,6 @@ pub(crate) trait Language: Send + Sync {
 	fn callable_keywords(&self) -> &'static [&'static str] {
 		&[]
 	}
-
-	/// A character that is part of a variable's name when it sits right in
-	/// front of the identifier (`$` in PHP), so `$name` is told from `name`.
-	fn identifier_prefix(&self) -> Option<u8> {
-		None
-	}
 }
 
 fn is_identifier_char(character: char) -> bool {
@@ -551,6 +636,42 @@ pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
 		.iter()
 		.find(|(language_name, _)| *language_name == name)
 		.map(|(_, make)| make())
+}
+
+/// The name of the language that owns the file extension (lowercase, without
+/// the dot), when one does.
+pub(crate) fn language_for_extension(extension: &str) -> Option<&'static str> {
+	LANGUAGES
+		.iter()
+		.find(|(_, make)| make().extensions().contains(&extension))
+		.map(|(name, _)| *name)
+}
+
+/// The pattern grammar a file with this extension is searched with, when its
+/// language offers one.
+pub(crate) fn pattern_grammar_for_extension(extension: &str) -> Option<PatternGrammar> {
+	LANGUAGES
+		.iter()
+		.map(|(_, make)| make())
+		.find(|language| language.extensions().contains(&extension))?
+		.pattern_grammar_for_extension(extension)
+}
+
+/// The pattern grammar called `name`: a language's own, or one it picks for
+/// some of its extensions.
+pub(crate) fn pattern_grammar_named(name: &str) -> Option<PatternGrammar> {
+	LANGUAGES.iter().map(|(_, make)| make()).find_map(|language| {
+		language
+			.pattern_grammar()
+			.into_iter()
+			.chain(
+				language
+					.extensions()
+					.iter()
+					.filter_map(|extension| language.pattern_grammar_for_extension(extension)),
+			)
+			.find(|grammar| grammar.name == name)
+	})
 }
 
 /// The stem of the file at `path` and, with `with_directory`, the name of

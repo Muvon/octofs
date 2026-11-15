@@ -21,7 +21,7 @@
 
 use super::javascript::JavaScript;
 use super::typescript::TypeScript;
-use super::{EmbeddedSource, Language};
+use super::{EmbeddedSource, Language, PatternGrammar, ScriptBlock};
 use crate::structural::graph::registry::FileRegistry;
 use tree_sitter::{Node, Parser};
 
@@ -35,8 +35,21 @@ impl Language for Svelte {
 		"svelte"
 	}
 
+	fn extensions(&self) -> &'static [&'static str] {
+		&["svelte"]
+	}
+
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_svelte_ng::LANGUAGE.into()
+	}
+
+	// A svelte pattern is JavaScript code; its scripts are searched with
+	// their own grammar through `script_blocks`.
+	fn pattern_grammar(&self) -> Option<PatternGrammar> {
+		JavaScript {}.pattern_grammar().map(|grammar| PatternGrammar {
+			name: self.name(),
+			..grammar
+		})
 	}
 
 	// Scripts are JavaScript or TypeScript; imports share one literal form.
@@ -66,10 +79,6 @@ impl Language for Svelte {
 		TypeScript {}.callable_keywords()
 	}
 
-	fn identifier_prefix(&self) -> Option<u8> {
-		TypeScript {}.identifier_prefix()
-	}
-
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		// The outline of a Svelte file is its scripts' outline, built from
 		// `script_sources`; the markup nodes declare nothing.
@@ -87,6 +96,11 @@ impl Language for Svelte {
 			.collect()
 	}
 
+	// Its scripts are what symbol navigation searches.
+	fn script_blocks(&self, contents: &str) -> Option<Vec<ScriptBlock>> {
+		Some(script_sources(contents))
+	}
+
 	// Svelte imports are JavaScript imports.
 	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
 		JavaScript {}.resolve_import(import_path, source_file, all_files)
@@ -95,7 +109,7 @@ impl Language for Svelte {
 
 /// One `<script>` block: (language, script text, 0-based row and column the
 /// text starts at).
-pub(crate) fn script_sources(contents: &str) -> Vec<(&'static str, String, usize, usize)> {
+pub(crate) fn script_sources(contents: &str) -> Vec<ScriptBlock> {
 	let mut parser = Parser::new();
 	if parser.set_language(&tree_sitter_svelte_ng::LANGUAGE.into()).is_err() {
 		return Vec::new();
@@ -107,7 +121,7 @@ pub(crate) fn script_sources(contents: &str) -> Vec<(&'static str, String, usize
 }
 
 /// The `<script>` blocks below `root`, language chosen by the `lang` attribute.
-fn script_blocks(root: Node, contents: &str) -> Vec<(&'static str, String, usize, usize)> {
+fn script_blocks(root: Node, contents: &str) -> Vec<ScriptBlock> {
 	let mut sources = Vec::new();
 	let mut stack = vec![root];
 	while let Some(node) = stack.pop() {

@@ -74,7 +74,6 @@ pub fn outline(path_label: &str, contents: &str) -> Result<Vec<OutlineItem>, Str
 	let language = language_for_extension(&extension).ok_or_else(|| unsupported_message(&extension))?;
 	match language {
 		"markdown" => Ok(signature_extractor::extract_markdown_signatures(contents)),
-		"svelte" => Ok(svelte_outline(contents)),
 		_ => parse_outline(language, contents),
 	}
 }
@@ -116,8 +115,6 @@ pub(crate) struct SpellingRules {
 	pub declaration_keywords: &'static [&'static str],
 	/// The declaration words whose name is followed by a parameter list.
 	pub callable_keywords: &'static [&'static str],
-	/// The byte that sits in front of a variable's name (`$`), if any.
-	pub identifier_prefix: Option<u8>,
 }
 
 /// The spelling rules of a language; none for a name without a language.
@@ -125,13 +122,15 @@ pub(crate) fn spelling_rules(language: &str) -> SpellingRules {
 	languages::get_language(language).map_or_else(SpellingRules::default, |language| SpellingRules {
 		declaration_keywords: language.declaration_keywords(),
 		callable_keywords: language.callable_keywords(),
-		identifier_prefix: language.identifier_prefix(),
 	})
 }
 
 fn parse_outline(language: &str, contents: &str) -> Result<Vec<OutlineItem>, String> {
 	let lang = languages::get_language(language)
 		.ok_or_else(|| format!("No grammar implementation for language '{language}'."))?;
+	if let Some(blocks) = lang.script_blocks(contents) {
+		return Ok(script_block_outline(blocks));
+	}
 	let mut parser = Parser::new();
 	parser
 		.set_language(&lang.get_ts_language())
@@ -145,13 +144,13 @@ fn parse_outline(language: &str, contents: &str) -> Result<Vec<OutlineItem>, Str
 	Ok(items)
 }
 
-/// A `.svelte` file's outline is the outline of its `<script>` blocks: the
-/// svelte grammar only wraps them, so each block's raw text is re-parsed with
-/// the JavaScript or TypeScript grammar (by its `lang` attribute) and the
-/// item lines are offset back to the file's coordinates.
-fn svelte_outline(contents: &str) -> Vec<OutlineItem> {
+/// The outline of a file that holds the code of other languages (a `.svelte`
+/// file's `<script>` blocks) is the outline of those blocks: each block's raw
+/// text is re-parsed with its own grammar and the item lines are offset back
+/// to the file's coordinates.
+fn script_block_outline(blocks: Vec<languages::ScriptBlock>) -> Vec<OutlineItem> {
 	let mut items = Vec::new();
-	for (language, script, start_row, _) in languages::svelte::script_sources(contents) {
+	for (language, script, start_row, _) in blocks {
 		if let Ok(script_items) = parse_outline(language, &script) {
 			items.extend(script_items.into_iter().map(|mut item| {
 				// The script text is a contiguous slice of the file, so its
@@ -177,30 +176,13 @@ pub(crate) fn path_extension(path_label: &str) -> String {
 		.unwrap_or_default()
 }
 
+/// Extensions of Markdown files: it has a heading outline but no grammar, so
+/// it is no language of the registry.
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
+
 pub(crate) fn language_for_extension(extension: &str) -> Option<&'static str> {
-	Some(match extension {
-		"rs" => "rust",
-		"py" => "python",
-		"js" | "mjs" | "jsx" => "javascript",
-		"ts" => "typescript",
-		// JSX needs the TSX grammar: the TypeScript one reads `<div>` as a type
-		// assertion and loses the components and calls inside it.
-		"tsx" => "tsx",
-		"go" => "go",
-		"java" => "java",
-		"cpp" | "cc" | "cxx" | "c++" | "c" | "h" | "hpp" | "hxx" | "cppm" | "ixx" | "mxx" | "ccm" | "cxxm" => "cpp",
-		"php" => "php",
-		"sh" | "bash" => "bash",
-		"rb" => "ruby",
-		"lua" => "lua",
-		"json" => "json",
-		"swift" => "swift",
-		"svelte" => "svelte",
-		"css" | "scss" | "sass" => "css",
-		"ex" | "exs" => "elixir",
-		"md" | "markdown" => "markdown",
-		_ => return None,
-	})
+	languages::language_for_extension(extension)
+		.or_else(|| MARKDOWN_EXTENSIONS.contains(&extension).then_some("markdown"))
 }
 
 pub(crate) fn unsupported_message(extension: &str) -> String {
