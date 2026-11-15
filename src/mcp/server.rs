@@ -1685,7 +1685,7 @@ pub struct ShellParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WorkdirParams {
-	/// Directory to switch into, absolute or relative to the current workdir. Omit it with
+	/// Directory to switch into, an absolute local path or a path relative to the current workdir. Omit it with
 	/// `reset` omitted or false to query the current directory. Remote: ssh://user@host:port/path;
 	/// `ssh://host` is the login home, `ssh://host/~/dir` is relative to it.
 	#[serde(default, skip_serializing_if = "Option::is_none")]

@@ -373,7 +373,7 @@ image itself as an MCP image block (up to 5 MB; the bytes must match the extensi
 **Delta views:** a whole-file view of a file the session already served returns
 only the hunks changed since — the same `...`/`-`/`+` style as edit results, with
 removed lines collapsed to their old id range — or
-`[unchanged since you last viewed or edited it: N lines. Pass full: true to re-read.]`.
+`[unchanged since you last viewed or edited it (compared with the file on disk just now): N lines. Pass full: true to re-read, or view a line range.]`.
 Octofs' own edits keep the cache current, so a re-view after your own `batch_edit`
 costs one line. Ranged views and content search always render exactly what was asked.
 `full` has no effect on ranges or searches; omit `start`/`end`/`ranges` and content search

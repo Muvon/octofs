@@ -152,7 +152,7 @@ async fn empty_file_views_are_explicit_and_preserve_deletion_deltas() {
 		let unchanged = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert_eq!(
 			unchanged,
-			"[unchanged since you last viewed or edited it: 0 lines. Pass full: true to re-read.]"
+			"[unchanged since you last viewed or edited it (compared with the file on disk just now): 0 lines. Pass full: true to re-read, or view a line range.]"
 		);
 		let forced = execute_view(&view_call(&file, json!({ "full": true }))).await.unwrap();
 		assert_eq!(forced, "[empty file, 0 lines]");
@@ -187,7 +187,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 		let second = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert_eq!(
 			second,
-			"[unchanged since you last viewed or edited it: 20 lines. Pass full: true to re-read.]"
+			"[unchanged since you last viewed or edited it (compared with the file on disk just now): 20 lines. Pass full: true to re-read, or view a line range.]"
 		);
 
 		// Ranged views neither use nor touch the cache.

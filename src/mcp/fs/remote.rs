@@ -307,7 +307,7 @@ mod sftp {
 					Ok(true)
 				}
 				Err(e) => Err(anyhow!(
-					"Host key verification failed for {}:{}: {e}. The presented key does not match ~/.ssh/known_hosts — possible man-in-the-middle attack. If the host key legitimately changed, remove the old entry (`ssh-keygen -R '{}'`) and reconnect.",
+					"Host key verification failed for {}:{}: {e}. The presented key does not match ~/.ssh/known_hosts — possible man-in-the-middle attack. If the host key legitimately changed, remove the old entry (`ssh-keygen -R '{}'`; for a port other than 22 the entry is named `[host]:port`) and reconnect.",
 					self.host,
 					self.port,
 					self.host

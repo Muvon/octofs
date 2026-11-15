@@ -135,7 +135,7 @@ pub fn render_whole_file(source: &PathSource, content: &str, full: bool) -> Stri
 	let new_lines: Vec<&str> = current.lines().collect();
 	match previous {
 		Some(prev) if prev == current => format!(
-			"[unchanged since you last viewed or edited it: {} lines. Pass full: true to re-read.]",
+			"[unchanged since you last viewed or edited it (compared with the file on disk just now): {} lines. Pass full: true to re-read, or view a line range.]",
 			new_lines.len()
 		),
 		Some(prev) => {

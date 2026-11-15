@@ -572,7 +572,7 @@ pub(super) fn render_paths(
 		format!("No path from \"{name}\" to \"{to}\" found in the files examined so far.")
 	} else {
 		format!(
-			"No path from \"{name}\" to \"{to}\" within depth {depth} over calls, extends and implements. Raise `depth` (max {MAX_GRAPH_DEPTH}) or try relation \"references\" for a text-level search."
+			"No path from \"{name}\" to \"{to}\" within depth {depth} over calls, extends and implements. Raise `depth` if it is below the maximum of {MAX_GRAPH_DEPTH}, or try relation \"references\" for a text-level search."
 		)
 	};
 	let mut notes = notes;
