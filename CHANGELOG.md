@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.25.2] - 2026-11-15
+
+### 📋 Release Summary
+
+Filesystem and working-directory guidance, unchanged-line ID guidance, and the append line ID format have been clarified. Code exploration documentation now describes call and macro resolution rules.
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: clarify unchanged-line id guidance `cf6e7c3b`
+- **mcp**: clarify append line ID format `d9daffe0`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: clarify filesystem and workdir guidance `7501590f`
+
+### 📚 Documentation & Examples
+
+- **code-exploration**: document call and macro resolution rules `02dc44bc`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.25.1] - 2026-11-15
 
 ### 📋 Release Summary
