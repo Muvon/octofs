@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.25.0] - 2026-11-15
+
+### 📋 Release Summary
+
+Graph searches now support bounded, scoped path queries and local symbol graph queries, with language-specific symbol resolution and a shared code index. Filesystem views support multi-range viewing, AST-pattern searches, and symbol navigation; AST searches include C files, structural outlines span languages, and hinted paths are normalized to forward slashes.
+
+### 🚨 Breaking Changes
+
+- **graph**: support bounded scoped graph path searches `92707571`
+- **symbol**: add local symbol graph queries `e9190b3b`
+
+### ✨ New Features & Enhancements
+
+- **structural**: unify language metadata across structural tooling `b00048ab`
+- **graph**: resolve symbols with language-specific rules `5f938cea`
+- **graph**: improve symbol graph resolution and searches `ac35ca61`
+- **graph**: bound graph queries with a shared code index `90ca7db4`
+- **ast**: support C files in AST searches `5adfe92c`
+- **fs**: support multi-range file views `4c92f0f2`
+- **ast**: support AST-pattern searches in file views `d7c24a2f`
+- **symbols**: add symbol navigation to filesystem views `bf75e9a3`
+- **structural**: support structural outlines across languages `161906f4`
+
+### 🔧 Improvements & Optimizations
+
+- **graph**: reduce graph index memory usage `f5503973`
+- **graph**: bound graph index memory and parse concurrency `d10e5919`
+
+### 🐛 Bug Fixes & Stability
+
+- **fs**: normalize hinted paths to forward slashes `a1459a70`
+
+### 📚 Documentation & Examples
+
+- **docs**: document code exploration and tool behavior `4cc15e20`
+- **docs**: document structural search and view modes `e8898542`
+
 ## [0.24.0] - 2026-11-12
 
 ### 📋 Release Summary
