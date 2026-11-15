@@ -1056,7 +1056,8 @@ impl ServerHandler for OctofsServer {
 				 the files on disk). File lines render as `N:hh|content`; copy `N:hh` verbatim \
 				 for line-addressed edits; content sent to edit tools is raw text without `N:hh|` \
 				 prefixes. Edit results include fresh ids and line shifts for \
-				 follow-up edits. Relative paths resolve against the session's workdir."
+				 follow-up edits; an earlier id still works while its line is unchanged: do not \
+				 change its number. Relative paths resolve against the session's workdir."
 				.to_string(),
 		)
 	}
