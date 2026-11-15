@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.25.1] - 2026-11-15
+
+### 📋 Release Summary
+
+Call graphs now resolve calls to qualified symbols.
+
+### 🐛 Bug Fixes & Stability
+
+- **graph**: resolve qualified symbol calls `c9ef289f`
+
 ## [0.25.0] - 2026-11-15
 
 ### 📋 Release Summary
