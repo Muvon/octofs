@@ -62,17 +62,17 @@ says why.
 
 | Language | Definitions, references | Calls (callers, callees) | Imports | Supertypes, subtypes | Constructors | Package scope | Re-exports followed |
 |---|---|---|---|---|---|---|---|
-| Rust | yes | yes, including calls inside macro arguments | `use`, `mod`, `#[path]`, `crate::`, `super::`, `self::` (globs included) | yes | none: `Foo::new` is an ordinary function | none: modules, not packages | `pub use` |
+| Rust | yes | yes, including calls inside macro arguments and calls written with a module path (`crate::a::f()`) | `use`, `mod`, `#[path]`, `crate::`, `super::`, `self::` (globs included) | yes | none: `Foo::new` is an ordinary function | none: modules, not packages | `pub use` |
 | Python | yes | yes | `import`, `from ... import`; absolute imports looked up from the file's directory and each directory above it | yes | none defined | none | an `__init__.py` passes on what it imports; any other file only through `import *` |
 | JavaScript | yes | yes | `import`, `require('./x')`, dynamic `import('./x')` | yes | `new Foo` reaches the class | none | `export ... from` (named, aliased, `export *`) |
 | TypeScript, TSX | yes (TSX files use the TSX grammar) | yes | as JavaScript | yes | `new Foo` reaches the class | none | as JavaScript |
 | Go | yes | yes | `import` | yes: embedded struct fields and interfaces | none: Go has no constructor syntax | by directory | none |
-| Java | yes | yes | `import`, including static, nested-class and wildcard | yes | constructors; `new Foo()` reaches the class | by declared `package` | none |
+| Java | yes | yes, including calls written with a package path (`com.acme.Util.run()`) | `import`, including static, nested-class and wildcard | yes | constructors; `new Foo()` reaches the class | by declared `package` | none |
 | C, C++ | yes | yes | `#include` | yes | constructors | none: no package concept | a header that includes another header (a source file passes nothing on) |
-| PHP | yes | yes | `use`, `require`, `include` | yes | `new Foo` | by declared namespace | none |
+| PHP | yes | yes, including static calls written with a namespace path (`\App\Models\User::find()`) | `use`, `require`, `include` | yes | `new Foo` | by declared namespace | none |
 | Ruby | yes | yes; a bare name is a call only when the method is declared in the same file | `require`, `require_relative`, `load` | yes: superclass, `include`, `extend`, `prepend` | `Foo.new` | none | none |
 | Swift | yes | yes | `import` | yes | constructors | by directory | `@_exported import` |
-| Elixir | yes | yes; `defdelegate` counts as a call | `alias`, `import`, `require`, `use` | `defimpl` as an implementation | none | none | none |
+| Elixir | yes | yes, including calls written with a full module name (`MyApp.Repo.get(id)`); `defdelegate` counts as a call | `alias`, `import`, `require`, `use` | `defimpl` as an implementation | none | none | none |
 | Bash | yes | yes | `source` and `.` | none: Bash has no types | none | none | none |
 | Lua | yes | yes | `require` | none: Lua has no declared inheritance | none | none | none |
 | CSS | no symbol to navigate | none: no calls | `@import` | none | none | none | none |
@@ -87,6 +87,29 @@ namespace. A Java or PHP file with no `package` or namespace line belongs to the
 unnamed package of its directory.
 
 In Swift, a call that names a type (`Widget()`) reaches the `init` of that type.
+
+A call that names its module or class by path resolves like an import of that
+path, with no import line in the calling file, and follows the same
+[re-exports](#re-exports):
+
+- Rust: `crate::runtime::spawn(f)`, `super::f()`, `self::f()` and `a::b::f()`.
+  Every segment is lowercase; a path with a capitalised segment (`Type::f()`,
+  `a::Type::f()`) names a type and is not read as a module path. Paths that start
+  with `std`, `core` or `alloc` are the standard library, not a project file.
+- Java: `com.acme.Util.run()`, lowercase package segments followed by a
+  capitalised class.
+- PHP: `\App\Models\User::find()`, a static call on a class written with its
+  namespace. A function called by namespace path (`\App\helper()`) is not
+  resolved this way.
+- Elixir: `MyApp.Repo.get(id)`, a module name of two or more segments.
+
+In Python the dotted path of a call (`pkg.mod.helper()`) is the one its `import`
+line names, so the import already resolves it.
+
+In Rust, the items inside a brace macro in item position, such as
+`cfg_rt! { ... }`, count as items of the surrounding module, impl or trait when
+the macro body parses without errors and holds only items. The outline and every
+`symbol` relation see them. Any other macro body stays opaque.
 
 Three resolution rules are worth knowing:
 
@@ -328,8 +351,11 @@ continues it. Timings per repository are in [Measurements](#measurements).
 
 ### Re-exports
 
-A name that a file only re-exports leads to the file that declares it. This is
-followed for `callers`, `callees` and `path`, up to 3 hops:
+A name that a file only re-exports leads to the file that declares it. A file
+that declares a name and also re-exports the same name (a stub next to a
+`pub use` under the opposite `cfg` attribute) leads to both, and a call to that
+name is listed under each. This is followed for `callers`, `callees` and `path`,
+up to 3 hops:
 
 - Python: names that an `__init__.py` imports, and `import *`.
 - JavaScript and TypeScript: `export ... from` (named, aliased, and `export *`).

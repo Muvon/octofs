@@ -67,6 +67,9 @@ Rust, Python, JavaScript, TypeScript, Go, Java, C/C++, PHP, Bash, Ruby, Lua, JSO
 - A name that is spelled in more than 3000 files needs a `path` or an `Owner::name` form; without one it is not traced.
 - A list shows at most 100 results, most certain first.
 - Re-exports are followed for `callers`, `callees` and `path` (Python `__init__.py` re-exports and `import *`, JavaScript and TypeScript `export ... from`, up to 3 hops), for Rust `pub use`, for C and C++ headers that include another header, and for Swift `@_exported import`. Re-exports in the other languages are not followed.
+- A call written with the path of its module or class resolves like an import of that path, with no import line in the calling file: Rust `crate::a::f()`, `super::f()`, `self::f()` and `a::b::f()`, Java `com.acme.Util.run()`, PHP `\App\Models\User::find()`, Elixir `MyApp.Repo.get(id)`. A Rust path with a capitalised segment (`Type::f()`) and a PHP function called by namespace path are not resolved this way.
+- A file that declares a name and also re-exports the same name leads to both, and a call to that name is listed under each.
+- Rust items inside a brace macro in item position (`cfg_rt! { ... }`) count as items of the surrounding module, impl or trait when the macro body parses without errors and holds only items.
 - A call to a name with several definitions in one file (a C function under `#ifdef` and `#else`, for example) leads to each of them, marked `(guess)`.
 - In C and C++, code under preprocessor shapes the parser cannot read can hide a call, so an empty or "No path" answer covers only what the parser recognised.
 - The `path` relation searches from both ends one level at a time within the same 600-file and 800 ms budget; a search that was cut says so and repeating the query continues it. "No path ... within depth N" appears only when the search finished.
