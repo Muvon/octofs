@@ -8,11 +8,12 @@ and refreshed from file metadata on every call, so a file edited by any program
 shows up in the next query.
 
 Measured (details in [Measurements](#measurements); benchmark machine: a 12-core
-Linux box shared with other jobs): the first symbol query of a process builds the
-index once, about 1.1 s on the 67,000-file Linux tree on an idle machine. After
-that, a query parses about 10 MB of source per second on 6 threads and stops after
-800 ms or 600 files, whichever comes first. When a name is spelled in more files
-than that, the answer covers the files examined so far and says how to continue.
+Linux box, release build): the first symbol query of a process builds the index
+once. After that, a query stops after 800 ms or 600 parsed files, whichever comes
+first. A repeated query whose answer is complete took 3 to 224 ms (median) in the
+`path` benchmarks, from tokio to the Linux tree. When a name is spelled in more
+files than the cap allows, the answer covers the files examined so far and says
+how to continue.
 
 Two tools carry this:
 
@@ -47,40 +48,48 @@ Lua, JSON, Swift, Svelte, CSS, Elixir, Markdown (`src/structural/languages/`,
 `SUPPORTED_LANGUAGES` in `src/structural/mod.rs`). The extension picks the
 grammar; a file with another extension fails with this list.
 
-Support differs by feature:
+Support differs by feature. Outline works for all of the above. AST search covers
+all except CSS, JSON and Markdown (a Svelte file is searched through its
+`<script>` blocks). The table below is about the `symbol` tool. An empty cell
+says why.
 
-| Feature | Covers | Does not cover |
-|---|---|---|
-| Outline | all of the above; Markdown yields its headings | |
-| `symbol` `definition` / `references` | all except CSS and JSON; Markdown yields headings, Svelte the symbols of its `<script>` blocks | CSS and JSON name no navigable symbol: a single file fails with that guidance, a directory skips them |
-| AST search | all except CSS, JSON and Markdown; a Svelte file is searched through its `<script>` blocks | CSS, JSON, Markdown |
-| Graph relations (`callers`, `callees`, `supertypes`, `subtypes`, `imports`, `imported_by`, `path`) | the languages whose definition in `src/structural/languages/` extracts the relation | Markdown and JSON contribute nothing to the graph. Bash and Lua define no extends or implements extraction, so `supertypes` and `subtypes` find nothing in them. CSS defines no calls or type relations |
+| Language | Definitions, references | Calls (callers, callees) | Imports | Supertypes, subtypes | Constructors | Package scope | Re-exports followed |
+|---|---|---|---|---|---|---|---|
+| Rust | yes | yes, including calls inside macro arguments | `use`, `mod`, `#[path]`, `crate::`, `super::`, `self::` (globs included) | yes | none: `Foo::new` is an ordinary function | none: modules, not packages | `pub use` |
+| Python | yes | yes | `import`, `from ... import`; absolute imports looked up from the file's directory and each directory above it | yes | none defined | none | an `__init__.py` passes on what it imports; any other file only through `import *` |
+| JavaScript | yes | yes | `import`, `require('./x')`, dynamic `import('./x')` | yes | `new Foo` reaches the class | none | `export ... from` (named, aliased, `export *`) |
+| TypeScript, TSX | yes (TSX files use the TSX grammar) | yes | as JavaScript | yes | `new Foo` reaches the class | none | as JavaScript |
+| Go | yes | yes | `import` | yes: embedded struct fields and interfaces | none: Go has no constructor syntax | by directory | none |
+| Java | yes | yes | `import`, including static, nested-class and wildcard | yes | constructors; `new Foo()` reaches the class | by declared `package` | none |
+| C, C++ | yes | yes | `#include` | yes | constructors | none: no package concept | a header that includes another header (a source file passes nothing on) |
+| PHP | yes | yes | `use`, `require`, `include` | yes | `new Foo` | by declared namespace | none |
+| Ruby | yes | yes; a bare name is a call only when the method is declared in the same file | `require`, `require_relative`, `load` | yes: superclass, `include`, `extend`, `prepend` | `Foo.new` | none | none |
+| Swift | yes | yes | `import` | yes | constructors | by directory | `@_exported import` |
+| Elixir | yes | yes; `defdelegate` counts as a call | `alias`, `import`, `require`, `use` | `defimpl` as an implementation | none | none | none |
+| Bash | yes | yes | `source` and `.` | none: Bash has no types | none | none | none |
+| Lua | yes | yes | `require` | none: Lua has no declared inheritance | none | none | none |
+| CSS | no symbol to navigate | none: no calls | `@import` | none | none | none | none |
+| Svelte | the symbols of its `<script>` blocks | through the script, as JavaScript or TypeScript | through the script | through the script | through the script | none | through the script |
+| Markdown | headings only | none | none | none | none | none | none |
+| JSON | no symbol to navigate | none | none | none | none | none | none |
 
-Graph relations also depend on what each language's definition resolves (checked
-in `src/structural/languages/` and `src/structural/graph/symbols.rs`):
+"Package scope" means that files of one package see each other's names without an
+import, so a call to such a name resolves to the other file: Go and Swift treat
+the files of one directory as a package, Java and PHP use the declared package or
+namespace.
 
-- Go: embedded struct fields and interfaces count as type relations. The files of
-  one directory are one package, so a call to a name declared in the same package
-  resolves without an import. An import path whose first segment has a dot is
-  matched to a local directory by path suffix. A path without a dot (`context`,
-  `log`, `net/http`) is taken as the standard library and matches only
-  `src/<path>` or `<path>` at the root.
-- Java: same-package calls resolve without an import, `new Foo()` reaches the
-  class, constructors are symbols, and static and nested-class imports resolve.
-- JavaScript and TypeScript: `require('./x')` and dynamic `import('./x')` count as
-  imports. TSX files use the TSX grammar. The tsconfig or jsconfig `paths` aliases
-  (`@/x`) are not read, so an aliased import is treated as external.
-- Python: an absolute import is looked up from the importing file's directory and
-  each directory above it, which covers `src/` layouts.
-- PHP: `new Foo` and `require`/`include` count. Ruby: `Foo.new` and `require("x")`
-  count.
-- Rust: `use super::*`, `crate::*` and `self::*` resolve, `#[path = "x.rs"]`
-  modules are followed, calls inside macro arguments are seen, and workspace
-  crates are matched by directory name and shown as a guess. `Cargo.toml` and
-  `go.mod` contents are not read.
-- C and C++: a call the parser reads as an error because a C++ keyword is used as
-  a name (`new`) is still recognised, and a function defined twice under
-  `#ifdef` and `#else` shows both definitions as guesses.
+Three resolution rules are worth knowing:
+
+- Go import paths. A path whose first segment has a dot (`example.com/app/store`)
+  is matched to a local directory by path suffix. A path without a dot is looked
+  up under the directory of each `go.mod` in the workdir (`module myapp` makes
+  `myapp/internal/log` the directory `internal/log` next to the `go.mod`);
+  otherwise it is taken as the standard library and matches only `src/<path>` or
+  `<path>` at the root.
+- Python imports found only in a directory between the file and the project root
+  are shown as guesses, because a standard-library name can collide with a local
+  file there.
+- Rust workspace crates are matched by directory name and shown as a guess.
 
 ## Outline
 
@@ -305,20 +314,20 @@ src/main.rs:4 main -calls-> src/util.rs:1 helper -calls-> src/util.rs:5 inner
 
 "No path ... within depth N" is printed only when the search finished. A search
 that was cut by the budget or by its work limit says so, and repeating the query
-continues it. Measured on a 12-core Linux box shared with other jobs (minimum of 5
-fresh processes, first call / repeated call): go `ListenAndServe` to `readRequest`
-400 ms / 47 ms, to `Errorf` 459 ms / 45 ms; vscode 438 ms / 86 ms; tokio 39 ms /
-4 ms; cargo 142 ms / 27 ms; django 1,390 ms on the first call (the second call
-is complete) / 39 ms; Linux tree 2,228 ms / 221 ms.
+continues it. Timings per repository are in [Measurements](#measurements).
 
 ### Re-exports
 
 A name that a file only re-exports leads to the file that declares it. This is
 followed for `callers`, `callees` and `path`, up to 3 hops:
 
-- Python: names re-exported from an `__init__.py`, and `import *`.
+- Python: names that an `__init__.py` imports, and `import *`.
 - JavaScript and TypeScript: `export ... from` (named, aliased, and `export *`).
 - Rust: `pub use` (a `use` line that starts with `pub`).
+- C and C++: a header that includes another header passes it on. Only headers do:
+  no file includes a source file, so the includes of a source file reach nothing
+  further.
+- Swift: `@_exported import`.
 
 Re-exports in the other languages are not followed.
 
@@ -331,6 +340,9 @@ Re-exports in the other languages are not followed.
   `(guess)`.
 - A call on a receiver the tool cannot identify, such as `getRepo().save()`, is
   resolved by name only and shown as `(guess)`.
+- An absolute Python import found only in a directory between the file and the
+  project root, and a Rust import of a workspace crate matched by directory
+  name, are shown as guesses.
 - A call outside any function lists the file as `path:line  file`.
 - A list shows at most 100 results, most certain first, then a closing line
   counts the rest.
@@ -353,10 +365,9 @@ disk.
 - **Refresh.** Every call re-walks the tree and compares file stamps (relative
   path, size, modification time and, on Unix, change time and inode) without
   reading any file. A file changed by any program is seen by the next call.
-- **Build.** The name table is built once, on the first symbol query of a process
-  (about 1.1 s on the 67,000-file Linux tree on an idle 12-core machine; 2 to 4 s
-  for the whole first call when the machine is loaded). The build is counted
-  after the refresh and does not count against the query budget.
+- **Build.** The name table is built once, on the first symbol query of a process.
+  The build is counted after the refresh and does not count against the query
+  budget.
 - **Parsing.** Only the files a query can need are parsed, level by level for
   `depth`, on a pool of at most 6 threads. A cap of 600 files and 800 ms applies
   per query; cached files are free, and at least one chunk of files is always
@@ -398,29 +409,55 @@ disk.
 
 ## Measurements
 
-Taken on a 12-core Linux box that was shared with other jobs, so treat them as
-orders of magnitude, not guarantees.
+Taken on a 12-core Linux box with a release build, running other jobs at the same
+time, so treat them as orders of magnitude. Each entry gives the minimum and the
+median over several fresh processes. Times are in milliseconds; memory is peak
+resident memory of the process, which is larger than the 160 MB of index data.
 
-Peak resident memory of the benchmark queries:
+`path` queries, first call and repeated call in the same process:
 
-| Repository | Peak resident memory |
-|---|---|
-| Linux tree | 280 to 320 MB |
-| vscode | 210 to 219 MB |
-| go | 103 to 126 MB |
-| django | 53 MB |
-| cargo | about 48 MB |
-| tokio | 38 MB |
+| Repository | From, to | First call | Repeated call | Peak memory (MB) |
+|---|---|---|---|---|
+| go | `ListenAndServe`, `readRequest` | 208 / 212 | 41 / 44 | 49 / 50 |
+| go | `ListenAndServe`, `Errorf` | 326 / 331 | 37 / 40 | 55 / 59 |
+| vscode | `createDecorator`, `storeServiceDependency` | 283 / 293 | 72 / 75 | 65 / 65 |
+| django | `redirect`, `reverse` | 1118 / 1171 | 33 / 35 | 74 / 74 |
+| tokio | `spawn_blocking_inner`, `spawn_thread` | 23 / 30 | 3 / 3 | 15 / 15 |
+| cargo | `compile`, `create_bcx` | 76 / 77 | 17 / 19 | 22 / 22 |
+| Linux tree | `list_add_tail`, `__list_add_valid` | 1255 / 1317 | 209 / 224 | 165 / 169 |
 
-Time of a repeated `callers` or `imported_by` query whose answer is already
-complete: 3 to 4 ms on tokio, 24 to 30 ms on cargo, 36 to 42 ms on django, 45 to
-50 ms on go, 86 to 94 ms on vscode. `path` timings are under
-[Path between two symbols](#path-between-two-symbols).
+Sequences of `callers` and `imported_by` queries in one process (first call /
+repeated call):
 
-A query that still has files to examine takes about the refresh plus 800 ms: about
-1.1 s on vscode and 1.3 to 1.4 s on the Linux tree. The first symbol query of a
-process builds the index once: about 1.1 s on the Linux tree on an idle 12-core
-machine, 2 to 4 s for the whole first call when the machine is loaded.
+| Repository | Query | First call | Repeated call |
+|---|---|---|---|
+| vscode | `callers createDecorator` | 911 / 925 | 74 / 178 |
+| vscode | `callers dispose` | 78 / 79 | 71 / 77 |
+| vscode | `imported_by src/vs/base/common/lifecycle.ts` | 697 / 748 | 1184 / 1199 |
+| go | `callers ListenAndServe` | 482 / 501 | 41 / 42 |
+| go | `callers Close` | 508 / 531 | 40 / 42 |
+| go | `imported_by src/net/http/server.go` | 189 / 194 | 40 / 41 |
+| django | `callers get_object_or_404` | 59 / 60 | 33 / 35 |
+| django | `callers get` | 135 / 143 | 33 / 39 |
+| django | `imported_by django/db/models/query.py` | 172 / 189 | 33 / 34 |
+| tokio | `callers spawn_blocking` | 21 / 22 | 3 / 4 |
+| tokio | `callers poll` | 68 / 69 | 3 / 4 |
+| tokio | `imported_by tokio/src/runtime/mod.rs` | 171 / 184 | 3 / 4 |
+| cargo | `callers compile` | 397 / 404 | 18 / 19 |
+| cargo | `callers new` | 140 / 161 | 18 / 19 |
+| cargo | `imported_by src/util/mod.rs` | 167 / 170 | 18 / 18 |
+| Linux tree | `callers kmalloc` | 2068 / 2166 | 1313 / 1376 |
+| Linux tree | `callers list_add_tail` | 1168 / 1182 | 657 / 950 |
+| Linux tree | `callers init` | 206 / 218 | 204 / 222 |
+| Linux tree | `imported_by include/linux/list.h` | 1119 / 1157 | 1028 / 1195 |
+
+Peak memory of those sequences (MB): vscode 238 / 243, go 98 / 99, django 50 / 51,
+tokio 37 / 37, cargo 45 / 46, Linux tree 336 / 351. The Linux tree peak ranged
+from 280 to 370 MB across runs, depending on machine load.
+
+A repeated query is fast only when its answer is complete. A query that still has
+files to examine, such as `callers kmalloc` on the Linux tree, spends its 800 ms
+budget again on every repeat, which is why some repeated times above stay high.
 
 Files skipped by the 1 MB limit: 6 in vscode, 4 in go, 117 in the Linux tree.
 
@@ -441,9 +478,17 @@ Files skipped by the 1 MB limit: 6 in vscode, 4 in go, 117 in the Linux tree.
   Common names need one of them.
 - C and C++ files whose calls sit under preprocessor shapes the parser cannot read
   can hide a call (see [Reading the output](#reading-the-output)).
-- Import resolution reads neither `tsconfig.json`/`jsconfig.json` `paths` (aliased
-  imports are external), nor `go.mod`, nor `Cargo.toml`. Rust workspace crates are
-  matched by directory name and shown as a guess.
+- Import resolution does not read manifests: `Cargo.toml`, the `require` lines of
+  `go.mod` (only the directory that holds a `go.mod` is used), `composer.json` or
+  `pom.xml`. The `paths` aliases of `tsconfig.json` and `jsconfig.json` are not
+  read either, so an aliased import (`@/x`) is treated as external.
+- Ruby: a call by a bare name to a method defined in a required file is missed,
+  because a bare name counts as a call only when the method is declared in the
+  same file.
+- Elixir: `defdelegate` counts as a call to the delegated function.
+- If the index of a workdir would not fit under the 160 MB ceiling, graph
+  relations report that, `definition` and `references` still work, and the index
+  is built again after a minute or when another workdir releases memory.
 - When a definition is found the search stops, and a closing line says how many
   other files spell the name without looking like declarations.
 - `view` called with the removed `symbol` parameter or the `r` flag fails with an

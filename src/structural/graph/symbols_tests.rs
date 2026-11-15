@@ -30,7 +30,16 @@ fn discover_symbol_relationships(files: &[SymbolFileData], lookup: LanguageLooku
 fn declaration(name: &str, kind: &str, start_line: u32, end_line: u32) -> SymbolDecl {
 	SymbolDecl {
 		name: name.to_string(),
-		kind: kind.to_string(),
+		kind: match kind {
+			"function" => SymbolKind::Function,
+			"class" => SymbolKind::Class,
+			"struct" => SymbolKind::Struct,
+			"trait" => SymbolKind::Trait,
+			"module" => SymbolKind::Module,
+			"const" => SymbolKind::Const,
+			_ => SymbolKind::Other,
+		},
+		is_constructor: false,
 		owner: None,
 		start_line,
 		end_line,
@@ -64,6 +73,7 @@ fn file(path: &str) -> SymbolFileData {
 		type_relations: Vec::new(),
 		symbols: Vec::new(),
 		default_export: None,
+		declared_package: None,
 		memo: ImportMemo::default(),
 	}
 }
@@ -79,20 +89,96 @@ fn find<'a>(
 		.find(|edge| edge.source == source && edge.target == target && edge.relation == relation)
 }
 
+/// The declarations `code` holds, parsed with the shipped language.
+fn declared_in(language: &str, code: &str) -> Vec<SymbolDecl> {
+	let language = crate::structural::languages::get_language(language).expect("known language");
+	extract_symbols_from_contents(code, language.as_ref(), &lookup)
+		.expect("source should parse")
+		.symbols
+}
+
 #[test]
-fn node_kinds_map_to_coarse_symbol_kinds() {
-	assert_eq!(symbol_kind_from_node_kind("function_item"), "function");
-	assert_eq!(symbol_kind_from_node_kind("method_definition"), "function");
-	assert_eq!(symbol_kind_from_node_kind("class_declaration"), "class");
-	assert_eq!(symbol_kind_from_node_kind("struct_item"), "struct");
-	assert_eq!(symbol_kind_from_node_kind("trait_item"), "trait");
-	assert_eq!(symbol_kind_from_node_kind("interface_declaration"), "interface");
-	assert_eq!(symbol_kind_from_node_kind("enum_item"), "enum");
-	assert_eq!(symbol_kind_from_node_kind("mod_item"), "module");
-	assert_eq!(symbol_kind_from_node_kind("const_item"), "const");
-	assert_eq!(symbol_kind_from_node_kind("macro_definition"), "macro");
-	assert_eq!(symbol_kind_from_node_kind("type_item"), "type");
-	assert_eq!(symbol_kind_from_node_kind("whatever"), "symbol");
+fn each_language_maps_its_own_node_kinds_to_symbol_kinds() {
+	let rust = declared_in("rust", "mod m {}\nstruct S;\nenum E {}\nconst C: u8 = 1;\nfn f() {}\n");
+	let kinds: Vec<(&str, SymbolKind)> = rust.iter().map(|symbol| (symbol.name.as_str(), symbol.kind)).collect();
+	assert_eq!(
+		kinds,
+		vec![
+			("m", SymbolKind::Module),
+			("S", SymbolKind::Struct),
+			("E", SymbolKind::Enum),
+			("C", SymbolKind::Const),
+			("f", SymbolKind::Function),
+		]
+	);
+
+	let ruby = declared_in("ruby", "module Shapes\n  class Circle\n    def area; end\n  end\nend\n");
+	let kinds: Vec<(&str, SymbolKind)> = ruby.iter().map(|symbol| (symbol.name.as_str(), symbol.kind)).collect();
+	assert_eq!(
+		kinds,
+		vec![
+			("Shapes", SymbolKind::Module),
+			("Circle", SymbolKind::Class),
+			("area", SymbolKind::Function),
+		]
+	);
+}
+
+#[test]
+fn a_function_named_like_its_class_is_a_constructor_only_when_the_language_says_so() {
+	let java = declared_in("java", "class Foo {\n  Foo() {}\n  void run() {}\n}\n");
+	let constructors: Vec<&str> = java
+		.iter()
+		.filter(|symbol| symbol.is_constructor)
+		.map(|symbol| symbol.name.as_str())
+		.collect();
+	assert_eq!(constructors, vec!["Foo"]);
+	assert_eq!(java[1].owner.as_deref(), Some("Foo"));
+
+	let cpp = declared_in("cpp", "class Foo {\npublic:\n  Foo() {}\n  void run() {}\n};\n");
+	let constructors: Vec<&str> = cpp
+		.iter()
+		.filter(|symbol| symbol.is_constructor)
+		.map(|symbol| symbol.name.as_str())
+		.collect();
+	assert_eq!(constructors, vec!["Foo"]);
+
+	// A class inside a module of the same name is a second declaration, not a
+	// constructor.
+	let ruby = declared_in("ruby", "module Foo\n  class Foo\n  end\nend\n");
+	assert_eq!(ruby.len(), 2);
+	assert!(ruby.iter().all(|symbol| !symbol.is_constructor));
+}
+
+#[test]
+fn a_call_naming_a_type_reaches_the_type_and_its_constructors_but_not_a_namesake() {
+	let constructed = |is_constructor: bool| {
+		let mut source = file("src/Foo.java");
+		source.calls = vec![call(9, None, "Foo")];
+		source.symbols = vec![
+			declaration("Foo", "class", 0, 8),
+			SymbolDecl {
+				is_constructor,
+				..owned_declaration("Foo", "Foo", "function", 1, 2)
+			},
+			declaration("main", "function", 9, 12),
+		];
+		let edges = discover_symbol_relationships(&[source], &lookup);
+		edges
+			.iter()
+			.filter(|edge| edge.relation == RelationType::Calls && edge.source == "src/Foo.java::main")
+			.map(|edge| (edge.target.clone(), edge.confidence))
+			.collect::<Vec<_>>()
+	};
+
+	let with_constructor = constructed(true);
+	assert_eq!(with_constructor.len(), 2);
+	assert!(with_constructor
+		.iter()
+		.all(|(_, confidence)| *confidence == CONFIDENCE_SAME_FILE));
+
+	let namesake = constructed(false);
+	assert!(namesake.is_empty());
 }
 
 #[test]
@@ -121,7 +207,9 @@ fn linear_owning_symbol(symbols: &[SymbolDecl], line: u32, functions_only: bool)
 		.iter()
 		.enumerate()
 		.filter(|(_, symbol)| {
-			line >= symbol.start_line && line <= symbol.end_line && (!functions_only || symbol.kind == "function")
+			line >= symbol.start_line
+				&& line <= symbol.end_line
+				&& (!functions_only || symbol.kind == SymbolKind::Function)
 		})
 		.min_by_key(|(_, symbol)| symbol.end_line.saturating_sub(symbol.start_line))
 		.map(|(index, _)| index)
@@ -209,7 +297,7 @@ fn same_file_unique_global_and_ambiguous_names_resolve_by_scope() {
 #[test]
 fn qualified_and_self_calls_resolve_to_the_correct_owner() {
 	let mut services = file("src/services.rs");
-	services.calls = vec![call(5, Some("self"), "run"), call(25, Some("Worker"), "run")];
+	services.calls = vec![call(5, Some(SELF_RECEIVER), "run"), call(25, Some("Worker"), "run")];
 	services.symbols = vec![
 		owned_declaration("Service", "execute", "function", 0, 10),
 		owned_declaration("Service", "run", "function", 12, 16),
@@ -359,10 +447,10 @@ pub fn main_fn() {
 	assert_eq!(data.imports, vec!["std::collections::HashMap"]);
 
 	let symbol = |name: &str| data.symbols.iter().find(|symbol| symbol.name == name).expect("symbol");
-	assert_eq!(symbol("Config").kind, "struct");
-	assert_eq!(symbol("Named").kind, "trait");
+	assert_eq!(symbol("Config").kind, SymbolKind::Struct);
+	assert_eq!(symbol("Named").kind, SymbolKind::Trait);
 	let new = symbol("new");
-	assert_eq!(new.kind, "function");
+	assert_eq!(new.kind, SymbolKind::Function);
 	assert_eq!(new.owner.as_deref(), Some("Config"));
 	assert_eq!(symbol("helper").owner, None);
 	let main_fn = symbol("main_fn");

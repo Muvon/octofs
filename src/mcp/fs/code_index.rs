@@ -35,7 +35,7 @@
 use super::graph::{walk_supported, SupportedFiles, MAX_GRAPH_FILE_BYTES};
 use crate::structural::graph::registry::{heap_chunk, FileRegistry};
 use crate::structural::graph::{parse_files, FileSpec, ParsedSource, SkippedFile};
-use crate::structural::{line_may_import, line_may_inherit, line_may_reexport};
+use crate::structural::{line_may_import, line_may_inherit, line_may_reexport, spelling_rules, SpellingRules};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -254,8 +254,9 @@ fn is_identifier_byte(byte: u8) -> bool {
 	byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 
-/// Calls `visit(run, after_dollar)` for every maximal identifier run.
-fn for_each_identifier_run<'a>(bytes: &'a [u8], mut visit: impl FnMut(&'a [u8], bool)) {
+/// Calls `visit(run, after_prefix)` for every maximal identifier run;
+/// `after_prefix` is whether the byte `prefix` sits right before it.
+fn for_each_identifier_run<'a>(bytes: &'a [u8], prefix: Option<u8>, mut visit: impl FnMut(&'a [u8], bool)) {
 	let mut index = 0;
 	while index < bytes.len() {
 		if !is_identifier_byte(bytes[index]) {
@@ -266,7 +267,10 @@ fn for_each_identifier_run<'a>(bytes: &'a [u8], mut visit: impl FnMut(&'a [u8], 
 		while index < bytes.len() && is_identifier_byte(bytes[index]) {
 			index += 1;
 		}
-		visit(&bytes[start..index], start > 0 && bytes[start - 1] == b'$');
+		visit(
+			&bytes[start..index],
+			start > 0 && prefix.is_some_and(|prefix| bytes[start - 1] == prefix),
+		);
 	}
 }
 
@@ -274,7 +278,7 @@ fn for_each_identifier_run<'a>(bytes: &'a [u8], mut visit: impl FnMut(&'a [u8], 
 /// `my` and `func`. Each distinct run once.
 pub(super) fn identifier_runs(name: &str) -> Vec<&str> {
 	let mut runs: Vec<&str> = Vec::new();
-	for_each_identifier_run(name.as_bytes(), |run, _| {
+	for_each_identifier_run(name.as_bytes(), None, |run, _| {
 		// A run of identifier bytes is whole UTF-8 sequences, so it is valid text.
 		if let Ok(text) = std::str::from_utf8(run) {
 			if !runs.contains(&text) {
@@ -285,10 +289,11 @@ pub(super) fn identifier_runs(name: &str) -> Vec<&str> {
 	runs
 }
 
-fn hash_run(run: &[u8], after_dollar: bool) -> u64 {
+/// The hash of a run, or of the run with the prefix byte in front of it.
+fn hash_run(run: &[u8], prefix: Option<u8>) -> u64 {
 	let mut hash = FNV_OFFSET;
-	if after_dollar {
-		hash = (hash ^ u64::from(b'$')).wrapping_mul(FNV_PRIME);
+	if let Some(prefix) = prefix {
+		hash = (hash ^ u64::from(prefix)).wrapping_mul(FNV_PRIME);
 	}
 	for byte in run {
 		hash = (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME);
@@ -387,14 +392,15 @@ fn read_capped_into(path: &Path, buffer: &mut Vec<u8>) -> bool {
 }
 
 /// Calls `use_hashes` with the sorted distinct hashes of every token of
-/// `bytes`, plus the `$` form of a token written `$name` (PHP, shell, Perl).
-fn with_token_hashes<T>(bytes: &[u8], use_hashes: impl FnOnce(&[u64]) -> T) -> T {
+/// `bytes`, plus the form with `prefix` in front of a token written that way
+/// (a sigil such as `$`).
+fn with_token_hashes<T>(bytes: &[u8], prefix: Option<u8>, use_hashes: impl FnOnce(&[u64]) -> T) -> T {
 	HASH_BUFFER.with_borrow_mut(|hashes| {
 		hashes.clear();
-		for_each_identifier_run(bytes, |run, after_dollar| {
-			hashes.push(hash_run(run, false));
-			if after_dollar {
-				hashes.push(hash_run(run, true));
+		for_each_identifier_run(bytes, prefix, |run, after_prefix| {
+			hashes.push(hash_run(run, None));
+			if after_prefix {
+				hashes.push(hash_run(run, prefix));
 			}
 		});
 		hashes.sort_unstable();
@@ -406,8 +412,8 @@ fn with_token_hashes<T>(bytes: &[u8], use_hashes: impl FnOnce(&[u64]) -> T) -> T
 }
 
 #[cfg(test)]
-fn token_hashes(bytes: &[u8]) -> Vec<u64> {
-	with_token_hashes(bytes, <[u64]>::to_vec)
+fn token_hashes(bytes: &[u8], prefix: Option<u8>) -> Vec<u64> {
+	with_token_hashes(bytes, prefix, <[u64]>::to_vec)
 }
 
 // ── Estimated size of parsed data ──────────────────────────────────────────
@@ -458,7 +464,7 @@ fn parsed_bytes(source: &ParsedSource) -> usize {
 		+ data
 			.symbols
 			.iter()
-			.map(|symbol| text_bytes(&symbol.name) + text_bytes(&symbol.kind) + optional_text_bytes(&symbol.owner))
+			.map(|symbol| text_bytes(&symbol.name) + optional_text_bytes(&symbol.owner))
 			.sum::<usize>();
 	bytes += optional_text_bytes(&data.default_export);
 	bytes
@@ -626,6 +632,50 @@ impl State {
 	}
 }
 
+/// How much work an index did, for the tests that check a query reads or
+/// parses little. Only test builds count.
+#[derive(Default)]
+pub(super) struct WorkCounters {
+	#[cfg(test)]
+	refreshes: AtomicUsize,
+	#[cfg(test)]
+	reads: AtomicUsize,
+	#[cfg(test)]
+	parses: AtomicUsize,
+}
+
+impl WorkCounters {
+	fn count_refresh(&self) {
+		#[cfg(test)]
+		self.refreshes.fetch_add(1, Ordering::AcqRel);
+	}
+
+	fn count_read(&self) {
+		#[cfg(test)]
+		self.reads.fetch_add(1, Ordering::Relaxed);
+	}
+
+	fn count_parse(&self) {
+		#[cfg(test)]
+		self.parses.fetch_add(1, Ordering::Relaxed);
+	}
+
+	#[cfg(test)]
+	pub(super) fn refreshes(&self) -> usize {
+		self.refreshes.load(Ordering::Relaxed)
+	}
+
+	#[cfg(test)]
+	pub(super) fn reads(&self) -> usize {
+		self.reads.load(Ordering::Relaxed)
+	}
+
+	#[cfg(test)]
+	pub(super) fn parses(&self) -> usize {
+		self.parses.load(Ordering::Relaxed)
+	}
+}
+
 /// One root's index.
 pub(super) struct CodeIndex {
 	root: PathBuf,
@@ -639,12 +689,7 @@ pub(super) struct CodeIndex {
 	/// Held while the missing filters are built, so two cold callers do not
 	/// both read every file.
 	filter_gate: Mutex<()>,
-	#[cfg(test)]
-	refresh_count: AtomicUsize,
-	#[cfg(test)]
-	reads: AtomicUsize,
-	#[cfg(test)]
-	parses: AtomicUsize,
+	pub(super) work: WorkCounters,
 }
 
 impl Drop for CodeIndex {
@@ -683,12 +728,7 @@ impl CodeIndex {
 			refresh_gate: tokio::sync::Mutex::new(()),
 			refresh_started: AtomicUsize::new(0),
 			filter_gate: Mutex::new(()),
-			#[cfg(test)]
-			refresh_count: AtomicUsize::new(0),
-			#[cfg(test)]
-			reads: AtomicUsize::new(0),
-			#[cfg(test)]
-			parses: AtomicUsize::new(0),
+			work: WorkCounters::default(),
 		}
 	}
 
@@ -706,15 +746,8 @@ impl CodeIndex {
 		paths
 	}
 
-	/// Files parsed from source so far (cache hits excluded), for the reuse tests.
-	#[cfg(test)]
-	pub(super) fn parse_count(&self) -> usize {
-		self.parses.load(Ordering::Relaxed)
-	}
-
 	fn read_file(&self, path: &str) -> Option<Vec<u8>> {
-		#[cfg(test)]
-		self.reads.fetch_add(1, Ordering::Relaxed);
+		self.work.count_read();
 		super::directory::read_capped(&self.root.join(path))
 	}
 
@@ -771,8 +804,7 @@ impl CodeIndex {
 		self.refresh_started.fetch_add(1, Ordering::AcqRel);
 		let this = self.clone();
 		blocking(move || this.refresh_blocking()).await?;
-		#[cfg(test)]
-		self.refresh_count.fetch_add(1, Ordering::AcqRel);
+		self.work.count_refresh();
 		Ok(())
 	}
 
@@ -921,13 +953,14 @@ impl CodeIndex {
 		state.parsed.clear();
 	}
 
-	fn build_filter(&self, path: &str, bits_per_token: usize) -> FilterOutcome {
-		#[cfg(test)]
-		self.reads.fetch_add(1, Ordering::Relaxed);
+	fn build_filter(&self, path: &str, language: &str, bits_per_token: usize) -> FilterOutcome {
+		self.work.count_read();
 		let full_path = self.root.join(path);
 		let filter = READ_BUFFER.with_borrow_mut(|buffer| {
 			if read_capped_into(&full_path, buffer) {
-				with_token_hashes(buffer, |hashes| TokenFilter::build(hashes, bits_per_token))
+				with_token_hashes(buffer, spelling_rules(language).identifier_prefix, |hashes| {
+					TokenFilter::build(hashes, bits_per_token)
+				})
 			} else {
 				TokenFilter::empty()
 			}
@@ -968,14 +1001,14 @@ impl CodeIndex {
 				if !state.indexed {
 					return Err(IndexUnavailable.into());
 				}
-				let pending: Vec<(FileId, String, Stamp)> = state
+				let pending: Vec<(FileId, String, &'static str, Stamp)> = state
 					.files
 					.iter()
 					.enumerate()
 					.filter(|(index, entry)| entry.is_some() && state.filters[*index].is_none())
 					.filter_map(|(index, entry)| {
 						let entry = entry.as_ref()?;
-						Some((index as FileId, entry.path.clone(), entry.stamp))
+						Some((index as FileId, entry.path.clone(), entry.language, entry.stamp))
 					})
 					.collect();
 				(pending, state.bits_per_token)
@@ -985,7 +1018,7 @@ impl CodeIndex {
 			}
 			let outcomes: Vec<(FileId, Stamp, FilterOutcome)> = pending
 				.into_par_iter()
-				.map(|(id, path, stamp)| (id, stamp, self.build_filter(&path, bits_per_token)))
+				.map(|(id, path, language, stamp)| (id, stamp, self.build_filter(&path, language, bits_per_token)))
 				.collect();
 			let mut out_of_memory = false;
 			let mut state = lock(&self.state);
@@ -1052,7 +1085,7 @@ impl CodeIndex {
 			return Ok((Vec::new(), runs));
 		}
 		self.ensure_filters()?;
-		let hashes: Vec<u64> = runs.iter().map(|run| hash_run(run.as_bytes(), false)).collect();
+		let hashes: Vec<u64> = runs.iter().map(|run| hash_run(run.as_bytes(), None)).collect();
 		let state = lock(&self.state);
 		let hits = state
 			.filters
@@ -1122,8 +1155,7 @@ impl CodeIndex {
 		let mut verified: Vec<FileId> = paths
 			.into_par_iter()
 			.filter(|(_, path)| {
-				#[cfg(test)]
-				self.reads.fetch_add(1, Ordering::Relaxed);
+				self.work.count_read();
 				let full_path = self.root.join(path);
 				READ_BUFFER.with_borrow_mut(|buffer| {
 					if !read_capped_into(&full_path, buffer) {
@@ -1131,7 +1163,7 @@ impl CodeIndex {
 					}
 					let mut found = 0;
 					let mut seen: HashSet<&[u8]> = HashSet::new();
-					for_each_identifier_run(buffer, |run, _| {
+					for_each_identifier_run(buffer, None, |run, _| {
 						if let Some(token) = wanted.get(run) {
 							if seen.insert(token) {
 								found += 1;
@@ -1188,6 +1220,21 @@ impl CodeIndex {
 			.by_path
 			.iter()
 			.filter(|(path, _)| path.starts_with(&prefix) && path.matches('/').count() <= allowed_slashes)
+			.map(|(_, id)| *id)
+			.collect()
+	}
+
+	/// The files directly in `directory`, not in the directories below it.
+	pub(super) fn files_in_directory(&self, directory: &str) -> Vec<FileId> {
+		let prefix = if directory.is_empty() {
+			String::new()
+		} else {
+			format!("{directory}/")
+		};
+		lock(&self.state)
+			.by_path
+			.iter()
+			.filter(|(path, _)| path.strip_prefix(&prefix).is_some_and(|name| !name.contains('/')))
 			.map(|(_, id)| *id)
 			.collect()
 	}
@@ -1310,20 +1357,27 @@ impl CodeIndex {
 		wanted: &HashSet<&[u8]>,
 		simple: &[u8],
 	) -> Result<Vec<(FileId, bool)>> {
-		let paths: Vec<(FileId, String)> = ids.iter().filter_map(|id| Some((*id, self.path_of(*id)?))).collect();
+		let files: Vec<(FileId, String, SpellingRules)> = {
+			let state = lock(&self.state);
+			ids.iter()
+				.filter_map(|id| {
+					let entry = state.files.get(*id as usize)?.as_ref()?;
+					Some((*id, entry.path.clone(), spelling_rules(entry.language)))
+				})
+				.collect()
+		};
 		let pool = parse_pool().ok_or_else(|| anyhow!("The parse thread pool did not start"))?;
 		Ok(pool.install(|| {
-			paths
+			files
 				.into_par_iter()
-				.filter_map(|(id, path)| {
-					#[cfg(test)]
-					self.reads.fetch_add(1, Ordering::Relaxed);
+				.filter_map(|(id, path, rules)| {
+					self.work.count_read();
 					let full_path = self.root.join(&path);
 					READ_BUFFER.with_borrow_mut(|buffer| {
 						if !read_capped_into(&full_path, buffer) {
 							return None;
 						}
-						scan_spelling(buffer, wanted, simple).map(|declares| (id, declares))
+						scan_spelling(buffer, wanted, simple, &rules).map(|declares| (id, declares))
 					})
 				})
 				.collect()
@@ -1444,8 +1498,7 @@ impl CodeIndex {
 	}
 
 	fn parse_file(&self, path: &str, language: &'static str) -> Result<Arc<ParsedSource>, SkippedFile> {
-		#[cfg(test)]
-		self.parses.fetch_add(1, Ordering::Relaxed);
+		self.work.count_parse();
 		// Bytes become the text without a second copy: both alive at once is
 		// twice the file in memory, per parsing thread.
 		let read = |relative: &str| -> Result<String> {
@@ -1754,8 +1807,7 @@ impl CodeIndex {
 			files
 				.par_iter()
 				.filter(|(_, path, language)| {
-					#[cfg(test)]
-					self.reads.fetch_add(1, Ordering::Relaxed);
+					self.work.count_read();
 					let full_path = self.root.join(path);
 					READ_BUFFER.with_borrow_mut(|buffer| {
 						read_capped_into(&full_path, buffer) && has_marked_line(buffer, token, language, path, kind)
@@ -1844,40 +1896,6 @@ fn has_marked_line(bytes: &[u8], token: &str, language: &str, path: &str, kind: 
 	})
 }
 
-/// Words after which a name is being declared (`fn`, `class`, `const`, ...).
-const DECLARATION_KEYWORDS: [&str; 26] = [
-	"fn",
-	"def",
-	"func",
-	"function",
-	"class",
-	"struct",
-	"interface",
-	"trait",
-	"type",
-	"enum",
-	"const",
-	"let",
-	"var",
-	"val",
-	"static",
-	"union",
-	"impl",
-	"proc",
-	"sub",
-	"macro",
-	"module",
-	"defmodule",
-	"object",
-	"record",
-	"namespace",
-	"protocol",
-];
-
-/// Keywords after which a parenthesis opens the parameter list of the name
-/// that follows later on the line (`func (s *Server) Name(`).
-const CALLABLE_KEYWORDS: [&str; 4] = ["fn", "def", "func", "function"];
-
 /// Bytes before an occurrence the declaration check reads: a minified file
 /// is one line of megabytes, and scanning back to the line start for every
 /// occurrence would be quadratic.
@@ -1886,7 +1904,7 @@ const DECLARATION_LOOKBACK_BYTES: usize = 200;
 /// Whether the occurrence of the name at `start..end` looks like the
 /// declaration of it. A guess that only orders the files to parse: a wrong
 /// answer costs a repeat of the query, never a missed result.
-fn looks_like_declaration(bytes: &[u8], start: usize, end: usize) -> bool {
+fn looks_like_declaration(bytes: &[u8], start: usize, end: usize, rules: &SpellingRules) -> bool {
 	let window_start = start.saturating_sub(DECLARATION_LOOKBACK_BYTES);
 	// Whether `prefix` is the whole text before the name on its line.
 	let (line_start, whole_line) = match bytes[window_start..start].iter().rposition(|byte| *byte == b'\n') {
@@ -1901,7 +1919,7 @@ fn looks_like_declaration(bytes: &[u8], start: usize, end: usize) -> bool {
 		.next()
 		.and_then(|word| std::str::from_utf8(word).ok())
 		.unwrap_or("");
-	if DECLARATION_KEYWORDS.contains(&previous_word) {
+	if rules.declaration_keywords.contains(&previous_word) || rules.callable_keywords.contains(&previous_word) {
 		return true;
 	}
 	let opens_parameters = bytes[end..].iter().find(|byte| !matches!(byte, b' ' | b'\t')) == Some(&b'(');
@@ -1916,22 +1934,22 @@ fn looks_like_declaration(bytes: &[u8], start: usize, end: usize) -> bool {
 		|| prefix
 			.split(|byte| !is_identifier_byte(*byte))
 			.filter_map(|word| std::str::from_utf8(word).ok())
-			.any(|word| CALLABLE_KEYWORDS.contains(&word))
+			.any(|word| rules.callable_keywords.contains(&word))
 }
 
 /// Reads one file for `spelling`: `None` when it does not spell every run in
 /// `wanted` as a whole token, else whether one occurrence of `simple` looks
 /// like a declaration.
-fn scan_spelling(bytes: &[u8], wanted: &HashSet<&[u8]>, simple: &[u8]) -> Option<bool> {
+fn scan_spelling(bytes: &[u8], wanted: &HashSet<&[u8]>, simple: &[u8], rules: &SpellingRules) -> Option<bool> {
 	let mut seen: HashSet<&[u8]> = HashSet::new();
 	let mut declares = false;
-	for_each_identifier_run(bytes, |run, _| {
+	for_each_identifier_run(bytes, None, |run, _| {
 		if let Some(token) = wanted.get(run) {
 			seen.insert(token);
 		}
 		if !declares && run == simple {
 			let start = run.as_ptr() as usize - bytes.as_ptr() as usize;
-			declares = looks_like_declaration(bytes, start, start + run.len());
+			declares = looks_like_declaration(bytes, start, start + run.len(), rules);
 		}
 	});
 	(seen.len() == wanted.len()).then_some(declares)
@@ -2134,29 +2152,35 @@ impl CodeIndexes {
 		tokio::spawn(async move {
 			loop {
 				tokio::time::sleep(period).await;
-				let (dropped, none_left) = {
-					let mut registry = lock(&registry);
-					let idle_keys: Vec<PathBuf> = registry
-						.roots
-						.iter()
-						.filter(|(_, slot)| slot.last_used.elapsed() >= idle)
-						.map(|(key, _)| key.clone())
-						.collect();
-					let dropped: Vec<Slot> = idle_keys.iter().filter_map(|key| registry.roots.remove(key)).collect();
-					let none_left = registry.roots.is_empty();
-					if none_left {
-						registry.sweeper_running = false;
-					}
-					(dropped, none_left)
-				};
-				// Dropping an index trims the allocator: not under the lock.
-				drop(dropped);
-				lock(&budget.peers).retain(|peer| peer.strong_count() > 0);
-				if none_left {
+				if Self::drop_idle_roots(&registry, &budget, idle) {
 					return;
 				}
 			}
 		});
+	}
+
+	/// Drops the roots unused for `idle` or longer. True when none is left,
+	/// which also stops the sweeper.
+	fn drop_idle_roots(registry: &Mutex<Registry>, budget: &MemoryBudget, idle: Duration) -> bool {
+		let (dropped, none_left) = {
+			let mut registry = lock(registry);
+			let idle_keys: Vec<PathBuf> = registry
+				.roots
+				.iter()
+				.filter(|(_, slot)| slot.last_used.elapsed() >= idle)
+				.map(|(key, _)| key.clone())
+				.collect();
+			let dropped: Vec<Slot> = idle_keys.iter().filter_map(|key| registry.roots.remove(key)).collect();
+			let none_left = registry.roots.is_empty();
+			if none_left {
+				registry.sweeper_running = false;
+			}
+			(dropped, none_left)
+		};
+		// Dropping an index trims the allocator: not under the lock.
+		drop(dropped);
+		lock(&budget.peers).retain(|peer| peer.strong_count() > 0);
+		none_left
 	}
 }
 

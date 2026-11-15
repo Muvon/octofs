@@ -16,6 +16,7 @@
 //! plus the graph methods (imports, calls, class inheritance, import
 //! resolution) that TypeScript, PHP, Python and Svelte reuse in part.
 
+use super::{enclosing_owner, CalleeSyntax, SymbolKind};
 use super::{parse_call_target, path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
@@ -23,6 +24,14 @@ use tree_sitter::Node;
 
 /// What closes the module path of a JavaScript or TypeScript import.
 pub(super) const SCRIPT_PATH_END: &str = "'\"`";
+
+// `$` and `#` (private members) are identifier characters; `?.` chains.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["?.", "."],
+	identifier_extras: &['$', '#'],
+	self_receivers: &["this"],
+	..CalleeSyntax::DOTTED
+};
 
 pub(crate) struct JavaScript {}
 
@@ -74,6 +83,37 @@ impl Language for JavaScript {
 			"function_expression",
 			"class_declaration",
 		]
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["class", "const", "let", "var"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["function"]
+	}
+
+	// `$el`, `$store`: the `$` is part of the name.
+	fn identifier_prefix(&self) -> Option<u8> {
+		Some(b'$')
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_declaration" | "method_definition" | "arrow_function" | "function_expression" => {
+				SymbolKind::Function
+			}
+			"class_declaration" => SymbolKind::Class,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(node, contents, &["class_declaration", "class"])
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -234,6 +274,11 @@ pub(crate) fn is_index_file(path: &str) -> bool {
 /// The name of `export default function name() {}`, `export default class
 /// Name {}` and `export default name;`.
 pub(crate) fn default_export_name(node: Node, contents: &str) -> Option<String> {
+	// Asked of every node of a file: only an export statement can hold the
+	// `default` keyword, so the other nodes' children are not walked.
+	if node.kind() != "export_statement" {
+		return None;
+	}
 	let mut cursor = node.walk();
 	let is_default = node.children(&mut cursor).any(|child| child.kind() == "default");
 	if !is_default {
@@ -396,7 +441,7 @@ pub(crate) fn js_call_target(node: Node, contents: &str) -> Option<CallTarget> {
 		_ => return None,
 	};
 	let callee = node.child_by_field_name(callee_field)?;
-	parse_call_target(callee.utf8_text(contents.as_bytes()).ok()?)
+	parse_call_target(callee.utf8_text(contents.as_bytes()).ok()?, &CALLEE_SYNTAX)
 }
 
 /// Join a directory and a name with `/`; an empty side is dropped, like

@@ -58,7 +58,7 @@ const EXTERNAL_ID_PREFIX: &str = "external:";
 pub struct FileSpec {
 	/// Workdir-relative path with forward slashes; becomes the file node id.
 	pub path: String,
-	/// Language name as `Language::name` spells it ("rust", "python", ...).
+	/// Language name as `Language::name` spells it.
 	pub language: &'static str,
 }
 
@@ -67,7 +67,7 @@ pub struct FileSpec {
 pub struct SourceFile {
 	/// Workdir-relative path with forward slashes; becomes the file node id.
 	pub path: String,
-	/// Language name as `Language::name` spells it ("rust", "python", ...).
+	/// Language name as `Language::name` spells it.
 	pub language: &'static str,
 	pub contents: String,
 }
@@ -392,7 +392,7 @@ fn add_file_nodes(graph: &mut CodeGraph, path: &str, language: &str, line_count:
 			CodeNode {
 				id: symbol_id.clone(),
 				name: symbol.name.clone(),
-				kind: symbol.kind.clone(),
+				kind: symbol.kind.as_str().to_string(),
 				path: path.to_string(),
 				owner: symbol.owner.clone(),
 				language: language.to_string(),

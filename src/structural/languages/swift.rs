@@ -15,12 +15,25 @@
 //! Swift grammar: functions, classes, protocols, initializers and type
 //! aliases.
 
+use super::{enclosing_owner, CalleeSyntax, PackageScope, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, files_in_dir_matching, parse_call_target, simple_type_name, CallTarget, Language,
 	TypeRelationKind,
 };
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
 use tree_sitter::Node;
+
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["?.", "."],
+	self_receivers: &["self", "Self"],
+	angle_generics: true,
+	..CalleeSyntax::DOTTED
+};
+
+/// The attribute that makes an import part of the importing module's own
+/// interface.
+const EXPORTED_IMPORT: &str = "@_exported";
 
 pub(crate) struct Swift {}
 
@@ -45,10 +58,65 @@ impl Language for Swift {
 		&["class", "struct", "enum", "extension", "protocol", "actor"]
 	}
 
-	// `import Module` names the directory that holds the module's files.
-	fn is_directory_index(&self, _path: &str) -> bool {
+	// `import Module` names the directory that holds the module's files,
+	// which are one package.
+	fn package_scope(&self) -> PackageScope {
+		PackageScope::Directory
+	}
+
+	fn import_names_directory(&self) -> bool {
 		true
 	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	// Protocol composition (`A & B`) and generic arguments.
+	fn inheritance_name_extras(&self) -> &'static str {
+		"<>:&"
+	}
+
+	fn import_name_separators(&self) -> &'static [char] {
+		&['.']
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&[
+			"class",
+			"struct",
+			"enum",
+			"protocol",
+			"actor",
+			"typealias",
+			"let",
+			"var",
+		]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["func"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_declaration" | "init_declaration" => SymbolKind::Function,
+			"class_declaration" => SymbolKind::Class,
+			"protocol_declaration" => SymbolKind::Interface,
+			"typealias_declaration" => SymbolKind::Type,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	fn is_constructor(&self, node: Node, _contents: &str) -> bool {
+		node.kind() == "init_declaration"
+	}
+
+	// A Swift `extension` is a `class_declaration` of the extended type.
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(node, contents, &["class_declaration", "protocol_declaration"])
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Same kinds as the outline: properties, subscripts and imports
 		// declare no symbol of their own.
@@ -118,6 +186,36 @@ impl Language for Swift {
 		(imports, exports)
 	}
 
+	// `import Models` binds the module name, so `Models.make()` names that
+	// module's files; `@_exported import Kit` also passes the module's
+	// declarations on to whoever imports this file.
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		if node.kind() != "import_declaration" {
+			return Vec::new();
+		}
+		let passes_on = node_text(node, contents).is_some_and(|text| text.trim_start().starts_with(EXPORTED_IMPORT));
+		let mut bindings = Vec::new();
+		for module in imports {
+			bindings.push(ImportBinding {
+				local_name: module.rsplit('.').next().unwrap_or(module).to_string(),
+				imported_name: None,
+				import_path: module.clone(),
+			});
+			if passes_on {
+				bindings.push(ImportBinding {
+					local_name: WILDCARD.to_string(),
+					imported_name: Some(WILDCARD.to_string()),
+					import_path: module.clone(),
+				});
+			}
+		}
+		bindings
+	}
+
+	fn line_may_reexport(&self, line: &str, name: &str, _path: &str) -> bool {
+		line.trim_start().starts_with(EXPORTED_IMPORT) && self.line_may_import(line, name)
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		if node.kind() != "call_expression" {
 			return Vec::new();
@@ -125,7 +223,7 @@ impl Language for Swift {
 		// The grammar has no field for the callee: it is the first child.
 		node.child(0)
 			.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-			.and_then(parse_call_target)
+			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 			.into_iter()
 			.collect()
 	}

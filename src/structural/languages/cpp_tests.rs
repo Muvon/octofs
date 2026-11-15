@@ -515,3 +515,120 @@ fn the_linux_list_header_keeps_every_call_edge_including_both_sides_of_an_ifdef(
 		.count();
 	assert_eq!(to_valid, 2);
 }
+
+fn cpp_file(path: &str, contents: &str) -> SourceFile {
+	SourceFile {
+		path: path.to_string(),
+		language: "cpp",
+		contents: contents.to_string(),
+	}
+}
+
+/// The names of every call the extractor reports in `source`, sorted.
+fn called_names(source: &str) -> Vec<String> {
+	let tree = parse(source);
+	let mut names: Vec<String> = [
+		"declaration",
+		"new_expression",
+		"compound_literal_expression",
+		"call_expression",
+	]
+	.into_iter()
+	.flat_map(|kind| nodes_of_kind(&tree, kind))
+	.flat_map(|node| Cpp {}.extract_function_calls(node, source))
+	.map(|target| target.name)
+	.collect();
+	names.sort();
+	names
+}
+
+#[test]
+fn every_way_to_build_an_object_calls_its_type() {
+	let source = "void f() {\n\tFoo a(1, 2);\n\tFoo b{1};\n\tauto c = new Foo(3);\n\tauto d = Foo{4};\n\tint e(5);\n\tFoo g;\n\tFoo h = other;\n}\n";
+	assert_eq!(called_names(source), ["Foo", "Foo", "Foo", "Foo"]);
+}
+
+#[test]
+fn calls_inside_macro_arguments_and_template_arguments_are_calls() {
+	let source =
+		"MACRO(helper(1));\nvoid g() {\n\tCHECK(compute(2));\n\tcall<Foo>(3);\n}\nstd::vector<decltype(make())> v;\n";
+	assert_eq!(
+		called_names(source),
+		["CHECK", "MACRO", "call", "compute", "helper", "make"]
+	);
+}
+
+#[test]
+fn an_include_binds_every_name_of_the_header_and_passes_it_on() {
+	let source = "#include \"inner.h\"\n";
+	let tree = parse(source);
+	let statement = first_node(&tree, "preproc_include");
+	let (imports, _) = Cpp {}.extract_imports_exports(statement, source);
+	let bindings = Cpp {}.extract_import_bindings(statement, source, &imports);
+	assert_eq!(bindings.len(), 1);
+	assert_eq!(bindings[0].local_name, "*");
+	assert_eq!(bindings[0].imported_name.as_deref(), Some("*"));
+	assert_eq!(bindings[0].import_path, "inner.h");
+	assert!(Cpp {}.line_may_reexport("#include \"inner.h\"", "inner", "include/outer.h"));
+	assert!(!Cpp {}.line_may_reexport("int inner = 1;", "inner", "include/outer.h"));
+}
+
+#[test]
+fn only_a_header_passes_an_included_header_on() {
+	let include = "#include \"inner.h\"";
+	for header in ["include/outer.h", "include/outer.hpp", "include/outer.hxx"] {
+		assert!(Cpp {}.line_may_reexport(include, "inner", header), "{header}");
+	}
+	// No file includes a source file, so its includes reach nothing further.
+	for source in ["src/outer.c", "src/outer.cpp", "src/outer.cc"] {
+		assert!(!Cpp {}.line_may_reexport(include, "inner", source), "{source}");
+	}
+}
+
+#[test]
+fn a_call_through_a_header_that_includes_another_reaches_the_inner_declaration() {
+	let graph = build_graph(vec![
+		cpp_file("include/inner.h", "void deep() {}\n"),
+		cpp_file("other/other.cpp", "void deep() {}\n"),
+		cpp_file("include/outer.h", "#include \"inner.h\"\n"),
+		cpp_file(
+			"src/main.cpp",
+			"#include \"../include/outer.h\"\n\nvoid run() {\n\tdeep();\n}\n",
+		),
+	]);
+	assert!(edge(
+		&graph,
+		"src/main.cpp::run",
+		"include/inner.h::deep",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"src/main.cpp::run",
+		"other/other.cpp::deep",
+		RelationType::Calls
+	)
+	.is_none());
+}
+
+#[test]
+fn each_way_to_build_an_object_reaches_the_class_through_the_graph() {
+	let main = "#include \"../include/foo.h\"\n\nvoid a() {\n\tFoo x(1);\n}\nvoid b() {\n\tFoo y{1};\n}\nvoid c() {\n\tauto z = new Foo(1);\n}\nvoid d() {\n\tauto w = Foo{1};\n}\n";
+	let graph = build_graph(vec![
+		cpp_file("include/foo.h", "class Foo {\npublic:\n\tFoo(int value) {}\n};\n"),
+		cpp_file("other/foo.cpp", "class Foo {};\n"),
+		cpp_file("src/main.cpp", main),
+	]);
+	for function in ["a", "b", "c", "d"] {
+		let caller = format!("src/main.cpp::{function}");
+		assert!(
+			edge(&graph, &caller, "include/foo.h::Foo", RelationType::Calls).is_some(),
+			"{function}"
+		);
+		assert!(
+			edge(&graph, &caller, "other/foo.cpp::Foo", RelationType::Calls).is_none(),
+			"{function}"
+		);
+	}
+}

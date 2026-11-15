@@ -21,6 +21,7 @@ use super::javascript::{
 	function_value_name, join_path, js_call_target, parse_js_export_statement, parse_js_import_statement_full_path,
 	re_export_source, JavaScript,
 };
+use super::{enclosing_owner, SymbolKind};
 use super::{extract_symbol_by_kinds, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
@@ -92,6 +93,65 @@ impl Language for TypeScript {
 			"internal_module",
 			"module",
 		]
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(
+			node,
+			contents,
+			&[
+				"class_declaration",
+				"abstract_class_declaration",
+				"class",
+				"interface_declaration",
+				"internal_module",
+				"module",
+			],
+		)
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	// Generic arguments of a parent (`extends Base<T>`).
+	fn inheritance_name_extras(&self) -> &'static str {
+		"<>?:"
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&[
+			"class",
+			"const",
+			"let",
+			"var",
+			"interface",
+			"type",
+			"enum",
+			"namespace",
+			"module",
+		]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["function"]
+	}
+
+	fn identifier_prefix(&self) -> Option<u8> {
+		Some(b'$')
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_declaration" | "method_definition" | "arrow_function" | "function_expression" => {
+				SymbolKind::Function
+			}
+			"class_declaration" | "abstract_class_declaration" => SymbolKind::Class,
+			"interface_declaration" => SymbolKind::Interface,
+			"type_alias_declaration" => SymbolKind::Type,
+			"enum_declaration" => SymbolKind::Enum,
+			_ => SymbolKind::Other,
+		}
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -251,6 +311,34 @@ impl Language for Tsx {
 
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		TypeScript {}.get_outline_kinds()
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		TypeScript {}.extract_symbol_owner(node, contents)
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		TypeScript {}.comment_starts()
+	}
+
+	fn inheritance_name_extras(&self) -> &'static str {
+		TypeScript {}.inheritance_name_extras()
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		TypeScript {}.declaration_keywords()
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		TypeScript {}.callable_keywords()
+	}
+
+	fn identifier_prefix(&self) -> Option<u8> {
+		TypeScript {}.identifier_prefix()
+	}
+
+	fn symbol_kind(&self, node: Node, contents: &str) -> SymbolKind {
+		TypeScript {}.symbol_kind(node, contents)
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {

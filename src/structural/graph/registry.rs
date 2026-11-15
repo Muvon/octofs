@@ -53,7 +53,7 @@ pub fn normalize_path(path: &str) -> String {
 }
 
 /// Resolve `relative_path` against the directory of `source_file`:
-/// `src/main.rs` + `../lib.rs` is `lib.rs`.
+/// `src/main.ext` + `../lib.ext` is `lib.ext`.
 pub fn resolve_relative_path(source_file: &str, relative_path: &str) -> String {
 	let source_dir = source_file
 		.rsplit_once(['/', '\\'])

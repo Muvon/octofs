@@ -272,3 +272,62 @@ fn graph_links_calls_and_imports_across_files() {
 	assert!(has("lib/main.lua", "lib/util.lua", RelationType::Imports));
 	assert!(has("lib/main.lua::run", "lib/util.lua::helper", RelationType::Calls));
 }
+
+#[test]
+fn a_required_module_assigned_to_a_local_binds_that_name() {
+	let bindings = |source: &str| {
+		let tree = parse_tree(source);
+		nodes_of_kind(tree.root_node(), "function_call")
+			.into_iter()
+			.flat_map(|call| {
+				let (imports, _) = Lua {}.extract_imports_exports(call, source);
+				Lua {}.extract_import_bindings(call, source, &imports)
+			})
+			.map(|binding| (binding.local_name, binding.import_path))
+			.collect::<Vec<_>>()
+	};
+	let pair = |name: &str, path: &str| (name.to_string(), path.to_string());
+	assert_eq!(bindings("local m = require(\"a.m\")\n"), [pair("m", "a.m")]);
+	assert_eq!(
+		bindings("local a, b = require(\"x\"), require 'y'\n"),
+		[pair("a", "x"), pair("b", "y")]
+	);
+	assert!(bindings("require(\"x\")\n").is_empty());
+	assert!(bindings("M.k = require(\"w\")\n").is_empty());
+	assert!(bindings("local v = compute(\"w\")\n").is_empty());
+}
+
+#[test]
+fn a_call_through_a_local_module_name_reaches_that_module() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "lua",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("lib/m.lua", "local M = {}\nfunction M.f()\nend\nreturn M\n"),
+		file("lib/n.lua", "local N = {}\nfunction N.f()\nend\nreturn N\n"),
+		file(
+			"lib/main.lua",
+			"local mod = require(\"lib.m\")\nlocal other = require(\"lib.n\")\nfunction run()\n\tmod.f()\nend\n",
+		),
+	]);
+	let has = |target: &str| {
+		graph.relationships.iter().any(|edge| {
+			edge.source == "lib/main.lua::run" && edge.target == target && edge.relation == RelationType::Calls
+		})
+	};
+	assert!(has("lib/m.lua::M::f"));
+	assert!(!has("lib/n.lua::N::f"));
+}
+
+#[test]
+fn an_init_file_stands_for_its_directory() {
+	assert!(Lua {}.is_directory_index("lib/pkg/init.lua"));
+	assert!(!Lua {}.is_directory_index("lib/pkg/util.lua"));
+	assert_eq!(
+		Lua {}.importer_names("lib/pkg/init.lua", &[]),
+		["init".to_string(), "pkg".to_string()]
+	);
+	assert_eq!(Lua {}.importer_names("lib/pkg/util.lua", &[]), ["util".to_string()]);
+}

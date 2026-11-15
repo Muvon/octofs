@@ -17,7 +17,7 @@
 use super::Go;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, CodeRelationship, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
+use crate::structural::languages::{CallTarget, Language, PackageScope, TypeRelationKind};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -495,4 +495,14 @@ fn a_dotless_import_is_the_modules_own_package_when_a_go_mod_holds_the_rest() {
 	let files = registry(&["go.mod", "cmd/main.go", "third_party/os/os.go"]);
 	assert_eq!(go.resolve_import("os", "cmd/main.go", &files), None);
 	assert_eq!(go.resolve_import("net/http", "cmd/main.go", &files), None);
+}
+
+#[test]
+fn the_files_of_a_directory_are_one_package_and_an_import_can_name_the_directory() {
+	assert_eq!(Go {}.package_scope(), PackageScope::Directory);
+	assert!(Go {}.import_names_directory());
+	assert_eq!(
+		Go {}.importer_names("internal/store/db.go", &[]),
+		["db".to_string(), "store".to_string()]
+	);
 }

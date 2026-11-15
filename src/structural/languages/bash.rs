@@ -15,7 +15,8 @@
 //! Bash grammar: named function definitions, plus the graph facts
 //! (`source` / `.` imports, command calls).
 
-use super::{parse_call_target, path_ends_with_name, CallTarget, Language};
+use super::SymbolKind;
+use super::{parse_call_target, path_ends_with_name, CallTarget, CalleeSyntax, Language};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
 
@@ -59,6 +60,26 @@ impl Language for Bash {
 		None
 	}
 
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["#"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["function"]
+	}
+
+	// Variables are `$name`.
+	fn identifier_prefix(&self) -> Option<u8> {
+		Some(b'$')
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_definition" => SymbolKind::Function,
+			_ => SymbolKind::Other,
+		}
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		vec!["function_definition"]
 	}
@@ -96,7 +117,7 @@ impl Language for Bash {
 		if name == "source" || name == "." {
 			return Vec::new();
 		}
-		parse_call_target(name)
+		parse_call_target(name, &CalleeSyntax::DOTTED)
 			.or_else(|| hyphenated_function_call(name))
 			.into_iter()
 			.collect()

@@ -15,11 +15,20 @@
 //! Lua grammar: named function declarations, plus the graph facts
 //! (`require` imports, module-return exports, calls, owners).
 
-use super::{extract_call_target, parse_call_target, path_ends_with_name, CallTarget, Language};
+use super::{extract_call_target, parse_call_target, path_ends_with_name, CallTarget, CalleeSyntax, Language};
+use super::{BodyOpen, SymbolKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
 
 pub(crate) struct Lua {}
+
+// `obj:method()` passes the receiver as the first argument.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &[":", "."],
+	self_receivers: &["self"],
+	..CalleeSyntax::DOTTED
+};
 
 impl Language for Lua {
 	fn name(&self) -> &'static str {
@@ -47,7 +56,40 @@ impl Language for Lua {
 		// named by its last segment.
 		let name = node.child_by_field_name("name")?;
 		let text = name.utf8_text(contents.as_bytes()).ok()?;
-		extract_call_target(text)
+		extract_call_target(text, &CALLEE_SYNTAX)
+	}
+
+	fn body_open(&self) -> BodyOpen {
+		BodyOpen::FirstLine
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["--"]
+	}
+
+	// `require("a.b")` names the module `a/b`.
+	fn import_name_separators(&self) -> &'static [char] {
+		&['.', '/']
+	}
+
+	// `require("a.b")` finds `a/b/init.lua` when there is no `a/b.lua`.
+	fn is_directory_index(&self, path: &str) -> bool {
+		path.rsplit('/').next() == Some(LUA_INDEX_FILE)
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["local"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["function"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_declaration" => SymbolKind::Function,
+			_ => SymbolKind::Other,
+		}
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -59,7 +101,7 @@ impl Language for Lua {
 	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
 		let name = node.child_by_field_name("name")?;
 		let text = name.utf8_text(contents.as_bytes()).ok()?;
-		parse_call_target(text).and_then(|target| target.qualifier)
+		parse_call_target(text, &CALLEE_SYNTAX).and_then(|target| target.qualifier)
 	}
 
 	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
@@ -95,6 +137,19 @@ impl Language for Lua {
 		(imports, exports)
 	}
 
+	// `local m = require("a.b")` binds `m` to the module: `m.f()` calls `f`
+	// of that file, whatever the module's own name is.
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		let (Some(module), Some(local_name)) = (imports.first(), variable_receiving(node, contents)) else {
+			return Vec::new();
+		};
+		vec![ImportBinding {
+			local_name,
+			imported_name: None,
+			import_path: module.clone(),
+		}]
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		if node.kind() != "function_call" {
 			return Vec::new();
@@ -110,7 +165,7 @@ impl Language for Lua {
 		if name == "require" {
 			return Vec::new();
 		}
-		parse_call_target(name).into_iter().collect()
+		parse_call_target(name, &CALLEE_SYNTAX).into_iter().collect()
 	}
 
 	fn resolve_import(&self, import_path: &str, source_file: &str, all_files: &FileRegistry) -> Option<String> {
@@ -140,6 +195,9 @@ impl Language for Lua {
 
 const LUA_EXTENSION: &str = "lua";
 
+/// The file that stands for its directory in a `require`.
+const LUA_INDEX_FILE: &str = "init.lua";
+
 fn join_path(base: &str, part: &str) -> String {
 	if base.is_empty() {
 		part.to_string()
@@ -153,7 +211,28 @@ fn find_lua_module(module_path: &str, base_dir: &str, registry: &FileRegistry) -
 	let module_base = join_path(base_dir, module_path);
 	registry
 		.find_exact_file(&format!("{module_base}.{LUA_EXTENSION}"))
-		.or_else(|| registry.find_exact_file(&format!("{module_base}/init.{LUA_EXTENSION}")))
+		.or_else(|| registry.find_exact_file(&format!("{module_base}/{LUA_INDEX_FILE}")))
+}
+
+/// The plain variable that takes the value of the call `node` in an
+/// assignment (`local m = require(...)`): the variable at the same position
+/// as the call in the value list. A field (`M.k = ...`) is no local name.
+fn variable_receiving(node: Node, contents: &str) -> Option<String> {
+	let values = node.parent().filter(|parent| parent.kind() == "expression_list")?;
+	let assignment = values
+		.parent()
+		.filter(|parent| parent.kind() == "assignment_statement")?;
+	let mut cursor = values.walk();
+	let position = values.named_children(&mut cursor).position(|value| value == node)?;
+	let variables = assignment
+		.named_children(&mut assignment.walk())
+		.find(|child| child.kind() == "variable_list")?;
+	let mut variable_cursor = variables.walk();
+	let variable = variables.named_children(&mut variable_cursor).nth(position)?;
+	if variable.kind() != "identifier" {
+		return None;
+	}
+	variable.utf8_text(contents.as_bytes()).ok().map(str::to_string)
 }
 
 /// First identifier child of a `function_call`: the callee name.

@@ -36,6 +36,9 @@ pub(crate) mod use_alias;
 
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::symbols::ImportBinding;
+use std::borrow::Cow;
+use std::collections::HashSet;
+use std::sync::OnceLock;
 use tree_sitter::Node;
 
 /// Kind of type-level relationship a language may report from an AST node,
@@ -68,6 +71,70 @@ pub struct EmbeddedSource {
 	/// 0-based line of the file where `contents` begins; added to every line
 	/// the embedded block reports.
 	pub start_line: u32,
+}
+
+/// Where a declaration's body opens, deciding which lines of an outline
+/// item are its signature.
+#[derive(Clone, Copy)]
+pub(crate) enum BodyOpen {
+	/// The first line containing `{`.
+	Brace,
+	/// The first line whose trimmed text ends with this.
+	LineEnding(&'static str),
+	/// The first line only.
+	FirstLine,
+}
+
+/// How a language groups its files into packages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageScope {
+	/// A file belongs to no package of its own.
+	NoPackage,
+	/// The files of one directory are one package.
+	Directory,
+	/// The files that declare the same package name are one package.
+	Declared,
+}
+
+/// What a graph symbol is, in the words the graph output shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolKind {
+	/// A function, method or constructor: something a call can reach.
+	Function,
+	Class,
+	Struct,
+	Trait,
+	Interface,
+	Enum,
+	/// A module or namespace.
+	Module,
+	Macro,
+	Const,
+	/// A type alias.
+	Type,
+	/// An implementation of a protocol or interface for a type.
+	Implementation,
+	/// A declaration the graph has no word for.
+	Other,
+}
+
+impl SymbolKind {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			SymbolKind::Function => "function",
+			SymbolKind::Class => "class",
+			SymbolKind::Struct => "struct",
+			SymbolKind::Trait => "trait",
+			SymbolKind::Interface => "interface",
+			SymbolKind::Enum => "enum",
+			SymbolKind::Module => "module",
+			SymbolKind::Macro => "macro",
+			SymbolKind::Const => "const",
+			SymbolKind::Type => "type",
+			SymbolKind::Implementation => "implementation",
+			SymbolKind::Other => "symbol",
+		}
+	}
 }
 
 /// A tree-sitter grammar plus the outline decisions for it.
@@ -113,6 +180,21 @@ pub(crate) trait Language: Send + Sync {
 		None
 	}
 
+	/// What the symbol declared at this node is. Languages list their own
+	/// grammar's node kinds here; a node it does not list is `Other`.
+	fn symbol_kind(&self, node: Node, contents: &str) -> SymbolKind {
+		let _ = (node, contents);
+		SymbolKind::Other
+	}
+
+	/// Whether the function declared at this node builds an instance of the
+	/// type that owns it (a Java constructor, a Swift `init`), so a call that
+	/// names the type reaches it.
+	fn is_constructor(&self, node: Node, contents: &str) -> bool {
+		let _ = (node, contents);
+		false
+	}
+
 	/// Node kinds that become symbol-level graph nodes. Empty by default, so a
 	/// language contributes no symbols until it opts in; kinds listed here must
 	/// declare something (not imports, calls or statements).
@@ -134,12 +216,13 @@ pub(crate) trait Language: Send + Sync {
 		Vec::new()
 	}
 
-	/// Owning type/module for a declared symbol, when it is syntactically known.
-	/// The default handles the common class/module/impl ancestor shapes;
-	/// languages with receiver syntax on the declaration itself (notably Go)
-	/// override it.
+	/// Owning type/module for a declared symbol, when it is syntactically
+	/// known: [`enclosing_owner`] over the language's container kinds, or the
+	/// receiver written on the declaration itself (Go, Lua). None for a
+	/// language without owned declarations.
 	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
-		find_graph_symbol_owner(node, contents)
+		let _ = (node, contents);
+		None
 	}
 
 	/// Code regions embedded in another language that should join the graph.
@@ -195,7 +278,7 @@ pub(crate) trait Language: Send + Sync {
 		contains_identifier(line, name)
 			&& (markers.is_empty()
 				|| markers.iter().any(|marker| marker_in_line(line, marker))
-				|| name_list_line(line, name, ""))
+				|| name_list_line(line, name, "", self.comment_starts()))
 	}
 
 	/// Whether `line` of the file `path` may re-export what the module `name`
@@ -209,7 +292,13 @@ pub(crate) trait Language: Send + Sync {
 	/// Whether `line` may name the parent type `name` of a declaration, with
 	/// the same soundness rule as `line_may_import`.
 	fn line_may_inherit(&self, line: &str, name: &str) -> bool {
-		inheritance_line(self.inheritance_line_markers(), line, name, INHERITANCE_LIST_EXTRA)
+		inheritance_line(
+			self.inheritance_line_markers(),
+			line,
+			name,
+			self.inheritance_name_extras(),
+			self.comment_starts(),
+		)
 	}
 
 	/// Every repository file an import names; empty for an external
@@ -249,15 +338,22 @@ pub(crate) trait Language: Send + Sync {
 	}
 
 	/// The file name that marks the root of a module or package of this
-	/// language (a manifest), when imports are written relative to it.
+	/// language, when imports are written relative to it. Only where the
+	/// file sits is read, never its contents.
 	fn module_root_file(&self) -> Option<&'static str> {
 		None
 	}
 
-	/// Whether the files of one directory are one package: they see each
+	/// How this language groups files into packages whose members see each
 	/// other's top-level names without importing them.
-	fn directory_is_package(&self) -> bool {
-		false
+	fn package_scope(&self) -> PackageScope {
+		PackageScope::NoPackage
+	}
+
+	/// The package a node declares for its file, for a language whose
+	/// [`Self::package_scope`] is [`PackageScope::Declared`].
+	fn declared_package(&self, _node: Node, _contents: &str) -> Option<String> {
+		None
 	}
 
 	/// Whether the file at `path` stands for its directory: importing the
@@ -266,18 +362,72 @@ pub(crate) trait Language: Send + Sync {
 		false
 	}
 
+	/// Whether an import can name the directory that holds a file, so
+	/// importers spell the directory's name as well as the file's.
+	fn import_names_directory(&self) -> bool {
+		false
+	}
+
 	/// The names importers of the file at `path` write: its stem and, where
-	/// the file stands for its directory or the directory is a package, the
+	/// an import can name the directory or the file stands for it, the
 	/// directory's name. Any other directory is spelled by unrelated files
-	/// and is left out.
-	fn importer_names(&self, path: &str) -> Vec<String> {
-		stem_and_directory(path, self.is_directory_index(path) || self.directory_is_package())
+	/// and is left out. `declared` are the names the file declares at its top
+	/// level, for a language whose import names are declared, not derived
+	/// from the path; empty when the file has not been parsed.
+	fn importer_names(&self, path: &str, _declared: &[&str]) -> Vec<String> {
+		stem_and_directory(path, self.is_directory_index(path) || self.import_names_directory())
+	}
+
+	/// Where a declaration's body opens, deciding which lines of an outline
+	/// item are its signature.
+	fn body_open(&self) -> BodyOpen {
+		BodyOpen::Brace
+	}
+
+	/// What begins a comment that runs to the end of a line or is closed
+	/// later (`//`, `/*`, `#`, `--`). A line is read up to the first one.
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&[]
+	}
+
+	/// Characters other than identifier characters, spaces and brackets that
+	/// the line of a parent-type list may hold: bounds (`+`, `&`), generic
+	/// brackets, `:`.
+	fn inheritance_name_extras(&self) -> &'static str {
+		""
+	}
+
+	/// Whether files of this language can add symbols to the code graph: it
+	/// declares symbols itself, or embeds code of a language that does.
+	fn has_graph_symbols(&self) -> bool {
+		!self.get_symbol_kinds().is_empty()
+	}
+
+	/// What separates the segments of the module an import names (`::` in
+	/// Rust, `.` in Python and Java, `/` in a path). A call qualified by the
+	/// last segment names the imported file.
+	fn import_name_separators(&self) -> &'static [char] {
+		&['/']
+	}
+
+	/// Words after which a name is being declared (`fn`, `class`, `const`).
+	/// Used to rank files by reading raw text, so a miss only costs a repeat.
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&[]
+	}
+
+	/// The declaration keywords whose name is followed by a parameter list,
+	/// possibly after a receiver in parentheses (`func (s *Server) Name(`).
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&[]
+	}
+
+	/// A character that is part of a variable's name when it sits right in
+	/// front of the identifier (`$` in PHP), so `$name` is told from `name`.
+	fn identifier_prefix(&self) -> Option<u8> {
+		None
 	}
 }
-
-/// Characters other than identifier characters, spaces and brackets that a
-/// line of parent names may hold: bounds (`+`, `&`), generics, `:` and `;`.
-const INHERITANCE_LIST_EXTRA: &str = "+&<>:;'?";
 
 fn is_identifier_char(character: char) -> bool {
 	character.is_alphanumeric() || character == '_' || character == '$'
@@ -316,24 +466,24 @@ fn marker_in_line(line: &str, marker: &str) -> bool {
 /// A parent-type line: a marker keyword, or names only (`extra` widens what
 /// counts as a name list for the language). No markers keeps every line that
 /// names the type.
-pub(crate) fn inheritance_line(markers: &[&str], line: &str, name: &str, extra: &str) -> bool {
+pub(crate) fn inheritance_line(markers: &[&str], line: &str, name: &str, extra: &str, comment_starts: &[&str]) -> bool {
 	contains_identifier(line, name)
 		&& (markers.is_empty()
 			|| markers.iter().any(|marker| marker_in_line(line, marker))
-			|| name_list_line(line, name, extra))
+			|| name_list_line(line, name, extra, comment_starts))
 }
 
-/// The line without a trailing comment.
-fn without_comment(line: &str) -> &str {
-	let cut = ["//", "#", "/*"].iter().filter_map(|start| line.find(start)).min();
+/// The line without a trailing comment that starts with one of `comment_starts`.
+fn without_comment<'a>(line: &'a str, comment_starts: &[&str]) -> &'a str {
+	let cut = comment_starts.iter().filter_map(|start| line.find(start)).min();
 	cut.map_or(line, |index| &line[..index])
 }
 
 /// A line that holds `name` among names only: identifiers, spaces, commas and
 /// brackets (plus `extra`), such as the `b,` of a parenthesised import group.
 /// A name used in code (`query = x`, `query.filter()`) has other characters.
-fn name_list_line(line: &str, name: &str, extra: &str) -> bool {
-	let code = without_comment(line);
+fn name_list_line(line: &str, name: &str, extra: &str, comment_starts: &[&str]) -> bool {
+	let code = without_comment(line, comment_starts);
 	contains_identifier(code, name)
 		&& code.chars().all(|character| {
 			is_identifier_char(character)
@@ -372,28 +522,35 @@ pub(crate) fn path_ends_with_name(line: &str, name: &str, closers: &str) -> bool
 	})
 }
 
+type LanguageConstructor = fn() -> Box<dyn Language>;
+
+/// Every language, by the name `get_language` takes.
+const LANGUAGES: [(&str, LanguageConstructor); 17] = [
+	("rust", || Box::new(rust::Rust {})),
+	("javascript", || Box::new(javascript::JavaScript {})),
+	("typescript", || Box::new(typescript::TypeScript {})),
+	("tsx", || Box::new(typescript::Tsx {})),
+	("python", || Box::new(python::Python {})),
+	("go", || Box::new(go::Go {})),
+	("java", || Box::new(java::Java {})),
+	("cpp", || Box::new(cpp::Cpp {})),
+	("php", || Box::new(php::Php {})),
+	("bash", || Box::new(bash::Bash {})),
+	("ruby", || Box::new(ruby::Ruby {})),
+	("lua", || Box::new(lua::Lua {})),
+	("json", || Box::new(json::Json {})),
+	("swift", || Box::new(swift::Swift {})),
+	("css", || Box::new(css::Css {})),
+	("elixir", || Box::new(elixir::Elixir {})),
+	("svelte", || Box::new(svelte::Svelte {})),
+];
+
 /// Gets a language implementation by its name.
 pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {
-	match name {
-		"rust" => Some(Box::new(rust::Rust {})),
-		"javascript" => Some(Box::new(javascript::JavaScript {})),
-		"typescript" => Some(Box::new(typescript::TypeScript {})),
-		"tsx" => Some(Box::new(typescript::Tsx {})),
-		"python" => Some(Box::new(python::Python {})),
-		"go" => Some(Box::new(go::Go {})),
-		"java" => Some(Box::new(java::Java {})),
-		"cpp" => Some(Box::new(cpp::Cpp {})),
-		"php" => Some(Box::new(php::Php {})),
-		"bash" => Some(Box::new(bash::Bash {})),
-		"ruby" => Some(Box::new(ruby::Ruby {})),
-		"lua" => Some(Box::new(lua::Lua {})),
-		"json" => Some(Box::new(json::Json {})),
-		"swift" => Some(Box::new(swift::Swift {})),
-		"css" => Some(Box::new(css::Css {})),
-		"elixir" => Some(Box::new(elixir::Elixir {})),
-		"svelte" => Some(Box::new(svelte::Svelte {})),
-		_ => None,
-	}
+	LANGUAGES
+		.iter()
+		.find(|(language_name, _)| *language_name == name)
+		.map(|(_, make)| make())
 }
 
 /// The stem of the file at `path` and, with `with_directory`, the name of
@@ -417,33 +574,30 @@ pub(crate) fn stem_and_directory(path: &str, with_directory: bool) -> Vec<String
 	names
 }
 
-/// Every language name `get_language` knows.
-const LANGUAGE_NAMES: [&str; 17] = [
-	"rust",
-	"javascript",
-	"typescript",
-	"tsx",
-	"python",
-	"go",
-	"java",
-	"cpp",
-	"php",
-	"bash",
-	"ruby",
-	"lua",
-	"json",
-	"swift",
-	"css",
-	"elixir",
-	"svelte",
-];
+/// The file names that mark a module root in any language, collected once.
+pub(crate) fn module_root_files() -> &'static [&'static str] {
+	static FILES: OnceLock<Vec<&'static str>> = OnceLock::new();
+	FILES.get_or_init(|| {
+		LANGUAGES
+			.iter()
+			.filter_map(|(_, make)| make().module_root_file())
+			.collect()
+	})
+}
 
-/// The file names that mark a module root in any language.
-pub(crate) fn module_root_files() -> Vec<&'static str> {
-	LANGUAGE_NAMES
-		.iter()
-		.filter_map(|name| get_language(name)?.module_root_file())
-		.collect()
+/// The names of the languages with a graph presence: their files can add
+/// symbols to the code graph. Markdown has a grammar for the outline modes but
+/// no language here, and JSON declares nothing, so handing their files over
+/// would list each as skipped or cost a parse for nothing.
+pub(crate) fn graph_languages() -> &'static HashSet<&'static str> {
+	static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+	NAMES.get_or_init(|| {
+		LANGUAGES
+			.iter()
+			.filter(|(_, make)| make().has_graph_symbols())
+			.map(|(name, _)| *name)
+			.collect()
+	})
 }
 
 #[cfg(test)]
@@ -519,32 +673,84 @@ pub(crate) fn files_in_dir_matching(
 /// call resolves by name only, at guess confidence.
 pub(crate) const UNKNOWN_RECEIVER: &str = "?";
 
-/// Parse a textual callee expression into its terminal name and qualifier.
-/// Handles the shared forms used by the supported languages: `foo`,
-/// `module.foo`, `Type::method`, `ptr->method`, and optional chaining. Generic
-/// arguments on the callable are removed before splitting. Returns None when
-/// the callee is not a plain identifier path — the qualifier segments must be
-/// identifier-like too, so expressions like `1 + 2` never name an item.
-pub(crate) fn parse_call_target(text: &str) -> Option<CallTarget> {
-	let mut trimmed = text.trim().trim_start_matches('&').trim_start_matches('*');
+/// The receiver of a member call that names the enclosing type itself
+/// (`self.run()`, `this.run()`). Not an identifier, so no real receiver can
+/// be written the same way.
+pub(crate) const SELF_RECEIVER: &str = ".";
+
+/// What joins the segments of a qualifier in a [`CallTarget`]: `a.b.c()` and
+/// `a::b::c()` both have the qualifier `a::b`.
+pub(crate) const QUALIFIER_SEPARATOR: &str = "::";
+
+/// How a language writes the callee of a call, so [`parse_call_target`] can
+/// split `receiver.name` without knowing any one language.
+pub(crate) struct CalleeSyntax {
+	/// What joins a receiver and a member name, longest first when one is a
+	/// prefix of another (`::` before `:`).
+	pub member_separators: &'static [&'static str],
+	/// Operators written in front of a callee that are not part of it
+	/// (address-of, dereference).
+	pub prefix_operators: &'static [char],
+	/// Characters besides letters, digits and `_` that an identifier of the
+	/// language may hold (`$` and `#` in JavaScript, `@` in Ruby).
+	pub identifier_extras: &'static [char],
+	/// The character in front of a variable's name, not part of the name.
+	pub variable_sigil: Option<char>,
+	/// Words that name the enclosing type as receiver.
+	pub self_receivers: &'static [&'static str],
+	/// Whether `<...>` after a name holds type arguments, not a comparison.
+	pub angle_generics: bool,
+}
+
+impl CalleeSyntax {
+	/// Receiver and name joined by `.`, nothing else.
+	pub(crate) const DOTTED: CalleeSyntax = CalleeSyntax {
+		member_separators: &["."],
+		prefix_operators: &[],
+		identifier_extras: &[],
+		variable_sigil: None,
+		self_receivers: &[],
+		angle_generics: false,
+	};
+}
+
+/// Parse a textual callee expression into its terminal name and qualifier,
+/// as the language writes it (`syntax`): `foo`, `module.foo`, `Type::method`,
+/// `ptr->method`, optional chaining. Generic arguments on the callable are
+/// removed before splitting. Returns None when the callee is not a plain
+/// identifier path: the qualifier segments must be identifier-like too, so
+/// expressions like `1 + 2` never name an item.
+pub(crate) fn parse_call_target(text: &str, syntax: &CalleeSyntax) -> Option<CallTarget> {
+	let mut trimmed = text.trim().trim_start_matches(syntax.prefix_operators);
 	if trimmed.is_empty() {
 		return None;
 	}
 
-	let mut without_generics = String::with_capacity(trimmed.len());
-	let mut generic_depth = 0u32;
-	for character in trimmed.chars() {
-		match character {
-			'<' => generic_depth += 1,
-			'>' if generic_depth > 0 => generic_depth -= 1,
-			_ if generic_depth == 0 => without_generics.push(character),
-			_ => {}
+	let without_generics;
+	if syntax.angle_generics {
+		let mut stripped = String::with_capacity(trimmed.len());
+		let mut generic_depth = 0u32;
+		for character in trimmed.chars() {
+			match character {
+				'<' => generic_depth += 1,
+				'>' if generic_depth > 0 => generic_depth -= 1,
+				_ if generic_depth == 0 => stripped.push(character),
+				_ => {}
+			}
+		}
+		without_generics = stripped;
+		trimmed = without_generics.trim();
+	}
+	// Called for every call of every file: the text is copied only when a
+	// separator other than the plain `.` is in it.
+	let mut normalized = Cow::Borrowed(trimmed);
+	for separator in syntax.member_separators.iter().filter(|separator| **separator != ".") {
+		if normalized.contains(separator) {
+			normalized = Cow::Owned(normalized.replace(separator, "."));
 		}
 	}
-	trimmed = without_generics.trim();
-	let normalized = trimmed.replace("?.", ".").replace("->", ".");
 	let segments: Vec<&str> = normalized
-		.split(['.', ':'])
+		.split('.')
 		.map(str::trim)
 		.filter(|segment| !segment.is_empty())
 		.collect();
@@ -558,9 +764,9 @@ pub(crate) fn parse_call_target(text: &str) -> Option<CallTarget> {
 		return None;
 	}
 	if qualifier_segments.iter().any(|segment| {
-		!segment
-			.chars()
-			.all(|character: char| character.is_alphanumeric() || matches!(character, '_' | '$' | '@' | '#'))
+		!segment.chars().all(|character: char| {
+			character.is_alphanumeric() || character == '_' || syntax.identifier_extras.contains(&character)
+		})
 	}) {
 		// A member call on an expression (`getRepo().save()`, `"x".len()`)
 		// is still a call of `save`, on a receiver nothing is known about.
@@ -580,10 +786,19 @@ pub(crate) fn parse_call_target(text: &str) -> Option<CallTarget> {
 			qualifier: Some(UNKNOWN_RECEIVER.to_string()),
 		});
 	}
-	let qualifier = if qualifier_segments.is_empty() {
-		None
-	} else {
-		Some(qualifier_segments.join("::"))
+	let names: Vec<&str> = qualifier_segments
+		.iter()
+		.map(|&segment| {
+			syntax
+				.variable_sigil
+				.and_then(|sigil| segment.strip_prefix(sigil))
+				.unwrap_or(segment)
+		})
+		.collect();
+	let qualifier = match names.as_slice() {
+		[] => None,
+		[only] if syntax.self_receivers.contains(only) => Some(SELF_RECEIVER.to_string()),
+		_ => Some(names.join(QUALIFIER_SEPARATOR)),
 	};
 	Some(CallTarget {
 		name: name.to_string(),
@@ -594,32 +809,17 @@ pub(crate) fn parse_call_target(text: &str) -> Option<CallTarget> {
 /// The simple (unqualified) name of a textual callee expression: the terminal
 /// segment of [`parse_call_target`], for callers that do not need the
 /// qualifier.
-pub(crate) fn extract_call_target(text: &str) -> Option<String> {
-	parse_call_target(text).map(|target| target.name)
+pub(crate) fn extract_call_target(text: &str, syntax: &CalleeSyntax) -> Option<String> {
+	parse_call_target(text, syntax).map(|target| target.name)
 }
 
-/// Nearest enclosing declaration that provides a stable method owner: a
-/// class, struct, interface, trait, module, namespace, extension or `impl`.
-pub(crate) fn find_graph_symbol_owner(node: Node, contents: &str) -> Option<String> {
+/// Name of the nearest enclosing declaration whose node kind is one of
+/// `owner_kinds` (the language's classes, interfaces, impl blocks...). Any
+/// other enclosing node is stepped over.
+pub(crate) fn enclosing_owner(node: Node, contents: &str, owner_kinds: &[&str]) -> Option<String> {
 	let mut current = node.parent();
 	while let Some(parent) = current {
-		let kind = parent.kind();
-		// Ruby's `class << self` reopens the enclosing class's singleton: its
-		// methods belong to that class, and the block has no name of its own.
-		if kind == "singleton_class" {
-			current = parent.parent();
-			continue;
-		}
-		let is_owner = !kind.contains("body")
-			&& (kind.contains("class")
-				|| kind.contains("struct")
-				|| kind.contains("interface")
-				|| kind.contains("trait")
-				|| kind.contains("module")
-				|| kind.contains("namespace")
-				|| kind.contains("extension")
-				|| kind == "impl_item");
-		if is_owner {
+		if owner_kinds.contains(&parent.kind()) {
 			// `type` first: it names the receiver of `impl Trait for Foo`.
 			for field in ["type", "name"] {
 				if let Some(name_node) = parent.child_by_field_name(field) {

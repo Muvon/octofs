@@ -73,6 +73,10 @@ impl Language for Css {
 		None
 	}
 
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["/*"]
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Same as the outline kinds minus `import_statement`: an import
 		// declares nothing, and a media-query identifier on it would otherwise

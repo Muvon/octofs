@@ -17,7 +17,7 @@
 use super::Swift;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, CodeRelationship, RelationType, SourceFile};
-use crate::structural::languages::{Language, TypeRelationKind};
+use crate::structural::languages::{Language, PackageScope, TypeRelationKind};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -324,4 +324,115 @@ fn build_graph_links_calls_imports_and_inheritance_across_files() {
 		RelationType::Implements
 	)
 	.is_some());
+}
+
+fn swift_file(path: &str, contents: &str) -> SourceFile {
+	SourceFile {
+		path: path.to_string(),
+		language: "swift",
+		contents: contents.to_string(),
+	}
+}
+
+#[test]
+fn the_files_of_a_directory_are_one_package_and_no_file_stands_for_its_directory() {
+	assert_eq!(Swift {}.package_scope(), PackageScope::Directory);
+	assert!(Swift {}.import_names_directory());
+	assert!(!Swift {}.is_directory_index("Sources/Kit/Kit.swift"));
+}
+
+#[test]
+fn a_function_of_the_same_directory_is_reached_without_an_import() {
+	let graph = build_graph(vec![
+		swift_file("Sources/Kit/Helper.swift", "func helper() {}\n"),
+		swift_file("Sources/Other/Helper.swift", "func helper() {}\n"),
+		swift_file("Sources/Kit/Run.swift", "func run() {\n\thelper()\n}\n"),
+	]);
+	assert!(edge(
+		&graph,
+		"Sources/Kit/Run.swift::run",
+		"Sources/Kit/Helper.swift::helper",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"Sources/Kit/Run.swift::run",
+		"Sources/Other/Helper.swift::helper",
+		RelationType::Calls
+	)
+	.is_none());
+}
+
+#[test]
+fn an_import_binds_the_module_name_and_exported_import_passes_the_module_on() {
+	let bindings = |source: &str| {
+		let tree = parse(source);
+		let statement = first_node(&tree, "import_declaration");
+		let (imports, _) = Swift {}.extract_imports_exports(statement, source);
+		Swift {}
+			.extract_import_bindings(statement, source, &imports)
+			.into_iter()
+			.map(|binding| (binding.local_name, binding.imported_name, binding.import_path))
+			.collect::<Vec<_>>()
+	};
+	assert_eq!(
+		bindings("import Models\n"),
+		[("Models".to_string(), None, "Models".to_string())]
+	);
+	assert_eq!(
+		bindings("@_exported import Kit\n"),
+		[
+			("Kit".to_string(), None, "Kit".to_string()),
+			("*".to_string(), Some("*".to_string()), "Kit".to_string()),
+		]
+	);
+	assert!(Swift {}.line_may_reexport("@_exported import Kit", "Kit", "Sources/Facade/F.swift"));
+	assert!(!Swift {}.line_may_reexport("import Kit", "Kit", "Sources/Facade/F.swift"));
+}
+
+#[test]
+fn a_call_through_an_exported_import_reaches_the_declaration_of_the_inner_module() {
+	let graph = build_graph(vec![
+		swift_file("Sources/Kit/Render.swift", "func render() {}\n"),
+		swift_file("Sources/Other/Render.swift", "func render() {}\n"),
+		swift_file("Sources/Facade/Facade.swift", "@_exported import Kit\n"),
+		swift_file(
+			"Sources/App/Main.swift",
+			"import Facade\n\nfunc main() {\n\trender()\n}\n",
+		),
+	]);
+	assert!(edge(
+		&graph,
+		"Sources/App/Main.swift::main",
+		"Sources/Kit/Render.swift::render",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"Sources/App/Main.swift::main",
+		"Sources/Other/Render.swift::render",
+		RelationType::Calls
+	)
+	.is_none());
+}
+
+#[test]
+fn a_call_that_names_a_type_reaches_the_type_it_constructs() {
+	let graph = build_graph(vec![
+		swift_file("Sources/Kit/Widget.swift", "struct Widget {\n\tinit(size: Int) {}\n}\n"),
+		swift_file(
+			"Sources/App/Main.swift",
+			"func build() {\n\tlet w = Widget(size: 1)\n}\n",
+		),
+	]);
+	let call = edge(
+		&graph,
+		"Sources/App/Main.swift::build",
+		"Sources/Kit/Widget.swift::Widget",
+		RelationType::Calls,
+	)
+	.expect("call of the type");
+	assert_eq!(call.line, Some(2));
 }

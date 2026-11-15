@@ -17,7 +17,7 @@
 use super::Rust;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, CodeRelationship, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
+use crate::structural::languages::{CallTarget, Language, TypeRelationKind, SELF_RECEIVER};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -171,7 +171,7 @@ fn target(name: &str, qualifier: Option<&str>) -> CallTarget {
 
 #[test]
 fn qualified_and_bare_calls_keep_their_terminal_name_and_qualifier() {
-	let source = "fn go() {\n\thelper();\n\tWidget::new();\n\tself.paint();\n}\n";
+	let source = "fn go() {\n\thelper();\n\tWidget::new();\n\tself.paint();\n\tSelf::build();\n}\n";
 	let tree = parse(source);
 	let lang = Rust {};
 	let targets: Vec<CallTarget> = nodes_of_kind(&tree, "call_expression")
@@ -183,7 +183,8 @@ fn qualified_and_bare_calls_keep_their_terminal_name_and_qualifier() {
 		vec![
 			target("helper", None),
 			target("new", Some("Widget")),
-			target("paint", Some("self")),
+			target("paint", Some(SELF_RECEIVER)),
+			target("build", Some(SELF_RECEIVER)),
 		]
 	);
 }

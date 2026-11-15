@@ -14,12 +14,20 @@
 
 //! Java grammar: types, records, methods and constructors.
 
+use super::{enclosing_owner, CalleeSyntax, PackageScope, SymbolKind};
 use super::{
 	files_in_dir_matching, parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language,
 	TypeRelationKind,
 };
 use crate::structural::graph::registry::FileRegistry;
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
+
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	self_receivers: &["this"],
+	angle_generics: true,
+	..CalleeSyntax::DOTTED
+};
 
 pub(crate) struct Java {}
 
@@ -44,8 +52,82 @@ impl Language for Java {
 		&["extends", "implements"]
 	}
 
-	fn directory_is_package(&self) -> bool {
+	fn package_scope(&self) -> PackageScope {
+		PackageScope::Declared
+	}
+
+	fn declared_package(&self, node: Node, contents: &str) -> Option<String> {
+		package_name(node, contents)
+	}
+
+	// `import a.*` names the directory of the package.
+	fn import_names_directory(&self) -> bool {
 		true
+	}
+
+	// A single-type or static import binds the last segment: `import a.B`
+	// makes `B` mean that class, which wins over a wildcard import of another
+	// package with a `B`.
+	fn extract_import_bindings(&self, node: Node, _contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		if node.kind() != "import_declaration" {
+			return Vec::new();
+		}
+		imports
+			.iter()
+			.filter(|path| !path.ends_with(".*"))
+			.filter_map(|path| {
+				let name = path.rsplit('.').next()?;
+				Some(ImportBinding {
+					local_name: name.to_string(),
+					imported_name: Some(name.to_string()),
+					import_path: path.clone(),
+				})
+			})
+			.collect()
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	// Generic bounds (`T extends A & B`) and wildcards.
+	fn inheritance_name_extras(&self) -> &'static str {
+		"<>&?"
+	}
+
+	fn import_name_separators(&self) -> &'static [char] {
+		&['.']
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["class", "interface", "enum", "record"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"method_declaration" | "constructor_declaration" => SymbolKind::Function,
+			"class_declaration" | "record_declaration" => SymbolKind::Class,
+			"interface_declaration" | "annotation_type_declaration" => SymbolKind::Interface,
+			"enum_declaration" => SymbolKind::Enum,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	fn is_constructor(&self, node: Node, _contents: &str) -> bool {
+		node.kind() == "constructor_declaration"
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(
+			node,
+			contents,
+			&[
+				"class_declaration",
+				"interface_declaration",
+				"enum_declaration",
+				"record_declaration",
+			],
+		)
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -101,13 +183,7 @@ impl Language for Java {
 				}
 			}
 			"package_declaration" => {
-				let mut cursor = node.walk();
-				let package = node
-					.children(&mut cursor)
-					.find(|child| matches!(child.kind(), "scoped_identifier" | "identifier"));
-				if let Some(Ok(name)) = package.map(|package| package.utf8_text(contents.as_bytes())) {
-					exports.push(format!("package:{name}"));
-				}
+				exports.extend(package_name(node, contents).map(|name| format!("package:{name}")));
 			}
 			"class_declaration"
 			| "interface_declaration"
@@ -143,11 +219,14 @@ impl Language for Java {
 				let qualified = node
 					.child_by_field_name("object")
 					.and_then(|object| object.utf8_text(contents.as_bytes()).ok())
-					.and_then(|object| parse_call_target(&format!("{object}.{name}")));
+					.and_then(|object| parse_call_target(&format!("{object}.{name}"), &CALLEE_SYNTAX));
 				// A receiver that is itself a call or other expression
 				// (`getRepo().save()`) has no usable qualifier, but the callee
 				// name is still a call.
-				qualified.or_else(|| parse_call_target(&name)).into_iter().collect()
+				qualified
+					.or_else(|| parse_call_target(&name, &CALLEE_SYNTAX))
+					.into_iter()
+					.collect()
 			}
 			// `new Foo()` calls the constructed type.
 			"object_creation_expression" => {
@@ -157,7 +236,7 @@ impl Language for Java {
 					.find(|child| matches!(child.kind(), "type_identifier" | "generic_type"));
 				constructed
 					.and_then(|child| child.utf8_text(contents.as_bytes()).ok())
-					.and_then(parse_call_target)
+					.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 					.into_iter()
 					.collect()
 			}
@@ -249,6 +328,18 @@ fn resolve_wildcard_import(package: &str, registry: &FileRegistry) -> Vec<String
 		.map(|directory| files_in_dir_matching(registry, directory, |file| file.ends_with(".java")))
 		.find(|files| !files.is_empty())
 		.unwrap_or_default()
+}
+
+/// The qualified name a `package` declaration gives the file.
+fn package_name(node: Node, contents: &str) -> Option<String> {
+	if node.kind() != "package_declaration" {
+		return None;
+	}
+	let mut cursor = node.walk();
+	let package = node
+		.children(&mut cursor)
+		.find(|child| matches!(child.kind(), "scoped_identifier" | "identifier"))?;
+	package.utf8_text(contents.as_bytes()).ok().map(str::to_string)
 }
 
 /// Text of the node's `name` field.

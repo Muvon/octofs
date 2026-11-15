@@ -17,7 +17,7 @@
 use super::Java;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, CodeRelationship, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind, UNKNOWN_RECEIVER};
+use crate::structural::languages::{CallTarget, Language, PackageScope, TypeRelationKind, UNKNOWN_RECEIVER};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -509,6 +509,114 @@ fn a_class_of_the_same_package_is_reached_without_an_import() {
 		&graph,
 		"a/Caller.java::Caller::run",
 		"b/Helper.java::Helper",
+		RelationType::Calls
+	)
+	.is_none());
+}
+
+#[test]
+fn the_package_a_file_declares_is_its_package_scope() {
+	let source = "package com.example.app;\n\nimport com.example.util.Tool;\n\npublic class Main {}\n";
+	let tree = parse(source);
+	assert_eq!(
+		Java {}.declared_package(first_node(&tree, "package_declaration"), source),
+		Some("com.example.app".to_string())
+	);
+	assert_eq!(
+		Java {}.declared_package(first_node(&tree, "import_declaration"), source),
+		None
+	);
+	assert_eq!(Java {}.package_scope(), PackageScope::Declared);
+}
+
+#[test]
+fn a_single_type_or_static_import_binds_its_last_segment_and_a_wildcard_binds_nothing() {
+	let bindings = |source: &str| {
+		let tree = parse(source);
+		let statement = first_node(&tree, "import_declaration");
+		let (imports, _) = Java {}.extract_imports_exports(statement, source);
+		Java {}
+			.extract_import_bindings(statement, source, &imports)
+			.into_iter()
+			.map(|binding| (binding.local_name, binding.imported_name, binding.import_path))
+			.collect::<Vec<_>>()
+	};
+	assert_eq!(
+		bindings("import com.a.Widget;"),
+		[(
+			"Widget".to_string(),
+			Some("Widget".to_string()),
+			"com.a.Widget".to_string()
+		)]
+	);
+	assert_eq!(
+		bindings("import static com.a.Util.helper;"),
+		[(
+			"helper".to_string(),
+			Some("helper".to_string()),
+			"com.a.Util.helper".to_string()
+		)]
+	);
+	assert!(bindings("import com.a.*;").is_empty());
+}
+
+#[test]
+fn a_class_of_the_same_package_in_another_source_root_is_reached_without_an_import() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("src/main/java/a/Helper.java", "package a;\npublic class Helper {}\n"),
+		file("src/main/java/b/Helper.java", "package b;\npublic class Helper {}\n"),
+		file(
+			"src/test/java/a/CallerTest.java",
+			"package a;\npublic class CallerTest {\n\tvoid run() {\n\t\tnew Helper();\n\t}\n}\n",
+		),
+	]);
+	assert!(edge(
+		&graph,
+		"src/test/java/a/CallerTest.java::CallerTest::run",
+		"src/main/java/a/Helper.java::Helper",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"src/test/java/a/CallerTest.java::CallerTest::run",
+		"src/main/java/b/Helper.java::Helper",
+		RelationType::Calls
+	)
+	.is_none());
+}
+
+#[test]
+fn an_explicit_import_wins_over_a_wildcard_import_of_another_package() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("a/Widget.java", "package a;\npublic class Widget {}\n"),
+		file("b/Widget.java", "package b;\npublic class Widget {}\n"),
+		file(
+			"c/Caller.java",
+			"package c;\nimport a.Widget;\nimport b.*;\npublic class Caller {\n\tvoid run() {\n\t\tnew Widget();\n\t}\n}\n",
+		),
+	]);
+	assert!(edge(
+		&graph,
+		"c/Caller.java::Caller::run",
+		"a/Widget.java::Widget",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"c/Caller.java::Caller::run",
+		"b/Widget.java::Widget",
 		RelationType::Calls
 	)
 	.is_none());

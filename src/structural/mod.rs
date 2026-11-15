@@ -23,7 +23,7 @@ mod languages;
 mod signature_extractor;
 pub mod symbols;
 
-pub(crate) use languages::module_root_files;
+pub(crate) use languages::{graph_languages, module_root_files, BodyOpen, PackageScope};
 use tree_sitter::Parser;
 
 /// One outline item: a declaration with the span of its signature lines.
@@ -45,31 +45,6 @@ pub struct OutlineItem {
 /// clauses, Go parameter lists) are cut at this many lines; the body follows
 /// them anyway, so the next item's line number still bounds what was elided.
 pub const MAX_SIGNATURE_LINES: usize = 4;
-
-/// Where a declaration's body opens, deciding which lines of the item are its
-/// signature. Markdown headings never pass through this — they are always one
-/// line.
-#[derive(Clone, Copy)]
-pub(crate) enum BodyOpen {
-	/// First line containing `{` (rust, go, java, cpp, js, ts, php, swift,
-	/// bash, css, json).
-	Brace,
-	/// First line whose trimmed text ends with `:` (python).
-	PythonColon,
-	/// First line whose trimmed text ends with `do` (elixir).
-	ElixirDo,
-	/// The first line only (ruby, lua).
-	FirstLine,
-}
-
-pub(crate) fn body_open_style(language: &str) -> BodyOpen {
-	match language {
-		"python" => BodyOpen::PythonColon,
-		"elixir" => BodyOpen::ElixirDo,
-		"ruby" | "lua" => BodyOpen::FirstLine,
-		_ => BodyOpen::Brace,
-	}
-}
 
 /// Whether `line` may hold an import of the module `name` in `language`: a
 /// pre-filter for text scans that never rejects a line the extractor reads an
@@ -116,15 +91,42 @@ fn language_of(path_label: &str) -> Option<Box<dyn languages::Language>> {
 }
 
 /// The names importers of the file write (see `Language::importer_names`).
-pub(crate) fn importer_names(path: &str) -> Vec<String> {
+pub(crate) fn importer_names(path: &str, declared: &[&str]) -> Vec<String> {
 	language_of(path)
-		.map(|language| language.importer_names(path))
+		.map(|language| language.importer_names(path, declared))
 		.unwrap_or_default()
 }
 
 /// Whether the file stands for its directory (see `Language::is_directory_index`).
 pub(crate) fn is_directory_index(path: &str) -> bool {
 	language_of(path).is_some_and(|language| language.is_directory_index(path))
+}
+
+/// How the language of the file groups files into packages (see
+/// `Language::package_scope`).
+pub(crate) fn package_scope(path: &str) -> PackageScope {
+	language_of(path).map_or(PackageScope::NoPackage, |language| language.package_scope())
+}
+
+/// What the code index reads of a language when it scans raw text: it ranks
+/// files by looking at the words around a name, without parsing.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SpellingRules {
+	/// Words after which a name is being declared.
+	pub declaration_keywords: &'static [&'static str],
+	/// The declaration words whose name is followed by a parameter list.
+	pub callable_keywords: &'static [&'static str],
+	/// The byte that sits in front of a variable's name (`$`), if any.
+	pub identifier_prefix: Option<u8>,
+}
+
+/// The spelling rules of a language; none for a name without a language.
+pub(crate) fn spelling_rules(language: &str) -> SpellingRules {
+	languages::get_language(language).map_or_else(SpellingRules::default, |language| SpellingRules {
+		declaration_keywords: language.declaration_keywords(),
+		callable_keywords: language.callable_keywords(),
+		identifier_prefix: language.identifier_prefix(),
+	})
 }
 
 fn parse_outline(language: &str, contents: &str) -> Result<Vec<OutlineItem>, String> {

@@ -14,14 +14,27 @@
 
 //! C++ grammar: function definitions and type/namespace containers.
 
+use super::SymbolKind;
 use super::{
-	extract_call_target, extract_symbol_by_kinds, find_graph_symbol_owner, parse_call_target, path_ends_with_name,
-	simple_type_name, CallTarget, Language, TypeRelationKind,
+	enclosing_owner, extract_call_target, extract_symbol_by_kinds, parse_call_target, path_ends_with_name,
+	simple_type_name, CallTarget, CalleeSyntax, Language, TypeRelationKind,
 };
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::{ImportBinding, WILDCARD};
 use tree_sitter::Node;
 
 pub(crate) struct Cpp {}
+
+/// Extensions of the files an `#include` names.
+const HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hxx"];
+
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["->", "::", "."],
+	prefix_operators: &['&', '*'],
+	self_receivers: &["this"],
+	angle_generics: true,
+	..CalleeSyntax::DOTTED
+};
 
 impl Language for Cpp {
 	fn name(&self) -> &'static str {
@@ -42,6 +55,38 @@ impl Language for Cpp {
 	// default name-list rule accepts.
 	fn inheritance_line_markers(&self) -> &'static [&'static str] {
 		&["class", "struct"]
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	// Template arguments and `::` in a base class.
+	fn inheritance_name_extras(&self) -> &'static str {
+		"<>:;"
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["class", "struct", "enum", "union", "namespace"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_definition" => SymbolKind::Function,
+			"class_specifier" => SymbolKind::Class,
+			"struct_specifier" => SymbolKind::Struct,
+			"enum_specifier" => SymbolKind::Enum,
+			"namespace_definition" => SymbolKind::Module,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	// A constructor is the function a class names after itself.
+	fn is_constructor(&self, node: Node, contents: &str) -> bool {
+		node.kind() == "function_definition"
+			&& self
+				.extract_declaration_name(node, contents)
+				.is_some_and(|name| self.extract_symbol_owner(node, contents) == Some(name))
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -82,7 +127,7 @@ impl Language for Cpp {
 					return Some(name_part.to_string());
 				}
 			}
-			return extract_call_target(callable);
+			return extract_call_target(callable, &CALLEE_SYNTAX);
 		}
 		// Bodyless specifiers are type REFERENCES (`struct stat st;`) or forward
 		// declarations, not definitions — naming them would mint a bogus item
@@ -112,14 +157,18 @@ impl Language for Cpp {
 			let owner = node
 				.child_by_field_name("declarator")
 				.and_then(|declarator| declarator.utf8_text(contents.as_bytes()).ok())
-				.and_then(|text| parse_call_target(text.split('(').next().unwrap_or(text)))
+				.and_then(|text| parse_call_target(text.split('(').next().unwrap_or(text), &CALLEE_SYNTAX))
 				.and_then(|target| target.qualifier)
 				.and_then(|qualifier| simple_type_name(&qualifier));
 			if owner.is_some() {
 				return owner;
 			}
 		}
-		find_graph_symbol_owner(node, contents)
+		enclosing_owner(
+			node,
+			contents,
+			&["class_specifier", "struct_specifier", "namespace_definition"],
+		)
 	}
 
 	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
@@ -177,21 +226,63 @@ impl Language for Cpp {
 		(imports, exports)
 	}
 
+	// An include pastes the header into the file, so everything the header
+	// declares is the includer's too, and passes on to whoever includes it.
+	fn extract_import_bindings(&self, node: Node, _contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		if node.kind() != "preproc_include" {
+			return Vec::new();
+		}
+		imports
+			.iter()
+			.map(|header| ImportBinding {
+				local_name: WILDCARD.to_string(),
+				imported_name: Some(WILDCARD.to_string()),
+				import_path: header.clone(),
+			})
+			.collect()
+	}
+
+	// A header passes on the headers it includes; no file includes a source
+	// file, so the includes of a source file reach nothing further.
+	fn line_may_reexport(&self, line: &str, name: &str, path: &str) -> bool {
+		let is_header = path
+			.rsplit_once('.')
+			.is_some_and(|(_, extension)| HEADER_EXTENSIONS.contains(&extension));
+		is_header && self.line_may_import(line, name)
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		if is_misparsed_call(node) {
 			return node
 				.child_by_field_name("declarator")
 				.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-				.and_then(parse_call_target)
+				.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 				.into_iter()
 				.collect();
+		}
+		// Building an object names its type: `new Foo(1)`, `Foo{1}`, `Foo x(1);`.
+		let constructed = match node.kind() {
+			"new_expression" | "compound_literal_expression" => node.child_by_field_name("type"),
+			"declaration" => type_of_initialized_declaration(node),
+			_ => None,
+		};
+		if let Some(type_node) = constructed {
+			return match type_node.kind() {
+				"type_identifier" | "qualified_identifier" | "template_type" => type_node
+					.utf8_text(contents.as_bytes())
+					.ok()
+					.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
+					.into_iter()
+					.collect(),
+				_ => Vec::new(),
+			};
 		}
 		if node.kind() != "call_expression" {
 			return Vec::new();
 		}
 		node.child_by_field_name("function")
 			.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-			.and_then(parse_call_target)
+			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 			.into_iter()
 			.collect()
 	}
@@ -298,6 +389,21 @@ fn function_declarator_of(node: Node) -> Option<Node> {
 fn function_name(node: Node, contents: &str) -> Option<String> {
 	let declarator = function_declarator_of(node)?;
 	declarator_name(declarator, contents).map(str::to_string)
+}
+
+/// The type of a declaration that initializes its variable with an argument
+/// list or braces (`Foo x(1, 2);`, `Foo y{1};`): the constructor call.
+fn type_of_initialized_declaration(node: Node) -> Option<Node> {
+	let mut cursor = node.walk();
+	let initialized = node
+		.children_by_field_name("declarator", &mut cursor)
+		.any(|declarator| {
+			declarator.kind() == "init_declarator"
+				&& declarator
+					.child_by_field_name("value")
+					.is_some_and(|value| matches!(value.kind(), "argument_list" | "initializer_list"))
+		});
+	node.child_by_field_name("type").filter(|_| initialized)
 }
 
 /// A call statement the C++ grammar could not read: C code that names a

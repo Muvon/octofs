@@ -28,7 +28,7 @@ use crate::structural::graph::types::{EXTERNAL_KIND, FILE_KIND};
 use crate::structural::graph::{
 	find_paths, neighbors, CodeGraph, CodeNode, Direction, GraphIndex, Hop, RelationType, SkippedFile, MAX_PATHS,
 };
-use crate::structural::{language_for_extension, path_extension};
+use crate::structural::{graph_languages, language_for_extension, path_extension};
 use crate::utils::truncation::CHARS_PER_TOKEN;
 use anyhow::{anyhow, bail, Context, Result};
 use std::path::Path;
@@ -90,11 +90,6 @@ pub(super) const UNREADABLE_REASON: &str = "unreadable";
 /// at files, which no symbol can reach, so they cannot lie on a symbol path.
 pub(super) const PATH_RELATIONS: [RelationType; 3] =
 	[RelationType::Calls, RelationType::Extends, RelationType::Implements];
-
-/// Languages the outline modes parse but that contribute nothing to the graph
-/// (Markdown has no graph language, JSON declares no graph symbols): handing
-/// them over would list every such file as skipped or cost a parse for nothing.
-const NO_GRAPH_LANGUAGES: [&str; 2] = ["markdown", "json"];
 
 const REMOTE_GRAPH_MESSAGE: &str = "Graph relations (callers, callees, imports, imported_by, supertypes, subtypes, path) run on the local machine: an ssh:// path or a remote workdir is not supported. Use relation \"definition\" or \"references\" for remote files.";
 
@@ -319,18 +314,17 @@ pub(super) fn walk_supported(root: &Path) -> Result<SupportedFiles> {
 	let files = paths
 		.into_iter()
 		.filter_map(|path| {
-			let language =
-				language_for_extension(&path_extension(&path)).filter(|l| !NO_GRAPH_LANGUAGES.contains(l))?;
+			let language = language_for_extension(&path_extension(&path)).filter(|l| graph_languages().contains(l))?;
 			Some((path, language))
 		})
 		.collect();
 	Ok(SupportedFiles { files, module_roots })
 }
 
-/// Whether the code index holds files like `path`: a language with a
-/// grammar that is not one of the languages the index leaves out.
+/// Whether the code index holds files like `path`: a language that can add
+/// symbols to the graph.
 pub(super) fn is_indexed_language(path: &str) -> bool {
-	language_for_extension(&path_extension(path)).is_some_and(|language| !NO_GRAPH_LANGUAGES.contains(&language))
+	language_for_extension(&path_extension(path)).is_some_and(|language| graph_languages().contains(language))
 }
 
 pub(super) fn oversize_reason() -> String {

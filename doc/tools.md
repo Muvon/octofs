@@ -151,7 +151,7 @@ only the files it needs within the same 600-file and 800 ms budget. Constants th
 `MAX_FILES_SPELLING_TO_TRACE` (3000), `MAX_FILES_PER_FOLLOWED_NAME` (200), `MAX_LISTED_RESULTS` (100),
 `MAX_GRAPH_DEPTH` (5), `MAX_GRAPH_FILE_BYTES` (1 MB), `REEXPORT_HOPS` (3), `MAX_REPORTED_HOPS` and
 `MAX_PATHS`. Re-exports are followed for `callers`, `callees` and `path` (Python `__init__.py` and
-`import *`, JS/TS `export ... from`, Rust `pub use`; hook: `Language::line_may_reexport`).
+`import *`, JS/TS `export ... from`, Rust `pub use`, C/C++ header includes, Swift `@_exported import`; hook: `Language::line_may_reexport`).
 What each limit means for a reader, how the index refreshes and what a partial answer looks like are
 in [code-exploration.md](code-exploration.md#how-the-index-behaves), with one worked example per
 relation in [Symbol lookups](code-exploration.md#symbol-lookups).

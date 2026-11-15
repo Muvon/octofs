@@ -17,10 +17,19 @@
 //! node kind.
 
 use super::{
-	extract_call_target, parse_call_target, path_ends_with_components, CallTarget, Language, TypeRelationKind,
+	extract_call_target, parse_call_target, path_ends_with_components, CallTarget, CalleeSyntax, Language,
+	TypeRelationKind,
 };
+use super::{stem_and_directory, BodyOpen, SymbolKind};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
+use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
+
+// An Erlang module is written as an atom: `:ets.insert`.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &[":", "."],
+	..CalleeSyntax::DOTTED
+};
 
 const FUNCTION_DEFINITION_MACROS: &[&str] = &[
 	"def",
@@ -70,6 +79,12 @@ const NON_CALL_MACROS: &[&str] = &[
 
 /// Macros whose first argument names an import.
 const IMPORT_MACROS: &[&str] = &["alias", "import", "require", "use"];
+
+/// Import macros that give the module a name to call it by.
+const NAMESPACE_BINDING_MACROS: &[&str] = &["alias", "require"];
+
+/// The macro that defines a function by calling one of another module.
+const DELEGATE_MACRO: &str = "defdelegate";
 
 const ELIXIR_EXTENSIONS: [&str; 2] = ["ex", "exs"];
 
@@ -153,6 +168,58 @@ impl Language for Elixir {
 		self.extract_declaration_name(node, contents)
 	}
 
+	// A module is imported by the name its `defmodule` declares (`MyApp.Repo`
+	// or `Repo` after an alias), which the file name only hints at.
+	fn importer_names(&self, path: &str, declared: &[&str]) -> Vec<String> {
+		let mut names = stem_and_directory(path, false);
+		for module in declared
+			.iter()
+			.filter(|name| name.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '_')))
+		{
+			for name in [module, module.rsplit('.').next().unwrap_or(module)] {
+				if !names.iter().any(|known| known == name) {
+					names.push(name.to_string());
+				}
+			}
+		}
+		names
+	}
+
+	fn body_open(&self) -> BodyOpen {
+		BodyOpen::LineEnding("do")
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["#"]
+	}
+
+	fn import_name_separators(&self) -> &'static [char] {
+		&['.']
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["defmodule", "defprotocol"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["def", "defp", "defmacro", "defmacrop"]
+	}
+
+	fn symbol_kind(&self, node: Node, contents: &str) -> SymbolKind {
+		match call_macro_name(node, contents).as_deref() {
+			Some("defmodule") => SymbolKind::Module,
+			Some("defprotocol") => SymbolKind::Interface,
+			Some("defimpl") => SymbolKind::Implementation,
+			Some("defstruct") => SymbolKind::Struct,
+			Some("defexception") => SymbolKind::Class,
+			Some("defmacro" | "defmacrop" | "defmacrocallback") => SymbolKind::Macro,
+			Some(name) if FUNCTION_DEFINITION_MACROS.contains(&name) || TEST_DEFINITION_MACROS.contains(&name) => {
+				SymbolKind::Function
+			}
+			_ => SymbolKind::Other,
+		}
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		// Every declaration is a `call`; `extract_declaration_name` filters the
 		// ones that are not definitions.
@@ -187,6 +254,28 @@ impl Language for Elixir {
 		(imports, exports)
 	}
 
+	// `alias MyApp.Repo, as: R` and `require Logger, as: L` bind the name the
+	// module is called by; without `as:` it is the module's last segment.
+	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
+		let Some(macro_name) = call_macro_name(node, contents) else {
+			return Vec::new();
+		};
+		if !NAMESPACE_BINDING_MACROS.contains(&macro_name.as_str()) {
+			return Vec::new();
+		}
+		let renamed = find_keyword_option(node, contents, "as");
+		imports
+			.iter()
+			.map(|module| ImportBinding {
+				local_name: renamed
+					.clone()
+					.unwrap_or_else(|| module.rsplit('.').next().unwrap_or(module).to_string()),
+				imported_name: None,
+				import_path: module.clone(),
+			})
+			.collect()
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		if node.kind() == "binary_operator" {
 			// Only the right side of a pipe is a callee: `x |> run()`.
@@ -197,7 +286,7 @@ impl Language for Elixir {
 				if let Some(right) = node.child_by_field_name("right") {
 					if matches!(right.kind(), "identifier" | "dot") {
 						return node_text(right, contents)
-							.and_then(|target| parse_call_target(&target))
+							.and_then(|target| parse_call_target(&target, &CALLEE_SYNTAX))
 							.into_iter()
 							.collect();
 					}
@@ -206,6 +295,9 @@ impl Language for Elixir {
 			return Vec::new();
 		}
 
+		if call_macro_name(node, contents).as_deref() == Some(DELEGATE_MACRO) {
+			return delegated_call(node, contents).into_iter().collect();
+		}
 		if node.kind() != "call" || is_definition_head_call(node, contents) {
 			return Vec::new();
 		}
@@ -220,7 +312,7 @@ impl Language for Elixir {
 		{
 			return Vec::new();
 		}
-		parse_call_target(&target_text).into_iter().collect()
+		parse_call_target(&target_text, &CALLEE_SYNTAX).into_iter().collect()
 	}
 
 	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
@@ -309,7 +401,7 @@ fn definition_head_name(node: Node, contents: &str) -> Option<String> {
 				if let Some(name) = current
 					.child_by_field_name("target")
 					.and_then(|target| node_text(target, contents))
-					.and_then(|target| extract_call_target(&target))
+					.and_then(|target| extract_call_target(&target, &CALLEE_SYNTAX))
 				{
 					return Some(name);
 				}
@@ -357,22 +449,28 @@ fn implementation_type(node: Node, contents: &str) -> Option<String> {
 	}
 	let mut cursor = node.walk();
 	for descendant in node.children(&mut cursor) {
-		if let Some(found) = find_for_option(descendant, contents) {
+		if let Some(found) = find_keyword_option(descendant, contents, "for") {
 			return Some(found);
 		}
 	}
 	None
 }
 
-fn find_for_option(node: Node, contents: &str) -> Option<String> {
-	// Iterative: `for:` can sit arbitrarily deep in nested arguments.
+/// The value of the keyword option `key:` (`for: User`, `as: R`) anywhere
+/// under `node`, as a module or function name.
+fn find_keyword_option(node: Node, contents: &str, key: &str) -> Option<String> {
+	// Iterative: an option can sit arbitrarily deep in nested arguments.
 	let mut stack = vec![node];
 	while let Some(current) = stack.pop() {
 		if current.kind() == "pair" {
-			let key = current
+			let found_key = current
 				.child_by_field_name("key")
 				.and_then(|child| node_text(child, contents));
-			if key.as_deref().is_some_and(|key| key.trim_end_matches(':') == "for") {
+			if found_key
+				.as_deref()
+				// The keyword token carries the space after its colon.
+				.is_some_and(|text| text.trim_end().trim_end_matches(':') == key)
+			{
 				return current
 					.child_by_field_name("value")
 					.and_then(|child| node_text(child, contents))
@@ -422,6 +520,15 @@ fn is_public_definition_macro(name: &str) -> bool {
 		name,
 		"def" | "defdelegate" | "defguard" | "defmacro" | "defn" | "defcallback" | "defmacrocallback"
 	)
+}
+
+/// The call a `defdelegate fetch(id), to: Impl, as: :get` makes: `get` (or
+/// `fetch` without `as:`) of the module `Impl`.
+fn delegated_call(node: Node, contents: &str) -> Option<CallTarget> {
+	let module = find_keyword_option(node, contents, "to")?;
+	let name = find_keyword_option(node, contents, "as")
+		.or_else(|| first_argument(node).and_then(|head| definition_head_name(head, contents)))?;
+	parse_call_target(&format!("{module}.{name}"), &CALLEE_SYNTAX)
 }
 
 /// `alias MyApp.{Repo, User}` becomes one import per member.

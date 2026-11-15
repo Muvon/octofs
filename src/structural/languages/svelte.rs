@@ -49,6 +49,27 @@ impl Language for Svelte {
 		TypeScript {}.line_may_inherit(line, name)
 	}
 
+	// Its scripts are what the graph reads.
+	fn has_graph_symbols(&self) -> bool {
+		true
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		TypeScript {}.comment_starts()
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		TypeScript {}.declaration_keywords()
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		TypeScript {}.callable_keywords()
+	}
+
+	fn identifier_prefix(&self) -> Option<u8> {
+		TypeScript {}.identifier_prefix()
+	}
+
 	fn get_outline_kinds(&self) -> Vec<&'static str> {
 		// The outline of a Svelte file is its scripts' outline, built from
 		// `script_sources`; the markup nodes declare nothing.

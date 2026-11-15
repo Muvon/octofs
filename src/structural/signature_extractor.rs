@@ -24,7 +24,7 @@ use tree_sitter::Node;
 pub(super) fn extract_signatures(node: Node, contents: &str, lang: &dyn Language) -> Vec<OutlineItem> {
 	let mut items = Vec::new();
 	let kinds = lang.get_outline_kinds();
-	let style = super::body_open_style(lang.name());
+	let style = lang.body_open();
 	// Sliced once: every item's signature span is resolved against it.
 	let lines: Vec<&str> = contents.lines().collect();
 
@@ -109,8 +109,9 @@ fn signature_line_span(lines: &[&str], start_row: usize, end_row: usize, style: 
 	match style {
 		BodyOpen::FirstLine => 1,
 		BodyOpen::Brace => body_open_offset(lines, start_row, last_row, |line| line.contains('{')),
-		BodyOpen::PythonColon => body_open_offset(lines, start_row, last_row, |line| line.trim_end().ends_with(':')),
-		BodyOpen::ElixirDo => body_open_offset(lines, start_row, last_row, |line| line.trim_end().ends_with("do")),
+		BodyOpen::LineEnding(ending) => {
+			body_open_offset(lines, start_row, last_row, |line| line.trim_end().ends_with(ending))
+		}
 	}
 }
 

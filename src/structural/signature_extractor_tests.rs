@@ -49,12 +49,12 @@ fn signature_span_stops_at_the_body_opening_line() {
 	assert_eq!(signature_line_span(&lines, 0, 4, BodyOpen::Brace), 4);
 
 	let python: Vec<&str> = vec!["def foo(", "x: int,", ") -> str:", "\tpass"];
-	assert_eq!(signature_line_span(&python, 0, 3, BodyOpen::PythonColon), 3);
+	assert_eq!(signature_line_span(&python, 0, 3, BodyOpen::LineEnding(":")), 3);
 
 	let elixir: Vec<&str> = vec!["def foo(", "x,", ") do", "\t:ok", "end"];
-	assert_eq!(signature_line_span(&elixir, 0, 4, BodyOpen::ElixirDo), 3);
+	assert_eq!(signature_line_span(&elixir, 0, 4, BodyOpen::LineEnding("do")), 3);
 
-	// Ruby and lua items are their first line.
+	// An item that is only its first line.
 	assert_eq!(signature_line_span(&elixir, 0, 4, BodyOpen::FirstLine), 1);
 }
 

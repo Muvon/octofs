@@ -390,3 +390,30 @@ fn a_bare_name_is_a_call_only_when_a_method_of_that_name_is_in_scope() {
 		vec!["setup"]
 	);
 }
+
+#[test]
+fn a_required_file_is_visible_to_the_whole_requiring_file_and_a_neighbour_is_not() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "ruby",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("app/util.rb", "def helper\nend\n"),
+		file("lib/other.rb", "def helper\nend\n"),
+		file("app/main.rb", "require_relative \"util\"\n\ndef run\n  helper()\nend\n"),
+		file("app/lone.rb", "def alone\n  helper()\nend\n"),
+	]);
+	let has = |source: &str, target: &str| {
+		graph
+			.relationships
+			.iter()
+			.any(|edge| edge.source == source && edge.target == target && edge.relation == RelationType::Calls)
+	};
+	assert!(has("app/main.rb::run", "app/util.rb::helper"));
+	assert!(!has("app/main.rb::run", "lib/other.rb::helper"));
+	// Files of one directory are no package: without a `require` the name is
+	// ambiguous between the two files that define it.
+	assert!(!has("app/lone.rb::alone", "app/util.rb::helper"));
+	assert!(!has("app/lone.rb::alone", "lib/other.rb::helper"));
+}

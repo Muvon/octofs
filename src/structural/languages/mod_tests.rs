@@ -18,7 +18,7 @@
 //! must reject the lines that only mention the name.
 
 use super::svelte::script_sources;
-use super::{get_language, Language, TypeRelationKind};
+use super::{get_language, Language, PackageScope, TypeRelationKind};
 use tree_sitter::{Node, Parser, Tree};
 
 /// Every node of the tree in document order, visited with an iterative walk.
@@ -491,4 +491,188 @@ fn css_imports_end_in_the_name_before_a_quote_or_parenthesis() {
 		assert_import_sound("css", source, path, name);
 	}
 	assert!(!import_lines("css", ".base { color: red; }", "base"));
+}
+
+fn collect_calls(name: &str, source: &str) -> Vec<(String, Option<String>)> {
+	let language = language(name);
+	let tree = parse(language.as_ref(), source);
+	let mut calls = Vec::new();
+	for_each_node(&tree, |node| {
+		for call in language.extract_function_calls(node, source) {
+			calls.push((call.name, call.qualifier));
+		}
+	});
+	calls
+}
+
+#[test]
+fn every_language_is_found_by_the_name_it_reports() {
+	for (name, make) in super::LANGUAGES {
+		assert_eq!(make().name(), name);
+		assert!(get_language(name).is_some());
+	}
+	assert!(get_language("markdown").is_none());
+}
+
+#[test]
+fn the_graph_languages_are_those_that_can_add_symbols() {
+	let graph = super::graph_languages();
+	for name in ["rust", "typescript", "bash", "css", "svelte", "elixir"] {
+		assert!(graph.contains(name), "{name}");
+	}
+	// JSON declares nothing and Markdown has no language.
+	assert!(!graph.contains("json"));
+	assert!(!graph.contains("markdown"));
+	assert!(super::module_root_files().contains(&"go.mod"));
+}
+
+#[test]
+fn a_callee_is_split_by_how_its_language_writes_members() {
+	use super::{SELF_RECEIVER, UNKNOWN_RECEIVER};
+	let pair = |name: &str, qualifier: Option<&str>| (name.to_string(), qualifier.map(str::to_string));
+
+	assert_eq!(
+		collect_calls("javascript", "this.run(); a?.b.c(); $.ajax(); box.#hidden();"),
+		vec![
+			pair("run", Some(SELF_RECEIVER)),
+			pair("c", Some("a::b")),
+			pair("ajax", Some("$")),
+			pair("hidden", Some("box")),
+		]
+	);
+	// A tree walk reaches the outer call before the one in its receiver.
+	assert_eq!(
+		collect_calls("rust", "fn f() { Self::make(); self.go(); a::b::c(); x.y()?.z(); }"),
+		vec![
+			pair("make", Some(SELF_RECEIVER)),
+			pair("go", Some(SELF_RECEIVER)),
+			pair("c", Some("a::b")),
+			pair("z", Some(UNKNOWN_RECEIVER)),
+			pair("y", Some("x")),
+		]
+	);
+	assert_eq!(
+		collect_calls("php", "<?php $this->save(); $repo->find(); Foo::make();"),
+		vec![
+			pair("save", Some(SELF_RECEIVER)),
+			pair("find", Some("repo")),
+			pair("make", Some("Foo")),
+		]
+	);
+	assert_eq!(
+		collect_calls("lua", "self:go()\nbox.open()\nbox:close()\n"),
+		vec![
+			pair("go", Some(SELF_RECEIVER)),
+			pair("open", Some("box")),
+			pair("close", Some("box")),
+		]
+	);
+	assert_eq!(
+		collect_calls("cpp", "void f() { this->go(); p->q(); ns::run(); }"),
+		vec![
+			pair("go", Some(SELF_RECEIVER)),
+			pair("q", Some("p")),
+			pair("run", Some("ns")),
+		]
+	);
+}
+
+#[test]
+fn a_nested_declaration_is_owned_by_the_container_kinds_of_its_language() {
+	let owner_of = |name: &str, source: &str, member: &str| {
+		let language = language(name);
+		let tree = parse(language.as_ref(), source);
+		let mut owner = None;
+		for_each_node(&tree, |node| {
+			if language.get_symbol_kinds().contains(&node.kind())
+				&& language.extract_declaration_name(node, source).as_deref() == Some(member)
+			{
+				owner = language.extract_symbol_owner(node, source);
+			}
+		});
+		owner
+	};
+	assert_eq!(
+		owner_of("rust", "impl Shape for Square { fn area(&self) {} }", "area").as_deref(),
+		Some("Square")
+	);
+	assert_eq!(owner_of("rust", "fn free() {}", "free"), None);
+	// `class << self` reopens the enclosing class: its methods belong to it.
+	assert_eq!(
+		owner_of(
+			"ruby",
+			"class Box\n  class << self\n    def open; end\n  end\nend\n",
+			"open"
+		)
+		.as_deref(),
+		Some("Box")
+	);
+	assert_eq!(
+		owner_of("java", "enum Level { HIGH; int rank() { return 1; } }", "rank").as_deref(),
+		Some("Level")
+	);
+	assert_eq!(
+		owner_of("swift", "extension Shape { func grow() {} }", "grow").as_deref(),
+		Some("Shape")
+	);
+	assert_eq!(owner_of("go", "package p\nfunc free() {}\n", "free"), None);
+	assert_eq!(
+		owner_of("python", "class A:\n    def m(self): pass\n", "m").as_deref(),
+		Some("A")
+	);
+}
+
+#[test]
+fn a_trailing_comment_ends_a_name_list_at_the_markers_of_its_language() {
+	use super::name_list_line;
+	let lua = language("lua");
+	let python = language("python");
+	assert!(name_list_line(
+		"b, c -- more words: here",
+		"b",
+		"",
+		lua.comment_starts()
+	));
+	assert!(!name_list_line(
+		"b, c -- more words: here",
+		"b",
+		"",
+		python.comment_starts()
+	));
+	assert!(name_list_line(
+		"b, c # more words: here",
+		"b",
+		"",
+		python.comment_starts()
+	));
+	assert!(!name_list_line(
+		"b, c # more words: here",
+		"b",
+		"",
+		lua.comment_starts()
+	));
+}
+
+#[test]
+fn only_languages_with_packages_declare_a_package_scope() {
+	let expected = [
+		("go", PackageScope::Directory),
+		("swift", PackageScope::Directory),
+		("java", PackageScope::Declared),
+		("php", PackageScope::Declared),
+		("cpp", PackageScope::NoPackage),
+		("elixir", PackageScope::NoPackage),
+		("ruby", PackageScope::NoPackage),
+		("lua", PackageScope::NoPackage),
+		("bash", PackageScope::NoPackage),
+		("python", PackageScope::NoPackage),
+		("rust", PackageScope::NoPackage),
+		("javascript", PackageScope::NoPackage),
+		("typescript", PackageScope::NoPackage),
+		("tsx", PackageScope::NoPackage),
+		("svelte", PackageScope::NoPackage),
+	];
+	for (name, scope) in expected {
+		assert_eq!(get_language(name).unwrap().package_scope(), scope, "{name}");
+	}
 }

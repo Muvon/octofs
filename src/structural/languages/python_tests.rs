@@ -17,7 +17,7 @@
 use super::Python;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind};
+use crate::structural::languages::{CallTarget, Language, TypeRelationKind, SELF_RECEIVER};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser};
 
@@ -220,7 +220,7 @@ fn calls_keep_qualifier() {
 			},
 			CallTarget {
 				name: "bar".to_string(),
-				qualifier: Some("self".to_string())
+				qualifier: Some(SELF_RECEIVER.to_string())
 			},
 		]
 	);
@@ -348,5 +348,37 @@ fn graph_links_calls_imports_and_inheritance_across_files() {
 		"pkg/main.py::Child",
 		"pkg/util.py::Base",
 		RelationType::Extends
+	));
+}
+
+#[test]
+fn a_call_that_names_a_class_reaches_the_class_it_constructs() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "python",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file(
+			"pkg/widget.py",
+			"class Widget:\n    def __init__(self, size):\n        self.size = size\n",
+		),
+		file("other/widget.py", "class Widget:\n    pass\n"),
+		file(
+			"app.py",
+			"from pkg.widget import Widget\n\ndef build():\n    return Widget(1)\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"app.py::build",
+		"pkg/widget.py::Widget",
+		RelationType::Calls
+	));
+	assert!(!has_edge(
+		&graph,
+		"app.py::build",
+		"other/widget.py::Widget",
+		RelationType::Calls
 	));
 }

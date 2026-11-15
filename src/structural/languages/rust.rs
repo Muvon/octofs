@@ -15,6 +15,7 @@
 //! Rust grammar: items, types, traits, modules, constants and macros.
 
 use super::use_alias::aliased_use_bindings;
+use super::{enclosing_owner, CalleeSyntax, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, parse_call_target, simple_type_name, stem_and_directory, CallTarget, Language,
 	TypeRelationKind, UNKNOWN_RECEIVER,
@@ -26,6 +27,15 @@ use tree_sitter::Node;
 /// File names whose child modules sit next to them rather than in a directory
 /// named after the file.
 const MODULE_ROOT_FILES: [&str; 3] = ["mod.rs", "lib.rs", "main.rs"];
+
+// `?` (try) can sit before the `.` of a method call.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["?.", "::", "."],
+	prefix_operators: &['&', '*'],
+	self_receivers: &["self", "Self"],
+	angle_generics: true,
+	..CalleeSyntax::DOTTED
+};
 
 pub(crate) struct Rust {}
 
@@ -47,6 +57,46 @@ impl Language for Rust {
 	// `impl Trait for Type`, `trait A: B` (bounds continue on later lines).
 	fn inheritance_line_markers(&self) -> &'static [&'static str] {
 		&["impl", "trait"]
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	// Trait bounds (`T: A + B`), lifetimes, `?Sized`, generic arguments.
+	fn inheritance_name_extras(&self) -> &'static str {
+		"+&<>:;'?"
+	}
+
+	fn import_name_separators(&self) -> &'static [char] {
+		&[':']
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&[
+			"struct", "enum", "trait", "type", "const", "static", "let", "mod", "union", "impl",
+		]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["fn"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_item" => SymbolKind::Function,
+			"struct_item" => SymbolKind::Struct,
+			"enum_item" => SymbolKind::Enum,
+			"trait_item" => SymbolKind::Trait,
+			"mod_item" => SymbolKind::Module,
+			"const_item" => SymbolKind::Const,
+			"macro_definition" => SymbolKind::Macro,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(node, contents, &["impl_item", "trait_item"])
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -146,7 +196,7 @@ impl Language for Rust {
 	}
 
 	// The crate root is what `crate::` names.
-	fn importer_names(&self, path: &str) -> Vec<String> {
+	fn importer_names(&self, path: &str, _declared: &[&str]) -> Vec<String> {
 		let file_name = path.rsplit('/').next().unwrap_or(path);
 		let mut names = stem_and_directory(path, self.is_directory_index(path));
 		if matches!(file_name, "lib.rs" | "main.rs") {
@@ -193,7 +243,7 @@ impl Language for Rust {
 		};
 		callee
 			.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-			.and_then(parse_call_target)
+			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 			.into_iter()
 			.collect()
 	}
@@ -384,27 +434,26 @@ fn path_attribute(node: Node, contents: &str) -> Option<String> {
 fn calls_in_token_tree(node: Node, contents: &str) -> Vec<CallTarget> {
 	let mut calls = Vec::new();
 	let mut cursor = node.walk();
-	let children: Vec<Node> = node.children(&mut cursor).collect();
-	for (position, child) in children.iter().enumerate() {
-		let Some(next) = children.get(position + 1) else {
-			break;
-		};
-		if child.kind() != "identifier"
-			|| next.kind() != "token_tree"
-			|| !next
-				.utf8_text(contents.as_bytes())
-				.is_ok_and(|text| text.starts_with('('))
-		{
-			continue;
+	// Asked of every token tree of a file: the children are walked once,
+	// holding the two before the current one, not collected.
+	let mut before: Option<Node> = None;
+	let mut previous: Option<Node> = None;
+	for child in node.children(&mut cursor) {
+		if let Some(name_node) = previous.filter(|candidate| candidate.kind() == "identifier") {
+			let opens_arguments = child.kind() == "token_tree"
+				&& child
+					.utf8_text(contents.as_bytes())
+					.is_ok_and(|text| text.starts_with('('));
+			if let (true, Ok(name)) = (opens_arguments, name_node.utf8_text(contents.as_bytes())) {
+				let after_dot = before.is_some_and(|node| node.kind() == ".");
+				calls.push(CallTarget {
+					name: name.to_string(),
+					qualifier: after_dot.then(|| UNKNOWN_RECEIVER.to_string()),
+				});
+			}
 		}
-		let Ok(name) = child.utf8_text(contents.as_bytes()) else {
-			continue;
-		};
-		let after_dot = position > 0 && children[position - 1].kind() == ".";
-		calls.push(CallTarget {
-			name: name.to_string(),
-			qualifier: after_dot.then(|| UNKNOWN_RECEIVER.to_string()),
-		});
+		before = previous;
+		previous = Some(child);
 	}
 	calls
 }
@@ -562,7 +611,9 @@ fn find_crate_root(source_file: &str, registry: &FileRegistry) -> Option<String>
 /// found.
 fn resolve_workspace_crate_import(import_path: &str, registry: &FileRegistry) -> Option<String> {
 	let (crate_name, module_path) = import_path.split_once("::")?;
-	let mut roots: Vec<&String> = registry
+	// Asked for every import that no file of the crate answers (the standard
+	// library and every third-party crate), so nothing is allocated per root.
+	let root = registry
 		.files_named("lib.rs")
 		.iter()
 		.filter(|root| {
@@ -570,11 +621,20 @@ fn resolve_workspace_crate_import(import_path: &str, registry: &FileRegistry) ->
 			parents.next() == Some("src")
 				&& parents
 					.next()
-					.is_some_and(|directory| directory.replace('-', "_") == crate_name)
+					.is_some_and(|directory| is_directory_of_crate(directory, crate_name))
 		})
-		.collect();
-	roots.sort();
-	resolve_in_crate(module_path, roots.first()?.to_string(), registry)
+		.min()?;
+	resolve_in_crate(module_path, root.to_string(), registry)
+}
+
+/// Whether a package directory is named `crate_name`: hyphens in the
+/// directory stand for the underscores of the crate's name.
+fn is_directory_of_crate(directory: &str, crate_name: &str) -> bool {
+	directory.len() == crate_name.len()
+		&& directory
+			.chars()
+			.zip(crate_name.chars())
+			.all(|(written, named)| written == named || (written == '-' && named == '_'))
 }
 
 /// Resolve `crate::module::Item`: the deepest module path that names a file,

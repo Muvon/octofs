@@ -18,10 +18,20 @@
 
 use super::javascript::{join_path, parent_dir};
 use super::use_alias::aliased_use_bindings;
+use super::{enclosing_owner, CalleeSyntax, PackageScope, SymbolKind};
 use super::{parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
+
+// A variable is written `$name`; `$this` and `self` name the enclosing class.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["?->", "->", "::", "."],
+	identifier_extras: &['$'],
+	variable_sigil: Some('$'),
+	self_receivers: &["this", "self"],
+	..CalleeSyntax::DOTTED
+};
 
 pub(crate) struct Php {}
 
@@ -60,6 +70,47 @@ impl Language for Php {
 			"trait_declaration",
 			"enum_declaration",
 		]
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "#", "/*"]
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["class", "interface", "trait", "enum", "const", "namespace"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["function"]
+	}
+
+	fn identifier_prefix(&self) -> Option<u8> {
+		Some(b'$')
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_definition" | "method_declaration" => SymbolKind::Function,
+			"class_declaration" => SymbolKind::Class,
+			"interface_declaration" => SymbolKind::Interface,
+			"trait_declaration" => SymbolKind::Trait,
+			"enum_declaration" => SymbolKind::Enum,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(
+			node,
+			contents,
+			&[
+				"class_declaration",
+				"interface_declaration",
+				"trait_declaration",
+				"enum_declaration",
+				"namespace_definition",
+			],
+		)
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -115,13 +166,29 @@ impl Language for Php {
 			.unwrap_or_default()
 	}
 
+	// The files of one namespace see each other's names without a `use`.
+	fn package_scope(&self) -> PackageScope {
+		PackageScope::Declared
+	}
+
+	fn declared_package(&self, node: Node, contents: &str) -> Option<String> {
+		if node.kind() != "namespace_definition" {
+			return None;
+		}
+		let mut cursor = node.walk();
+		let name = node
+			.children(&mut cursor)
+			.find(|child| child.kind() == "namespace_name")?;
+		name.utf8_text(contents.as_bytes()).ok().map(str::to_string)
+	}
+
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
 		let target = match node.kind() {
 			"function_call_expression" => node
 				.child_by_field_name("function")
 				.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
 				// `\App\helper()`: the namespace is not part of the callee name.
-				.and_then(|text| parse_call_target(last_namespace_segment(text))),
+				.and_then(|text| parse_call_target(last_namespace_segment(text), &CALLEE_SYNTAX)),
 			"member_call_expression" | "nullsafe_member_call_expression" | "scoped_call_expression" => {
 				method_call_target(node, contents)
 			}
@@ -133,7 +200,7 @@ impl Language for Php {
 					.find(|child| matches!(child.kind(), "name" | "qualified_name" | "relative_name"));
 				class
 					.and_then(|class| class.utf8_text(contents.as_bytes()).ok())
-					.and_then(|text| parse_call_target(last_namespace_segment(text)))
+					.and_then(|text| parse_call_target(last_namespace_segment(text), &CALLEE_SYNTAX))
 			}
 			_ => None,
 		};
@@ -250,8 +317,10 @@ fn method_call_target(node: Node, contents: &str) -> Option<CallTarget> {
 	let qualified = node
 		.child_by_field_name(receiver_field)
 		.and_then(|receiver| receiver.utf8_text(contents.as_bytes()).ok())
-		.and_then(|receiver| parse_call_target(&format!("{}.{name}", last_namespace_segment(receiver))));
-	qualified.or_else(|| parse_call_target(name))
+		.and_then(|receiver| {
+			parse_call_target(&format!("{}.{name}", last_namespace_segment(receiver)), &CALLEE_SYNTAX)
+		});
+	qualified.or_else(|| parse_call_target(name, &CALLEE_SYNTAX))
 }
 
 /// Full namespace paths of a use statement, backslashes turned into `/` so

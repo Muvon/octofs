@@ -15,12 +15,21 @@
 //! Ruby grammar: methods, singleton methods, classes and modules, plus the
 //! graph facts (require imports, calls, superclass relations).
 
+use super::{enclosing_owner, BodyOpen, CalleeSyntax, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, parse_call_target, path_ends_with_components, path_ends_with_name, simple_type_name,
 	CallTarget, Language, TypeRelationKind,
 };
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use tree_sitter::Node;
+
+// Instance variables are `@name`, globals `$name`.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["::", "."],
+	identifier_extras: &['@', '$'],
+	self_receivers: &["self"],
+	..CalleeSyntax::DOTTED
+};
 
 pub(crate) struct Ruby {}
 
@@ -74,6 +83,42 @@ impl Language for Ruby {
 		extract_symbol_by_kinds(node, contents, &["identifier", "name", "type_identifier"])
 	}
 
+	fn body_open(&self) -> BodyOpen {
+		BodyOpen::FirstLine
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["#"]
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["class", "module"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["def"]
+	}
+
+	// Globals are `$name`.
+	fn identifier_prefix(&self) -> Option<u8> {
+		Some(b'$')
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"method" | "singleton_method" => SymbolKind::Function,
+			"class" => SymbolKind::Class,
+			"module" => SymbolKind::Module,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	// `class << self` reopens the enclosing class's singleton: its methods
+	// belong to that class, and the block has no name of its own.
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(node, contents, &["class", "module"])
+	}
+
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
 		vec!["method", "singleton_method", "class", "module"]
 	}
@@ -101,7 +146,7 @@ impl Language for Ruby {
 			let name = node.utf8_text(contents.as_bytes()).unwrap_or_default();
 			return if is_statement && !is_local_variable(node, contents, name) && declares_method(node, contents, name)
 			{
-				parse_call_target(name).into_iter().collect()
+				parse_call_target(name, &CALLEE_SYNTAX).into_iter().collect()
 			} else {
 				Vec::new()
 			};
@@ -131,14 +176,14 @@ impl Language for Ruby {
 				.and_then(|receiver| receiver.utf8_text(contents.as_bytes()).ok())
 				.and_then(simple_type_name)
 			{
-				return parse_call_target(&class).into_iter().collect();
+				return parse_call_target(&class, &CALLEE_SYNTAX).into_iter().collect();
 			}
 		}
 		let raw = receiver
 			.and_then(|receiver| receiver.utf8_text(contents.as_bytes()).ok())
 			.map(|receiver| format!("{receiver}.{name}"))
 			.unwrap_or_else(|| name.to_string());
-		parse_call_target(&raw).into_iter().collect()
+		parse_call_target(&raw, &CALLEE_SYNTAX).into_iter().collect()
 	}
 
 	// A class reports its superclass (Extends) and the modules it mixes in

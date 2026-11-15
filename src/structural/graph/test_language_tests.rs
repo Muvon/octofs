@@ -17,7 +17,17 @@
 //! resolution and embedding paths end to end.
 
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
-use crate::structural::languages::{parse_call_target, simple_type_name, EmbeddedSource, Language, TypeRelationKind};
+use crate::structural::languages::{
+	enclosing_owner, parse_call_target, simple_type_name, CalleeSyntax, EmbeddedSource, Language, SymbolKind,
+	TypeRelationKind,
+};
+
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	member_separators: &["::", "."],
+	self_receivers: &["self", "Self"],
+	angle_generics: true,
+	..CalleeSyntax::DOTTED
+};
 use tree_sitter::Node;
 
 fn field_text(node: Node, field: &str, contents: &str) -> Option<String> {
@@ -47,6 +57,18 @@ impl Language for TestLanguage {
 		vec!["function_item", "struct_item", "trait_item"]
 	}
 
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(node, contents, &["impl_item", "trait_item"])
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_item" => SymbolKind::Function,
+			"struct_item" => SymbolKind::Struct,
+			_ => SymbolKind::Trait,
+		}
+	}
+
 	fn extract_imports_exports(&self, node: Node, contents: &str) -> (Vec<String>, Vec<String>) {
 		if node.kind() != "use_declaration" {
 			return (Vec::new(), Vec::new());
@@ -71,7 +93,7 @@ impl Language for TestLanguage {
 			return Vec::new();
 		}
 		field_text(node, "function", contents)
-			.and_then(|text| parse_call_target(&text))
+			.and_then(|text| parse_call_target(&text, &CALLEE_SYNTAX))
 			.into_iter()
 			.collect()
 	}

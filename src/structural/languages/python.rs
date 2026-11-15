@@ -16,6 +16,7 @@
 //! plus the graph methods (imports, calls, base classes, module resolution).
 
 use super::javascript::{join_path, parent_dir};
+use super::{enclosing_owner, BodyOpen, CalleeSyntax, SymbolKind};
 use super::{parse_call_target, simple_type_name, CallTarget, Language, TypeRelationKind};
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::symbols::ImportBinding;
@@ -24,6 +25,11 @@ use tree_sitter::Node;
 /// Marks an import path that is only a candidate: `from pkg import sub` may
 /// name the module `pkg.sub` or an object of `pkg`.
 const SUBMODULE_CANDIDATE: &str = "~";
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	self_receivers: &["self"],
+	..CalleeSyntax::DOTTED
+};
+
 pub(crate) struct Python {}
 
 impl Language for Python {
@@ -59,6 +65,39 @@ impl Language for Python {
 		// The class container is included (chunking drops it as too large);
 		// imports are dropped — they declare nothing an outline needs.
 		vec!["function_definition", "class_definition"]
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["#"]
+	}
+
+	// The `:` that ends a multi-line base list.
+	fn inheritance_name_extras(&self) -> &'static str {
+		":"
+	}
+
+	fn import_name_separators(&self) -> &'static [char] {
+		&['.']
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["class"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["def"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_definition" => SymbolKind::Function,
+			"class_definition" => SymbolKind::Class,
+			_ => SymbolKind::Other,
+		}
+	}
+
+	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
+		enclosing_owner(node, contents, &["class_definition"])
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -107,6 +146,10 @@ impl Language for Python {
 		}
 
 		(imports, exports)
+	}
+
+	fn body_open(&self) -> BodyOpen {
+		BodyOpen::LineEnding(":")
 	}
 
 	fn is_directory_index(&self, path: &str) -> bool {
@@ -165,7 +208,7 @@ impl Language for Python {
 		}
 		node.child_by_field_name("function")
 			.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-			.and_then(parse_call_target)
+			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 			.into_iter()
 			.collect()
 	}

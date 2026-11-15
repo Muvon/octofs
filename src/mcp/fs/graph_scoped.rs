@@ -426,10 +426,14 @@ impl Query {
 			.filter_map(|id| graph.nodes.get(id))
 			.map(|node| node.path.as_str())
 			.collect();
-		let imported: HashSet<FileId> = imported_paths(graph, &from_paths)
+		let mut imported: HashSet<FileId> = imported_paths(graph, &from_paths)
 			.iter()
 			.filter_map(|path| self.index.file_id(path))
 			.collect();
+		// A package sees its own names without importing them.
+		for path in &from_paths {
+			imported.extend(self.package_mates(path).await?);
+		}
 		let mut followed = Vec::new();
 		let mut looked_up = 0usize;
 		for name in names {
@@ -599,7 +603,7 @@ impl Query {
 			for (path, followed) in &level {
 				let followed_set = self.spelling(followed).await?;
 				let mut candidates: Vec<FileId> = Vec::new();
-				for token in file_tokens(path) {
+				for token in file_tokens(self, path) {
 					importing.extend(
 						self.marked_among(followed, &followed_set, &token, LineKind::Import)
 							.await?
@@ -639,6 +643,7 @@ impl Query {
 		let mut ordered: Vec<FileId> = self.index.file_id(definition_path).into_iter().collect();
 		ordered.extend(self.sorted_by_path(reexporters));
 		ordered.extend(self.sorted_by_path(importing));
+		ordered.extend(self.package_mates(definition_path).await?);
 		if definitions <= 1 {
 			ordered.extend(set.files.iter());
 		}
@@ -647,6 +652,38 @@ impl Query {
 		let mut seen = HashSet::new();
 		ordered.retain(|id| seen.insert(*id));
 		Ok(ordered)
+	}
+
+	/// The other files that may be in the package of the file `path`: the
+	/// callers of a name its package declares need no import. Where the
+	/// package is the directory they are its files; where files declare their
+	/// package, the files that spell the last segment of its name (a
+	/// superset the parse confirms).
+	async fn package_mates(&self, path: &str) -> Result<Vec<FileId>> {
+		let own = self.index.file_id(path);
+		let mates = match structural::package_scope(path) {
+			structural::PackageScope::NoPackage => return Ok(Vec::new()),
+			structural::PackageScope::Directory => self
+				.index
+				.files_in_directory(path.rsplit_once('/').map_or("", |(directory, _)| directory)),
+			structural::PackageScope::Declared => {
+				let package = own
+					.and_then(|id| self.parsed_source(id))
+					.and_then(|source| source.data().declared_package.clone());
+				let segment = package
+					.as_deref()
+					.and_then(|name| {
+						name.rsplit(|character: char| !character.is_alphanumeric() && character != '_')
+							.next()
+					})
+					.filter(|segment| !segment.is_empty());
+				match segment {
+					Some(segment) => self.index.files_spelling(&[segment]).await?,
+					None => return Ok(Vec::new()),
+				}
+			}
+		};
+		Ok(self.sorted_by_path(mates.into_iter().filter(|id| Some(*id) != own).collect()))
 	}
 }
 
@@ -680,8 +717,23 @@ fn imported_paths(graph: &CodeGraph, from: &HashSet<&str>) -> Vec<String> {
 
 /// What importers of a file spell, without the names of directories that
 /// thousands of unrelated files spell: deduplicated, in order.
-fn file_tokens(path: &str) -> BTreeSet<String> {
-	structural::importer_names(path).into_iter().collect()
+fn file_tokens(query: &Query, path: &str) -> BTreeSet<String> {
+	let source = query.index.file_id(path).and_then(|id| query.parsed_source(id));
+	let declared: Vec<&str> = source.as_ref().map_or_else(Vec::new, |source| {
+		source
+			.data()
+			.symbols
+			.iter()
+			.filter(|symbol| symbol.owner.is_none())
+			.map(|symbol| symbol.name.as_str())
+			.collect()
+	});
+	importer_tokens(path, &declared)
+}
+
+/// The names importers of the file spell, deduplicated, in order.
+fn importer_tokens(path: &str, declared: &[&str]) -> BTreeSet<String> {
+	structural::importer_names(path, declared).into_iter().collect()
 }
 
 fn last_level_ids(found: &crate::structural::graph::traverse::Neighborhood) -> Vec<String> {
@@ -780,7 +832,9 @@ fn nameless_importers(query: &Query, file: &str) -> Vec<FileId> {
 /// from the memo on its parsed data, so the cost is linear in the candidates
 /// examined by this call and nothing examined earlier is resolved again.
 async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answer> {
-	let mut tokens = file_tokens(file);
+	// The names a file declares are among what its importers spell.
+	query.ensure_paths(&[file.to_string()], file).await?;
+	let mut tokens = file_tokens(query, file);
 	// The files whose importers the current level looks for.
 	let mut targets: HashSet<String> = HashSet::from([file.to_string()]);
 	let mut seen: HashSet<String> = HashSet::from([file.to_string()]);
@@ -832,7 +886,7 @@ async fn imported_by(query: &mut Query, file: &str, depth: usize) -> Result<Answ
 		if level == depth || frontier.is_empty() {
 			break;
 		}
-		tokens = frontier.iter().flat_map(|path| file_tokens(path)).collect();
+		tokens = frontier.iter().flat_map(|path| file_tokens(query, path)).collect();
 		targets = frontier.into_iter().collect();
 	}
 	Ok(query.finish(import_edge_graph(&importers, &edges)))

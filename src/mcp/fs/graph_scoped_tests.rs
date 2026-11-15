@@ -740,17 +740,23 @@ fn a_callee_name_spelled_everywhere_resolves_through_the_imports_of_the_caller()
 
 #[test]
 fn files_are_found_by_their_name_and_their_directory() {
-	let tokens = file_tokens("src/net/http/server.go");
+	let tokens = importer_tokens("src/net/http/server.go", &[]);
 	assert_eq!(tokens, BTreeSet::from(["server".to_string(), "http".to_string()]));
 	// A crate root is also what `crate::` names in the importers.
 	assert_eq!(
-		file_tokens("lib.rs"),
+		importer_tokens("lib.rs", &[]),
 		BTreeSet::from(["lib".to_string(), "crate".to_string()])
 	);
-	assert_eq!(file_tokens("src/foo.d.ts"), BTreeSet::from(["foo".to_string()]));
-	assert_eq!(file_tokens("src/common/util.ts"), BTreeSet::from(["util".to_string()]));
 	assert_eq!(
-		file_tokens("src/components/index.ts"),
+		importer_tokens("src/foo.d.ts", &[]),
+		BTreeSet::from(["foo".to_string()])
+	);
+	assert_eq!(
+		importer_tokens("src/common/util.ts", &[]),
+		BTreeSet::from(["util".to_string()])
+	);
+	assert_eq!(
+		importer_tokens("src/components/index.ts", &[]),
 		BTreeSet::from(["index".to_string(), "components".to_string()])
 	);
 }
@@ -931,30 +937,41 @@ fn an_unnarrowed_name_spelled_past_the_trace_limit_is_not_traced_and_nothing_is_
 	};
 	assert!(text.contains("spelled in about 3051 files"), "{text}");
 	assert!(text.contains("`path`") && text.contains("`Owner::name`"), "{text}");
-	assert_eq!(CodeIndexes::global().index(root.path()).parse_count(), 0);
+	assert_eq!(CodeIndexes::global().index(root.path()).work.parses(), 0);
+}
+
+/// Files that all spell `shared`, more than one query may parse, where the
+/// only definition (an indented method, so it does not look like one) lies
+/// past the cap. Returns the files and how many they are.
+fn shared_spelled_past_the_cap() -> (Vec<(String, String)>, usize) {
+	let count = MAX_PARSED_FILES_PER_QUERY + 100;
+	let definition = MAX_PARSED_FILES_PER_QUERY + 50;
+	let files = (0..count)
+		.map(|n| {
+			let contents = if n == definition {
+				"export class K {\n  shared() {}\n}\n".to_string()
+			} else {
+				format!("export const v{n} = shared;\n")
+			};
+			(format!("src/m{n:05}.ts"), contents)
+		})
+		.collect();
+	(files, count)
 }
 
 #[test]
 #[serial]
 fn a_definition_search_stopped_by_the_cap_is_partial_and_repeating_finds_the_definition() {
-	// 700 files spell the name and none looks like a declaration (the
-	// definition is an indented method), so the definition in file 650 lies
-	// past the 600-file cap of one call.
-	let mut files: Vec<(String, String)> = Vec::new();
-	for n in 0..700 {
-		let contents = if n == 650 {
-			"export class K {\n  shared() {}\n}\n".to_string()
-		} else {
-			format!("export const v{n} = shared;\n")
-		};
-		files.push((format!("src/m{n:04}.ts"), contents));
-	}
+	let (files, count) = shared_spelled_past_the_cap();
 	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
 	let root = project(&borrowed);
 
 	let (first, notices) = scoped(root.path(), GraphRelation::Callers, Some("shared"), None, 1);
 	assert!(!notices.is_empty(), "the cut was not recorded: {first}");
-	assert!(notices.join("\n").contains("700 candidate files"), "{notices:?}");
+	assert!(
+		notices.join("\n").contains(&format!("{count} candidate files")),
+		"{notices:?}"
+	);
 
 	let (_, notices) = scoped(root.path(), GraphRelation::Callers, Some("shared"), None, 1);
 	assert!(notices.is_empty(), "{notices:?}");
@@ -963,17 +980,7 @@ fn a_definition_search_stopped_by_the_cap_is_partial_and_repeating_finds_the_def
 #[test]
 #[serial]
 fn a_path_end_not_found_within_the_cap_is_partial_not_a_final_negative() {
-	// `shared` is spelled in 700 files; its only definition (an indented
-	// method, so it does not look like one) is past what one call examines.
-	let mut files: Vec<(String, String)> = Vec::new();
-	for n in 0..700 {
-		let contents = if n == 650 {
-			"export class K {\n  shared() {}\n}\n".to_string()
-		} else {
-			format!("export const v{n} = shared;\n")
-		};
-		files.push((format!("src/m{n:04}.ts"), contents));
-	}
+	let (mut files, _) = shared_spelled_past_the_cap();
 	files.push(("src/start.ts".to_string(), "export function start() {}\n".to_string()));
 	let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
 	let root = project(&borrowed);
@@ -1118,7 +1125,7 @@ fn an_expired_time_budget_answers_with_what_was_examined_and_repeating_goes_on()
 	let notice = answer.1.join("\n");
 	assert!(notice.contains("repeat the query"), "{notice}");
 	// The notice counts what the query examined: every file this call parsed.
-	let parsed = CodeIndexes::global().index(root.path()).parse_count();
+	let parsed = CodeIndexes::global().index(root.path()).work.parses();
 	assert!(
 		notice.contains(&format!("{} candidate files, {parsed} examined", users + 1)),
 		"{notice}"
@@ -1157,10 +1164,10 @@ fn a_second_query_reuses_the_parsed_files() {
 	]);
 	let index = CodeIndexes::global().index(root.path());
 	scoped(root.path(), GraphRelation::Callers, Some("helper"), None, 1);
-	let after_first = index.parse_count();
+	let after_first = index.work.parses();
 	assert!(after_first >= 2, "{after_first}");
 	scoped(root.path(), GraphRelation::Callers, Some("helper"), None, 1);
-	assert_eq!(index.parse_count(), after_first);
+	assert_eq!(index.work.parses(), after_first);
 }
 
 #[test]
@@ -1177,7 +1184,7 @@ fn an_edited_file_is_parsed_again_and_nothing_else() {
 	let index = CodeIndexes::global().index(root.path());
 	let (before, _) = scoped(root.path(), GraphRelation::Callers, Some("helper"), None, 1);
 	assert!(!before.contains("function  again"), "{before}");
-	let parsed = index.parse_count();
+	let parsed = index.work.parses();
 	std::fs::write(
 		root.path().join("src/b.ts"),
 		"import { helper } from './a';\nexport function run() {\n\thelper();\n}\nexport function again() {\n\thelper();\n}\n",
@@ -1185,7 +1192,7 @@ fn an_edited_file_is_parsed_again_and_nothing_else() {
 	.unwrap();
 	let (after, _) = scoped(root.path(), GraphRelation::Callers, Some("helper"), None, 1);
 	assert!(after.contains("src/b.ts:5  function  again"), "{after}");
-	assert_eq!(index.parse_count(), parsed + 1);
+	assert_eq!(index.work.parses(), parsed + 1);
 }
 
 #[test]
@@ -1423,7 +1430,7 @@ fn a_search_from_the_cheaper_end_leaves_the_wide_side_unparsed() {
 		text.contains("src/top.ts:2 top -calls-> src/mid.ts:2 mid -calls-> src/target.ts:1 target"),
 		"{text}"
 	);
-	let parsed = index.parse_count();
+	let parsed = index.work.parses();
 	assert!(parsed < 10, "the thirty callees of `top` were parsed: {parsed}");
 }
 
@@ -1451,4 +1458,340 @@ fn an_edit_between_two_path_calls_is_seen() {
 		"{after}"
 	);
 	assert!(notices.is_empty(), "{notices:?}");
+}
+
+/// What a callers query for `name`, limited to the definition in `scope`,
+/// answers: the same from the scoped build and from the whole repository.
+fn callers_in(root: &Path, name: &str, scope: Option<&str>, expected: &[&str]) -> String {
+	assert_same(root, GraphRelation::Callers, Some(name), scope, 1, expected);
+	scoped(root, GraphRelation::Callers, Some(name), scope, 1).0
+}
+
+#[test]
+#[serial]
+fn a_call_reaches_a_name_of_its_directory_package_that_nothing_imports() {
+	let root = project(&[
+		("pkg/a.go", "package pkg\n\nfunc Helper() {}\n"),
+		("pkg/b.go", "package pkg\n\nfunc Run() {\n\tHelper()\n}\n"),
+		("other/c.go", "package other\n\nfunc Helper() {}\n"),
+	]);
+	callers_in(root.path(), "Helper", Some("pkg/a.go"), &["pkg/b.go:3  function  Run"]);
+	let other = callers_in(root.path(), "Helper", Some("other/c.go"), &[]);
+	assert!(!other.contains("pkg/b.go"), "{other}");
+
+	let root = project(&[
+		("Sources/Kit/Helper.swift", "func helper() {}\n"),
+		("Sources/Other/Helper.swift", "func helper() {}\n"),
+		("Sources/Kit/Run.swift", "func run() {\n\thelper()\n}\n"),
+	]);
+	callers_in(
+		root.path(),
+		"helper",
+		Some("Sources/Kit/Helper.swift"),
+		&["Sources/Kit/Run.swift:1  function  run"],
+	);
+	let other = callers_in(root.path(), "helper", Some("Sources/Other/Helper.swift"), &[]);
+	assert!(!other.contains("Sources/Kit/Run.swift"), "{other}");
+}
+
+#[test]
+#[serial]
+fn a_call_reaches_a_name_of_its_declared_package_in_another_directory() {
+	let root = project(&[
+		(
+			"src/main/java/com/example/widgets/Helper.java",
+			"package com.example.widgets;\npublic class Helper {}\n",
+		),
+		(
+			"src/main/java/com/example/gadgets/Helper.java",
+			"package com.example.gadgets;\npublic class Helper {}\n",
+		),
+		(
+			"src/test/java/com/example/widgets/CallerTest.java",
+			"package com.example.widgets;\npublic class CallerTest {\n\tvoid run() {\n\t\tnew Helper();\n\t}\n}\n",
+		),
+	]);
+	callers_in(
+		root.path(),
+		"Helper",
+		Some("src/main/java/com/example/widgets/Helper.java"),
+		&["src/test/java/com/example/widgets/CallerTest.java"],
+	);
+	let other = callers_in(
+		root.path(),
+		"Helper",
+		Some("src/main/java/com/example/gadgets/Helper.java"),
+		&[],
+	);
+	assert!(!other.contains("CallerTest"), "{other}");
+
+	let root = project(&[
+		(
+			"src/Models/Widget.php",
+			"<?php\nnamespace App\\Models;\nclass Widget {}\n",
+		),
+		("other/Widget.php", "<?php\nnamespace Other;\nclass Widget {}\n"),
+		(
+			"tests/WidgetTest.php",
+			"<?php\nnamespace App\\Models;\nfunction check() {\n\t$w = new Widget();\n}\n",
+		),
+	]);
+	callers_in(
+		root.path(),
+		"Widget",
+		Some("src/Models/Widget.php"),
+		&["tests/WidgetTest.php:3  function  check"],
+	);
+	let other = callers_in(root.path(), "Widget", Some("other/Widget.php"), &[]);
+	assert!(!other.contains("tests/WidgetTest.php"), "{other}");
+}
+
+#[test]
+#[serial]
+fn a_single_type_import_wins_over_a_wildcard_of_another_package() {
+	let root = project(&[
+		("com/a/Widget.java", "package com.a;\npublic class Widget {}\n"),
+		("com/b/Widget.java", "package com.b;\npublic class Widget {}\n"),
+		(
+			"com/c/Caller.java",
+			"package com.c;\nimport com.a.Widget;\nimport com.b.*;\npublic class Caller {\n\tvoid run() {\n\t\tnew Widget();\n\t}\n}\n",
+		),
+	]);
+	callers_in(root.path(), "Widget", Some("com/a/Widget.java"), &["com/c/Caller.java"]);
+	let other = callers_in(root.path(), "Widget", Some("com/b/Widget.java"), &[]);
+	assert!(!other.contains("com/c/Caller.java"), "{other}");
+}
+
+#[test]
+#[serial]
+fn a_call_through_headers_that_include_each_other_reaches_the_inner_declaration() {
+	let root = project(&[
+		("include/inner.h", "void deep() {}\n"),
+		("other/other.cpp", "void deep() {}\n"),
+		("include/outer.h", "#include \"inner.h\"\n"),
+		(
+			"src/main.cpp",
+			"#include \"../include/outer.h\"\n\nvoid run() {\n\tdeep();\n}\n",
+		),
+	]);
+	callers_in(
+		root.path(),
+		"deep",
+		Some("include/inner.h"),
+		&["src/main.cpp:3  function  run"],
+	);
+	let other = callers_in(root.path(), "deep", Some("other/other.cpp"), &[]);
+	assert!(!other.contains("src/main.cpp"), "{other}");
+}
+
+#[test]
+#[serial]
+fn a_call_through_a_module_that_exports_another_module_reaches_its_declaration() {
+	let root = project(&[
+		("Sources/Kit/Render.swift", "func render() {}\n"),
+		("Sources/Other/Render.swift", "func render() {}\n"),
+		("Sources/Facade/Facade.swift", "@_exported import Kit\n"),
+		(
+			"Sources/App/Main.swift",
+			"import Facade\n\nfunc main() {\n\trender()\n}\n",
+		),
+	]);
+	callers_in(
+		root.path(),
+		"render",
+		Some("Sources/Kit/Render.swift"),
+		&["Sources/App/Main.swift:3  function  main"],
+	);
+	let other = callers_in(root.path(), "render", Some("Sources/Other/Render.swift"), &[]);
+	assert!(!other.contains("Sources/App/Main.swift"), "{other}");
+}
+
+#[test]
+#[serial]
+fn each_way_to_build_an_object_is_a_caller_of_its_class() {
+	let main = "#include \"../include/foo.h\"\n\nvoid a() {\n\tFoo x(1);\n}\nvoid b() {\n\tFoo y{1};\n}\nvoid c() {\n\tauto z = new Foo(1);\n}\nvoid d() {\n\tauto w = Foo{1};\n}\n";
+	let root = project(&[
+		("include/foo.h", "class Foo {\npublic:\n\tFoo(int value) {}\n};\n"),
+		("other/foo.cpp", "class Foo {};\n"),
+		("src/main.cpp", main),
+	]);
+	callers_in(
+		root.path(),
+		"Foo",
+		Some("include/foo.h"),
+		&[
+			"src/main.cpp:3  function  a",
+			"src/main.cpp:6  function  b",
+			"src/main.cpp:9  function  c",
+			"src/main.cpp:12  function  d",
+		],
+	);
+
+	let root = project(&[
+		(
+			"pkg/widget.py",
+			"class Widget:\n    def __init__(self, size):\n        self.size = size\n",
+		),
+		("other/widget.py", "class Widget:\n    pass\n"),
+		(
+			"app.py",
+			"from pkg.widget import Widget\n\ndef build():\n    return Widget(1)\n",
+		),
+	]);
+	callers_in(
+		root.path(),
+		"Widget",
+		Some("pkg/widget.py"),
+		&["app.py:3  function  build"],
+	);
+
+	let root = project(&[
+		("Sources/Kit/Widget.swift", "struct Widget {\n\tinit(size: Int) {}\n}\n"),
+		(
+			"Sources/App/Main.swift",
+			"func build() {\n\tlet w = Widget(size: 1)\n}\n",
+		),
+	]);
+	callers_in(
+		root.path(),
+		"Widget",
+		None,
+		&["Sources/App/Main.swift:1  function  build"],
+	);
+}
+
+#[test]
+#[serial]
+fn calls_in_macro_and_template_arguments_and_pipes_are_callers() {
+	let root = project(&[(
+		"src/g.cpp",
+		"void compute(int v) {}\nvoid make() {}\nvoid g() {\n\tCHECK(compute(2));\n\tcall<Foo>(make());\n}\n",
+	)]);
+	callers_in(root.path(), "compute", None, &["src/g.cpp:3  function  g"]);
+	callers_in(root.path(), "make", None, &["src/g.cpp:3  function  g"]);
+
+	let root = project(&[
+		(
+			"lib/my_app/util.ex",
+			"defmodule MyApp.Util do\n  def tidy(x), do: x\nend\n",
+		),
+		(
+			"lib/my_app/run.ex",
+			"defmodule MyApp.Run do\n  alias MyApp.Util\n  def go(x), do: x |> Util.tidy()\nend\n",
+		),
+	]);
+	callers_in(root.path(), "tidy", None, &["lib/my_app/run.ex"]);
+}
+
+#[test]
+#[serial]
+fn a_local_name_for_a_required_module_and_a_delegating_function_lead_to_their_targets() {
+	let root = project(&[
+		("lib/m.lua", "local M = {}\nfunction M.f()\nend\nreturn M\n"),
+		("lib/n.lua", "local N = {}\nfunction N.f()\nend\nreturn N\n"),
+		(
+			"lib/main.lua",
+			"local mod = require(\"lib.m\")\nlocal other = require(\"lib.n\")\nfunction run()\n\tmod.f()\nend\n",
+		),
+	]);
+	callers_in(root.path(), "f", Some("lib/m.lua"), &["lib/main.lua:3  function  run"]);
+	let other = callers_in(root.path(), "f", Some("lib/n.lua"), &[]);
+	assert!(!other.contains("lib/main.lua"), "{other}");
+
+	// An alias that renames a module: the callees of the caller are those of
+	// the module it names, not of the other module that has the same function.
+	let root = project(&[
+		(
+			"lib/my_app/repo.ex",
+			"defmodule MyApp.Repo do\n  def get(id), do: id\nend\n",
+		),
+		(
+			"lib/my_app/other.ex",
+			"defmodule MyApp.Other do\n  def get(id), do: id\nend\n",
+		),
+		(
+			"lib/my_app/accounts.ex",
+			"defmodule MyApp.Accounts do\n  alias MyApp.Repo, as: R\n  def fetch(id), do: R.get(id)\nend\n",
+		),
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::Callees,
+		Some("fetch"),
+		None,
+		1,
+		&["lib/my_app/repo.ex"],
+	);
+	let (callees, _) = scoped(root.path(), GraphRelation::Callees, Some("fetch"), None, 1);
+	assert!(!callees.contains("lib/my_app/other.ex"), "{callees}");
+
+	let root = project(&[
+		(
+			"lib/my_app/impl.ex",
+			"defmodule MyApp.Impl do\n  def get(id), do: id\nend\n",
+		),
+		(
+			"lib/my_app/facade.ex",
+			"defmodule MyApp.Facade do\n  alias MyApp.Impl\n  defdelegate fetch(id), to: Impl, as: :get\nend\n",
+		),
+	]);
+	callers_in(root.path(), "get", None, &["lib/my_app/facade.ex"]);
+}
+
+#[test]
+#[serial]
+fn a_required_file_is_a_wildcard_import_and_an_init_file_names_its_directory() {
+	let root = project(&[
+		("app/util.rb", "def helper\nend\n"),
+		("lib/other.rb", "def helper\nend\n"),
+		("app/main.rb", "require_relative \"util\"\n\ndef run\n  helper()\nend\n"),
+		("app/lone.rb", "def alone\n  helper()\nend\n"),
+	]);
+	let callers = callers_in(
+		root.path(),
+		"helper",
+		Some("app/util.rb"),
+		&["app/main.rb:3  function  run"],
+	);
+	assert!(!callers.contains("app/lone.rb"), "{callers}");
+
+	let root = project(&[
+		("lib/init.lua", "local M = {}\nfunction M.go()\nend\nreturn M\n"),
+		("main.lua", "local lib = require(\"lib\")\nlib.go()\n"),
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::ImportedBy,
+		None,
+		Some("lib/init.lua"),
+		1,
+		&["main.lua"],
+	);
+}
+
+#[test]
+#[serial]
+fn an_elixir_module_is_imported_by_the_name_its_file_declares() {
+	let root = project(&[
+		(
+			"lib/my_app/repo.ex",
+			"defmodule MyApp.Repo do\n  def get(id), do: id\nend\n",
+		),
+		(
+			"lib/my_app/accounts.ex",
+			"defmodule MyApp.Accounts do\n  alias MyApp.Repo\nend\n",
+		),
+		(
+			"lib/my_app/lone.ex",
+			"defmodule MyApp.Lone do\n  # repo is not imported here\nend\n",
+		),
+	]);
+	assert_same(
+		root.path(),
+		GraphRelation::ImportedBy,
+		None,
+		Some("lib/my_app/repo.ex"),
+		1,
+		&["lib/my_app/accounts.ex"],
+	);
 }

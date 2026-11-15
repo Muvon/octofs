@@ -15,9 +15,10 @@
 //! Go grammar: functions, methods and type specs.
 
 use super::{
-	files_in_dir_matching, find_graph_symbol_owner, inheritance_line, parse_call_target, path_ends_with_components,
-	path_ends_with_name, simple_type_name, CallTarget, Language, TypeRelationKind,
+	files_in_dir_matching, parse_call_target, path_ends_with_components, path_ends_with_name, simple_type_name,
+	CallTarget, Language, TypeRelationKind,
 };
+use super::{CalleeSyntax, PackageScope, SymbolKind};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -27,6 +28,12 @@ use tree_sitter::Node;
 const GO_EMBEDDED_FIELD_EXTRA: &str = "*.`\":;";
 
 pub(crate) struct Go {}
+
+// Go takes a function's address with `&` and dereferences with `*`.
+const CALLEE_SYNTAX: CalleeSyntax = CalleeSyntax {
+	prefix_operators: &['&', '*'],
+	..CalleeSyntax::DOTTED
+};
 
 impl Language for Go {
 	fn name(&self) -> &'static str {
@@ -50,8 +57,28 @@ impl Language for Go {
 		&["struct", "interface"]
 	}
 
-	fn line_may_inherit(&self, line: &str, name: &str) -> bool {
-		inheritance_line(self.inheritance_line_markers(), line, name, GO_EMBEDDED_FIELD_EXTRA)
+	fn inheritance_name_extras(&self) -> &'static str {
+		GO_EMBEDDED_FIELD_EXTRA
+	}
+
+	fn comment_starts(&self) -> &'static [&'static str] {
+		&["//", "/*"]
+	}
+
+	fn declaration_keywords(&self) -> &'static [&'static str] {
+		&["type", "const", "var"]
+	}
+
+	fn callable_keywords(&self) -> &'static [&'static str] {
+		&["func"]
+	}
+
+	fn symbol_kind(&self, node: Node, _contents: &str) -> SymbolKind {
+		match node.kind() {
+			"function_declaration" | "method_declaration" => SymbolKind::Function,
+			"type_spec" => SymbolKind::Type,
+			_ => SymbolKind::Other,
+		}
 	}
 
 	fn get_symbol_kinds(&self) -> Vec<&'static str> {
@@ -131,7 +158,11 @@ impl Language for Go {
 		Some(GO_MODULE_FILE)
 	}
 
-	fn directory_is_package(&self) -> bool {
+	fn package_scope(&self) -> PackageScope {
+		PackageScope::Directory
+	}
+
+	fn import_names_directory(&self) -> bool {
 		true
 	}
 
@@ -141,14 +172,14 @@ impl Language for Go {
 		}
 		node.child_by_field_name("function")
 			.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-			.and_then(parse_call_target)
+			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
 			.into_iter()
 			.collect()
 	}
 
 	fn extract_symbol_owner(&self, node: Node, contents: &str) -> Option<String> {
 		if node.kind() != "method_declaration" {
-			return find_graph_symbol_owner(node, contents);
+			return None;
 		}
 		// The receiver type (`func (s *Server) Handle()`) owns the method.
 		let receiver = node.child_by_field_name("receiver")?;

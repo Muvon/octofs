@@ -51,8 +51,22 @@ fn bump_mtime(path: &Path) {
 }
 
 fn reads(index: &CodeIndex) -> usize {
-	index.reads.load(Ordering::Relaxed)
+	index.work.reads()
 }
+
+/// Makes the root look as if it was last used `ago` ago, so which root is the
+/// least recent does not depend on how finely the clock ticks.
+fn last_used_ago(indexes: &CodeIndexes, root: &Path, ago: Duration) {
+	let last_used = Instant::now().checked_sub(ago).expect("the clock has run for longer");
+	lock(&indexes.registry)
+		.roots
+		.get_mut(root)
+		.expect("the root is indexed")
+		.last_used = last_used;
+}
+
+/// Long enough ago that nothing else in a test is older.
+const LONG_AGO: Duration = Duration::from_secs(20);
 
 #[test]
 fn identifier_runs_split_names_at_non_identifier_bytes() {
@@ -69,24 +83,31 @@ fn identifier_runs_split_names_at_non_identifier_bytes() {
 fn non_ascii_identifiers_are_single_tokens() {
 	assert_eq!(identifier_runs("größe_x"), vec!["größe_x"]);
 	assert_eq!(identifier_runs("名前 変数"), vec!["名前", "変数"]);
-	let hashes = token_hashes("let größe = 1;".as_bytes());
-	assert!(hashes.contains(&hash_run("größe".as_bytes(), false)));
-	assert!(!hashes.contains(&hash_run("gr".as_bytes(), false)));
+	let hashes = token_hashes("let größe = 1;".as_bytes(), None);
+	assert!(hashes.contains(&hash_run("größe".as_bytes(), None)));
+	assert!(!hashes.contains(&hash_run("gr".as_bytes(), None)));
 }
 
 #[test]
 fn a_dollar_prefixed_token_is_also_stored_with_its_dollar() {
-	let hashes = token_hashes(b"echo $name; name2");
-	assert!(hashes.contains(&hash_run(b"name", false)));
-	assert!(hashes.contains(&hash_run(b"name", true)));
-	assert!(!hashes.contains(&hash_run(b"name2", true)));
+	let prefix = spelling_rules("bash").identifier_prefix;
+	assert_eq!(prefix, Some(b'$'));
+	let hashes = token_hashes(b"echo $name; name2", prefix);
+	assert!(hashes.contains(&hash_run(b"name", None)));
+	assert!(hashes.contains(&hash_run(b"name", prefix)));
+	assert!(!hashes.contains(&hash_run(b"name2", prefix)));
+
+	// A language whose identifiers have no prefix stores the plain token only.
+	assert_eq!(spelling_rules("rust").identifier_prefix, None);
+	let plain = token_hashes(b"echo $name", None);
+	assert!(!plain.contains(&hash_run(b"name", Some(b'$'))));
 }
 
 #[test]
 fn the_filter_has_no_false_negatives_and_few_false_positives() {
 	let present: Vec<u64> = {
 		let mut hashes: Vec<u64> = (0..5000)
-			.map(|n| hash_run(format!("token{n}").as_bytes(), false))
+			.map(|n| hash_run(format!("token{n}").as_bytes(), None))
 			.collect();
 		hashes.sort_unstable();
 		hashes.dedup();
@@ -95,14 +116,14 @@ fn the_filter_has_no_false_negatives_and_few_false_positives() {
 	let filter = TokenFilter::build(&present, BITS_PER_TOKEN);
 	assert!(present.iter().all(|hash| filter.contains(*hash)));
 	let false_positives = (0..20_000)
-		.filter(|n| filter.contains(hash_run(format!("absent{n}").as_bytes(), false)))
+		.filter(|n| filter.contains(hash_run(format!("absent{n}").as_bytes(), None)))
 		.count();
 	assert!(false_positives < 100, "{false_positives} of 20000 absent tokens hit");
 }
 
 #[test]
 fn a_smaller_filter_still_has_no_false_negatives() {
-	let mut hashes: Vec<u64> = (0..2000).map(|n| hash_run(format!("t{n}").as_bytes(), false)).collect();
+	let mut hashes: Vec<u64> = (0..2000).map(|n| hash_run(format!("t{n}").as_bytes(), None)).collect();
 	hashes.sort_unstable();
 	let filter = TokenFilter::build(&hashes, MIN_BITS_PER_TOKEN);
 	assert!(hashes.iter().all(|hash| filter.contains(*hash)));
@@ -171,6 +192,7 @@ async fn refresh_sees_new_changed_and_gone_files_and_rereads_only_the_changed_on
 		assert!(index.file_id(name).is_some(), "{name} is indexed");
 	}
 	index.refresh().await.unwrap();
+	assert_eq!(index.file_count(), 3, "a, b and c");
 
 	index.files_spelling(&["aaa"]).await.unwrap();
 	assert_eq!(reads(&index), 3, "the filters read every file once");
@@ -186,6 +208,8 @@ async fn refresh_sees_new_changed_and_gone_files_and_rereads_only_the_changed_on
 	index.refresh().await.unwrap();
 	assert!(index.file_id("d.rs").is_some());
 	assert!(index.file_id("c.rs").is_none());
+	assert_eq!(index.file_count(), 3, "a and b stay, c is gone, d is new");
+	assert_eq!(index.file_id("a.rs"), Some(a), "a changed but keeps its place");
 
 	let before = reads(&index);
 	let hits = index.files_spelling(&["zzz"]).await.unwrap();
@@ -342,9 +366,8 @@ async fn two_roots_are_independent_and_a_third_evicts_the_least_recent() {
 	assert!(a.file_id("one.rs").is_some() && a.file_id("two.rs").is_none());
 	assert!(b.file_id("two.rs").is_some() && b.file_id("one.rs").is_none());
 
-	tokio::time::sleep(Duration::from_millis(5)).await;
+	last_used_ago(&indexes, second.path(), LONG_AGO);
 	assert!(Arc::ptr_eq(&a, &indexes.index(first.path())));
-	tokio::time::sleep(Duration::from_millis(5)).await;
 	indexes.index(third.path());
 	assert_eq!(indexes.root_count(), MAX_INDEXED_WORKDIRS);
 	assert!(Arc::ptr_eq(&a, &indexes.index(first.path())), "the touched root stays");
@@ -366,7 +389,7 @@ async fn concurrent_refreshes_share_one_run_that_started_after_they_arrived() {
 	for result in [a, b, c, d] {
 		result.unwrap();
 	}
-	assert_eq!(index.refresh_count.load(Ordering::Relaxed), 2);
+	assert_eq!(index.work.refreshes(), 2);
 }
 
 #[tokio::test]
@@ -387,12 +410,13 @@ async fn two_cold_callers_build_each_filter_once() {
 }
 
 #[tokio::test]
-async fn an_idle_root_is_dropped_by_the_sweeper_and_its_memory_returns() {
+async fn an_idle_root_is_dropped_by_the_sweep_and_its_memory_returns() {
 	let root = numbered_project(10, 20);
+	let idle = Duration::from_secs(60);
 	let indexes = CodeIndexes::new(IndexLimits {
 		max_roots: MAX_INDEXED_WORKDIRS,
 		memory_bytes: AMPLE,
-		idle: Duration::from_millis(80),
+		idle,
 	});
 	{
 		let index = indexes.index(root.path());
@@ -402,15 +426,15 @@ async fn an_idle_root_is_dropped_by_the_sweeper_and_its_memory_returns() {
 		assert!(indexes.memory_used() > 0);
 	}
 	assert_eq!(indexes.root_count(), 1);
-	for _ in 0..50 {
-		if indexes.root_count() == 0 {
-			break;
-		}
-		tokio::time::sleep(Duration::from_millis(20)).await;
-	}
+
+	let sweep = || CodeIndexes::drop_idle_roots(&indexes.registry, &indexes.budget, idle);
+	assert!(!sweep(), "a root used just now stays");
+	assert_eq!(indexes.root_count(), 1);
+
+	last_used_ago(&indexes, root.path(), idle);
+	assert!(sweep(), "the idle root was the last one");
 	assert_eq!(indexes.root_count(), 0);
 	assert_eq!(indexes.memory_used(), 0);
-	tokio::time::sleep(Duration::from_millis(40)).await;
 	assert!(
 		!lock(&indexes.registry).sweeper_running,
 		"the sweeper ends with the last root"
@@ -456,12 +480,30 @@ fn the_declaration_check_reads_a_bounded_window_before_a_name() {
 	let wanted: HashSet<&[u8]> = HashSet::from([b"foo".as_slice()]);
 	let filler = "a.b(1);".repeat(DECLARATION_LOOKBACK_BYTES);
 	let far = format!("function {filler} foo(1);");
-	assert_eq!(scan_spelling(far.as_bytes(), &wanted, b"foo"), Some(false));
+	let rules = spelling_rules("javascript");
+	assert_eq!(scan_spelling(far.as_bytes(), &wanted, b"foo", &rules), Some(false));
 	let near = format!("{filler} function foo(1);");
-	assert_eq!(scan_spelling(near.as_bytes(), &wanted, b"foo"), Some(true));
+	assert_eq!(scan_spelling(near.as_bytes(), &wanted, b"foo", &rules), Some(true));
 
 	let minified = format!(" {}", "a.foo(1);".repeat(100_000)).into_bytes();
-	assert_eq!(scan_spelling(&minified, &wanted, b"foo"), Some(false));
+	assert_eq!(scan_spelling(&minified, &wanted, b"foo", &rules), Some(false));
+}
+
+#[test]
+fn declaration_words_come_from_the_files_language() {
+	let wanted: HashSet<&[u8]> = HashSet::from([b"area".as_slice()]);
+	let python = spelling_rules("python");
+	let go = spelling_rules("go");
+	assert_eq!(scan_spelling(b"  def area", &wanted, b"area", &python), Some(true));
+	assert_eq!(scan_spelling(b"  def area", &wanted, b"area", &go), Some(false));
+	assert_eq!(
+		scan_spelling(b"  type area struct {}", &wanted, b"area", &go),
+		Some(true)
+	);
+	assert_eq!(
+		scan_spelling(b"  type area struct {}", &wanted, b"area", &python),
+		Some(false)
+	);
 }
 
 #[tokio::test]
@@ -479,7 +521,7 @@ async fn a_root_that_did_not_fit_is_built_again_only_after_memory_was_freed() {
 	let indexes = CodeIndexes::new(limits(ceiling));
 	let held = indexes.index(small.path());
 	held.refresh().await.unwrap();
-	tokio::time::sleep(Duration::from_millis(5)).await;
+	last_used_ago(&indexes, small.path(), LONG_AGO);
 	let unfit = indexes.index(big.path());
 	unfit.refresh().await.unwrap();
 	unfit.files_spelling(&["f0_0"]).await.unwrap_err();
@@ -489,7 +531,6 @@ async fn a_root_that_did_not_fit_is_built_again_only_after_memory_was_freed() {
 		"nothing was freed: no new attempt"
 	);
 
-	tokio::time::sleep(Duration::from_millis(5)).await;
 	// A third root pushes the least recent one out; once its last handle is
 	// gone its memory returns.
 	indexes.index(third.path());

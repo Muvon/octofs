@@ -294,3 +294,120 @@ fn builds_elixir_live_graph_with_import_call_and_protocol_edges() {
 	assert!(has(impl_renderable, renderable_protocol, RelationType::Implements));
 	assert!(has(test_fetch, accounts_fetch, RelationType::Calls));
 }
+
+fn elixir_file(path: &str, contents: &str) -> SourceFile {
+	SourceFile {
+		path: path.to_string(),
+		language: "elixir",
+		contents: contents.to_string(),
+	}
+}
+
+fn has_edge(graph: &crate::structural::graph::CodeGraph, source: &str, target: &str) -> bool {
+	graph
+		.relationships
+		.iter()
+		.any(|edge| edge.source == source && edge.target == target && edge.relation == RelationType::Calls)
+}
+
+#[test]
+fn an_alias_binds_its_new_name_or_last_segment_and_import_and_use_bind_none() {
+	let bindings = |source: &str| {
+		let tree = parse(source);
+		let statement = call_nodes(tree.root_node())[0];
+		let (imports, _) = elixir().extract_imports_exports(statement, source);
+		elixir()
+			.extract_import_bindings(statement, source, &imports)
+			.into_iter()
+			.map(|binding| (binding.local_name, binding.import_path))
+			.collect::<Vec<_>>()
+	};
+	let pair = |name: &str, path: &str| (name.to_string(), path.to_string());
+	assert_eq!(bindings("alias MyApp.Repo, as: R"), [pair("R", "MyApp.Repo")]);
+	assert_eq!(bindings("alias MyApp.Repo"), [pair("Repo", "MyApp.Repo")]);
+	assert_eq!(
+		bindings("alias MyApp.{A, B}"),
+		[pair("A", "MyApp.A"), pair("B", "MyApp.B")]
+	);
+	assert_eq!(bindings("require Logger"), [pair("Logger", "Logger")]);
+	assert!(bindings("import MyApp.Util").is_empty());
+	assert!(bindings("use MyApp.Telemetry").is_empty());
+}
+
+#[test]
+fn an_aliased_module_name_reaches_the_module_it_renames() {
+	let graph = build_graph(vec![
+		elixir_file("lib/my_app/repo.ex", "defmodule MyApp.Repo do\n  def get(id), do: id\nend\n"),
+		elixir_file("lib/my_app/other.ex", "defmodule MyApp.Other do\n  def get(id), do: id\nend\n"),
+		elixir_file(
+			"lib/my_app/accounts.ex",
+			"defmodule MyApp.Accounts do\n  alias MyApp.Repo, as: R\n  alias MyApp.Other, as: O\n  def fetch(id), do: R.get(id)\nend\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"lib/my_app/accounts.ex::MyApp.Accounts::fetch",
+		"lib/my_app/repo.ex::MyApp.Repo::get"
+	));
+	assert!(!has_edge(
+		&graph,
+		"lib/my_app/accounts.ex::MyApp.Accounts::fetch",
+		"lib/my_app/other.ex::MyApp.Other::get"
+	));
+}
+
+#[test]
+fn a_delegating_function_calls_the_function_it_delegates_to() {
+	let graph = build_graph(vec![
+		elixir_file(
+			"lib/my_app/impl.ex",
+			"defmodule MyApp.Impl do\n  def get(id), do: id\n  def list(id), do: id\nend\n",
+		),
+		elixir_file(
+			"lib/my_app/other.ex",
+			"defmodule MyApp.Other do\n  def get(id), do: id\n  def list(id), do: id\nend\n",
+		),
+		elixir_file(
+			"lib/my_app/facade.ex",
+			"defmodule MyApp.Facade do\n  alias MyApp.Impl\n  defdelegate fetch(id), to: Impl, as: :get\n  defdelegate list(id), to: Impl\nend\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"lib/my_app/facade.ex::MyApp.Facade::fetch",
+		"lib/my_app/impl.ex::MyApp.Impl::get"
+	));
+	assert!(has_edge(
+		&graph,
+		"lib/my_app/facade.ex::MyApp.Facade::list",
+		"lib/my_app/impl.ex::MyApp.Impl::list"
+	));
+	assert!(!has_edge(
+		&graph,
+		"lib/my_app/facade.ex::MyApp.Facade::fetch",
+		"lib/my_app/other.ex::MyApp.Other::get"
+	));
+}
+
+#[test]
+fn the_right_side_of_a_pipe_is_a_call_whatever_the_left_side_is() {
+	let source = "defmodule M do\n  def run(x), do: x |> helper() |> Util.tidy(1)\nend\n";
+	let tree = parse(source);
+	let mut names: Vec<String> = call_nodes(tree.root_node())
+		.into_iter()
+		.flat_map(|node| elixir().extract_function_calls(node, source))
+		.map(|target| target.name)
+		.collect();
+	names.sort();
+	assert_eq!(names, ["helper", "tidy"]);
+}
+
+#[test]
+fn importers_name_a_module_by_what_the_file_declares() {
+	let lang = elixir();
+	assert_eq!(lang.importer_names("lib/my_app/repo.ex", &[]), ["repo"]);
+	assert_eq!(
+		lang.importer_names("lib/my_app/repo.ex", &["MyApp.Repo", "Printable for MyApp.User"]),
+		["repo", "MyApp.Repo", "Repo"]
+	);
+}

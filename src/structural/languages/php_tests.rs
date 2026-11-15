@@ -17,7 +17,7 @@
 use super::Php;
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::{build_graph, CodeGraph, RelationType, SourceFile};
-use crate::structural::languages::{CallTarget, Language, TypeRelationKind, UNKNOWN_RECEIVER};
+use crate::structural::languages::{CallTarget, Language, PackageScope, TypeRelationKind, UNKNOWN_RECEIVER};
 use crate::structural::outline;
 use tree_sitter::{Node, Parser};
 
@@ -114,7 +114,7 @@ fn calls_keep_qualifier() {
 			},
 			CallTarget {
 				name: "method".to_string(),
-				qualifier: Some("$obj".to_string())
+				qualifier: Some("obj".to_string())
 			},
 			CallTarget {
 				name: "run".to_string(),
@@ -145,7 +145,7 @@ fn static_and_namespaced_calls_keep_the_method_name_and_class_qualifier() {
 			("helper", None),
 			("save", Some(UNKNOWN_RECEIVER)),
 			("getRepo", None),
-			("find", Some("$this::repo")),
+			("find", Some("this::repo")),
 		]
 	);
 }
@@ -272,4 +272,51 @@ fn new_is_a_call_of_the_class_and_require_include_are_imports() {
 		"<?php\nrequire 'a.php';\nrequire_once __DIR__ . '/lib/b.php';\ninclude(\"c.php\");\ninclude_once $computed;\n",
 	);
 	assert_eq!(imports, vec!["a.php", "./lib/b.php", "c.php"]);
+}
+
+#[test]
+fn the_namespace_a_file_declares_is_its_package_scope() {
+	assert_eq!(Php {}.package_scope(), PackageScope::Declared);
+	for source in [
+		"<?php\nnamespace App\\Models;\nclass C {}\n",
+		"<?php\nnamespace App\\Models {\n\tclass C {}\n}\n",
+	] {
+		let mut packages = Vec::new();
+		for_each_node(source, |node, contents| {
+			packages.extend(Php {}.declared_package(node, contents))
+		});
+		assert_eq!(packages, ["App\\Models"], "{source}");
+	}
+}
+
+#[test]
+fn a_class_of_the_same_namespace_is_reached_without_a_use() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "php",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file(
+			"src/Models/Widget.php",
+			"<?php\nnamespace App\\Models;\nclass Widget {}\n",
+		),
+		file("other/Widget.php", "<?php\nnamespace Other;\nclass Widget {}\n"),
+		file(
+			"tests/WidgetTest.php",
+			"<?php\nnamespace App\\Models;\nfunction check() {\n\t$w = new Widget();\n}\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"tests/WidgetTest.php::check",
+		"src/Models/Widget.php::Widget",
+		RelationType::Calls
+	));
+	assert!(!has_edge(
+		&graph,
+		"tests/WidgetTest.php::check",
+		"other/Widget.php::Widget",
+		RelationType::Calls
+	));
 }
