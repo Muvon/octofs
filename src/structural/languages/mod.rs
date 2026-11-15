@@ -184,6 +184,17 @@ pub(crate) trait Language: Send + Sync {
 	/// The tree-sitter grammar to parse with.
 	fn get_ts_language(&self) -> tree_sitter::Language;
 
+	/// Byte ranges to blank out of the text before its declarations are read:
+	/// the tokens of a wrapper around real declarations (Rust's
+	/// `cfg_rt! { ... }` blocks, whose items the grammar leaves opaque), found
+	/// in the tree already parsed. Blanking keeps every line and column where
+	/// it was, so what a parse of the result finds maps straight back to the
+	/// file. Empty when the file has none.
+	fn declaration_blanks(&self, tree: &tree_sitter::Tree, contents: &str) -> Vec<(usize, usize)> {
+		let _ = (tree, contents);
+		Vec::new()
+	}
+
 	/// Node kinds that become outline items. Defaults to the chunking kinds;
 	/// languages override to expose container declarations (classes,
 	/// interfaces, enums) that chunking deliberately drops, and to drop
@@ -421,6 +432,20 @@ pub(crate) trait Language: Send + Sync {
 		Vec::new()
 	}
 
+	/// The import a call makes inline, when its callee is written with the
+	/// path of the module or type that owns it (`crate::runtime::spawn(f)`,
+	/// `\App\Models\User::find()`) instead of through an import statement:
+	/// the binding is the one the statement for that path would give, so the
+	/// call resolves through the import resolver and the re-exports it
+	/// follows. `node` is the call node `callee` was read from, for a
+	/// language whose call target does not keep the whole path. None when the
+	/// qualifier names no such path: a receiver, a type written without its
+	/// module, the enclosing type itself.
+	fn inline_import(&self, node: Node, contents: &str, callee: &CallTarget) -> Option<ImportBinding> {
+		let _ = (node, contents, callee);
+		None
+	}
+
 	/// The name a node declares as the file's default export (`draw` in
 	/// `export default function draw() {}`): a default import names it
 	/// whatever the importer calls it.
@@ -629,6 +654,70 @@ const LANGUAGES: [(&str, LanguageConstructor); 17] = [
 	("elixir", || Box::new(elixir::Elixir {})),
 	("svelte", || Box::new(svelte::Svelte {})),
 ];
+
+/// Parses `contents` with the grammar `parser` was set to. When the language
+/// finds wrappers around real declarations in the tree (see
+/// `Language::declaration_blanks`), the tree is that of the text with the
+/// wrappers blanked out, derived from the first tree by an incremental parse
+/// (the blanked text has the same byte length, so nothing moves); the text is
+/// returned with it. Files without wrappers cost one parse and one tree walk.
+pub(crate) fn parse_declarations<'a>(
+	language: &dyn Language,
+	parser: &mut tree_sitter::Parser,
+	contents: &'a str,
+) -> Option<(tree_sitter::Tree, Cow<'a, str>)> {
+	let mut tree = parser.parse(contents, None)?;
+	let mut blanks = language.declaration_blanks(&tree, contents);
+	if blanks.is_empty() {
+		return Some((tree, Cow::Borrowed(contents)));
+	}
+	blanks.sort_unstable();
+	let mut bytes = contents.as_bytes().to_vec();
+	for (start, end) in &blanks {
+		// Newlines stay, so every line and column is unchanged.
+		for byte in &mut bytes[*start..*end] {
+			if !matches!(*byte, b'\n' | b'\r') {
+				*byte = b' ';
+			}
+		}
+	}
+	let Ok(blanked) = String::from_utf8(bytes) else {
+		return Some((tree, Cow::Borrowed(contents)));
+	};
+	let offsets: Vec<usize> = blanks.iter().flat_map(|(start, end)| [*start, *end]).collect();
+	let points = points_at(contents, &offsets);
+	for (index, (start, end)) in blanks.iter().enumerate() {
+		tree.edit(&tree_sitter::InputEdit {
+			start_byte: *start,
+			old_end_byte: *end,
+			new_end_byte: *end,
+			start_position: points[2 * index],
+			old_end_position: points[2 * index + 1],
+			new_end_position: points[2 * index + 1],
+		});
+	}
+	let reparsed = parser.parse(&blanked, Some(&tree))?;
+	Some((reparsed, Cow::Owned(blanked)))
+}
+
+/// The row and column (in bytes) of each offset, in one pass over the text.
+fn points_at(text: &str, offsets: &[usize]) -> Vec<tree_sitter::Point> {
+	let mut sorted: Vec<(usize, usize)> = offsets.iter().copied().zip(0..).collect();
+	sorted.sort_unstable();
+	let mut points = vec![tree_sitter::Point::new(0, 0); offsets.len()];
+	let (mut row, mut line_start) = (0, 0);
+	for (offset, slot) in sorted {
+		while let Some(newline) = text.as_bytes()[line_start..offset]
+			.iter()
+			.position(|byte| *byte == b'\n')
+		{
+			row += 1;
+			line_start += newline + 1;
+		}
+		points[slot] = tree_sitter::Point::new(row, offset - line_start);
+	}
+	points
+}
 
 /// Gets a language implementation by its name.
 pub(crate) fn get_language(name: &str) -> Option<Box<dyn Language>> {

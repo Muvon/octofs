@@ -22,7 +22,7 @@ use super::{
 	TypeRelationKind,
 };
 use super::{stem_and_directory, BodyOpen, SymbolKind};
-use super::{PatternGrammar, IDENTIFIER_EXPANDO};
+use super::{PatternGrammar, IDENTIFIER_EXPANDO, QUALIFIER_SEPARATOR};
 use crate::structural::graph::registry::{resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -114,9 +114,11 @@ impl Language for Elixir {
 	}
 
 	// `alias MyApp.{` newline `Repo,` newline `User` leaves a bare module name
-	// on its own line, which the default name-list rule accepts.
+	// on its own line, which the default name-list rule accepts. A module
+	// called by its full name (`MyApp.Repo.get(id)`) needs no statement, so a
+	// line that names it after a `.` may import it too.
 	fn import_line_markers(&self) -> &'static [&'static str] {
-		&["alias", "import", "require", "use"]
+		&["alias", "import", "require", "use", "."]
 	}
 
 	// The protocol is the first argument of `defimpl`, on its own line.
@@ -340,6 +342,22 @@ impl Language for Elixir {
 			return Vec::new();
 		}
 		parse_call_target(&target_text, &CALLEE_SYNTAX).into_iter().collect()
+	}
+
+	// `MyApp.Repo.get(id)` names the module by its full name, as `alias
+	// MyApp.Repo` would. A single segment is an alias or a top-level module
+	// and is bound by its own `alias`; an atom (`:ets.insert`) is Erlang.
+	fn inline_import(&self, _node: Node, _contents: &str, callee: &CallTarget) -> Option<ImportBinding> {
+		let qualifier = callee.qualifier.as_deref()?;
+		let is_module_path = qualifier.contains(QUALIFIER_SEPARATOR)
+			&& qualifier
+				.split(QUALIFIER_SEPARATOR)
+				.all(|segment| segment.chars().next().is_some_and(char::is_uppercase));
+		is_module_path.then(|| ImportBinding {
+			local_name: qualifier.to_string(),
+			imported_name: None,
+			import_path: qualifier.replace(QUALIFIER_SEPARATOR, "."),
+		})
 	}
 
 	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {

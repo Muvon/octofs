@@ -19,12 +19,12 @@ use super::C_STYLE_COMMENTS;
 use super::{enclosing_owner, CalleeSyntax, SymbolKind};
 use super::{
 	extract_symbol_by_kinds, parse_call_target, simple_type_name, stem_and_directory, CallTarget, Language,
-	TypeRelationKind, UNKNOWN_RECEIVER,
+	TypeRelationKind, QUALIFIER_SEPARATOR, SELF_RECEIVER, UNKNOWN_RECEIVER,
 };
 use super::{PatternGrammar, IDENTIFIER_EXPANDO};
 use crate::structural::graph::registry::{normalize_separators, resolve_relative_path, FileRegistry};
 use crate::structural::graph::symbols::ImportBinding;
-use tree_sitter::Node;
+use tree_sitter::{Node, Parser, Tree};
 
 /// File names whose child modules sit next to them rather than in a directory
 /// named after the file.
@@ -79,6 +79,14 @@ impl Language for Rust {
 
 	fn get_ts_language(&self) -> tree_sitter::Language {
 		tree_sitter_rust::LANGUAGE.into()
+	}
+
+	fn declaration_blanks(&self, tree: &Tree, contents: &str) -> Vec<(usize, usize)> {
+		let mut ranges = Vec::new();
+		// Made on the first brace macro whose body needs a parse.
+		let mut parser = None;
+		collect_wrapper_ranges(&mut parser, tree.root_node(), contents, 0, 0, &mut ranges);
+		ranges
 	}
 
 	fn pattern_grammar(&self) -> Option<PatternGrammar> {
@@ -196,12 +204,15 @@ impl Language for Rust {
 		match node.kind() {
 			"use_declaration" => {
 				if let Ok(use_text) = node.utf8_text(contents.as_bytes()) {
-					let nesting = inline_module_depth(node);
-					imports.extend(
-						expand_rust_use_paths(use_text)
-							.into_iter()
-							.filter_map(|path| lift_super_out_of_inline_modules(path, nesting)),
-					);
+					imports.extend(use_paths(use_text, inline_module_depth(node)));
+				}
+			}
+			// `cfg_rt! { pub(crate) use a::b; }`: the grammar leaves what an item
+			// macro wraps as tokens, and a `use` in it is as real as any other.
+			"token_tree" => {
+				let nesting = inline_module_depth(node);
+				for statement in use_statements_in_token_tree(node, contents) {
+					imports.extend(use_paths(statement, nesting));
 				}
 			}
 			"mod_item" => {
@@ -246,31 +257,17 @@ impl Language for Rust {
 		names
 	}
 
-	fn extract_import_bindings(&self, node: Node, contents: &str, imports: &[String]) -> Vec<ImportBinding> {
-		if node.kind() != "use_declaration" {
-			return Vec::new();
-		}
-		let Ok(text) = node.utf8_text(contents.as_bytes()) else {
-			return Vec::new();
+	fn extract_import_bindings(&self, node: Node, contents: &str, _imports: &[String]) -> Vec<ImportBinding> {
+		let statements = match node.kind() {
+			"use_declaration" => node.utf8_text(contents.as_bytes()).ok().into_iter().collect(),
+			"token_tree" => use_statements_in_token_tree(node, contents),
+			_ => return Vec::new(),
 		};
-		let mut bindings = aliased_use_bindings(text.trim(), imports);
-		// A plain or grouped `use a::b::{C, D}` brings each leaf in under its
-		// own name, so a call to `C` is looked up in the files the import names.
-		for import in imports {
-			let name = import.rsplit(':').next().unwrap_or_default();
-			let already_bound = bindings
-				.iter()
-				.any(|binding| binding.imported_name.as_deref() == Some(name));
-			if name.is_empty() || matches!(name, "self" | "super" | "crate") || already_bound {
-				continue;
-			}
-			bindings.push(ImportBinding {
-				local_name: name.to_string(),
-				imported_name: Some(name.to_string()),
-				import_path: import.clone(),
-			});
-		}
-		bindings
+		let nesting = inline_module_depth(node);
+		statements
+			.into_iter()
+			.flat_map(|statement| use_bindings(statement, &use_paths(statement, nesting)))
+			.collect()
 	}
 
 	fn extract_function_calls(&self, node: Node, contents: &str) -> Vec<CallTarget> {
@@ -284,9 +281,31 @@ impl Language for Rust {
 		};
 		callee
 			.and_then(|callee| callee.utf8_text(contents.as_bytes()).ok())
-			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX))
+			.and_then(|text| parse_call_target(text, &CALLEE_SYNTAX).map(|target| module_self_path(text, target)))
 			.into_iter()
 			.collect()
+	}
+
+	// A qualifier that starts at a module root (`crate::a::f()`, `super::f()`,
+	// `self::f()`) or walks several modules (`a::b::f()`) is the path of a
+	// module. Modules are written in lowercase: a qualifier with a type in it
+	// (`a::Type::f()`, `Type::f()`) names the type's methods, not the module's
+	// functions, and the standard library is no project file.
+	fn inline_import(&self, _node: Node, _contents: &str, callee: &CallTarget) -> Option<ImportBinding> {
+		let qualifier = callee.qualifier.as_deref()?;
+		let mut segments = qualifier.split(QUALIFIER_SEPARATOR);
+		let first = segments.next()?;
+		let is_rooted = matches!(first, "crate" | "self" | "super");
+		let is_module_path = is_rooted || qualifier.contains(QUALIFIER_SEPARATOR);
+		let is_standard_library = matches!(first, "std" | "core" | "alloc");
+		let is_lowercase = |segment: &str| segment.chars().next().is_some_and(|c| c.is_lowercase() || c == '_');
+		(is_module_path && !is_standard_library && is_lowercase(first) && segments.all(is_lowercase)).then(|| {
+			ImportBinding {
+				local_name: qualifier.to_string(),
+				imported_name: None,
+				import_path: qualifier.to_string(),
+			}
+		})
 	}
 
 	// `pub use a::b;` re-exports what the module `name` declares.
@@ -497,6 +516,175 @@ fn calls_in_token_tree(node: Node, contents: &str) -> Vec<CallTarget> {
 		previous = Some(child);
 	}
 	calls
+}
+
+/// The parser reads the `self` of `self::f()` as the receiver of a method
+/// call; here it is the path of the enclosing module.
+fn module_self_path(text: &str, mut target: CallTarget) -> CallTarget {
+	if target.qualifier.as_deref() == Some(SELF_RECEIVER) && text.trim_start().starts_with("self::") {
+		target.qualifier = Some("self".to_string());
+	}
+	target
+}
+
+/// The import paths a `use` statement expands to, `super` counted from the
+/// module the statement sits in.
+fn use_paths(statement: &str, nesting: usize) -> Vec<String> {
+	expand_rust_use_paths(statement)
+		.into_iter()
+		.filter_map(|path| lift_super_out_of_inline_modules(path, nesting))
+		.collect()
+}
+
+/// The names a `use` statement binds: its renames, and for a plain or grouped
+/// `use a::b::{C, D}` each leaf under its own name, so a call to `C` is looked
+/// up in the files the import names.
+fn use_bindings(statement: &str, imports: &[String]) -> Vec<ImportBinding> {
+	let mut bindings = aliased_use_bindings(statement.trim(), imports);
+	for import in imports {
+		let name = import.rsplit(':').next().unwrap_or_default();
+		let already_bound = bindings
+			.iter()
+			.any(|binding| binding.imported_name.as_deref() == Some(name));
+		if name.is_empty() || matches!(name, "self" | "super" | "crate") || already_bound {
+			continue;
+		}
+		bindings.push(ImportBinding {
+			local_name: name.to_string(),
+			imported_name: Some(name.to_string()),
+			import_path: import.clone(),
+		});
+	}
+	bindings
+}
+
+/// The `use` statements written directly in a macro's token tree, each from
+/// its `use` to its `;`. A statement that holds a macro fragment (`$path`)
+/// names nothing yet.
+fn use_statements_in_token_tree<'a>(node: Node, contents: &'a str) -> Vec<&'a str> {
+	let mut statements = Vec::new();
+	let mut start = None;
+	let mut cursor = node.walk();
+	for child in node.children(&mut cursor) {
+		match (start, child.kind()) {
+			(None, "use") => start = Some(child.start_byte()),
+			(Some(from), ";") => {
+				start = None;
+				if let Some(statement) = contents.get(from..child.end_byte()).filter(|text| !text.contains('$')) {
+					statements.push(statement);
+				}
+			}
+			_ => {}
+		}
+	}
+	statements
+}
+
+/// How many wrappers may sit inside one another (`cfg_rt! { cfg_net! { .. } }`).
+const MAX_WRAPPER_NESTING: usize = 8;
+
+/// What a macro body may hold, at its top level, to count as a block of
+/// ordinary items. Anything else (statements, expressions) leaves the macro
+/// as an opaque call.
+const ITEM_KINDS: [&str; 21] = [
+	"function_item",
+	"struct_item",
+	"enum_item",
+	"union_item",
+	"trait_item",
+	"impl_item",
+	"mod_item",
+	"type_item",
+	"const_item",
+	"static_item",
+	"use_declaration",
+	"extern_crate_declaration",
+	"foreign_mod_item",
+	"macro_definition",
+	"macro_invocation",
+	"attribute_item",
+	"inner_attribute_item",
+	"function_signature_item",
+	"empty_statement",
+	"line_comment",
+	"block_comment",
+];
+
+/// The macro invocation an item position holds, if any.
+fn item_macro(node: Node) -> Option<Node> {
+	match node.kind() {
+		"macro_invocation" => Some(node),
+		"expression_statement" => node.named_child(0).filter(|child| child.kind() == "macro_invocation"),
+		_ => None,
+	}
+}
+
+/// Byte ranges to blank so the items inside brace macros in item position
+/// become items of the surrounding module, impl or trait. A body counts only
+/// when it parses without errors and holds nothing but items.
+fn collect_wrapper_ranges(
+	parser: &mut Option<Parser>,
+	container: Node,
+	text: &str,
+	base: usize,
+	depth: usize,
+	ranges: &mut Vec<(usize, usize)>,
+) {
+	let mut cursor = container.walk();
+	for child in container.children(&mut cursor) {
+		if let Some(invocation) = item_macro(child) {
+			collect_wrapper(parser, invocation, text, base, depth, ranges);
+		} else if matches!(child.kind(), "mod_item" | "impl_item" | "trait_item") {
+			if let Some(body) = child.child_by_field_name("body") {
+				collect_wrapper_ranges(parser, body, text, base, depth, ranges);
+			}
+		}
+	}
+}
+
+fn collect_wrapper(
+	parser: &mut Option<Parser>,
+	invocation: Node,
+	text: &str,
+	base: usize,
+	depth: usize,
+	ranges: &mut Vec<(usize, usize)>,
+) {
+	let mut cursor = invocation.walk();
+	let Some(body) = invocation
+		.children(&mut cursor)
+		.find(|child| child.kind() == "token_tree")
+	else {
+		return;
+	};
+	let (open, close) = (body.start_byte(), body.end_byte() - 1);
+	let is_braced = text.as_bytes().get(open) == Some(&b'{') && text.as_bytes().get(close) == Some(&b'}');
+	let prefix_is_ascii = text.get(invocation.start_byte()..=open).is_some_and(str::is_ascii);
+	if !is_braced || !prefix_is_ascii || depth >= MAX_WRAPPER_NESTING {
+		return;
+	}
+	let inner = &text[open + 1..close];
+	if parser.is_none() {
+		let mut created = Parser::new();
+		if created.set_language(&tree_sitter_rust::LANGUAGE.into()).is_err() {
+			return;
+		}
+		*parser = Some(created);
+	}
+	let Some(tree) = parser.as_mut().and_then(|parser| parser.parse(inner, None)) else {
+		return;
+	};
+	let root = tree.root_node();
+	let mut items_cursor = root.walk();
+	let mut items = root.named_children(&mut items_cursor).peekable();
+	let only_items = items.peek().is_some() && items.all(|item| ITEM_KINDS.contains(&item.kind()));
+	drop(items);
+	if root.has_error() || !only_items {
+		return;
+	}
+	ranges.push((base + invocation.start_byte(), base + open + 1));
+	ranges.push((base + close, base + close + 1));
+	collect_wrapper_ranges(parser, root, inner, base + open + 1, depth + 1, ranges);
 }
 
 /// Whether the item carries a `pub` visibility modifier (`pub`, `pub(crate)`).

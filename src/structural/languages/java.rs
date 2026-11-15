@@ -20,7 +20,7 @@ use super::{
 	files_in_dir_matching, parse_call_target, path_ends_with_components, simple_type_name, CallTarget, Language,
 	TypeRelationKind,
 };
-use super::{PatternGrammar, DOLLAR_EXPANDO};
+use super::{PatternGrammar, DOLLAR_EXPANDO, QUALIFIER_SEPARATOR};
 use crate::structural::graph::registry::FileRegistry;
 use crate::structural::graph::symbols::ImportBinding;
 use tree_sitter::Node;
@@ -78,9 +78,11 @@ impl Language for Java {
 	}
 
 	// A Java import is one statement with the whole qualified name after
-	// `import` (also `import static`, `.*`); there is no grouped form.
+	// `import` (also `import static`, `.*`); there is no grouped form. A class
+	// written with its package (`com.acme.Util.run()`) needs no statement, so
+	// a line that names it after a `.` may import it too.
 	fn import_line_markers(&self) -> &'static [&'static str] {
-		&["import"]
+		&["import", "."]
 	}
 
 	// `implements A,` newline `B` leaves a bare name on its own line, which
@@ -279,6 +281,23 @@ impl Language for Java {
 			}
 			_ => Vec::new(),
 		}
+	}
+
+	// `com.acme.Util.run()` names the class by its package path, as `import
+	// com.acme.Util;` would: lowercase package segments, then the class.
+	// A lowercase last segment is a variable or field, not a class.
+	fn inline_import(&self, _node: Node, _contents: &str, callee: &CallTarget) -> Option<ImportBinding> {
+		let qualifier = callee.qualifier.as_deref()?;
+		let (packages, class) = qualifier.rsplit_once(QUALIFIER_SEPARATOR)?;
+		let starts_with = |segment: &str, case: fn(char) -> bool| segment.chars().next().is_some_and(case);
+		let is_package_path = packages
+			.split(QUALIFIER_SEPARATOR)
+			.all(|segment| starts_with(segment, char::is_lowercase));
+		(is_package_path && starts_with(class, char::is_uppercase)).then(|| ImportBinding {
+			local_name: qualifier.to_string(),
+			imported_name: Some(class.to_string()),
+			import_path: qualifier.replace(QUALIFIER_SEPARATOR, "."),
+		})
 	}
 
 	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {

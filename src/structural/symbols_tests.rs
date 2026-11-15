@@ -401,3 +401,53 @@ fn svelte_symbols_resolve_in_script_blocks_at_file_coordinates() {
 	assert_eq!(hits.len(), 1);
 	assert_eq!(hits[0].line, 2);
 }
+
+const WRAPPED_SOURCE: &str = "\
+struct Pool;
+impl Pool {
+    cfg_x! {
+        pub fn spawn(&self) {}
+    }
+}
+cfg_rt! {
+    pub fn f() {}
+    cfg_net! {
+        pub fn g() {}
+    }
+}
+lazy_static! {
+    static ref TABLE: u32 = make();
+}
+";
+
+#[test]
+fn items_inside_a_brace_macro_are_declarations_at_their_file_lines() {
+	let find = |name: &str| find_definitions("a.rs", WRAPPED_SOURCE, &NameMatcher::new(name).unwrap()).unwrap();
+	let spawn = find("spawn");
+	assert_eq!(spawn.len(), 1);
+	assert_eq!(spawn[0].line, 4);
+	assert_eq!(spawn[0].breadcrumb.as_deref(), Some("impl Pool"));
+	assert_eq!(find("f")[0].line, 8);
+	// A wrapper inside a wrapper.
+	assert_eq!(find("g")[0].line, 10);
+	// The static a `lazy_static!`-shaped body declares is a real name.
+	let table = find("TABLE");
+	assert_eq!(table.len(), 1);
+	assert_eq!(table[0].line, 14);
+
+	let references = find_references("a.rs", WRAPPED_SOURCE, &NameMatcher::new("spawn").unwrap()).unwrap();
+	assert!(references.iter().any(|hit| hit.line == 4 && hit.is_definition));
+	assert_eq!(
+		line_breadcrumbs("a.rs", WRAPPED_SOURCE).unwrap()[3].as_deref(),
+		Some("impl Pool › fn spawn")
+	);
+
+	let names: Vec<String> = outline("a.rs", WRAPPED_SOURCE)
+		.unwrap()
+		.into_iter()
+		.map(|item| item.name)
+		.collect();
+	for expected in ["spawn", "f", "g"] {
+		assert!(names.iter().any(|name| name == expected), "{expected} in {names:?}");
+	}
+}

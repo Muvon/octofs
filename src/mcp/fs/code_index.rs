@@ -425,16 +425,17 @@ fn parsed_bytes(source: &ParsedSource) -> usize {
 	let data = source.data();
 	let mut bytes = std::mem::size_of::<ParsedSource>() + text_bytes(&data.path) + text_bytes(&data.language);
 	bytes += vec_bytes(&data.imports) + data.imports.iter().map(text_bytes).sum::<usize>();
-	bytes += vec_bytes(&data.import_bindings)
-		+ data
-			.import_bindings
-			.iter()
-			.map(|binding| {
-				text_bytes(&binding.local_name)
-					+ optional_text_bytes(&binding.imported_name)
-					+ text_bytes(&binding.import_path)
-			})
-			.sum::<usize>();
+	for bindings in [&data.import_bindings, &data.inline_imports] {
+		bytes += vec_bytes(bindings)
+			+ bindings
+				.iter()
+				.map(|binding| {
+					text_bytes(&binding.local_name)
+						+ optional_text_bytes(&binding.imported_name)
+						+ text_bytes(&binding.import_path)
+				})
+				.sum::<usize>();
+	}
 	bytes += vec_bytes(&data.calls)
 		+ data
 			.calls

@@ -411,3 +411,31 @@ fn importers_name_a_module_by_what_the_file_declares() {
 		["repo", "MyApp.Repo", "Repo"]
 	);
 }
+
+#[test]
+fn a_module_called_by_its_full_name_needs_no_alias() {
+	let graph = build_graph(vec![
+		elixir_file(
+			"lib/my_app/repo.ex",
+			"defmodule MyApp.Repo do\n  def get(id), do: id\nend\n",
+		),
+		elixir_file(
+			"lib/my_app/other.ex",
+			"defmodule MyApp.Other do\n  def get(id), do: id\nend\n",
+		),
+		elixir_file(
+			"lib/my_app/accounts.ex",
+			"defmodule MyApp.Accounts do\n  def fetch(id), do: MyApp.Repo.get(id)\nend\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"lib/my_app/accounts.ex::MyApp.Accounts::fetch",
+		"lib/my_app/repo.ex::MyApp.Repo::get"
+	));
+	assert!(!has_edge(
+		&graph,
+		"lib/my_app/accounts.ex::MyApp.Accounts::fetch",
+		"lib/my_app/other.ex::MyApp.Other::get"
+	));
+}

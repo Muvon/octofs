@@ -320,3 +320,33 @@ fn a_class_of_the_same_namespace_is_reached_without_a_use() {
 		RelationType::Calls
 	));
 }
+
+#[test]
+fn a_static_call_that_spells_the_namespace_of_its_class_needs_no_use() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "php",
+		contents: contents.to_string(),
+	};
+	let user = "<?php\nnamespace App\\Models;\nclass User {\n\tpublic static function find() {}\n}\n";
+	let graph = build_graph(vec![
+		file("src/Models/User.php", user),
+		file("src/Other/User.php", &user.replace("Models", "Other")),
+		file(
+			"src/Service.php",
+			"<?php\nnamespace App;\nclass Service {\n\tpublic function run() {\n\t\t\\App\\Models\\User::find();\n\t}\n}\n",
+		),
+	]);
+	assert!(has_edge(
+		&graph,
+		"src/Service.php::Service::run",
+		"src/Models/User.php::User::find",
+		RelationType::Calls
+	));
+	assert!(!has_edge(
+		&graph,
+		"src/Service.php::Service::run",
+		"src/Other/User.php::User::find",
+		RelationType::Calls
+	));
+}

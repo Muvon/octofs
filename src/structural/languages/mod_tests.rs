@@ -702,3 +702,15 @@ fn plain_c_files_are_parsed_with_their_own_grammar_and_other_extensions_with_the
 	assert!(super::pattern_grammar_for_extension("json").is_none());
 	assert!(super::pattern_grammar_for_extension("md").is_none());
 }
+
+#[test]
+fn a_call_that_names_its_module_inline_is_an_import_line() {
+	assert!(import_lines(
+		"rust",
+		"insert(crate::runtime::spawn_blocking(f));",
+		"runtime"
+	));
+	assert!(import_lines("java", "com.acme.util.Util.run();", "Util"));
+	assert!(import_lines("php", "\\App\\Models\\User::find();", "User"));
+	assert!(import_lines("elixir", "MyApp.Repo.get(id)", "Repo"));
+}

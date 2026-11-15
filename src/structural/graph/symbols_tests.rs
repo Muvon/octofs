@@ -69,6 +69,7 @@ fn file(path: &str) -> SymbolFileData {
 		language: "rust".to_string(),
 		imports: Vec::new(),
 		import_bindings: Vec::new(),
+		inline_imports: Vec::new(),
 		calls: Vec::new(),
 		type_relations: Vec::new(),
 		symbols: Vec::new(),

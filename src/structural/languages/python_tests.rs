@@ -382,3 +382,32 @@ fn a_call_that_names_a_class_reaches_the_class_it_constructs() {
 		RelationType::Calls
 	));
 }
+
+#[test]
+fn a_call_through_a_dotted_module_path_resolves_through_its_import() {
+	// Python has no inline form: the module path in the call is the one the
+	// `import` statement names, so the statement already binds it.
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "python",
+		contents: contents.to_string(),
+	};
+	let graph = build_graph(vec![
+		file("pkg/__init__.py", ""),
+		file("pkg/mod.py", "def helper():\n    pass\n"),
+		file("other/mod.py", "def helper():\n    pass\n"),
+		file("app.py", "import pkg.mod\n\n\ndef run():\n    pkg.mod.helper()\n"),
+	]);
+	assert!(has_edge(
+		&graph,
+		"app.py::run",
+		"pkg/mod.py::helper",
+		RelationType::Calls
+	));
+	assert!(!has_edge(
+		&graph,
+		"app.py::run",
+		"other/mod.py::helper",
+		RelationType::Calls
+	));
+}

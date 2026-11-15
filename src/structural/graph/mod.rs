@@ -285,12 +285,16 @@ pub fn declaration_graph<S: AsRef<ParsedSource>>(sources: &[S]) -> CodeGraph {
 /// What each import of `source` resolves to, as lists of repository files.
 /// The answers are kept on the file, so asking again over the same registry
 /// resolves nothing. Imports of external modules give empty lists; an import
-/// that names the file's own package is left out, as in the full graph.
+/// that names the file's own package is left out, as in the full graph. The
+/// modules calls name inline follow the statements.
 pub fn resolved_imports(registry: &Arc<FileRegistry>, source: &ParsedSource) -> Vec<Arc<Vec<String>>> {
 	let mut resolver = ImportResolver::with_registry(registry.clone(), &get_language);
 	let data = &source.data;
+	let inline = data.inline_imports.iter().map(|binding| binding.import_path.as_str());
 	data.imports
 		.iter()
+		.map(String::as_str)
+		.chain(inline)
 		.map(|import| import.trim())
 		.filter(|import| !import.is_empty())
 		.map(|import| resolver.resolve_for(data, import))
@@ -418,14 +422,23 @@ fn add_file_nodes(graph: &mut CodeGraph, path: &str, language: &str, line_count:
 /// itself adds no edge.
 fn add_import_edges(graph: &mut CodeGraph, files: &[&SymbolFileData], resolver: &mut ImportResolver) {
 	for file in files {
-		for import in &file.imports {
+		// A module only a call names has no statement to be an external
+		// dependency of: unresolved, it is no import at all.
+		let inline = file
+			.inline_imports
+			.iter()
+			.map(|binding| binding.import_path.as_str())
+			.filter(|path| !file.imports.iter().any(|statement| statement.trim() == path.trim()))
+			.map(|path| (path, true));
+		let statements = file.imports.iter().map(|import| (import.as_str(), false));
+		for (import, is_inline) in statements.chain(inline) {
 			let import = import.trim();
 			if import.is_empty() {
 				continue;
 			}
 			let resolved = resolver.resolve_for(file, import);
 			let target = match resolved.first() {
-				None if resolver.is_optional(file, import) => continue,
+				None if is_inline || resolver.is_optional(file, import) => continue,
 				None => {
 					let id = format!("{EXTERNAL_ID_PREFIX}{import}");
 					graph.nodes.entry(id.clone()).or_insert_with(|| CodeNode {

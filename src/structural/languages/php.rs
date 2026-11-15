@@ -241,6 +241,24 @@ impl Language for Php {
 		target.into_iter().collect()
 	}
 
+	// `\App\Models\User::find()` names the class by its namespace path, as
+	// `use App\Models\User;` would. The call target keeps the class name only,
+	// so the path is read from the call node; a class written without its
+	// namespace is bound by its own `use` statement.
+	fn inline_import(&self, node: Node, contents: &str, callee: &CallTarget) -> Option<ImportBinding> {
+		if node.kind() != "scoped_call_expression" {
+			return None;
+		}
+		let scope = node.child_by_field_name("scope")?.utf8_text(contents.as_bytes()).ok()?;
+		let path = scope.trim_start_matches('\\');
+		let class = path.rsplit_once('\\')?.1;
+		Some(ImportBinding {
+			local_name: callee.qualifier.clone()?,
+			imported_name: Some(class.to_string()),
+			import_path: path.replace('\\', "/"),
+		})
+	}
+
 	fn extract_type_relations(&self, node: Node, contents: &str) -> Vec<(TypeRelationKind, String)> {
 		// `class Foo extends Bar implements I, J { }`
 		// `interface A extends B, C { }`

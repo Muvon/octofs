@@ -655,6 +655,61 @@ fn rust_pub_use_keeps_its_callers() {
 
 #[test]
 #[serial]
+fn a_call_that_spells_the_module_path_reaches_the_definition_through_two_re_exports() {
+	// The layout of tokio's `spawn_blocking`: a workspace member directory
+	// with `lib.rs` as the crate root, modules declared inside item macros
+	// (`cfg_rt! { ... }`, whose body the grammar leaves as tokens), the
+	// function defined in `pool` next to a method of the same name, passed on
+	// by a `pub(crate) use` with a brace list and by a second one in a macro
+	// block, and called by callers that write `crate::runtime::` inline, with
+	// no `use` line. Another definition of the name keeps the unique-name
+	// guess away.
+	let root = project(&[
+		(
+			"tokio/src/lib.rs",
+			"cfg_rt! {\n    pub mod runtime;\n}\n\ncfg_rt! {\n    pub mod task;\n}\n\nmod fs;\nmod mock;\n",
+		),
+		(
+			"tokio/src/runtime/blocking/pool.rs",
+			"pub(crate) fn spawn_blocking(f: u8) {}\n\npub(crate) struct Spawner;\n\nimpl Spawner {\n    pub(crate) fn spawn_blocking(&self, f: u8) {}\n}\n",
+		),
+		(
+			"tokio/src/runtime/blocking/mod.rs",
+			"mod pool;\npub(crate) use pool::{spawn_blocking, Spawner};\n",
+		),
+		(
+			"tokio/src/runtime/mod.rs",
+			"cfg_rt! {\n    mod blocking;\n    #[cfg_attr(target_os = \"wasi\", allow(unused_imports))]\n    pub(crate) use blocking::spawn_blocking;\n}\n",
+		),
+		("tokio/src/mock/pool.rs", "pub fn spawn_blocking(f: u8) {}\n"),
+		(
+			"tokio/src/task/join_set.rs",
+			"pub fn run(f: u8) {\n\tinsert(crate::runtime::spawn_blocking(f));\n}\n",
+		),
+		(
+			"tokio/src/task/blocking.rs",
+			"pub fn spawn(f: u8) {\n\tcrate::runtime::spawn_blocking(f)\n}\n",
+		),
+		(
+			"tokio/src/fs/mod.rs",
+			"use crate::runtime::spawn_blocking;\n\npub fn read(f: u8) {\n\tspawn_blocking(f)\n}\n",
+		),
+		NOISE,
+	]);
+	callers_in(
+		root.path(),
+		"spawn_blocking",
+		Some("tokio/src/runtime/blocking/pool.rs"),
+		&[
+			"tokio/src/task/join_set.rs:1  function  run",
+			"tokio/src/task/blocking.rs:1  function  spawn",
+			"tokio/src/fs/mod.rs:3  function  read",
+		],
+	);
+}
+
+#[test]
+#[serial]
 fn python_module_alias_calls_resolve_like_the_full_graph() {
 	let root = project(&[
 		("pkg/__init__.py", ""),

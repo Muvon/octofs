@@ -19,10 +19,12 @@
 use super::registry::{heap_chunk, FileRegistry};
 use super::types::{CodeRelationship, RelationType};
 use crate::structural::languages::{
-	CallTarget, Language, PackageScope, SymbolKind, TypeRelationKind, QUALIFIER_SEPARATOR, SELF_RECEIVER,
+	parse_declarations, CallTarget, Language, PackageScope, SymbolKind, TypeRelationKind, QUALIFIER_SEPARATOR,
+	SELF_RECEIVER,
 };
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -118,6 +120,10 @@ pub struct ImportBinding {
 pub struct FileAstData {
 	pub imports: Vec<String>,
 	pub import_bindings: Vec<ImportBinding>,
+	/// The modules the file's calls name inline: one binding per distinct
+	/// qualifier, local name the qualifier as written. Not statements, so
+	/// they never make an external node and bind no unqualified name.
+	pub inline_imports: Vec<ImportBinding>,
 	pub exports: Vec<String>,
 	/// The name the file's default export declares, when it has one.
 	pub default_export: Option<String>,
@@ -139,6 +145,8 @@ pub struct SymbolFileData {
 	pub language: String,
 	pub imports: Vec<String>,
 	pub import_bindings: Vec<ImportBinding>,
+	/// The modules the file's calls name inline, as in [`FileAstData`].
+	pub inline_imports: Vec<ImportBinding>,
 	pub calls: Vec<(u32, CallTarget)>,
 	pub type_relations: Vec<TypeRelationDecl>,
 	pub symbols: Vec<SymbolDecl>,
@@ -222,6 +230,7 @@ impl SymbolFileData {
 		// Kept for as long as the file stays cached: no growth slack.
 		data.imports.shrink_to_fit();
 		data.import_bindings.shrink_to_fit();
+		data.inline_imports.shrink_to_fit();
 		data.calls.shrink_to_fit();
 		data.type_relations.shrink_to_fit();
 		data.symbols.shrink_to_fit();
@@ -230,6 +239,7 @@ impl SymbolFileData {
 			language,
 			imports: data.imports,
 			import_bindings: data.import_bindings,
+			inline_imports: data.inline_imports,
 			calls: data.calls,
 			type_relations: data.type_relations,
 			symbols: data.symbols,
@@ -331,14 +341,14 @@ fn find_owning_symbol(symbols: &[SymbolDecl], order: &[usize], line: u32) -> Opt
 	best.map(|(_, index)| index)
 }
 
-fn parse_tree(contents: &str, language: &dyn Language) -> Result<tree_sitter::Tree> {
+/// The syntax tree of `contents`, and the text it was parsed from (see
+/// `parse_declarations`).
+fn parse_tree<'a>(contents: &'a str, language: &dyn Language) -> Result<(tree_sitter::Tree, Cow<'a, str>)> {
 	let mut parser = tree_sitter::Parser::new();
 	parser
 		.set_language(&language.get_ts_language())
 		.with_context(|| format!("tree-sitter grammar mismatch for {}", language.name()))?;
-	parser
-		.parse(contents, None)
-		.ok_or_else(|| anyhow!("tree-sitter produced no syntax tree"))
+	parse_declarations(language, &mut parser, contents).ok_or_else(|| anyhow!("tree-sitter produced no syntax tree"))
 }
 
 /// Single-pass AST extraction: imports, exports, call sites, type relations
@@ -349,7 +359,8 @@ pub(crate) fn extract_symbols_from_contents(
 	language: &dyn Language,
 	lookup: LanguageLookup,
 ) -> Result<FileAstData> {
-	let tree = parse_tree(contents, language)?;
+	let (tree, declarations) = parse_tree(contents, language)?;
+	let contents = declarations.as_ref();
 	let root = tree.root_node();
 	let mut data = FileAstData::default();
 	walk_ast(root, contents, language, &language.get_symbol_kinds(), &mut data);
@@ -360,13 +371,13 @@ pub(crate) fn extract_symbols_from_contents(
 		let Some(embedded_language) = lookup(embedded.language) else {
 			continue;
 		};
-		let Ok(embedded_tree) = parse_tree(&embedded.contents, embedded_language.as_ref()) else {
+		let Ok((embedded_tree, embedded_contents)) = parse_tree(&embedded.contents, embedded_language.as_ref()) else {
 			continue;
 		};
 		let mut embedded_data = FileAstData::default();
 		walk_ast(
 			embedded_tree.root_node(),
-			&embedded.contents,
+			&embedded_contents,
 			embedded_language.as_ref(),
 			&embedded_language.get_symbol_kinds(),
 			&mut embedded_data,
@@ -383,6 +394,7 @@ pub(crate) fn extract_symbols_from_contents(
 		}
 		data.imports.extend(embedded_data.imports);
 		data.import_bindings.extend(embedded_data.import_bindings);
+		data.inline_imports.extend(embedded_data.inline_imports);
 		data.exports.extend(embedded_data.exports);
 		data.default_export = data.default_export.take().or(embedded_data.default_export);
 		data.declared_package = data.declared_package.take().or(embedded_data.declared_package);
@@ -444,6 +456,15 @@ fn visit_node(
 
 	let line = node.start_position().row as u32;
 	for callee in language.extract_function_calls(node, contents) {
+		if let Some(binding) = language.inline_import(node, contents, &callee) {
+			if !data
+				.inline_imports
+				.iter()
+				.any(|known| known.local_name == binding.local_name)
+			{
+				data.inline_imports.push(binding);
+			}
+		}
 		data.calls.push((line, callee));
 	}
 	let type_relations = language.extract_type_relations(node, contents);
@@ -488,6 +509,9 @@ type Resolved<'a> = (&'a str, f32);
 /// Files a lookup follows from one that only re-exports a name (a barrel
 /// file that passes on what other files declare) before it gives up.
 const MAX_REEXPORT_HOPS: usize = 3;
+
+/// File path -> (symbol name -> symbol node ids).
+type SymbolsByFile = HashMap<String, HashMap<String, Vec<String>>>;
 
 /// A name a file takes in: its name in the other file and the files the
 /// import resolved to.
@@ -683,18 +707,25 @@ impl SymbolIndex {
 		}
 	}
 
-	/// The symbols `name` is in `path`: its own declarations or, when it
-	/// declares none, what the files it takes the name from declare (a barrel
-	/// file that only passes names on).
-	fn declared_or_reexported(&self, path: &str, name: &str) -> Vec<&String> {
+	/// The symbols `name` is in `path`, looked up in `declarations` (every
+	/// symbol of a file, or only its free functions): its own declarations and
+	/// what the files it takes the name from declare (a barrel file that only
+	/// passes names on, or one that declares a variant of its own).
+	fn declared_or_reexported<'a>(
+		&'a self,
+		declarations: &'a SymbolsByFile,
+		path: &str,
+		name: &str,
+	) -> Vec<&'a String> {
 		let mut found = Vec::new();
 		let mut seen = HashSet::new();
-		self.collect_declared(path, name, MAX_REEXPORT_HOPS, &mut seen, &mut found);
+		self.collect_declared(declarations, path, name, MAX_REEXPORT_HOPS, &mut seen, &mut found);
 		found
 	}
 
 	fn collect_declared<'a>(
 		&'a self,
+		declarations: &'a SymbolsByFile,
 		path: &str,
 		name: &str,
 		hops: usize,
@@ -704,21 +735,23 @@ impl SymbolIndex {
 		if !seen.insert((path.to_string(), name.to_string())) {
 			return;
 		}
-		if let Some(ids) = self.by_file.get(path).and_then(|symbols| symbols.get(name)) {
+		// A file may declare a name and also re-export it: the two sit under
+		// opposite `cfg` attributes (a stub next to `pub(crate) use real::f`).
+		// Both are candidates.
+		if let Some(ids) = declarations.get(path).and_then(|symbols| symbols.get(name)) {
 			found.extend(ids);
-			return;
 		}
 		let Some(reexports) = self.reexports.get(path).filter(|_| hops > 0) else {
 			return;
 		};
 		for (imported, files) in reexports.named.get(name).into_iter().flatten() {
 			for file in files.iter() {
-				self.collect_declared(file, imported, hops - 1, seen, found);
+				self.collect_declared(declarations, file, imported, hops - 1, seen, found);
 			}
 		}
 		for files in &reexports.wildcard {
 			for file in files.iter() {
-				self.collect_declared(file, name, hops - 1, seen, found);
+				self.collect_declared(declarations, file, name, hops - 1, seen, found);
 			}
 		}
 	}
@@ -821,7 +854,7 @@ impl SymbolIndex {
 					reexports.named.contains_key(target_name) || !reexports.wildcard.is_empty()
 				});
 				if takes_the_name {
-					imported_targets.extend(self.declared_or_reexported(path, target_name));
+					imported_targets.extend(self.declared_or_reexported(&self.by_file, path, target_name));
 				}
 			}
 		}
@@ -859,24 +892,25 @@ impl SymbolIndex {
 		}
 	}
 
-	fn resolve_call(
-		&self,
-		source_path: &str,
-		source_owner: Option<&str>,
+	/// The symbols the import bindings of the file give the callee: a binding
+	/// that names it, or that names its module or type, looked up in
+	/// `declarations`. Sorted, without duplicates.
+	fn bound_targets<'a>(
+		&'a self,
 		target: &CallTarget,
 		bindings: &[(ImportBinding, String)],
-		imported: &ImportedFiles,
-	) -> Vec<Resolved<'_>> {
+		declarations: &'a SymbolsByFile,
+	) -> Vec<&'a String> {
 		let mut bound_targets = Vec::new();
 		for (binding, path) in bindings {
 			if target.qualifier.is_none() && binding.local_name == target.name {
 				let imported_name = binding.imported_name.as_deref().unwrap_or(&target.name);
-				let mut declared = self.declared_or_reexported(path, imported_name);
+				let mut declared = self.declared_or_reexported(declarations, path, imported_name);
 				// A default import takes whatever name the importer chose; the
 				// file's default export is the declaration it names.
 				if declared.is_empty() && binding.imported_name.is_none() {
 					if let Some(default_name) = self.default_exports.get(path) {
-						declared = self.declared_or_reexported(path, default_name);
+						declared = self.declared_or_reexported(declarations, path, default_name);
 					}
 				}
 				bound_targets.extend(declared);
@@ -890,12 +924,24 @@ impl SymbolIndex {
 						bound_targets.extend(ids);
 					}
 				} else {
-					bound_targets.extend(self.declared_or_reexported(path, &target.name));
+					bound_targets.extend(self.declared_or_reexported(declarations, path, &target.name));
 				}
 			}
 		}
 		bound_targets.sort_unstable();
 		bound_targets.dedup();
+		bound_targets
+	}
+
+	fn resolve_call(
+		&self,
+		source_path: &str,
+		source_owner: Option<&str>,
+		target: &CallTarget,
+		bindings: &[(ImportBinding, String)],
+		imported: &ImportedFiles,
+	) -> Vec<Resolved<'_>> {
+		let bound_targets = self.bound_targets(target, bindings, &self.by_file);
 		if bound_targets.len() == 1 || self.is_type_with_constructors(&bound_targets) {
 			return bound_targets
 				.into_iter()
@@ -903,7 +949,16 @@ impl SymbolIndex {
 				.collect();
 		}
 		if bound_targets.len() > 1 {
-			return Vec::new();
+			// A bare or module-qualified call names a free function: a method
+			// that shares its name (`Spawner::spawn_blocking` next to
+			// `spawn_blocking`) is reached through a receiver. Several free
+			// functions are alternatives the import can bind to (builds under
+			// opposite `cfg`): the caller is listed for each.
+			return self
+				.bound_targets(target, bindings, &self.free_by_file)
+				.into_iter()
+				.map(|id| (id.as_str(), CONFIDENCE_BOUND_IMPORT))
+				.collect();
 		}
 
 		let Some(qualifier) = target.qualifier.as_deref() else {
@@ -1196,7 +1251,7 @@ pub(crate) fn discover_symbol_relationships(
 				}
 			}
 			let mut resolved_bindings: Vec<(ImportBinding, String)> = Vec::new();
-			for binding in &source_file.import_bindings {
+			for binding in source_file.import_bindings.iter().chain(&source_file.inline_imports) {
 				for path in resolver.resolve_for(source_file, &binding.import_path).iter() {
 					resolved_bindings.push((binding.clone(), path.clone()));
 				}

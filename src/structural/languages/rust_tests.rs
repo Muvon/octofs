@@ -27,6 +27,15 @@ fn parse(source: &str) -> Tree {
 	parser.parse(source, None).expect("parse")
 }
 
+/// The text the declarations of `source` are read from.
+fn unwrapped_source(source: &str) -> std::borrow::Cow<'_, str> {
+	let mut parser = Parser::new();
+	parser.set_language(&Rust {}.get_ts_language()).expect("rust grammar");
+	crate::structural::languages::parse_declarations(&Rust {}, &mut parser, source)
+		.expect("parse")
+		.1
+}
+
 /// Every node of `kind` in document order, found with an iterative walk.
 fn nodes_of_kind<'tree>(tree: &'tree Tree, kind: &str) -> Vec<Node<'tree>> {
 	let mut found = Vec::new();
@@ -680,4 +689,199 @@ fn a_workspace_crate_import_is_a_guess_and_its_edge_is_not_certain() {
 	)
 	.expect("import edge");
 	assert!(import.confidence < 1.0);
+}
+
+fn rust_file(path: &str, contents: &str) -> SourceFile {
+	SourceFile {
+		path: path.to_string(),
+		language: "rust",
+		contents: contents.to_string(),
+	}
+}
+
+/// The module tree the inline-path tests call into. The same name in two
+/// modules rules out the unique-name guess.
+fn modules_declaring_helper(app: &str) -> Vec<SourceFile> {
+	vec![
+		rust_file("src/lib.rs", "mod util;\nmod other;\nmod app;\n"),
+		rust_file("src/util.rs", "pub fn helper() {}\nmod child;\n"),
+		rust_file("src/other.rs", "pub fn helper() {}\n"),
+		rust_file("src/util/child.rs", "fn go() {\n\tsuper::helper();\n}\n"),
+		rust_file("src/app.rs", app),
+	]
+}
+
+#[test]
+fn a_call_qualified_by_a_module_path_resolves_like_an_import_of_that_path() {
+	let app = "fn run() {\n\tcrate::util::helper();\n\tself::local();\n\tstd::mem::drop(1);\n}\n\nfn local() {}\n";
+	let inline = build_graph(modules_declaring_helper(app));
+
+	let through_path =
+		edge(&inline, "src/app.rs::run", "src/util.rs::helper", RelationType::Calls).expect("crate-rooted path");
+	assert!(edge(&inline, "src/app.rs::run", "src/other.rs::helper", RelationType::Calls).is_none());
+	assert!(edge(&inline, "src/app.rs::run", "src/app.rs::local", RelationType::Calls).is_some());
+	assert!(edge(
+		&inline,
+		"src/util/child.rs::go",
+		"src/util.rs::helper",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(&inline, "src/app.rs", "src/util.rs", RelationType::Imports).is_some());
+	// An unresolved path is no import: the standard library is not a node.
+	assert!(inline.nodes.values().all(|node| !node.id.contains("std::mem")));
+
+	let statement = "use crate::util::helper;\n\nfn run() {\n\thelper();\n}\n";
+	let imported = build_graph(modules_declaring_helper(statement));
+	let through_use =
+		edge(&imported, "src/app.rs::run", "src/util.rs::helper", RelationType::Calls).expect("the use statement");
+	assert_eq!(through_path.confidence, through_use.confidence);
+}
+
+#[test]
+fn a_type_in_the_qualifier_is_not_a_module_path() {
+	let graph = build_graph(modules_declaring_helper(
+		"fn run() {\n\tcrate::util::Widget::helper();\n}\n",
+	));
+	assert!(edge(&graph, "src/app.rs::run", "src/util.rs::helper", RelationType::Calls).is_none());
+}
+
+#[test]
+fn a_use_inside_an_item_macro_is_an_import_with_its_bindings() {
+	let source = "cfg_rt! {\n    mod blocking;\n    pub(crate) use blocking::spawn_blocking as spawn;\n    pub(crate) use $path::Skipped;\n}\n";
+	let tree = parse(source);
+	let macro_body = nodes_of_kind(&tree, "token_tree")[0];
+	let (imports, _) = Rust {}.extract_imports_exports(macro_body, source);
+	assert_eq!(imports, vec!["blocking::spawn_blocking"]);
+	let bindings = Rust {}.extract_import_bindings(macro_body, source, &imports);
+	let named: Vec<(&str, Option<&str>)> = bindings
+		.iter()
+		.map(|binding| (binding.local_name.as_str(), binding.imported_name.as_deref()))
+		.collect();
+	assert_eq!(named, vec![("spawn", Some("spawn_blocking"))]);
+}
+
+#[test]
+fn a_caller_inside_a_macro_wrapped_function_is_attributed_to_that_function() {
+	let graph = build_graph(vec![
+		rust_file("src/lib.rs", "mod util;\nmod app;\n"),
+		rust_file("src/util.rs", "cfg_rt! {\n    pub fn helper() {}\n}\n"),
+		rust_file(
+			"src/app.rs",
+			"use crate::util::helper;\ncfg_rt! {\n    cfg_net! {\n        pub fn run() {\n            helper();\n        }\n    }\n}\n",
+		),
+	]);
+	assert!(graph.nodes.contains_key("src/util.rs::helper"));
+	assert!(edge(&graph, "src/app.rs::run", "src/util.rs::helper", RelationType::Calls).is_some());
+}
+
+#[test]
+fn mod_and_use_lines_inside_a_macro_block_are_ordinary_declarations() {
+	let graph = build_graph(vec![
+		rust_file("tokio/src/lib.rs", "cfg_rt! {\n    pub mod runtime;\n}\n"),
+		rust_file(
+			"tokio/src/runtime/mod.rs",
+			"cfg_rt! {\n    mod blocking;\n    pub(crate) use blocking::spawn_blocking;\n}\n",
+		),
+		rust_file("tokio/src/runtime/blocking.rs", "pub fn spawn_blocking() {}\n"),
+	]);
+	assert!(edge(
+		&graph,
+		"tokio/src/lib.rs",
+		"tokio/src/runtime/mod.rs",
+		RelationType::Imports
+	)
+	.is_some());
+	assert!(edge(
+		&graph,
+		"tokio/src/runtime/mod.rs",
+		"tokio/src/runtime/blocking.rs",
+		RelationType::Imports
+	)
+	.is_some());
+}
+
+#[test]
+fn a_macro_body_that_is_not_a_block_of_items_keeps_its_calls_and_declares_nothing() {
+	let source = "fn helper() -> u32 {\n    1\n}\nfn run() {\n    let v = vec![1, 2];\n    println!(\"{}\", helper());\n}\nbroken! {\n    fn half(\n}\nstatements! {\n    let x = make();\n}\nmacro_rules! m {\n    () => { fn hidden() {} };\n}\n";
+	assert!(matches!(unwrapped_source(source), std::borrow::Cow::Borrowed(_)));
+	let graph = build_graph(vec![rust_file("src/a.rs", source)]);
+	assert!(!graph.nodes.contains_key("src/a.rs::hidden"));
+	assert!(!graph.nodes.contains_key("src/a.rs::half"));
+	// The call in a format-style macro's arguments is still extracted.
+	assert!(edge(&graph, "src/a.rs::run", "src/a.rs::helper", RelationType::Calls).is_some());
+}
+
+#[test]
+fn a_lazy_static_shaped_body_declares_its_static() {
+	let source = "lazy_static! {\n    pub static ref TABLE: u32 = build();\n}\nfn build() -> u32 {\n    1\n}\n";
+	// Statics are no graph nodes; the definition itself is covered through
+	// symbol navigation. Here the body must be taken as items.
+	let unwrapped = unwrapped_source(source);
+	assert!(matches!(unwrapped, std::borrow::Cow::Owned(_)));
+	assert!(unwrapped.contains("pub static ref TABLE: u32 = build();"));
+	assert!(!unwrapped.contains("lazy_static"));
+}
+
+#[test]
+fn unwrapping_a_macro_block_keeps_every_line_and_column() {
+	let source = "cfg_rt! {\n    cfg_net! {\n        pub fn g() {}\n    }\n}\nfn tail() {}\n";
+	let unwrapped = unwrapped_source(source);
+	assert_eq!(unwrapped.len(), source.len());
+	assert_eq!(unwrapped.lines().count(), source.lines().count());
+	assert_eq!(unwrapped.lines().nth(2), source.lines().nth(2));
+	assert!(!unwrapped.contains("cfg_rt") && !unwrapped.contains("cfg_net"));
+}
+
+#[test]
+fn a_use_inside_a_function_body_binds_for_the_calls_in_that_function() {
+	let graph = build_graph(vec![
+		rust_file("src/lib.rs", "mod util;\nmod other;\nmod app;\n"),
+		rust_file("src/util.rs", "pub fn helper() {}\n"),
+		rust_file("src/other.rs", "pub fn helper() {}\n"),
+		rust_file(
+			"src/app.rs",
+			"fn run() {\n    use crate::util::helper;\n    helper();\n}\n",
+		),
+	]);
+	assert!(edge(&graph, "src/app.rs::run", "src/util.rs::helper", RelationType::Calls).is_some());
+	assert!(edge(&graph, "src/app.rs::run", "src/other.rs::helper", RelationType::Calls).is_none());
+}
+
+#[test]
+fn two_imports_of_one_name_under_opposite_cfg_are_both_candidates() {
+	let graph = build_graph(vec![
+		rust_file("src/lib.rs", "mod real;\nmod mocks;\nmod app;\n"),
+		rust_file("src/real.rs", "pub fn go() {}\n"),
+		rust_file("src/mocks.rs", "pub fn go() {}\n"),
+		rust_file(
+			"src/app.rs",
+			"#[cfg(not(test))]\nuse crate::real::go;\n#[cfg(test)]\nuse crate::mocks::go;\n\nfn run() {\n    go();\n}\n",
+		),
+	]);
+	assert!(edge(&graph, "src/app.rs::run", "src/real.rs::go", RelationType::Calls).is_some());
+	assert!(edge(&graph, "src/app.rs::run", "src/mocks.rs::go", RelationType::Calls).is_some());
+}
+
+#[test]
+fn a_name_a_file_declares_and_re_exports_reaches_the_definition_three_hops_away() {
+	let graph = build_graph(vec![
+		rust_file("src/lib.rs", "mod blocking;\nmod runtime;\nmod app;\n"),
+		rust_file(
+			"src/blocking.rs",
+			"cfg_rt! {\n    #[cfg(not(emscripten))]\n    pub(crate) use crate::runtime::go;\n\n    #[cfg(emscripten)]\n    pub(crate) fn go() {}\n}\n",
+		),
+		rust_file("src/runtime/mod.rs", "cfg_rt! {\n    mod inner;\n    pub(crate) use inner::go;\n}\n"),
+		rust_file("src/runtime/inner/mod.rs", "mod pool;\npub(crate) use pool::go;\n"),
+		rust_file("src/runtime/inner/pool.rs", "pub fn go() {}\n"),
+		rust_file("src/app.rs", "fn run() {\n    use crate::blocking::go;\n    go();\n}\n"),
+	]);
+	assert!(edge(
+		&graph,
+		"src/app.rs::run",
+		"src/runtime/inner/pool.rs::go",
+		RelationType::Calls
+	)
+	.is_some());
+	assert!(edge(&graph, "src/app.rs::run", "src/blocking.rs::go", RelationType::Calls).is_some());
 }

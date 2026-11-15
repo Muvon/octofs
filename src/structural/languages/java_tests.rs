@@ -637,3 +637,27 @@ fn an_explicit_import_wins_over_a_wildcard_import_of_another_package() {
 	)
 	.is_none());
 }
+
+#[test]
+fn a_call_that_spells_the_package_of_its_class_needs_no_import() {
+	let file = |path: &str, contents: &str| SourceFile {
+		path: path.to_string(),
+		language: "java",
+		contents: contents.to_string(),
+	};
+	let util = "package com.acme.util;\n\npublic class Util {\n\tpublic static void run() {}\n}\n";
+	let acme = "src/main/java/com/acme/util/Util.java";
+	let other = "src/main/java/com/other/Util.java";
+	let app = "src/main/java/com/app/App.java";
+	let graph = build_graph(vec![
+		file(acme, util),
+		file(other, &util.replace("acme.util", "other")),
+		file(
+			app,
+			"package com.app;\n\npublic class App {\n\tvoid go() {\n\t\tcom.acme.util.Util.run();\n\t}\n}\n",
+		),
+	]);
+	let caller = format!("{app}::App::go");
+	assert!(edge(&graph, &caller, &format!("{acme}::Util::run"), RelationType::Calls).is_some());
+	assert!(edge(&graph, &caller, &format!("{other}::Util::run"), RelationType::Calls).is_none());
+}

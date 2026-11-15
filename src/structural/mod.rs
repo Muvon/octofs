@@ -137,9 +137,10 @@ fn parse_outline(language: &str, contents: &str) -> Result<Vec<OutlineItem>, Str
 		.map_err(|e| format!("tree-sitter grammar mismatch for {language}: {e}"))?;
 	// `parse` returns None only without input or on cancellation; both are
 	// impossible here, but an empty outline beats a panic.
-	let items = parser
-		.parse(contents, None)
-		.map(|tree| signature_extractor::extract_signatures(tree.root_node(), contents, lang.as_ref()))
+	let items = languages::parse_declarations(lang.as_ref(), &mut parser, contents)
+		.map(|(tree, declarations)| {
+			signature_extractor::extract_signatures(tree.root_node(), declarations.as_ref(), lang.as_ref())
+		})
 		.unwrap_or_default();
 	Ok(items)
 }

@@ -17,6 +17,7 @@
 //! like `outline` — the path label only picks the language, nothing here
 //! touches the filesystem or network.
 
+use std::borrow::Cow;
 use tree_sitter::{Node, Parser};
 
 use crate::structural::languages::{self, Language, ScriptBlock};
@@ -113,9 +114,10 @@ fn symbol_hits_by_language(
 	if let Some(blocks) = lang.script_blocks(contents) {
 		return Ok(script_block_hits(blocks, matcher, references));
 	}
-	let Some(tree) = parse_tree(lang.as_ref(), contents)? else {
+	let Some((tree, declarations)) = parse_tree(lang.as_ref(), contents)? else {
 		return Ok(Vec::new());
 	};
+	let contents = declarations.as_ref();
 	if references {
 		Ok(reference_hits(lang.as_ref(), &tree, contents, matcher))
 	} else {
@@ -200,7 +202,8 @@ pub fn line_breadcrumbs(path_label: &str, contents: &str) -> Option<Vec<Option<S
 	if containers.is_empty() {
 		return None;
 	}
-	let tree = parse_tree(lang.as_ref(), contents).ok()??;
+	let (tree, declarations) = parse_tree(lang.as_ref(), contents).ok()??;
+	let contents = declarations.as_ref();
 	let line_count = contents.lines().count();
 	// One pass: collect the containers with their breadcrumb (pre-order, so
 	// start rows are non-decreasing), then sweep the rows once with a stack of
@@ -243,13 +246,15 @@ fn language(path_label: &str) -> Result<&'static str, String> {
 	language_for_extension(&extension).ok_or_else(|| unsupported_message(&extension))
 }
 
-fn parse_tree(lang: &dyn Language, contents: &str) -> Result<Option<tree_sitter::Tree>, String> {
+/// The syntax tree of `contents`, and the text it was parsed from (see
+/// `languages::parse_declarations`).
+fn parse_tree<'a>(lang: &dyn Language, contents: &'a str) -> Result<Option<(tree_sitter::Tree, Cow<'a, str>)>, String> {
 	let mut parser = Parser::new();
 	parser
 		.set_language(&lang.get_ts_language())
 		.map_err(|e| format!("tree-sitter grammar mismatch for {}: {e}", lang.name()))?;
 	// None only without input or on cancellation; both are impossible here.
-	Ok(parser.parse(contents, None))
+	Ok(languages::parse_declarations(lang, &mut parser, contents))
 }
 
 /// Pre-order walk of every node (parents before children), cursor-based so
