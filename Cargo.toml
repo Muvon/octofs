@@ -50,7 +50,7 @@ tracing = { version = "0.1", features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }
 
 # MCP SDK
-rmcp = { version = "3.9.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3.10.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 # RFC 3339 task timestamps (SEP-2663); already in the tree through rmcp.
@@ -67,7 +67,7 @@ russh-sftp = "3.0"
 # Tree-sitter grammars for the `view` structural outline (`flags: "s"`), always
 # compiled in — the ceiling is binary size and build time, not correctness.
 # Versions mirror the octocode pins, which are known to work together.
-tree-sitter = "0.27.1"
+tree-sitter = "0.27.2"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.2"
 tree-sitter-css = "0.25.0"
@@ -88,7 +88,7 @@ tree-sitter-typescript = "0.23.2"
 # AST-pattern search (`view` with `ast: true`), ported from octocode. Grammar-
 # agnostic core: it is generic over the tree-sitter grammars above and adds no
 # tree-sitter dependency of its own, so it cannot conflict with their pins.
-ast-grep-core = "0.51.0"
+ast-grep-core = "0.51.2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
@@ -97,7 +97,7 @@ tempfile = "3.27.0"
 serial_test = "3.5.0"
 # Client feature for the in-process delivery tests in `server_tests.rs`;
 # feature unification applies it to test builds only, never the shipped bin.
-rmcp = { version = "3.9.0", features = ["client"] }
+rmcp = { version = "3.10.0", features = ["client"] }
 
 [profile.dev]
 opt-level = 1
