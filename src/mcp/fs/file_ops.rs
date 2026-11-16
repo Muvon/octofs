@@ -17,7 +17,8 @@
 use super::remote::{io_create_dir_all, io_exists, io_is_file, io_metadata, io_read_capped, io_write, PathSource};
 use super::search::{self, SearchOutput, ViewFlags};
 use crate::structural;
-use crate::utils::truncation::format_content_with_line_numbers;
+use crate::utils::line_hash::is_saved_tool_output;
+use crate::utils::truncation::{format_content_as_stored, format_content_with_line_numbers};
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::path::Path;
@@ -132,7 +133,13 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 	let content = read_view_file(source).await?;
 	// Whole-file views go through the session delta cache; ranged views render
 	// exactly what was asked and leave the cache alone.
+	let saved = is_saved_tool_output(&source.display());
 	let Some(range) = line_range else {
+		// A saved tool result never changes, so the delta cache has nothing to track.
+		if saved {
+			let lines: Vec<&str> = content.lines().collect();
+			return Ok(format_content_as_stored(&lines, None));
+		}
 		// A delta or unchanged response is already compact — the outline hint
 		// only pays off when the full content is about to be served.
 		let served_full = full || !super::delta::has_previous_view(source);
@@ -146,7 +153,11 @@ pub async fn view_file_spec(source: &PathSource, line_range: Option<(usize, i64)
 	};
 	let lines: Vec<&str> = content.lines().collect();
 
-	let content_with_numbers = format_file_content_with_numbers(&lines, Some(range));
+	let content_with_numbers = if saved {
+		format_content_as_stored(&lines, Some(range))
+	} else {
+		format_file_content_with_numbers(&lines, Some(range))
+	};
 
 	// Defensive: the range is pre-clamped in resolve_view_range, but if the formatter ever
 	// returns its out-of-range error string, surface it as an error rather than content.

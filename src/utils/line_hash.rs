@@ -21,6 +21,18 @@
 
 pub use octolib::utils::line_hash::{line_hash, line_id};
 
+/// Extension of the files besydr and octomind save a shortened tool result to.
+pub const SAVED_TOOL_OUTPUT_EXTENSION: &str = "spill";
+
+/// Whether `path` names a saved tool result. It is the tool's earlier output, kept
+/// word for word: it already carries whatever ids that tool printed, and nobody
+/// edits it, so adding ids on view would only duplicate them.
+pub fn is_saved_tool_output(path: &str) -> bool {
+	std::path::Path::new(path)
+		.extension()
+		.is_some_and(|extension| extension == SAVED_TOOL_OUTPUT_EXTENSION)
+}
+
 /// Composite id for a 1-indexed line looked up in `lines`.
 pub fn line_id_at(lines: &[&str], line_1idx: usize) -> String {
 	line_id(line_1idx, lines[line_1idx - 1])

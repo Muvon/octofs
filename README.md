@@ -355,7 +355,8 @@ are merged, and each gap shows as `[... N lines omitted]`. `ranges` cannot be co
 with `start`/`end` or `content`.
 
 Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
-that `batch_edit` and `extract_lines` take as targets.
+that `batch_edit` and `extract_lines` take as targets. Files with the extension `.spill`
+(saved tool output) are shown as stored, without added ids.
 
 To read several files, make multiple `view` calls — they run in parallel.
 

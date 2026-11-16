@@ -14,7 +14,7 @@
 
 // Pure-Rust line-based content search with optional regex and context support.
 
-use crate::utils::line_hash::line_id_at;
+use crate::utils::line_hash::{is_saved_tool_output, line_id_at};
 use anyhow::{anyhow, bail, Result};
 use regex::Regex;
 
@@ -236,10 +236,27 @@ pub fn search_lines(content: &str, matcher: &Matcher, context_lines: usize, inve
 		.collect()
 }
 
+/// A matching line as the search prints it: with its id, or as stored when the file
+/// already carries ids of its own.
+fn matched_line(lines: &[&str], line_1idx: usize, with_ids: bool) -> String {
+	let line = lines[line_1idx - 1];
+	if with_ids {
+		format!("{}|{}", line_id_at(lines, line_1idx), line)
+	} else {
+		line.to_string()
+	}
+}
+
 /// One file's search result in the shape `flags` asks for, without its path, or `None`
 /// when the file has nothing to report. Files-only output has an empty body: the path
-/// is the whole result.
-pub fn render_file_matches(content: &str, matcher: &Matcher, context_lines: usize, flags: ViewFlags) -> Option<String> {
+/// is the whole result. `with_ids` is off for saved tool output, whose lines print as stored.
+pub fn render_file_matches(
+	content: &str,
+	matcher: &Matcher,
+	context_lines: usize,
+	flags: ViewFlags,
+	with_ids: bool,
+) -> Option<String> {
 	if matcher.is_empty_pattern() {
 		return None;
 	}
@@ -255,7 +272,7 @@ pub fn render_file_matches(content: &str, matcher: &Matcher, context_lines: usiz
 			let rendered: Vec<String> = blocks
 				.iter()
 				.flat_map(|block| &block.line_numbers)
-				.map(|&n| format!("{}|{}", line_id_at(&lines, n), lines[n - 1]))
+				.map(|&n| matched_line(&lines, n, with_ids))
 				.collect();
 			Some(rendered.join("\n"))
 		}
@@ -307,8 +324,9 @@ pub fn render_file_matches_with_breadcrumbs(
 	context_lines: usize,
 	flags: ViewFlags,
 ) -> Option<String> {
+	let with_ids = !is_saved_tool_output(path_label);
 	if flags.output != SearchOutput::Lines || flags.invert || !crate::structural::is_supported(path_label) {
-		return render_file_matches(content, matcher, context_lines, flags);
+		return render_file_matches(content, matcher, context_lines, flags, with_ids);
 	}
 	let blocks = search_lines(content, matcher, context_lines, false);
 	if blocks.is_empty() {
@@ -337,7 +355,7 @@ pub fn render_file_matches_with_breadcrumbs(
 			last_group = group;
 		}
 		for &n in &block.line_numbers {
-			rendered.push(format!("{}|{}", line_id_at(&lines, n), lines[n - 1]));
+			rendered.push(matched_line(&lines, n, with_ids));
 		}
 	}
 	Some(rendered.join("\n"))

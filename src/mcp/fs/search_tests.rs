@@ -114,7 +114,7 @@ fn test_literal_treats_regex_chars_literally() {
 
 fn render(content: &str, pattern: &str, regex: bool, flags: &str) -> Option<String> {
 	let matcher = Matcher::new(pattern, regex).unwrap();
-	render_file_matches(content, &matcher, 0, ViewFlags::parse(Some(flags), true).unwrap())
+	render_file_matches(content, &matcher, 0, ViewFlags::parse(Some(flags), true).unwrap(), true)
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn test_breadcrumbs_absent_for_grammarless_compact_and_inverted() {
 	let matcher = Matcher::new("flush", false).unwrap();
 	// No grammar: exactly the plain render.
 	let flags = ViewFlags::parse(None, true).unwrap();
-	let plain = render_file_matches(content, &matcher, 0, flags).unwrap();
+	let plain = render_file_matches(content, &matcher, 0, flags, true).unwrap();
 	assert_eq!(
 		render_file_matches_with_breadcrumbs("a.txt", content, &matcher, 0, flags),
 		Some(plain.clone())
@@ -264,7 +264,7 @@ fn test_breadcrumbs_absent_for_grammarless_compact_and_inverted() {
 		Some("2".to_string())
 	);
 	let invert = ViewFlags::parse(Some("v"), true).unwrap();
-	let inverted = render_file_matches(content, &matcher, 0, invert).unwrap();
+	let inverted = render_file_matches(content, &matcher, 0, invert, true).unwrap();
 	assert_eq!(
 		render_file_matches_with_breadcrumbs("a.rs", content, &matcher, 0, invert),
 		Some(inverted)

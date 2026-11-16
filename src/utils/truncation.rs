@@ -44,7 +44,26 @@ pub fn format_content_with_line_numbers(
 	start_line_number: usize,
 	view_range: Option<(usize, i64)>,
 ) -> String {
-	let render = |i: usize| render_line(start_line_number + i, lines[i]);
+	format_range(lines, start_line_number, view_range, render_line)
+}
+
+/// Same layout as [`format_content_with_line_numbers`], lines left as stored.
+pub fn format_content_as_stored(lines: &[&str], view_range: Option<(usize, i64)>) -> String {
+	format_range(lines, 1, view_range, stored_line)
+}
+
+/// A line printed without an id, for files that already carry their own.
+fn stored_line(_line_number: usize, line: &str) -> String {
+	line.to_string()
+}
+
+fn format_range(
+	lines: &[&str],
+	start_line_number: usize,
+	view_range: Option<(usize, i64)>,
+	render_numbered: impl Fn(usize, &str) -> String,
+) -> String {
+	let render = |i: usize| render_numbered(start_line_number + i, lines[i]);
 
 	if let Some((start, end)) = view_range {
 		let start_idx = if start == 0 { 0 } else { start.saturating_sub(1) };
@@ -86,13 +105,22 @@ pub fn format_content_with_line_numbers(
 /// inclusive, sorted, non-adjacent and within `lines`. Each gap between two spans is one
 /// `[... N lines omitted]` marker; the trailing marker matches a single ranged view.
 pub fn format_line_spans(lines: &[&str], spans: &[(usize, usize)]) -> String {
+	format_spans(lines, spans, render_line)
+}
+
+/// Same layout as [`format_line_spans`], lines left as stored.
+pub fn format_line_spans_as_stored(lines: &[&str], spans: &[(usize, usize)]) -> String {
+	format_spans(lines, spans, stored_line)
+}
+
+fn format_spans(lines: &[&str], spans: &[(usize, usize)], render_numbered: impl Fn(usize, &str) -> String) -> String {
 	let mut result_lines = Vec::new();
 	let mut previous_end = None;
 	for &(start, end) in spans {
 		if let Some(previous_end) = previous_end {
 			result_lines.push(format!("[... {} lines omitted]", start - previous_end - 1));
 		}
-		result_lines.extend((start..=end).map(|line| render_line(line, lines[line - 1])));
+		result_lines.extend((start..=end).map(|line| render_numbered(line, lines[line - 1])));
 		previous_end = Some(end);
 	}
 

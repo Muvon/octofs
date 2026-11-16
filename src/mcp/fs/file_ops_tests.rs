@@ -246,3 +246,62 @@ fn sniff_image_recognises_the_four_served_formats() {
 	assert_eq!(sniff_image(b"RIFF\0\0\0\0WAVE"), None);
 	assert_eq!(sniff_image(b""), None);
 }
+
+// A saved tool result already carries the ids its tool printed; only the extension
+// decides whether octofs adds its own.
+const ALREADY_NUMBERED: &str = "464:3c|alpha\n465:aa|beta\n466:bb|needle\n467:cc|delta\n";
+
+async fn numbered_file(dir: &std::path::Path, name: &str) -> (PathSource, String) {
+	let path = dir.join(name);
+	fs::write(&path, ALREADY_NUMBERED).await.unwrap();
+	(source(&path), path.to_string_lossy().into_owned())
+}
+
+#[tokio::test]
+async fn spill_file_is_viewed_whole_as_stored() {
+	let dir = tempfile::tempdir().unwrap();
+	let (spill, _) = numbered_file(dir.path(), "out.spill").await;
+	let out = view_file_spec(&spill, None, false).await.unwrap();
+	assert_eq!(out, ALREADY_NUMBERED.trim_end());
+}
+
+#[tokio::test]
+async fn spill_file_range_is_shown_as_stored_with_the_range_marker() {
+	let dir = tempfile::tempdir().unwrap();
+	let (spill, _) = numbered_file(dir.path(), "out.spill").await;
+	let out = view_file_spec(&spill, Some((2, 3)), false).await.unwrap();
+	assert_eq!(out, "465:aa|beta\n466:bb|needle\n[... 1 more lines, 4 total]");
+}
+
+#[tokio::test]
+async fn spill_file_content_search_is_shown_as_stored() {
+	let dir = tempfile::tempdir().unwrap();
+	let (spill, label) = numbered_file(dir.path(), "out.spill").await;
+	let out = view_file_with_content_search(&spill, &label, "needle", 1, false, ViewFlags::default())
+		.await
+		.unwrap();
+	assert_eq!(out, "465:aa|beta\n466:bb|needle\n467:cc|delta");
+}
+
+#[tokio::test]
+async fn same_content_in_a_txt_file_still_gets_ids() {
+	let dir = tempfile::tempdir().unwrap();
+	let (text, label) = numbered_file(dir.path(), "out.txt").await;
+	let whole = view_file_spec(&text, None, false).await.unwrap();
+	assert!(
+		whole.starts_with("1:") && whole.contains("|464:3c|alpha"),
+		"whole was: {whole}"
+	);
+	let range = view_file_spec(&text, Some((2, 3)), false).await.unwrap();
+	assert!(
+		range.starts_with("2:") && range.contains("|465:aa|beta"),
+		"range was: {range}"
+	);
+	let found = view_file_with_content_search(&text, &label, "needle", 0, false, ViewFlags::default())
+		.await
+		.unwrap();
+	assert!(
+		found.starts_with("3:") && found.ends_with("|466:bb|needle"),
+		"search was: {found}"
+	);
+}

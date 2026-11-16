@@ -35,7 +35,7 @@ One tool, several read modes, selected by the parameters:
 - **File read** (`path`) — lines render as `N:hh|content`, where `N:hh` is the
   line id edit tools target (see [Line ids](architecture.md#line-ids)). Ranged
   reads (`start`/`end`, negative counts from EOF) always return the requested
-  lines.
+  lines. `.spill` files (saved tool output) are shown as stored, without added ids.
 - **Image read** (a `path` ending in `png`, `jpg`/`jpeg`, `gif` or `webp`) — the file
   comes back as an MCP image block, base64 with its MIME type, up to 5 MB. The
   leading bytes must match the extension or the call fails; `start`/`end` and

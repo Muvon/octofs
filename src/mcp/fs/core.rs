@@ -21,8 +21,10 @@ use super::remote::{
 };
 use crate::mcp::fs::search::ViewFlags;
 use crate::mcp::fs::{ast, delta, directory, file_ops, structure, text_editing};
-use crate::utils::line_hash::{self, Endpoint};
-use crate::utils::truncation::{format_extracted_content_smart, format_line_spans, format_megabytes, MAX_RESULT_BYTES};
+use crate::utils::line_hash::{self, is_saved_tool_output, Endpoint};
+use crate::utils::truncation::{
+	format_extracted_content_smart, format_line_spans, format_line_spans_as_stored, format_megabytes, MAX_RESULT_BYTES,
+};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -386,7 +388,11 @@ async fn view_file_ranges(source: &PathSource, ranges: &[(Endpoint, Endpoint)]) 
 			_ => merged.push((start, end)),
 		}
 	}
-	Ok(format_line_spans(&lines, &merged))
+	Ok(if is_saved_tool_output(&source.display()) {
+		format_line_spans_as_stored(&lines, &merged)
+	} else {
+		format_line_spans(&lines, &merged)
+	})
 }
 
 /// Whether any line-range parameter (`start`, `end` or `ranges`) is set.

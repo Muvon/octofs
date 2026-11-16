@@ -622,7 +622,8 @@ impl OctofsServer {
 		),
 		description = "Read files, list directories, search content. Lines render as \
 			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target; content sent \
-			to edit tools is raw text without `N:hh|` prefixes. Listings are gitignore-aware, \
+			to edit tools is raw text without `N:hh|` prefixes; `.spill` files (saved tool output) \
+			are shown as stored. Listings are gitignore-aware, \
 			one `path\tNL\t~Nt` (lines, ~tokens) per file; `max_depth` \
 			controls recursion, with bare remote listings limited to root entries by default. \
 			`flags` gives what `grep -c/-l/-o/-v` and `ls -l` give: match counts, matching \

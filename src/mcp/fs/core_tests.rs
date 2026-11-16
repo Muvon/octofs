@@ -47,3 +47,31 @@ fn test_history_store_per_file_cap() {
 	}
 	assert_eq!(n, 10);
 }
+
+const ALREADY_NUMBERED: &str = "464:3c|alpha\n465:aa|beta\n466:bb|needle\n467:cc|delta\n";
+
+fn line_span(first: i64, last: i64) -> (Endpoint, Endpoint) {
+	(Endpoint::Number(first), Endpoint::Number(last))
+}
+
+#[tokio::test]
+async fn view_ranges_shows_a_spill_file_as_stored_and_numbers_a_txt_file() {
+	let dir = tempfile::tempdir().unwrap();
+	let spans = [line_span(1, 1), line_span(3, 3)];
+
+	let spill = dir.path().join("out.spill");
+	std::fs::write(&spill, ALREADY_NUMBERED).unwrap();
+	let out = view_file_ranges(&PathSource::Local(spill), &spans).await.unwrap();
+	assert_eq!(
+		out,
+		"464:3c|alpha\n[... 1 lines omitted]\n466:bb|needle\n[... 1 more lines, 4 total]"
+	);
+
+	let text = dir.path().join("out.txt");
+	std::fs::write(&text, ALREADY_NUMBERED).unwrap();
+	let out = view_file_ranges(&PathSource::Local(text), &spans).await.unwrap();
+	assert!(
+		out.starts_with("1:") && out.contains("|464:3c|alpha\n"),
+		"out was: {out}"
+	);
+}
