@@ -714,7 +714,7 @@ async fn view_reads_a_job_link_like_resources_read() {
 /// workdir, run the execute fn, append hints. Drive them end-to-end through
 /// the MCP connection so the wrapper lines count as covered.
 #[tokio::test(flavor = "multi_thread")]
-async fn tool_handlers_text_editor_batch_edit_extract_lines_round_trip() {
+async fn tool_handlers_text_editor_batch_edit_copy_from_round_trip() {
 	let (client, _server_task, _unsolicited) = connect().await;
 
 	let call = |tool: &'static str, arguments: serde_json::Map<String, serde_json::Value>| {
@@ -776,22 +776,22 @@ async fn tool_handlers_text_editor_batch_edit_extract_lines_round_trip() {
 	.expect("batch_edit");
 	assert_ne!(edit.is_error, Some(true), "{:?}", edit.content);
 
-	// extract_lines: copy the edited line into a second file
-	let extract = call(
-		"extract_lines",
+	// batch_edit copy_from: copy the edited line into a new file
+	let copy = call(
+		"batch_edit",
 		json!({
-			"from_path": "wrapper.txt",
-			"from_start": 1,
-			"append_path": "copied.txt",
-			"append_line": -1
+			"path": "copied.txt",
+			"operations": [
+				{ "operation": "insert", "start": -1, "copy_from": { "path": "wrapper.txt", "start": 1 } }
+			]
 		})
 		.as_object()
 		.unwrap()
 		.clone(),
 	)
 	.await
-	.expect("extract_lines");
-	assert_ne!(extract.is_error, Some(true), "{:?}", extract.content);
+	.expect("batch_edit copy_from");
+	assert_ne!(copy.is_error, Some(true), "{:?}", copy.content);
 
 	// Verify the copy landed via view
 	let view = call("view", json!({ "path": "copied.txt" }).as_object().unwrap().clone())
@@ -895,57 +895,6 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	assert_eq!(probe.is_error, Some(true), "the check must not run after a failed edit");
 }
 
-/// An omitted `path` is re-serialized as JSON null and rejected as an invalid
-/// path. Drive the query through the MCP connection, then set and reset, so the
-/// session workdir follows.
-#[tokio::test(flavor = "multi_thread")]
-async fn workdir_empty_arguments_query_gets_current_directory() {
-	let (client, _server_task, _unsolicited) = connect().await;
-	let call = |arguments: serde_json::Value| {
-		client.call_tool(CallToolRequestParams::new("workdir").with_arguments(arguments.as_object().unwrap().clone()))
-	};
-	let body = |result: CallToolResult| {
-		assert_ne!(result.is_error, Some(true), "{:?}", result.content);
-		let text = result
-			.content
-			.iter()
-			.find_map(|block| match block {
-				ContentBlock::Text(text) => Some(text.text.as_str()),
-				_ => None,
-			})
-			.expect("workdir response text");
-		serde_json::from_str::<serde_json::Value>(text).expect("workdir response JSON")
-	};
-
-	let initial = body(call(json!({})).await.expect("query workdir"));
-	assert_eq!(initial["action"], "get");
-	let original = initial["working_directory"].as_str().expect("initial workdir");
-	assert!(std::path::Path::new(original).is_absolute());
-
-	let other = tempfile::tempdir().expect("other workdir");
-	let path = other.path().canonicalize().expect("canonical workdir");
-	let switched = body(call(json!({ "path": path })).await.expect("set workdir"));
-	assert_eq!(switched["action"], "set");
-	let queried = body(call(json!({})).await.expect("query changed workdir"));
-	assert_eq!(queried["action"], "get");
-	assert_eq!(queried["working_directory"], path.to_string_lossy().as_ref());
-
-	let reset = body(call(json!({ "reset": true })).await.expect("reset workdir"));
-	assert_eq!(reset["action"], "reset");
-	let restored = body(call(json!({})).await.expect("query reset workdir"));
-	assert_eq!(restored["action"], "get");
-	assert_eq!(restored["working_directory"], original);
-
-	let blank = call(json!({ "path": "   " })).await.expect("blank path response");
-	assert_eq!(blank.is_error, Some(true), "blank paths must still be rejected");
-	let numeric = call(json!({ "path": 42 })).await.expect("invalid type response");
-	assert_eq!(
-		numeric.is_error,
-		Some(true),
-		"invalid parameter types must still be rejected"
-	);
-}
-
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]
@@ -989,21 +938,18 @@ fn batch_edit_rejects_operations_naming_different_files() {
 }
 
 /// Only reads take plain line numbers: a replace end is only ever a line id, and edit
-/// positions (op `start`, `append_line`) offer no integers but the anchors 0/-1.
+/// positions (op `start`) offer no integers but the anchors 0/-1.
 #[test]
 fn edit_schemas_allow_integers_only_as_anchors() {
 	let anchors = serde_json::json!([0, -1]);
-	let extract = serde_json::to_value(rmcp::schemars::schema_for!(super::ExtractLinesParams)).expect("schema json");
-	let append_line = &extract["properties"]["append_line"];
-	assert!(
-		append_line["anyOf"]
-			.as_array()
-			.expect("append_line anyOf")
-			.iter()
-			.any(|variant| variant["enum"] == anchors),
-		"append_line: {append_line}"
-	);
-
+	let copy = serde_json::to_value(rmcp::schemars::schema_for!(super::CopySource)).expect("schema json");
+	let copy_start = copy["properties"]["start"]["anyOf"]
+		.as_array()
+		.expect("copy_from start anyOf")
+		.iter()
+		.find(|variant| variant["type"] == "integer")
+		.expect("copy_from start takes line numbers");
+	assert!(copy_start.get("enum").is_none(), "copy_from start: {copy_start}");
 	let schema = serde_json::to_value(rmcp::schemars::schema_for!(super::BatchEditOperation)).expect("schema json");
 	let properties = &schema["properties"];
 	assert_eq!(properties["end"]["type"], "string", "end: {}", properties["end"]);
@@ -1125,14 +1071,12 @@ fn session_context(
 }
 
 /// Octomind shares one connection between its sessions: each keeps its own
-/// anchor, `workdir` override and view cache.
+/// anchor and view cache.
 #[tokio::test]
 async fn sessions_sharing_a_connection_keep_their_own_workdir() {
 	let root = tempfile::tempdir().expect("server root");
 	let first = tempfile::tempdir().expect("first workdir");
 	let second = tempfile::tempdir().expect("second workdir");
-	let nested = first.path().join("nested");
-	std::fs::create_dir(&nested).expect("nested dir");
 	let server = OctofsServer::with_root(root.path().to_path_buf());
 	let (transport, _client) = tokio::io::duplex(4096);
 	let service = rmcp::service::serve_directly(server.clone(), transport, None);
@@ -1140,27 +1084,24 @@ async fn sessions_sharing_a_connection_keep_their_own_workdir() {
 
 	let a = server.session(&session_context(peer, "a", first.path(), Some(0)));
 	let b = server.session(&session_context(peer, "b", second.path(), Some(0)));
-	assert_eq!(a.workdir.get_current(), first.path());
-	assert_eq!(b.workdir.get_current(), second.path());
+	assert_eq!(a.workdir, first.path());
+	assert_eq!(b.workdir, second.path());
 	assert!(!Arc::ptr_eq(
 		a.view_cache.as_ref().expect("a view cache"),
 		b.view_cache.as_ref().expect("b view cache")
 	));
 
-	a.workdir.set_current(nested.clone());
 	let again = server.session(&session_context(peer, "a", first.path(), Some(0)));
-	assert_eq!(again.workdir.get_current(), nested);
-	let other = server.session(&session_context(peer, "b", second.path(), Some(0)));
-	assert_eq!(other.workdir.get_current(), second.path());
+	assert!(Arc::ptr_eq(&a, &again), "a revisited session keeps its state");
 
 	let moved = server.session(&session_context(peer, "a", second.path(), Some(0)));
-	assert_eq!(moved.workdir.get_current(), second.path(), "a moved anchor starts over");
+	assert_eq!(moved.workdir, second.path(), "a moved anchor starts over");
 
 	let anonymous = server.session(&rmcp::service::RequestContext::new(
 		rmcp::model::RequestId::Number(2),
 		peer.clone(),
 	));
-	assert_eq!(anonymous.workdir.get_current(), root.path());
+	assert_eq!(anonymous.workdir, root.path());
 }
 
 #[test]
@@ -1184,12 +1125,10 @@ fn least_recently_used_session_is_dropped_at_capacity() {
 /// Deltas are opt-in: only a client that reports a `context_epoch` gets them,
 /// and a new epoch (the client compacted or rewrote what the model was served)
 /// serves the next whole-file view in full again while the session keeps its
-/// workdir. A client without an epoch is always served whole files.
+/// state. A client without an epoch is always served whole files.
 #[tokio::test]
 async fn view_deltas_follow_the_client_context_epoch() {
 	let dir = tempfile::tempdir().expect("workdir");
-	let nested = dir.path().join("nested");
-	std::fs::create_dir(&nested).expect("nested dir");
 	let file = dir.path().join("f.txt");
 	std::fs::write(&file, "one\n").expect("write file");
 	let server = OctofsServer::with_root(dir.path().to_path_buf());
@@ -1213,20 +1152,12 @@ async fn view_deltas_follow_the_client_context_epoch() {
 
 	assert!(view("s", Some(0)).await.ends_with("|one"));
 	assert!(view("s", Some(0)).await.starts_with(unchanged));
-	server
-		.session(&session_context(peer, "s", dir.path(), Some(0)))
-		.workdir
-		.set_current(nested.clone());
+	let before = server.session(&session_context(peer, "s", dir.path(), Some(0)));
 
 	assert!(view("s", Some(1)).await.ends_with("|one"), "new epoch serves in full");
 	assert!(view("s", Some(1)).await.starts_with(unchanged));
-	assert_eq!(
-		server
-			.session(&session_context(peer, "s", dir.path(), Some(1)))
-			.workdir
-			.get_current(),
-		nested
-	);
+	let after = server.session(&session_context(peer, "s", dir.path(), Some(1)));
+	assert!(Arc::ptr_eq(&before, &after), "a new epoch keeps the session");
 }
 
 #[test]

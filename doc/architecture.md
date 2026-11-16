@@ -17,13 +17,13 @@ src/
   http_auth.rs         — HTTP access control: bind policy, bearer-token layer, Host/Origin config
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit, extract_lines,
-                          shell, workdir), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit,
+                          shell), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
     fs/
       mod.rs           — module list + re-exports (execute_*, parse_path_source, PathSource)
-      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_editor/batch_edit/extract_lines
+      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_editor/batch_edit
       file_ops.rs      — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs  — str_replace_spec (progressive matching), batch_edit_spec, per-file async locking
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks
@@ -39,7 +39,6 @@ src/
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops
       shell.rs         — execute_shell_command, misuse gate, foreground window, process-group cleanup
       background.rs    — job registry, octofs://jobs/<id> resources, durable output files, completion callback
-      workdir.rs       — workdir get/set/reset (WorkdirResult)
     *_tests.rs         — sibling unit tests; fs_tests.rs = cross-module integration; server_tests.rs = in-process
                           protocol delivery tests (rmcp `client` feature, dev-dependency only)
   structural/
@@ -84,10 +83,10 @@ response budget; it is local only.
 
 ## State
 
-- **Sessions** (`server.rs`) — one `SessionWorkdir` (`RwLock<PathBuf>`) and
+- **Sessions** (`server.rs`) — one fixed root and
   `ViewCache` per client session, resolved on every request from
   `experimental.session` in the client capabilities: `session_id` keys the
-  state, `workdir` is its root (the `workdir` tool's reset target). One
+  state, `workdir` is its root. One
   connection can carry many sessions (octomind multiplexes its sessions over a
   shared client); requests without session context share the server root.
   Least recently used sessions beyond `MAX_TRACKED_SESSIONS` are dropped.

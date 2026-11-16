@@ -1,6 +1,6 @@
 # Octofs — AGENTS.md
 
-Standalone Rust binary that serves filesystem tools (view, text_editor, batch_edit, extract_lines, shell, workdir) and code exploration (view outline and AST modes, and the `symbol` tool: definitions, references, callers, callees, supertypes, subtypes, imports, imported_by, path) over MCP — stdio or streamable HTTP. Code answers are computed from the files on disk with an in-memory index, no database. Native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum. Reader-facing docs: `README.md`, `doc/`.
+Standalone Rust binary that serves filesystem tools (view, text_editor, batch_edit, shell) and code exploration (view outline and AST modes, and the `symbol` tool: definitions, references, callers, callees, supertypes, subtypes, imports, imported_by, path) over MCP — stdio or streamable HTTP. Code answers are computed from the files on disk with an in-memory index, no database. Native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum. Reader-facing docs: `README.md`, `doc/`.
 
 ## Commands
 - Build: `cargo build` · Release: `cargo build --release` · Dev run: `cargo run -- mcp` (stdio; add `--bind 127.0.0.1:12345` for HTTP; `RUST_LOG=debug` for logs)

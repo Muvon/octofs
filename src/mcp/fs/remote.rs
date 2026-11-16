@@ -1135,21 +1135,11 @@ mod sftp {
 		entries.sort_by(|a, b| a.0.cmp(&b.0));
 		Ok(entries)
 	}
-
-	/// Canonicalize a remote path.
-	pub async fn remote_canonicalize(source: &super::PathSource) -> Result<String> {
-		let path = source.sftp_path();
-		let sftp = remote_session(source).await?;
-		sftp.canonicalize(path)
-			.await
-			.map_err(|e| anyhow!("SFTP canonicalize failed for {path}: {e}"))
-	}
 }
 
 pub use sftp::{
-	init_sftp_pool, remote_canonicalize, remote_create_dir_all, remote_exists, remote_list_dir, remote_metadata,
-	remote_read, remote_read_to_string, remote_remove_file, remote_write, sftp_pool, RemoteMetadata, SftpPool,
-	SshConfig,
+	init_sftp_pool, remote_create_dir_all, remote_exists, remote_list_dir, remote_metadata, remote_read,
+	remote_read_to_string, remote_remove_file, remote_write, sftp_pool, RemoteMetadata, SftpPool, SshConfig,
 };
 
 // ── Unified I/O dispatch layer ─────────────────────────────────────────
@@ -1288,16 +1278,6 @@ pub async fn io_remove_file(source: &PathSource) -> Result<()> {
 			.await
 			.map_err(|e| anyhow!("Failed to remove '{}': {}", source.display(), e)),
 		PathSource::Remote { .. } => sftp::remote_remove_file(source).await,
-	}
-}
-
-/// Canonicalize a path. Returns the canonical path as a string.
-pub async fn io_canonicalize(source: &PathSource) -> Result<PathBuf> {
-	match source {
-		PathSource::Local(p) => tokio::fs::canonicalize(p)
-			.await
-			.map_err(|e| anyhow!("Failed to canonicalize '{}': {}", source.display(), e)),
-		PathSource::Remote { .. } => sftp::remote_canonicalize(source).await.map(PathBuf::from),
 	}
 }
 

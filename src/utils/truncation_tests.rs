@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Unit tests for truncation formatting: ranged and multi-span views, boundary
-//! ranges and smart middle-elision of extracted content.
+//! Unit tests for truncation formatting: ranged and multi-span views and boundary
+//! ranges.
 
 use super::*;
 
@@ -109,38 +109,4 @@ fn line_spans_covering_the_whole_file_emit_no_marker() {
 	let lines = vec!["a", "b"];
 	let out = format_line_spans(&lines, &[(1, 2)]);
 	assert!(!out.contains('['), "out was: {out}");
-}
-
-#[test]
-fn extracted_content_within_limit_renders_all_lines_verbatim() {
-	let lines: Vec<&str> = (0..5).map(|_| "x").collect();
-	let out = format_extracted_content_smart(&lines, 10, Some(5));
-	assert_eq!(out.split('\n').count(), 5);
-	// ids reflect the start_line offset into the source file
-	assert!(out.split('\n').next().unwrap().starts_with("10:"));
-}
-
-#[test]
-fn extracted_content_over_limit_keeps_two_thirds_head_and_rest_tail() {
-	let total = 100;
-	let max = 9;
-	let lines: Vec<String> = (0..total).map(|i| format!("line{i}")).collect();
-	let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-	let out = format_extracted_content_smart(&refs, 1, Some(max));
-	let rendered: Vec<&str> = out.split('\n').collect();
-	// 6 head + 1 elision marker + 2 tail = max lines of output
-	assert_eq!(rendered.len(), max);
-	assert!(rendered[6].starts_with("[...92 lines more]"));
-	assert!(rendered[0].ends_with("|line0"));
-	assert!(rendered[5].ends_with("|line5"));
-	assert!(rendered[7].ends_with("|line98"));
-	assert!(rendered[8].ends_with("|line99"));
-}
-
-#[test]
-fn extracted_content_defaults_to_fifty_display_lines() {
-	let lines: Vec<String> = (0..80).map(|i| format!("v{i}")).collect();
-	let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-	let out = format_extracted_content_smart(&refs, 1, None);
-	assert_eq!(out.split('\n').count(), 50);
 }

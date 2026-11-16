@@ -8,7 +8,7 @@ feature flag. Implementation: `src/mcp/fs/remote.rs`.
 Every path parses via `parse_path_source` into `PathSource::Local` or
 `PathSource::Remote` (`ssh://`, `sftp://`). `resolve_path_source(path,
 workdir)` resolves locals against the workdir; a remote workdir
-(`--path ssh://…` or `workdir ssh://…`) makes *relative* paths resolve to
+(`--path ssh://…`) makes *relative* paths resolve to
 remote sources, joined with `/` by hand — never `PathBuf::join` (it inserts
 `\` on Windows and corrupts URLs). IPv6 hosts (`ssh://user@[::1]:2222/path`)
 parse.
@@ -57,7 +57,7 @@ duplicate connections and repeated agent prompts.
 
 `shell` always runs locally and bails on a remote workdir — there is no
 remote command execution. Everything file-shaped (`view`, `text_editor`,
-`batch_edit`, `extract_lines`, directory listings, content search) works
+`batch_edit`, directory listings, content search) works
 remotely, with remote listing quirks handled in `fs/directory.rs`. The
 structural read modes work remotely too — outline (`flags: "s"`), AST search
 (`ast: true`) and the `symbol` tool's `definition`/`references` each walk the remote tree

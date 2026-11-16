@@ -288,7 +288,7 @@ async fn resolve_scope(call: &McpToolCall, root: &Path, raw: Option<&str>) -> Re
 		.or_else(|_| canonical.strip_prefix(root))
 		.map_err(|_| {
 			anyhow!(
-				"`path` {raw} is outside the workdir {}: graph relations resolve names across the whole workdir. Switch workdir with the `workdir` tool, or pass a path inside it.",
+				"`path` {raw} is outside the workdir {}: graph relations resolve names across the whole workdir and only inside it. Pass a path inside it; you cannot change the workdir.",
 				root.display()
 			)
 		})?;

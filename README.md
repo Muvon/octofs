@@ -31,10 +31,8 @@ With these tools an assistant can work in a project without the user pasting fil
 
 - `view` reads a file (whole, a line range, or several ranges), lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
 - `text_editor` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
-- `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved.
-- `extract_lines` copies a line range from one file into another.
+- `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
 - `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. By default, standalone `cat`, `grep`, `find`, `ls` and similar reads are rejected with a pointer to `view`.
-- `workdir` gets, sets or resets the directory that relative paths resolve against.
 - Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
 - Remote files use SSH/SFTP with your OpenSSH config. `shell` always runs locally. RSA keys are not supported (see [Remote Filesystem](#remote-filesystem-sshsftp)).
 
@@ -330,7 +328,7 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 - **RSA keys are not supported** — the Rust `rsa` crate has an unfixed timing side-channel (Marvin attack, [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071)), so octofs is built without RSA entirely. Use an ed25519 key instead (`ssh-keygen -t ed25519`); ecdsa also works. RSA-only setups fail with a clear error naming the key.
 - **Host keys** — verified against `~/.ssh/known_hosts` with the OpenSSH `accept-new` policy: unknown hosts are recorded on first use, a changed key fails closed.
 - **`--ssh-timeout SECS`** — connection timeout (default 30). Connections are pooled per host, kept alive with transport keepalives, and reconnected automatically if they drop.
-- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `workdir`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
+- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch_edit`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
 
 ---
 
@@ -355,7 +353,7 @@ are merged, and each gap shows as `[... N lines omitted]`. `ranges` cannot be co
 with `start`/`end` or `content`.
 
 Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
-that `batch_edit` and `extract_lines` take as targets. Files with the extension `.spill`
+that `batch_edit` takes as targets. Files with the extension `.spill`
 (saved tool output) are shown as stored, without added ids.
 
 To read several files, make multiple `view` calls — they run in parallel.
@@ -594,23 +592,17 @@ can retarget without a re-view. The result is a diff with fresh ids.
 
 ---
 
-### `extract_lines` — Copy lines between files
-
+**Copy lines from another file:**
 ```json
 {
-  "from_path": "src/utils.rs",
-  "from_start": 10,
-  "from_end": 25,
-  "append_path": "src/new.rs",
-  "append_line": -1
+  "path": "src/new.rs",
+  "operations": [
+    {"operation": "insert", "start": -1, "copy_from": {"path": "src/utils.rs", "start": 10, "end": 25}}
+  ]
 }
 ```
 
-`from_end` is optional (omit to copy a single line). `from_start` and `from_end`
-each accept a line number or a line id (`"12:a3"`, verified against the file).
-`append_line` positions the copy in the target: a line id to insert after
-(verified against the target), `0` = beginning, or `-1` = end. Like every edit
-target it takes no other plain line number.
+`copy_from` replaces `content` in an `insert` or `replace` operation; give exactly one of the two. `start` and `end` are line ids (`"12:a3"`, verified against the source) or integers (negative counts from the end); `end` defaults to `start`. The source can be another file or the edited file. A same-file source is read as it was before the call, so moving lines inside a file is one call: insert the copy and replace the old range with `""`. If the target file does not exist, it is created (with its folders) only when every operation is a `copy_from` insert at `0` or `-1`; any other edit of a missing file fails with "File not found". Copied lines are not checked for duplicates.
 
 ---
 
@@ -661,25 +653,6 @@ Without it, read the job's resource link when you need the result.
 
 ---
 
-### `workdir` — Manage working directory
-
-**Get current:**
-```json
-{}
-```
-
-**Set new:**
-```json
-{"path": "/path/to/project"}
-```
-
-**Reset to session root:**
-```json
-{"reset": true}
-```
-
----
-
 ## Architecture
 
 ```
@@ -689,11 +662,11 @@ octofs/
 │   ├── cli.rs                   # CLI argument parsing (clap): octofs mcp [OPTIONS]
 │   ├── mcp/
 │   │   ├── mod.rs               # McpToolCall, SessionRoot
-│   │   ├── server.rs            # OctofsServer (rmcp tool impl), Params structs, SessionWorkdir
+│   │   ├── server.rs            # OctofsServer (rmcp tool impl), Params structs, per-session state
 │   │   ├── request_ctx.rs       # Per-request hint queue + stale-file stamps
 │   │   └── fs/                  # Filesystem tool implementations
 │   │       ├── mod.rs           # Re-exports
-│   │       ├── core.rs          # view, text_editor, batch_edit, extract_lines
+│   │       ├── core.rs          # view, text_editor, batch_edit
 │   │       ├── file_ops.rs      # view_file_spec, create_file_spec
 │   │       ├── text_editing.rs  # str_replace, batch_edit, undo, per-file locking
 │   │       ├── directory.rs     # Directory listing + content search
@@ -705,7 +678,6 @@ octofs/
 │   │   │   ├── graph.rs         # `symbol` graph relations: parameters, rendering
 │   │       ├── ast.rs           # AST-pattern search mode (ast: true)
 │   │       ├── shell.rs         # Command execution, background, process cleanup
-│   │       ├── workdir.rs       # Working directory management
 │   │       ├── remote.rs        # SSH/SFTP path abstraction, SshHandler, SFTP pool
 │   │       └── fs_tests.rs      # Integration tests (cfg(test))
 │   ├── structural/              # Tree-sitter grammars: outline, symbols, AST search

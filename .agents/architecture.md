@@ -10,13 +10,13 @@ src/
   cli.rs               — clap CLI: `octofs mcp [--path PATH] [--bind HOST:PORT] [--ssh-key FILE] [--ssh-timeout SECS]`
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit, extract_lines,
-                          shell, workdir), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit,
+                          shell), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
     fs/
       mod.rs           — module list + re-exports (execute_*, parse_path_source, PathSource)
-      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_editor/batch_edit/extract_lines
+      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_editor/batch_edit
       file_ops.rs      — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs  — str_replace_spec (progressive matching), batch_edit_spec, per-file async locking
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks
@@ -32,7 +32,6 @@ src/
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops
       shell.rs         — execute_shell_command, misuse gate, foreground window, process-group cleanup
       background.rs    — job registry, octofs://jobs/<id> resources, durable output files, completion callback
-      workdir.rs       — workdir get/set/reset (WorkdirResult)
     *_tests.rs         — sibling unit tests; fs_tests.rs = cross-module integration; server_tests.rs = in-process
                           protocol delivery tests (rmcp `client` feature, dev-dependency only)
   structural/
@@ -66,8 +65,8 @@ files is unchanged.
 
 ## State
 
-- **SessionWorkdir** — per `OctofsServer` instance (`RwLock<PathBuf>`); HTTP mode creates a fresh server per
-  session. `SESSION_ROOT` in `mcp/mod.rs` is only the startup default.
+- **Session root** — fixed per client session (`SessionState` in `server.rs`), from `--path` or the
+  client's `experimental.session.workdir`; nothing changes it mid-session. `SESSION_ROOT` in `mcp/mod.rs` is only the startup default.
 - **FILE_LOCKS** — per-file `tokio::sync::Mutex` inside a `std::sync::Mutex<HashMap>`; keys are canonicalized
   local paths or `PathSource::lock_key()` (host+path) for remote. The outer guard is never held across `.await`.
 - **FILE_HISTORY** — content snapshot before every write; powers `undo` (max 10 levels per file, in-memory only).

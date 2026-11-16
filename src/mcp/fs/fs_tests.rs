@@ -16,7 +16,7 @@
 
 #[cfg(test)]
 mod tests {
-	use crate::mcp::fs::core::{execute_batch_edit, execute_extract_lines, execute_view, execute_view_image};
+	use crate::mcp::fs::core::{execute_batch_edit, execute_view, execute_view_image};
 	use crate::mcp::fs::execute_symbol;
 
 	use crate::mcp::fs::remote::PathSource;
@@ -1606,330 +1606,6 @@ mod tests {
 		// Content search should render matches with `N:hh|content` line ids
 		assert!(line_id_pattern.is_match(&content_search_str)); // Line ids
 		assert!(content_search_str.contains("println!")); // Actual content
-	}
-
-	// ===== EXTRACT_LINES TESTS =====
-
-	async fn test_extract_lines(
-		source_content: &str,
-		from_range: (usize, usize),
-		target_content: &str,
-		append_line: impl Into<serde_json::Value>,
-		expected_target: &str,
-	) {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		// Create source file
-		fs::write(&source_path, source_content).await.unwrap();
-
-		// Create target file if it has content
-		if !target_content.is_empty() {
-			fs::write(&target_path, target_content).await.unwrap();
-		}
-
-		let append_line: serde_json::Value = append_line.into();
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": from_range.0, "from_end": from_range.1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": append_line
-			}),
-		};
-
-		execute_extract_lines(&call).await.unwrap();
-
-		// Check source file unchanged
-		let source_after = fs::read_to_string(&source_path).await.unwrap();
-		assert_eq!(source_after, source_content, "Source file should be unchanged");
-
-		// Check target file content
-		let target_after = fs::read_to_string(&target_path).await.unwrap();
-		assert_eq!(target_after, expected_target, "Target file content mismatch");
-	}
-
-	#[tokio::test]
-	async fn test_extract_single_line_to_empty_file() {
-		test_extract_lines("line 1\nline 2\nline 3\n", (2, 2), "", -1, "line 2").await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_multiple_lines_to_empty_file() {
-		test_extract_lines("line 1\nline 2\nline 3\nline 4\n", (2, 3), "", -1, "line 2\nline 3").await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_append_to_end() {
-		test_extract_lines(
-			"source 1\nsource 2\nsource 3\n",
-			(1, 2),
-			"existing 1\nexisting 2\n",
-			-1,
-			"existing 1\nexisting 2\nsource 1\nsource 2",
-		)
-		.await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_insert_at_beginning() {
-		test_extract_lines(
-			"new 1\nnew 2\n",
-			(1, 2),
-			"old 1\nold 2\n",
-			0,
-			"new 1\nnew 2\nold 1\nold 2\n",
-		)
-		.await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_insert_after_line() {
-		test_extract_lines(
-			"inserted 1\ninserted 2\n",
-			(1, 2),
-			"line 1\nline 2\nline 3\n",
-			lid("line 1\nline 2\nline 3\n", 2),
-			"line 1\nline 2\ninserted 1\ninserted 2\nline 3\n",
-		)
-		.await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_first_line() {
-		test_extract_lines("first\nsecond\nthird\n", (1, 1), "", -1, "first").await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_last_line() {
-		test_extract_lines("first\nsecond\nlast\n", (3, 3), "", -1, "last\n").await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_all_lines() {
-		test_extract_lines("all 1\nall 2\nall 3\n", (1, 3), "", -1, "all 1\nall 2\nall 3\n").await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_with_special_characters() {
-		test_extract_lines(
-			"fn main() {\n    println!(\"Hello, world!\");\n}\n",
-			(1, 3),
-			"",
-			-1,
-			"fn main() {\n    println!(\"Hello, world!\");\n}\n",
-		)
-		.await;
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_error_invalid_range() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		fs::write(&source_path, "line 1\nline 2\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": 1, "from_end": 5, // Line 5 doesn't exist
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("exceeds file length"),
-			"Should fail with invalid range: {}",
-			err
-		);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_error_start_greater_than_end() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		fs::write(&source_path, "line 1\nline 2\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": 2, "from_end": 1, // Start > end
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("range must go forward"),
-			"Should fail when start > end: {}",
-			err
-		);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_error_missing_source_file() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("nonexistent.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": 1, "from_end": 1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("does not exist"),
-			"Should fail with missing source file: {}",
-			err
-		);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_rejects_a_plain_append_line_number() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		fs::write(&source_path, "line 1\nline 2\n").await.unwrap();
-		fs::write(&target_path, "existing\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": 1, "from_end": 1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": 1 // A write position by number: nothing verifies it
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("Invalid append_line 1"),
-			"Should reject a plain append_line number: {}",
-			err
-		);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_creates_parent_directories() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("nested/deep/target.txt");
-
-		fs::write(&source_path, "content\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": 1, "from_end": 1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		execute_extract_lines(&call).await.unwrap();
-
-		// Check that target file was created with correct content
-		let target_content = fs::read_to_string(&target_path).await.unwrap();
-		assert_eq!(target_content, "content\n");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_parameter_validation() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		fs::write(&source_path, "line 1\n").await.unwrap();
-
-		// Test missing from_path
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_start": 1, "from_end": 1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("Missing required parameter 'from_path'"),
-			"Should fail with missing from_path: {}",
-			err
-		);
-
-		// Test invalid from_start type (array instead of line number / hash)
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": [1], // Wrong type: array, not a line number or hash
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("from_start"),
-			"Should fail with invalid from_start: {}",
-			err
-		);
-
-		// Test empty from_path
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": "",
-				"from_start": 1, "from_end": 1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("cannot be empty"),
-			"Should fail with empty from_path: {}",
-			err
-		);
 	}
 
 	// ===============================
@@ -3729,111 +3405,6 @@ mod tests {
 				&& content.contains(&idl(2, "line 2"))
 				&& content.contains(&idl(3, "line 3")),
 			"Should return all 3 lines after clamp: {content}"
-		);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_negative_indexing() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		// Create source file with 5 lines
-		fs::write(&source_path, "line 1\nline 2\nline 3\nline 4\nline 5\n")
-			.await
-			.unwrap();
-		fs::write(&target_path, "").await.unwrap();
-
-		// Test extracting last line with -1
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": -1, "from_end": -1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		execute_extract_lines(&call).await.unwrap();
-
-		let target_content = fs::read_to_string(&target_path).await.unwrap();
-		assert_eq!(target_content.trim(), "line 5", "Should extract last line");
-
-		// Test extracting last 2 lines
-		fs::write(&target_path, "").await.unwrap(); // Clear target
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": -2, "from_end": -1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		execute_extract_lines(&call).await.unwrap();
-
-		let target_content = fs::read_to_string(&target_path).await.unwrap();
-		assert_eq!(target_content.trim(), "line 4\nline 5", "Should extract last 2 lines");
-
-		// Test mixed positive and negative indices
-		fs::write(&target_path, "").await.unwrap(); // Clear target
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": 2, "from_end": -2,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		execute_extract_lines(&call).await.unwrap();
-
-		let target_content = fs::read_to_string(&target_path).await.unwrap();
-		assert_eq!(
-			target_content.trim(),
-			"line 2\nline 3\nline 4",
-			"Should extract lines 2-4"
-		);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_negative_indexing_errors() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source_path = temp_dir.path().join("source.txt");
-		let target_path = temp_dir.path().join("target.txt");
-
-		// Create source file with 3 lines
-		fs::write(&source_path, "line 1\nline 2\nline 3\n").await.unwrap();
-		fs::write(&target_path, "").await.unwrap();
-
-		// Test negative index beyond file length
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source_path.to_string_lossy(),
-				"from_start": -5, "from_end": -1,
-				"append_path": target_path.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-
-		let err = execute_extract_lines(&call).await.unwrap_err();
-		let content = err.to_string();
-		assert!(
-			content.contains("exceeds file length"),
-			"Should show error: {}",
-			content
 		);
 	}
 
@@ -6144,262 +5715,6 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_extract_lines_with_id_endpoints() {
-		// from_start/from_end as line ids are verified against the source file.
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		let source_content = "l1\nl2\nl3\nl4\n";
-		fs::write(&source, source_content).await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": lid(source_content, 3),
-				"from_end": lid(source_content, 3),
-				"append_path": target.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "l3", "should extract exactly the id-targeted line");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_stale_id_rejected() {
-		// A stale from_start id must fail with fresh context, copying nothing.
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		let original = "l1\nl2\nl3\n";
-		fs::write(&source, original).await.unwrap();
-		let stale = lid(original, 2);
-		fs::write(&source, "l1\nCHANGED\nl3\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": stale,
-				"append_path": target.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-		let err = execute_extract_lines(&call).await.unwrap_err().to_string();
-		assert!(err.contains("does not match"), "got: {err}");
-		assert!(!target.exists(), "target must not be created on stale source id");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_append_line_id() {
-		// append_line as a line id is verified against the TARGET file.
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "EXTRACTED\n").await.unwrap();
-		let target_content = "x\ny\nz\n";
-		fs::write(&target, target_content).await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"append_path": target.to_string_lossy(),
-				"append_line": lid(target_content, 2)
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "x\ny\nEXTRACTED\nz\n");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_mixed_target_preserves_untouched_endings() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "new one\r\nnew two\r\n").await.unwrap();
-		let target_content = "alpha\nbeta\r\ngamma\ndelta\n";
-		fs::write(&target, target_content).await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"from_end": 2,
-				"append_path": target.to_string_lossy(),
-				"append_line": 0
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "new one\nnew two\nalpha\nbeta\r\ngamma\ndelta\n");
-		assert_eq!(out.matches("\r\n").count(), 1);
-		assert_eq!(target_content.matches("\r\n").count(), 1);
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_crlf_target_uses_crlf_for_inserted_lines() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "new one\nnew two").await.unwrap();
-		fs::write(&target, "alpha\r\nbeta\r\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"from_end": 2,
-				"append_path": target.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "alpha\r\nbeta\r\nnew one\r\nnew two");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_crlf_source_does_not_add_cr_to_lf_target() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "new one\r\nnew two\r\n").await.unwrap();
-		fs::write(&target, "alpha\nbeta\ngamma\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"from_end": 2,
-				"append_path": target.to_string_lossy(),
-				"append_line": lid("alpha\nbeta\ngamma\n", 2)
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "alpha\nbeta\nnew one\nnew two\ngamma\n");
-		assert!(!out.contains('\r'));
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_empty_target_strips_final_bare_cr() {
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "first\r\nlast\r").await.unwrap();
-		fs::write(&target, "").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"from_end": 2,
-				"append_path": target.to_string_lossy(),
-				"append_line": 0
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "first\nlast");
-		assert!(!out.contains('\r'));
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_append_line_id_empty_target_errors() {
-		// An id append_line against an empty/new target has nothing to verify → clear error.
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "a\nb\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"append_path": target.to_string_lossy(),
-				"append_line": "1:ab"
-			}),
-		};
-		let err = execute_extract_lines(&call).await.unwrap_err().to_string();
-		assert!(err.contains("empty"), "should reject id on empty target: {err}");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_from_end_omitted_is_single_line() {
-		// Omitting from_end copies exactly one line (defaults to from_start).
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "one\ntwo\nthree\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 2,
-				"append_path": target.to_string_lossy(),
-				"append_line": -1
-			}),
-		};
-		execute_extract_lines(&call).await.unwrap();
-		let out = fs::read_to_string(&target).await.unwrap();
-		assert_eq!(out, "two");
-	}
-
-	#[tokio::test]
-	async fn test_extract_lines_append_line_negative_invalid() {
-		// append_line < -1 is out of spec and must produce a clear error (not a wrapped usize).
-		let temp_dir = tempfile::TempDir::new().unwrap();
-		let source = temp_dir.path().join("s.txt");
-		let target = temp_dir.path().join("t.txt");
-		fs::write(&source, "a\nb\n").await.unwrap();
-		fs::write(&target, "x\n").await.unwrap();
-
-		let call = McpToolCall {
-			tool_id: "test".to_string(),
-			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "extract_lines".to_string(),
-			parameters: json!({
-				"from_path": source.to_string_lossy(),
-				"from_start": 1,
-				"append_path": target.to_string_lossy(),
-				"append_line": -2
-			}),
-		};
-		let err = execute_extract_lines(&call).await.unwrap_err().to_string();
-		assert!(err.contains("Invalid append_line"), "got: {err}");
-	}
-
-	#[tokio::test]
 	async fn test_view_with_id_endpoints() {
 		// view start/end accept line ids; the position part selects the span.
 		// Out-of-range lines never render; a trailing marker reports what remains.
@@ -6931,51 +6246,6 @@ mod tests {
 	}
 
 	#[test]
-	fn remote_extract_lines() {
-		if remote_test_prefix().is_none() {
-			return;
-		}
-		remote_runtime().block_on(async {
-			let dir = setup_remote_dir().await;
-			let src_path = format!("{dir}/extract_src.txt");
-			let dst_path = format!("{dir}/extract_dst.txt");
-
-			// Create source file
-			let call = McpToolCall::test_call(
-				"text_editor",
-				json!({
-					"command": "create",
-					"path": src_path,
-					"content": "L1\nL2\nL3\nL4\nL5\n"
-				}),
-			);
-			crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
-
-			// Extract lines 2-3 into dst
-			let extract_call = McpToolCall::test_call(
-				"extract_lines",
-				json!({
-					"from_path": src_path,
-					"from_start": 2,
-					"from_end": 3,
-					"append_path": dst_path,
-					"append_line": -1
-				}),
-			);
-			let result = execute_extract_lines(&extract_call).await;
-			assert!(result.is_ok(), "extract_lines failed: {:?}", result.err());
-
-			// Verify destination
-			let dst_source = crate::mcp::fs::remote::parse_path_source(&dst_path);
-			let content = crate::mcp::fs::remote::io_read_to_string(&dst_source).await.unwrap();
-			assert!(content.contains("L2"), "content: {content}");
-			assert!(content.contains("L3"), "content: {content}");
-
-			cleanup_remote_dir(&dir).await;
-		})
-	}
-
-	#[test]
 	fn remote_undo_edit() {
 		if remote_test_prefix().is_none() {
 			return;
@@ -7019,45 +6289,14 @@ mod tests {
 	}
 
 	#[test]
-	fn remote_workdir_set() {
-		if remote_test_prefix().is_none() {
-			return;
-		}
-		remote_runtime().block_on(async {
-			let dir = setup_remote_dir().await;
-
-			let call = McpToolCall::test_call(
-				"workdir",
-				json!({
-			"path": dir }),
-			);
-			let result = crate::mcp::fs::execute_workdir_command(&call)
-				.await
-				.expect("workdir set failed");
-			match result {
-				crate::mcp::fs::WorkdirResult::Set { current, .. } => {
-					let current = current.to_string_lossy();
-					assert!(
-						current.starts_with("ssh://") || current.starts_with("sftp://"),
-						"expected remote workdir URL, got: {current}"
-					);
-				}
-				_ => panic!("expected WorkdirResult::Set"),
-			}
-
-			cleanup_remote_dir(&dir).await;
-		})
-	}
-
-	#[test]
 	fn remote_io_error_paths_and_metadata() {
 		if remote_test_prefix().is_none() {
 			return;
 		}
 		remote_runtime().block_on(async {
 			use crate::mcp::fs::remote::{
-				io_canonicalize, io_create_dir_all, io_exists, io_is_dir, io_is_file, io_metadata, io_read,
-				io_read_to_string, io_remove_file, io_write, parse_path_source,
+				io_create_dir_all, io_exists, io_is_dir, io_is_file, io_metadata, io_read, io_read_to_string,
+				io_remove_file, io_write, parse_path_source,
 			};
 
 			let dir = setup_remote_dir().await;
@@ -7071,8 +6310,6 @@ mod tests {
 			assert!(!io_exists(&missing).await.unwrap());
 			assert!(!io_is_dir(&missing).await.unwrap_or(false));
 			assert!(!io_is_file(&missing).await.unwrap_or(false));
-			// SFTP realpath may resolve nonexistent paths, so no error assertion here;
-			// the existing-file case below verifies canonicalize works.
 
 			// Existing file: write then read round-trip, metadata, predicates.
 			let file = parse_path_source(&format!("{dir}/data.txt"));
@@ -7086,8 +6323,6 @@ mod tests {
 			assert_eq!(meta.size, b"hello remote\n".len() as u64);
 			assert!(!meta.is_dir);
 			assert!(meta.is_file);
-			let canon = io_canonicalize(&file).await.unwrap();
-			assert!(canon.to_string_lossy().contains("data.txt"));
 
 			// Remove then verify it is gone.
 			io_remove_file(&file).await.unwrap();
@@ -8085,7 +7320,7 @@ mod tests {
 		let call = symbol_in(&root, json!({ "relation": "callers", "name": "other", "path": path }));
 		let err = execute_symbol(&call).await.unwrap_err().to_string();
 		assert!(err.contains("outside the workdir"), "got: {err}");
-		assert!(err.contains("`workdir` tool"), "got: {err}");
+		assert!(err.contains("cannot change the workdir"), "got: {err}");
 	}
 
 	#[tokio::test]
@@ -8593,5 +7828,353 @@ mod tests {
 
 			cleanup_remote_dir(&dir).await;
 		})
+	}
+
+	async fn run_copy_batch(path: &std::path::Path, operations: serde_json::Value) -> anyhow::Result<String> {
+		let call = McpToolCall::test_call(
+			"batch_edit",
+			json!({ "path": path.to_string_lossy(), "operations": operations }),
+		);
+		execute_batch_edit(&call).await
+	}
+
+	#[tokio::test]
+	async fn copy_from_inserts_a_range_from_another_file_after_an_id_anchor() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		let source_content = "s1\ns2\ns3\ns4\n";
+		let target_content = "a\nb\nc\n";
+		fs::write(&source, source_content).await.unwrap();
+		fs::write(&target, target_content).await.unwrap();
+
+		run_copy_batch(
+			&target,
+			json!([{
+				"operation": "insert",
+				"start": lid(target_content, 2),
+				"copy_from": { "path": source.to_string_lossy(), "start": lid(source_content, 2), "end": lid(source_content, 3) }
+			}]),
+		)
+		.await
+		.unwrap();
+
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\nb\ns2\ns3\nc\n");
+		assert_eq!(
+			fs::read_to_string(&source).await.unwrap(),
+			source_content,
+			"source must stay unchanged"
+		);
+	}
+
+	#[tokio::test]
+	async fn copy_from_accepts_integer_and_negative_endpoints_and_defaults_end_to_start() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		fs::write(&source, "s1\ns2\ns3\ns4\n").await.unwrap();
+		fs::write(&target, "a\nb\n").await.unwrap();
+
+		run_copy_batch(
+			&target,
+			json!([
+				{ "operation": "insert", "start": 0, "copy_from": { "path": source.to_string_lossy(), "start": 1 } },
+				{ "operation": "insert", "start": -1, "copy_from": { "path": source.to_string_lossy(), "start": -2, "end": -1 } }
+			]),
+		)
+		.await
+		.unwrap();
+
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "s1\na\nb\ns3\ns4\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_replaces_a_range() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		let target_content = "a\nb\nc\nd\n";
+		fs::write(&source, "x\ny\n").await.unwrap();
+		fs::write(&target, target_content).await.unwrap();
+
+		run_copy_batch(
+			&target,
+			json!([{
+				"operation": "replace",
+				"start": lid(target_content, 2),
+				"end": lid(target_content, 3),
+				"copy_from": { "path": source.to_string_lossy(), "start": 1, "end": 2 }
+			}]),
+		)
+		.await
+		.unwrap();
+
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\nx\ny\nd\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_same_file_moves_a_line_in_one_call() {
+		// The source side reads the file as it was before the call, so the replace that
+		// deletes the original does not disturb the copy.
+		let dir = tempfile::tempdir().unwrap();
+		let file = dir.path().join("f.txt");
+		let content = "a\nb\nc\nd\n";
+		fs::write(&file, content).await.unwrap();
+
+		run_copy_batch(
+			&file,
+			json!([
+				{ "operation": "insert", "start": -1, "copy_from": { "path": file.to_string_lossy(), "start": lid(content, 2) } },
+				{ "operation": "replace", "start": lid(content, 2), "end": lid(content, 2), "content": "" }
+			]),
+		)
+		.await
+		.unwrap();
+
+		assert_eq!(fs::read_to_string(&file).await.unwrap(), "a\nc\nd\nb\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_may_duplicate_a_block_next_to_itself() {
+		// Copied lines are deliberate duplication: duplicate-line detection must not fire.
+		let dir = tempfile::tempdir().unwrap();
+		let file = dir.path().join("f.txt");
+		let content = "a\nb\nc\nd\n";
+		fs::write(&file, content).await.unwrap();
+
+		run_copy_batch(
+			&file,
+			json!([{
+				"operation": "insert",
+				"start": lid(content, 1),
+				"copy_from": { "path": file.to_string_lossy(), "start": lid(content, 2), "end": lid(content, 3) }
+			}]),
+		)
+		.await
+		.unwrap();
+
+		assert_eq!(fs::read_to_string(&file).await.unwrap(), "a\nb\nc\nb\nc\nd\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_one_blank_line_stays_one_blank_line() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		let target_content = "a\nb\n";
+		fs::write(&source, "x\n\ny\n").await.unwrap();
+		fs::write(&target, target_content).await.unwrap();
+
+		run_copy_batch(
+			&target,
+			json!([{ "operation": "insert", "start": lid(target_content, 1), "copy_from": { "path": source.to_string_lossy(), "start": 2 } }]),
+		)
+		.await
+		.unwrap();
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\n\nb\n");
+
+		// Replacing with a copied blank line leaves a blank line, not a deletion.
+		let replaced = "a\n\nb\n";
+		run_copy_batch(
+			&target,
+			json!([{ "operation": "replace", "start": lid(replaced, 3), "end": lid(replaced, 3), "copy_from": { "path": source.to_string_lossy(), "start": 2 } }]),
+		)
+		.await
+		.unwrap();
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\n\n\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_creates_a_missing_target_with_parent_dirs_and_trailing_newline() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("nested").join("deeper").join("t.txt");
+		fs::write(&source, "s1\ns2\ns3\n").await.unwrap();
+
+		run_copy_batch(
+			&target,
+			json!([{ "operation": "insert", "start": -1, "copy_from": { "path": source.to_string_lossy(), "start": 1, "end": 2 } }]),
+		)
+		.await
+		.unwrap();
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "s1\ns2\n");
+
+		let at_start = dir.path().join("start.txt");
+		run_copy_batch(
+			&at_start,
+			json!([{ "operation": "insert", "start": 0, "copy_from": { "path": source.to_string_lossy(), "start": 3 } }]),
+		)
+		.await
+		.unwrap();
+		assert_eq!(fs::read_to_string(&at_start).await.unwrap(), "s3\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_does_not_start_a_missing_file_for_other_operations() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		fs::write(&source, "s1\ns2\n").await.unwrap();
+		let copy = json!({ "path": source.to_string_lossy(), "start": 1 });
+		let expected = "only copy_from inserts at 0 or -1 start a missing file";
+
+		let cases = [
+			json!([{ "operation": "insert", "start": -1, "content": "typed\n" }]),
+			json!([{ "operation": "insert", "start": "1:ab", "copy_from": copy }]),
+			json!([{ "operation": "replace", "start": "1:ab", "end": "1:ab", "copy_from": copy }]),
+			json!([
+				{ "operation": "insert", "start": -1, "copy_from": copy },
+				{ "operation": "insert", "start": 0, "content": "typed\n" }
+			]),
+		];
+		for operations in cases {
+			let missing_dir = dir.path().join("absent");
+			let target = missing_dir.join("t.txt");
+			let err = run_copy_batch(&target, operations).await.unwrap_err().to_string();
+			assert!(err.contains("File not found") && err.contains(expected), "got: {err}");
+			assert!(
+				!missing_dir.exists(),
+				"no directory may be created for a rejected batch"
+			);
+		}
+	}
+
+	#[tokio::test]
+	async fn copy_from_rejects_content_together_with_copy_from_and_applies_nothing() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		fs::write(&source, "s1\n").await.unwrap();
+		fs::write(&target, "a\nb\n").await.unwrap();
+
+		let err = run_copy_batch(
+			&target,
+			json!([
+				{ "operation": "insert", "start": 0, "copy_from": { "path": source.to_string_lossy(), "start": 1 } },
+				{ "operation": "insert", "start": -1, "content": "x\n", "copy_from": { "path": source.to_string_lossy(), "start": 1 } }
+			]),
+		)
+		.await
+		.unwrap_err()
+		.to_string();
+
+		assert!(err.contains("Set 'content' or 'copy_from', not both"), "got: {err}");
+		assert_eq!(
+			fs::read_to_string(&target).await.unwrap(),
+			"a\nb\n",
+			"valid sibling op must not apply"
+		);
+	}
+
+	#[tokio::test]
+	async fn copy_from_missing_content_and_copy_from_is_rejected() {
+		let dir = tempfile::tempdir().unwrap();
+		let target = dir.path().join("t.txt");
+		fs::write(&target, "a\n").await.unwrap();
+
+		let err = run_copy_batch(&target, json!([{ "operation": "insert", "start": -1 }]))
+			.await
+			.unwrap_err()
+			.to_string();
+
+		assert!(err.contains("Missing 'content' or 'copy_from' field"), "got: {err}");
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_stale_source_id_is_rejected_and_applies_nothing() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		let stale = lid("s1\ns2\n", 2);
+		fs::write(&source, "s1\nchanged\n").await.unwrap();
+		fs::write(&target, "a\n").await.unwrap();
+
+		let err = run_copy_batch(
+			&target,
+			json!([{ "operation": "insert", "start": -1, "copy_from": { "path": source.to_string_lossy(), "start": stale } }]),
+		)
+		.await
+		.unwrap_err()
+		.to_string();
+
+		assert!(err.contains("Invalid copy_from"), "got: {err}");
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\n");
+
+		// A stale id must not start a missing target either.
+		let new_target = dir.path().join("new.txt");
+		let stale_for_new = lid("s1\ns2\n", 2);
+		run_copy_batch(
+			&new_target,
+			json!([{ "operation": "insert", "start": -1, "copy_from": { "path": source.to_string_lossy(), "start": stale_for_new } }]),
+		)
+		.await
+		.unwrap_err();
+		assert!(!new_target.exists(), "target must not be created on a stale source id");
+	}
+
+	#[tokio::test]
+	async fn copy_from_source_id_from_before_an_edit_of_the_source_still_names_its_line() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		let source_content = "s1\ns2\ns3\n";
+		fs::write(&source, source_content).await.unwrap();
+		fs::write(&target, "a\n").await.unwrap();
+		let old_id = lid(source_content, 2);
+
+		// Moves "s2" down a line; the edit leaves an undo snapshot to relocate through.
+		run_copy_batch(&source, json!([{ "operation": "insert", "start": 0, "content": "s0" }]))
+			.await
+			.unwrap();
+
+		run_copy_batch(
+			&target,
+			json!([{ "operation": "insert", "start": -1, "copy_from": { "path": source.to_string_lossy(), "start": old_id } }]),
+		)
+		.await
+		.unwrap();
+
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\ns2\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_start_after_end_is_rejected() {
+		let dir = tempfile::tempdir().unwrap();
+		let source = dir.path().join("s.txt");
+		let target = dir.path().join("t.txt");
+		fs::write(&source, "s1\ns2\ns3\n").await.unwrap();
+		fs::write(&target, "a\n").await.unwrap();
+
+		let err = run_copy_batch(
+			&target,
+			json!([{ "operation": "insert", "start": -1, "copy_from": { "path": source.to_string_lossy(), "start": 3, "end": 1 } }]),
+		)
+		.await
+		.unwrap_err()
+		.to_string();
+
+		assert!(
+			err.contains("Invalid copy_from") && err.contains("is after end"),
+			"got: {err}"
+		);
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\n");
+	}
+
+	#[tokio::test]
+	async fn copy_from_missing_source_file_is_rejected() {
+		let dir = tempfile::tempdir().unwrap();
+		let target = dir.path().join("t.txt");
+		fs::write(&target, "a\n").await.unwrap();
+
+		let err = run_copy_batch(
+			&target,
+			json!([{ "operation": "insert", "start": -1, "copy_from": { "path": dir.path().join("nope.txt").to_string_lossy(), "start": 1 } }]),
+		)
+		.await
+		.unwrap_err()
+		.to_string();
+
+		assert!(err.contains("Invalid copy_from"), "got: {err}");
+		assert_eq!(fs::read_to_string(&target).await.unwrap(), "a\n");
 	}
 }

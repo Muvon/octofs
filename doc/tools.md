@@ -2,7 +2,7 @@
 
 Every tool Octofs exposes, what it does, and how it works internally. The tools
 fall into two groups: filesystem work (`view`, `text_editor`, `batch_edit`,
-`extract_lines`, `shell`, `workdir`) and code exploration (the outline and AST
+`shell`) and code exploration (the outline and AST
 modes of `view`, and `symbol`), which is described in full in
 [code-exploration.md](code-exploration.md). The model-facing contract (schemas,
 descriptions, defaults) lives in `src/mcp/server.rs` — `Params` structs and
@@ -18,7 +18,7 @@ pipeline (see [architecture.md](architecture.md)):
   → result string → append_hints()       — drains queued guidance into the response
 ```
 
-Relative paths resolve against the session workdir (see
+Relative paths resolve against the session root, called `workdir` in code (see
 [architecture.md](architecture.md#state)); every file tool also accepts
 `ssh://` / `sftp://` URLs transparently (see [remote.md](remote.md)).
 
@@ -206,17 +206,17 @@ Applies up to 50 `insert`/`replace` operations to one file atomically.
 Because verification precedes the write, a failed batch leaves the file
 untouched.
 
----
-
-## `extract_lines` — copy a range between files
-
-**Modules:** `fs/core.rs`
-
-Copies a line range from one file and appends it into another — moving code
-between files, splitting modules — without retyping it. The source is left
-untouched; to *move*, follow with a `batch_edit` that removes the range.
-Targets follow the same `N:hh` verification and locking discipline as
-`batch_edit`.
+**Copying lines.** An `insert` or `replace` operation can take
+`copy_from: {path, start, end?}` instead of `content` (exactly one of the two).
+The operation then inserts or substitutes the copied lines, so code moves
+between files, or inside one file, without retyping it. `start` and `end` are
+line ids (`"N:hh"`) or integers (negative counts from the end); `end` defaults
+to `start`. The source can be another file or the edited file; a same-file
+source is read as it was before the call, so moving lines inside a file is one
+call: insert the copy, and replace the old range with `""`. A missing target
+file is created, with its folders, only when every operation is a `copy_from`
+insert at `0` or `-1`; any other edit of a missing file fails with "File not
+found". Copied lines are exempt from the duplicate-line check.
 
 ---
 
@@ -224,8 +224,9 @@ Targets follow the same `N:hh` verification and locking discipline as
 
 **Modules:** `fs/shell.rs`, `fs/background.rs`
 
-Runs `sh -c` (`cmd /C` on Windows) in the current workdir. Local machine only —
-a remote (`ssh://`) workdir disables `shell` (bail, not a hint). No stdin, no
+Runs `sh -c` (`cmd /C` on Windows) in the session root. To run elsewhere, start
+the command with `cd dir && …`. Local machine only —
+a remote (`ssh://`) session root disables `shell` (bail, not a hint). No stdin, no
 TTY: interactive commands are unusable by design.
 
 **Lifecycle.** A command runs in a ~10 s foreground window with MCP progress
@@ -261,18 +262,6 @@ redraws stripped, repeated lines collapsed with a count; pipe through
 output. Distinct commands run concurrently; an identical command in the same
 directory is rejected while it runs. Children run in their own process group,
 registered via `register_child`, so SIGTERM/stdio-EOF cleanup kills them.
-
----
-
-## `workdir` — switch working directory
-
-**Modules:** `fs/workdir.rs`, `SessionWorkdir` in `server.rs`
-
-Switches the working directory for later calls (`path`), or reverts to the
-session root (`reset: true`). Every tool resolves relative paths against it.
-Returns a structured `WorkdirResult` (set / reset / get). A remote `ssh://`
-workdir is allowed — it makes relative paths resolve remotely and disables
-`shell`. Don't call it just to check the directory.
 
 ---
 

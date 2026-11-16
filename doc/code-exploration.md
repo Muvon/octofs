@@ -23,7 +23,7 @@ Two tools carry this:
   name and returns definitions, references, callers, callees, supertypes,
   subtypes, imports, importers, or the chain between two symbols.
 
-For the filesystem half (read, search, edit, copy, shell, working directory,
+For the filesystem half (read, search, edit, copy, shell,
 `ssh://` paths) see [tools.md](tools.md) and [remote.md](remote.md). Module
 layout is in [architecture.md](architecture.md).
 

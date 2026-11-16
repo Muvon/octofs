@@ -15,7 +15,7 @@
 //! MCP server handlers, session state, and tool parameter schemas.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use rmcp::{
 	handler::server::{wrapper::Parameters, ServerHandler},
@@ -38,48 +38,6 @@ use super::fs;
 use super::request_ctx;
 use super::McpToolCall;
 
-/// Per-session working directory state.
-/// Each client session has its own workdir, isolated from other sessions.
-#[derive(Debug)]
-pub struct SessionWorkdir {
-	/// The session root directory (set at session creation, never changes).
-	pub root: PathBuf,
-	/// The current working directory (can be changed via workdir tool).
-	pub current: RwLock<Option<PathBuf>>,
-}
-
-impl SessionWorkdir {
-	pub fn new(root: PathBuf) -> Self {
-		Self {
-			root,
-			current: RwLock::new(None),
-		}
-	}
-
-	/// Get the current working directory, or the root if not set.
-	pub fn get_current(&self) -> PathBuf {
-		self.current
-			.read()
-			.ok()
-			.and_then(|guard| guard.clone())
-			.unwrap_or_else(|| self.root.clone())
-	}
-
-	/// Set the current working directory.
-	pub fn set_current(&self, path: PathBuf) {
-		if let Ok(mut guard) = self.current.write() {
-			*guard = Some(path);
-		}
-	}
-
-	/// Reset to the session root.
-	pub fn reset(&self) {
-		if let Ok(mut guard) = self.current.write() {
-			*guard = None;
-		}
-	}
-}
-
 /// Most sessions one connection keeps state for. Octomind multiplexes every
 /// session of a long-lived daemon over one connection and MCP has no session-end
 /// signal, so the least recently used session is dropped beyond this.
@@ -88,7 +46,8 @@ const MAX_TRACKED_SESSIONS: usize = 64;
 /// Workdir and delta-view cache of one client session.
 #[derive(Debug)]
 struct SessionState {
-	workdir: SessionWorkdir,
+	/// Root that relative paths resolve against.
+	workdir: PathBuf,
 	/// Present only for clients that report a `context_epoch`: a delta is safe
 	/// only when the client says when the model lost what it was served.
 	view_cache: Option<Arc<fs::delta::ViewCache>>,
@@ -115,7 +74,7 @@ impl Sessions {
 		let mut states = self.states.lock().expect("sessions lock poisoned");
 		if let Some(state) = states
 			.get(&id)
-			.filter(|state| state.workdir.root == root && state.view_cache.is_some() == context_epoch.is_some())
+			.filter(|state| state.workdir == root && state.view_cache.is_some() == context_epoch.is_some())
 		{
 			state.last_used.store(now, Ordering::Relaxed);
 			if let (Some(cache), Some(epoch)) = (&state.view_cache, context_epoch) {
@@ -135,7 +94,7 @@ impl Sessions {
 			}
 		}
 		let state = Arc::new(SessionState {
-			workdir: SessionWorkdir::new(root),
+			workdir: root,
 			view_cache: context_epoch.map(|_| Arc::new(fs::delta::ViewCache::default())),
 			context_epoch: std::sync::atomic::AtomicU64::new(context_epoch.unwrap_or_default()),
 			last_used: std::sync::atomic::AtomicU64::new(now),
@@ -453,7 +412,7 @@ impl OctofsServer {
 		preface: String,
 	) -> Result<CallToolResponse, String> {
 		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
+		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "shell".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -646,7 +605,7 @@ impl OctofsServer {
 		Parameters(params): Parameters<ViewParams>,
 	) -> Result<CallToolResponse, String> {
 		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
+		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "view".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -707,7 +666,7 @@ impl OctofsServer {
 		Parameters(params): Parameters<SymbolParams>,
 	) -> Result<String, String> {
 		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
+		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "symbol".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -749,7 +708,7 @@ impl OctofsServer {
 			return Err(CHECK_NEEDS_SHELL.to_string());
 		}
 		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
+		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "text_editor".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -782,7 +741,11 @@ impl OctofsServer {
 			shows; removed lines and the middle of a long added block show as an id range. A \
 			trailing `shift:` line says how far the lines after each edit moved. Insert anchors \
 			0 (file start) and -1 (end) are plain integers. Content is raw text without `N:hh|` \
-			prefixes."
+			prefixes. To copy lines instead of retyping them, give an operation `copy_from` \
+			(a line range of any file, this one as it was before the call) in place of \
+			`content`; a move adds a replace of the old range with \"\" (a range of another file \
+			is removed by a separate call on that file). A file that does not \
+			exist yet takes only `copy_from` inserts at 0 or -1, which create it."
 	)]
 	async fn batch_edit(
 		&self,
@@ -794,7 +757,7 @@ impl OctofsServer {
 			return Err(CHECK_NEEDS_SHELL.to_string());
 		}
 		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
+		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "batch_edit".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
@@ -807,38 +770,6 @@ impl OctofsServer {
 		})
 		.await?;
 		self.edit_response(context, result, check).await
-	}
-
-	#[tool(
-		title = "Extract Lines",
-		annotations(
-			read_only_hint = false,
-			destructive_hint = false,
-			idempotent_hint = false,
-			open_world_hint = false
-		),
-		description = "Copy a line range from one file into another at append_line without \
-			retyping the content. The source is left untouched. A move requires a separate \
-			batch_edit to remove the source range; the two calls are not one atomic operation."
-	)]
-	async fn extract_lines(
-		&self,
-		context: RequestContext<RoleServer>,
-		Parameters(params): Parameters<ExtractLinesParams>,
-	) -> Result<String, String> {
-		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
-		let call = McpToolCall {
-			tool_name: "extract_lines".to_string(),
-			parameters: serde_json::to_value(&params).unwrap_or_default(),
-			tool_id: String::new(),
-			workdir,
-		};
-		request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_extract_lines(&call).await.map_err(|e| e.to_string())?;
-			Ok(append_hints(result))
-		})
-		.await
 	}
 
 	#[tool(
@@ -861,8 +792,8 @@ impl OctofsServer {
 			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. \
 			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
 			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
-			changes directory for that call; `workdir` changes it for later calls. A remote \
-			(ssh://) workdir disables shell. Output is terminal-clean \
+			changes directory for that call only. A remote (ssh://) workdir disables shell. \
+			Output is terminal-clean \
 			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
 			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
 			the output. Large recognized test/build output is digested with its full output path appended. \
@@ -882,48 +813,6 @@ impl OctofsServer {
 		Parameters(params): Parameters<ShellParams>,
 	) -> Result<CallToolResponse, String> {
 		self.run_shell(context, params, String::new()).await
-	}
-
-	#[tool(
-		title = "Working Directory",
-		annotations(
-			read_only_hint = false,
-			destructive_hint = false,
-			idempotent_hint = true,
-			open_world_hint = false
-		),
-		description = "Get or change the session's working directory. Set `path` to switch \
-			directories, or `reset: true` to revert to the session root. Omit both to query the \
-			current directory. Subsequent calls resolve relative paths against it. \
-			A remote (ssh://) workdir disables `shell`."
-	)]
-	async fn workdir(
-		&self,
-		context: RequestContext<RoleServer>,
-		Parameters(params): Parameters<WorkdirParams>,
-	) -> Result<String, String> {
-		let session = self.session(&context);
-		let workdir = session.workdir.get_current();
-		let call = McpToolCall {
-			tool_name: "workdir".to_string(),
-			parameters: serde_json::to_value(&params).unwrap_or_default(),
-			tool_id: String::new(),
-			workdir,
-		};
-		let result = fs::execute_workdir_command(&call).await.map_err(|e| e.to_string())?;
-
-		// Update session workdir state based on the structured result
-		match &result {
-			fs::WorkdirResult::Set { current, .. } => {
-				session.workdir.set_current(current.clone());
-			}
-			fs::WorkdirResult::Reset => {
-				session.workdir.reset();
-			}
-			fs::WorkdirResult::Get { .. } => {}
-		}
-
-		Ok(result.to_json_string())
 	}
 }
 
@@ -1051,8 +940,8 @@ impl ServerHandler for OctofsServer {
 		.with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
-			"Tools for file reading, search, editing, copying, shell execution, the session working \
-				 directory, and code exploration (outlines, syntax-tree search, and the `symbol` tool for \
+			"Tools for file reading, search, editing, copying, shell execution, and code exploration \
+				 (outlines, syntax-tree search, and the `symbol` tool for \
 				 definitions, references, callers, callees, imports and type hierarchies, computed from \
 				 the files on disk). File lines render as `N:hh|content`; copy `N:hh` verbatim \
 				 for line-addressed edits; content sent to edit tools is raw text without `N:hh|` \
@@ -1437,7 +1326,7 @@ pub struct ViewRange {
 	pub end: serde_json::Value,
 }
 
-/// JSON schema for a read position (view `start`/`end`, extract `from_start`/`from_end`).
+/// JSON schema for a read position (view `start`/`end`, batch_edit `copy_from` `start`/`end`).
 ///
 /// A line id string "N:hh" copied from view output, or a plain integer line number:
 /// only reads take plain numbers. `anyOf` (not `oneOf`) is used because it has strictly
@@ -1462,7 +1351,7 @@ fn line_id_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 	})
 }
 
-/// JSON schema for an edit position (op `start`, `append_line`): a line id, or the
+/// JSON schema for an edit position (op `start`): a line id, or the
 /// anchors 0 (file start) / -1 (end). Edits reject every other plain number, so the
 /// schema does not offer them.
 fn edit_anchor_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -1546,20 +1435,43 @@ pub struct BatchEditOperation {
 	#[serde(default)]
 	#[schemars(schema_with = "line_id_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Raw text to insert or replace with, no `N:hh|` prefixes.
-	#[serde(deserialize_with = "string_or_lines")]
-	pub content: String,
+	/// Raw text to insert or replace with, no `N:hh|` prefixes. Omit it when `copy_from` is set.
+	#[serde(
+		default,
+		deserialize_with = "string_or_lines",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub content: Option<String>,
+	/// Lines to copy in place of typing `content`: a range of any file, this one as it was
+	/// before the call.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub copy_from: Option<CopySource>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CopySource {
+	/// File to copy from (ssh://user@host:port/path for remote).
+	pub path: String,
+	/// First line to copy (inclusive): line id or integer.
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub start: serde_json::Value,
+	/// Last line to copy (inclusive): line id or integer. Default: `start`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[schemars(schema_with = "line_endpoint_schema")]
+	pub end: Option<serde_json::Value>,
 }
 
 /// Accept content as a string or as a list of lines. A list names exactly one
 /// block of text, so joining it beats rejecting the call and being re-sent the
 /// same edit as a string.
-fn string_or_lines<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn string_or_lines<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
 	D: serde::Deserializer<'de>,
 {
 	match serde_json::Value::deserialize(deserializer)? {
-		serde_json::Value::String(s) => Ok(s),
+		serde_json::Value::Null => Ok(None),
+		serde_json::Value::String(s) => Ok(Some(s)),
 		serde_json::Value::Array(items) => items
 			.iter()
 			.map(|item| match item {
@@ -1569,7 +1481,7 @@ where
 				))),
 			})
 			.collect::<Result<Vec<_>, _>>()
-			.map(|lines| lines.join("\n")),
+			.map(|lines| Some(lines.join("\n"))),
 		other => Err(serde::de::Error::custom(format!(
 			"content must be a string or a list of lines, found {other}"
 		))),
@@ -1658,42 +1570,11 @@ impl<'de> Deserialize<'de> for BatchEditParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct ExtractLinesParams {
-	/// Source file (ssh://user@host:port/path for remote).
-	pub from_path: String,
-	/// First line to copy (inclusive): integer or line id (verified against the source).
-	#[schemars(schema_with = "line_endpoint_schema")]
-	pub from_start: serde_json::Value,
-	/// Last line to copy (inclusive): integer or line id. Default: `from_start`.
-	#[serde(default)]
-	#[schemars(schema_with = "line_endpoint_schema")]
-	pub from_end: Option<serde_json::Value>,
-	/// Target file the lines are appended to (ssh://user@host:port/path for remote).
-	pub append_path: String,
-	/// Where to append in the target: a full line id like "12:a3" to insert after (verified
-	/// against the target), or 0 = beginning, -1 = end.
-	#[schemars(schema_with = "edit_anchor_schema")]
-	pub append_line: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ShellParams {
 	/// Command line for `sh -c` (`cmd /C` on Windows). No stdin or TTY is available;
 	/// commands requiring input need their non-interactive options.
 	#[schemars(extend("contentMediaType" = SHELL_COMMAND_MEDIA_TYPE))]
 	pub command: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct WorkdirParams {
-	/// Directory to switch into, an absolute local path or a path relative to the current workdir. Omit it with
-	/// `reset` omitted or false to query the current directory. Remote: ssh://user@host:port/path;
-	/// `ssh://host` is the login home, `ssh://host/~/dir` is relative to it.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub path: Option<String>,
-	/// Revert to the session root.
-	#[serde(default)]
-	pub reset: Option<bool>,
 }
 
 // ── Server implementation ───────────────────────────────────────────────────────

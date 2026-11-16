@@ -16,7 +16,10 @@
 
 use super::super::McpToolCall;
 use super::core::save_file_history;
-use super::remote::{io_exists, io_metadata, io_read_to_string, io_remove_file, io_write, PathSource};
+use super::remote::{
+	io_create_dir_all, io_exists, io_metadata, io_read_to_string, io_remove_file, io_write, resolve_path_source,
+	PathSource,
+};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -122,7 +125,7 @@ pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
 }
 
 // Line-id helpers are shared from utils::line_hash.
-use crate::utils::line_hash::{line_id_at, verify_line_id};
+use crate::utils::line_hash::{line_id_at, parse_endpoint, resolve_line_index, verify_line_id, Endpoint};
 
 // Batch operation structures for the new single-file, multi-operation approach
 #[derive(Debug, Clone)]
@@ -131,6 +134,8 @@ struct BatchOperation {
 	line_range: LineRange,
 	content: String,
 	operation_index: usize,
+	/// Content came from `copy_from`: deliberate duplication, exempt from duplicate checks.
+	copied: bool,
 }
 
 // Unresolved batch operation with endpoints not yet verified against the file
@@ -140,6 +145,7 @@ struct UnresolvedBatchOperation {
 	line_range: UnresolvedLineRange,
 	content: String,
 	operation_index: usize,
+	copied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -649,40 +655,6 @@ impl EditableContent {
 			content.push_str(line.ending);
 		}
 		content
-	}
-
-	pub(crate) fn insert_lines(
-		&mut self,
-		position: usize,
-		content_lines: &[&str],
-		trailing_newline: bool,
-	) -> Result<()> {
-		if position > self.lines.len() {
-			bail!("Invalid internal insertion position {position}");
-		}
-
-		let mut inserted: Vec<EditableLine> = content_lines
-			.iter()
-			.map(|line| EditableLine {
-				text: line.trim_end_matches('\r').to_string(),
-				ending: self.dominant_ending,
-			})
-			.collect();
-		if inserted.is_empty() {
-			return Ok(());
-		}
-
-		if position > 0 && self.lines[position - 1].ending.is_empty() {
-			self.lines[position - 1].ending = self.dominant_ending;
-		}
-		if position == self.lines.len() && !trailing_newline {
-			let last = inserted.len() - 1;
-			inserted[last].ending = "";
-		}
-
-		self.lines.splice(position..position, inserted);
-		self.had_trailing_newline = trailing_newline;
-		Ok(())
 	}
 
 	pub(crate) fn replace_normalized_range(&mut self, start: usize, end: usize, replacement: &str) -> Result<()> {
@@ -1503,6 +1475,92 @@ pub(crate) fn push_added_lines(diff: &mut Vec<String>, first_1idx: usize, conten
 	diff.push(format!("+{}|{}", id(n - 1), content_lines[n - 1]));
 }
 
+// Lines of a `copy_from` range, ending in a newline so a copied blank line stays one
+// line. A source that is the edited file reads as it was before this call, the same
+// snapshot every other target in the batch refers to.
+async fn copied_lines(
+	spec: &Value,
+	target: &PathSource,
+	target_lines: &[&str],
+	workdir: &Path,
+) -> Result<String, String> {
+	let path = spec
+		.get("path")
+		.and_then(|v| v.as_str())
+		.filter(|p| !p.trim().is_empty())
+		.ok_or("missing 'path'")?;
+	let start = parse_endpoint(spec.get("start").filter(|v| !v.is_null()).ok_or("missing 'start'")?)?;
+	let end = match spec.get("end").filter(|v| !v.is_null()) {
+		Some(v) => parse_endpoint(v)?,
+		None => start.clone(),
+	};
+	let source = resolve_path_source(path, workdir);
+	let source_raw;
+	let lines: Vec<&str> = if lock_key_for_source(&source) == lock_key_for_source(target) {
+		target_lines.to_vec()
+	} else {
+		source_raw = io_read_to_string(&source)
+			.await
+			.map_err(|e| format!("cannot read '{path}': {e}"))?;
+		incoming_content_lines(&source_raw)
+	};
+	let resolve = |endpoint: &Endpoint| match endpoint {
+		Endpoint::Number(n) => resolve_line_index(*n, lines.len()),
+		Endpoint::Id { line, hash } => verify_line_id(*line, hash, &lines),
+	};
+	let (first, last) = match (resolve(&start), resolve(&end)) {
+		(Ok(first), Ok(last)) => (first, last),
+		(first, last) => relocated_range(&start, &end, &source, &lines).ok_or_else(|| {
+			[first.err(), last.err()]
+				.into_iter()
+				.flatten()
+				.collect::<Vec<_>>()
+				.join("\n")
+		})?,
+	};
+	if first > last {
+		return Err(format!("start (line {first}) is after end (line {last}) in '{path}'"));
+	}
+	Ok(lines[first - 1..last].join("\n") + "\n")
+}
+
+// Source ids copied before the source was edited still name their lines when the edit
+// only moved them, as for every other line id in the batch.
+fn relocated_range(start: &Endpoint, end: &Endpoint, source: &PathSource, lines: &[&str]) -> Option<(usize, usize)> {
+	let (
+		Endpoint::Id {
+			line: first,
+			hash: first_hash,
+		},
+		Endpoint::Id {
+			line: last,
+			hash: last_hash,
+		},
+	) = (start, end)
+	else {
+		return None;
+	};
+	let range = UnresolvedLineRange::IdRange {
+		start: (*first, first_hash.clone()),
+		end: (*last, last_hash.clone()),
+	};
+	match resolve_through_history(&range, &super::core::file_snapshots(source), lines)? {
+		LineRange::Range(first, last) => Some((first, last)),
+		LineRange::Single(line) => Some((line, line)),
+	}
+}
+
+// An insert of copied lines at the file start (0) or end (-1): the only edit a missing
+// file can take, as it has no line for an id to name.
+fn copies_to_file_edge(operation: &Value) -> bool {
+	operation.get("operation").and_then(Value::as_str) == Some("insert")
+		&& operation.get("copy_from").is_some_and(|v| !v.is_null())
+		&& matches!(
+			operation.get("start").map(parse_endpoint),
+			Some(Ok(Endpoint::Number(0 | -1)))
+		)
+}
+
 // NEW REVOLUTIONARY BATCH_EDIT: Single file, multiple operations, original line numbers
 pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result<String> {
 	// Extract path from the call parameters - NEW: single file only
@@ -1527,22 +1585,32 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		);
 	}
 
-	let source = super::remote::resolve_path_source(path_str, &call.workdir);
-	// Check if file exists
-	if !io_exists(&source).await? {
-		bail!("File not found: {}", path_str);
-	}
-
+	let source = resolve_path_source(path_str, &call.workdir);
+	// Copied lines may start a missing file; any other edit of a missing path names a
+	// wrong path.
+	let starts_file = operations.iter().all(copies_to_file_edge);
 	// Acquire file lock to prevent concurrent writes
 	let file_lock = acquire_file_lock(&source).await?;
 	let _lock_guard = file_lock.lock().await;
 
+	// Checked under the lock: another writer may create or remove the file until then.
+	let is_new = !io_exists(&source).await?;
+	if is_new && !starts_file {
+		bail!("File not found: {path_str} (only copy_from inserts at 0 or -1 start a missing file)");
+	}
+
 	// Matching, ids, conflicts, and diffs remain ending-agnostic while writes retain
 	// the original terminator of every line that no operation touches.
-	let original_raw = io_read_to_string(&source)
-		.await
-		.map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
-	let original = EditableContent::from_raw(&original_raw);
+	let original_raw = if is_new {
+		String::new()
+	} else {
+		io_read_to_string(&source)
+			.await
+			.map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?
+	};
+	let mut original = EditableContent::from_raw(&original_raw);
+	// A started file ends in a newline like any text file: there is no ending to keep.
+	original.had_trailing_newline |= is_new;
 	let original_content = original.normalized();
 
 	// Parse and validate all operations (with unresolved line ranges)
@@ -1604,13 +1672,27 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			}
 		};
 
-		// Extract content. An insert of "" can only mean a blank line: inserting nothing
-		// is no edit, and reporting it as applied hides the miss. A replace of "" deletes.
-		let content = match operation_obj.get("content").and_then(|v| v.as_str()) {
-			Some("") if operation_type == OperationType::Insert => "\n".to_string(),
-			Some(c) => c.to_string(),
-			None => {
-				parse_failures.push(format!("  op {index}: Missing 'content' field"));
+		// Content is typed in or copied from a line range, never both. An insert of ""
+		// can only mean a blank line: inserting nothing is no edit, and reporting it as
+		// applied hides the miss. A replace of "" deletes.
+		let typed = operation_obj.get("content").and_then(|v| v.as_str());
+		let copy_from = operation_obj.get("copy_from").filter(|v| !v.is_null());
+		let content = match (typed, copy_from) {
+			(Some(_), Some(_)) => {
+				parse_failures.push(format!("  op {index}: Set 'content' or 'copy_from', not both"));
+				continue;
+			}
+			(Some(""), None) if operation_type == OperationType::Insert => "\n".to_string(),
+			(Some(c), None) => c.to_string(),
+			(None, Some(spec)) => match copied_lines(spec, &source, &original_lines, &call.workdir).await {
+				Ok(lines) => lines,
+				Err(e) => {
+					parse_failures.push(format!("  op {index}: Invalid copy_from: {e}"));
+					continue;
+				}
+			},
+			(None, None) => {
+				parse_failures.push(format!("  op {index}: Missing 'content' or 'copy_from' field"));
 				continue;
 			}
 		};
@@ -1619,6 +1701,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			operation_type,
 			line_range,
 			content,
+			copied: copy_from.is_some(),
 			operation_index: index,
 		});
 	}
@@ -1656,6 +1739,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					operation_type: unresolved_op.operation_type,
 					line_range: resolved_range,
 					content: unresolved_op.content,
+					copied: unresolved_op.copied,
 					operation_index: unresolved_op.operation_index,
 				});
 			}
@@ -1691,7 +1775,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	};
 	for op in &batch_operations {
 		let content_lines = incoming_content_lines(&op.content);
-		if content_lines.is_empty() {
+		if content_lines.is_empty() || op.copied {
 			continue;
 		}
 		match op.operation_type {
@@ -1745,6 +1829,15 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		.await
 		.map_err(|e| anyhow!("Failed to apply operations: {}", e))?;
 	let final_content = edited.normalized();
+
+	// Folders for a started file are made only now, so a call that fails leaves none behind.
+	if is_new {
+		if let Some(parent) = source.parent() {
+			io_create_dir_all(&parent)
+				.await
+				.map_err(|e| anyhow!("Failed to create parent directories for '{path_str}': {e}"))?;
+		}
+	}
 
 	// Save file history for undo functionality
 	save_file_history(&source).await?;

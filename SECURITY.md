@@ -31,8 +31,8 @@ We take security seriously. If you discover a security vulnerability, please rep
 
 Octofs gives the connected MCP client the same access as the user running it. It is not a sandbox:
 
-- **Trust model** — Every tool acts with the server user's permissions. `shell` runs arbitrary commands and the file tools accept absolute paths, so the session root (`--path`, `workdir`) is the default for relative paths, not a containment boundary. Connect only clients you trust, and use OS-level isolation (a container, VM, or dedicated user) when you need confinement.
-- **Remote paths** — `ssh://` and `sftp://` paths, including a `workdir` switched to one, connect with the operator's SSH key and agent.
+- **Trust model** — Every tool acts with the server user's permissions. `shell` runs arbitrary commands and the file tools accept absolute paths, so the session root (`--path`, or the client's session setting) is the default for relative paths, not a containment boundary. Connect only clients you trust, and use OS-level isolation (a container, VM, or dedicated user) when you need confinement.
+- **Remote paths** — `ssh://` and `sftp://` paths, including a session root started with `--path ssh://…`, connect with the operator's SSH key and agent.
 - **Network** — The default stdio transport opens no port. `--bind` serves HTTP: a non-loopback address is refused unless `--auth-token` (or `OCTOFS_AUTH_TOKEN`) is set, and clients must then send `Authorization: Bearer <token>`. A server without a token listens on loopback only and rejects requests that carry a browser `Origin` header.
 - **Stale-write detection** — Edits target hash-verified line ids, so an edit against a file that changed underneath fails instead of overwriting it.
 

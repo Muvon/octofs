@@ -30,17 +30,15 @@ pub mod shell;
 pub mod structure;
 pub mod symbols;
 pub mod text_editing;
-pub mod workdir;
 
 #[cfg(test)]
 mod fs_tests;
 
 // Re-export main functionality
-pub use core::{execute_batch_edit, execute_extract_lines, execute_text_editor, execute_view, execute_view_image};
+pub use core::{execute_batch_edit, execute_text_editor, execute_view, execute_view_image};
 
 pub use remote::{parse_path_source, PathSource};
 pub use shell::execute_shell_command;
 pub use symbols::execute_symbol;
-pub use workdir::{execute_workdir_command, WorkdirResult};
 
 mod multi_edit;

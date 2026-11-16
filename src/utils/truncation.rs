@@ -136,37 +136,6 @@ fn format_spans(lines: &[&str], spans: &[(usize, usize)], render_numbered: impl 
 	result_lines.join("\n")
 }
 
-/// Format extracted content with composite line ids and smart truncation.
-/// `start_line` is the 1-indexed position of `lines[0]` in the source file, so
-/// the ids match what a `view` of the source shows.
-pub fn format_extracted_content_smart(lines: &[&str], start_line: usize, max_display_lines: Option<usize>) -> String {
-	let render = |i: usize| render_line(start_line + i, lines[i]);
-
-	let max_lines = max_display_lines.unwrap_or(50);
-
-	if lines.len() <= max_lines {
-		(0..lines.len()).map(render).collect::<Vec<_>>().join("\n")
-	} else {
-		let show_first = (max_lines * 2) / 3;
-		let show_last = max_lines - show_first - 1;
-
-		let mut result_lines = Vec::new();
-
-		for i in 0..show_first {
-			result_lines.push(render(i));
-		}
-
-		let hidden_lines = lines.len() - show_first - show_last;
-		result_lines.push(format!("[...{} lines more]", hidden_lines));
-
-		for i in (lines.len() - show_last)..lines.len() {
-			result_lines.push(render(i));
-		}
-
-		result_lines.join("\n")
-	}
-}
-
 #[cfg(test)]
 #[path = "truncation_tests.rs"]
 mod truncation_tests;
