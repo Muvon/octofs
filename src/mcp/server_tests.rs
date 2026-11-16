@@ -909,7 +909,7 @@ fn batch_edit_accepts_content_as_a_list_of_lines() {
 		}],
 	}))
 	.expect("list content is joined");
-	assert_eq!(params.operations[0].content, "use a::B;\nuse c::D;");
+	assert_eq!(params.operations[0].content.as_deref(), Some("use a::B;\nuse c::D;"));
 }
 
 #[test]
