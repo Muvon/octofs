@@ -1,6 +1,6 @@
 # Octofs — AGENTS.md
 
-Standalone Rust binary that serves filesystem tools (view, text_editor, batch_edit, shell) and code exploration (view outline and AST modes, and the `symbol` tool: definitions, references, callers, callees, supertypes, subtypes, imports, imported_by, path) over MCP — stdio or streamable HTTP. Code answers are computed from the files on disk with an in-memory index, no database. Native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum. Reader-facing docs: `README.md`, `doc/`.
+Standalone Rust binary that serves filesystem tools (view, text_editor, batch, shell) and code exploration (view outline and AST modes, and the `symbol` tool: definitions, references, callers, callees, supertypes, subtypes, imports, imported_by, path) over MCP — stdio or streamable HTTP. Code answers are computed from the files on disk with an in-memory index, no database. Native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum. Reader-facing docs: `README.md`, `doc/`.
 
 ## Commands
 - Build: `cargo build` · Release: `cargo build --release` · Dev run: `cargo run -- mcp` (stdio; add `--bind 127.0.0.1:12345` for HTTP; `RUST_LOG=debug` for logs)
@@ -14,7 +14,7 @@ Standalone Rust binary that serves filesystem tools (view, text_editor, batch_ed
 | Add / change an MCP tool | `.agents/tool-authoring.md`, then `src/mcp/server.rs` (Params + `#[tool]`) → `src/mcp/fs/*.rs` (execute fn) → `src/mcp/fs/mod.rs` (re-export) → tests |
 | Tool schemas & model-facing descriptions | `src/mcp/server.rs` — Params structs and `#[tool(...)]` blocks |
 | view / create / undo / path resolution | `src/mcp/fs/core.rs` + `src/mcp/fs/file_ops.rs` |
-| str_replace / batch_edit internals / file locking | `src/mcp/fs/text_editing.rs` |
+| str_replace / batch edit internals / file locking | `src/mcp/fs/text_editing.rs` |
 | Directory listing, glob + content filtering | `src/mcp/fs/directory.rs` + `src/mcp/fs/search.rs` |
 | Structural outline (`view` `flags: "s"`) | `src/mcp/fs/structure.rs` + `src/structural/` (grammars) |
 | Symbol navigation (`symbol` tool: definition, references) | `src/mcp/fs/symbols.rs` (validation + text lookup) + `src/structural/symbols.rs` |

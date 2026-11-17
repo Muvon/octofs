@@ -15,7 +15,7 @@
 //! Structural outline mode of `view` (`flags: "s"`): reads files through the
 //! same I/O path and caps as a whole-file view, extracts declarations with
 //! `crate::structural`, and renders them as ordinary `N:hh|content` lines so
-//! the ids feed `batch_edit` unchanged. Bodies are elided; nesting is conveyed
+//! the ids feed `batch` unchanged. Bodies are elided; nesting is conveyed
 //! by the original indentation only. Outline reads never register in the
 //! delta/view cache.
 

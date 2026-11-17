@@ -1,7 +1,7 @@
 # MCP Tools Reference
 
 Every tool Octofs exposes, what it does, and how it works internally. The tools
-fall into two groups: filesystem work (`view`, `text_editor`, `batch_edit`,
+fall into two groups: filesystem work (`view`, `text_editor`, `batch`,
 `shell`) and code exploration (the outline and AST
 modes of `view`, and `symbol`), which is described in full in
 [code-exploration.md](code-exploration.md). The model-facing contract (schemas,
@@ -51,7 +51,7 @@ One tool, several read modes, selected by the parameters:
   (`fs/search.rs`, `render_file_matches_with_breadcrumbs`).
 - **Structural outline** (`flags: "s"`) — the declarations of a file, or of
   every grammar-supported file under a directory, with their bodies elided.
-  Each rendered line keeps its `N:hh` id, so the outline feeds `batch_edit`
+  Each rendered line keeps its `N:hh` id, so the outline feeds `batch`
   like any other view. Markdown files yield their headings. A directory
   outline honours `pattern`, `max_depth` and `include_hidden`. Rejected
   together with `content`, `start`/`end` and the other flags.
@@ -133,7 +133,7 @@ wrong relation, `*` in a graph relation, `name` for `imports`) fail with a guide
 `definition` and `references` are the text-level lookup: definitions or uses of a name in a file or
 under a directory (default the workdir), locally or over `ssh://`. `flags: "c"`/`"l"` give per-file
 counts and matching paths; `o`, `v`, `s` and `r` are rejected. Every source line renders as
-`N:hh|content`, so the ids feed `batch_edit`. Symbol reads never register in the delta/view cache.
+`N:hh|content`, so the ids feed `batch`. Symbol reads never register in the delta/view cache.
 
 The graph relations are answered from a code graph in `src/structural/graph/`: nodes are files,
 symbols and external imports; edges are `Contains`, `Imports`, `Calls`, `Extends` and `Implements`,
@@ -167,7 +167,7 @@ A multi-command tool (`command` + operands):
 - **create** — new file only; fails if it exists, parent directories are made.
 - **str_replace** — raw file text (real newlines, no `N:hh|` prefixes);
   `old_text` must match exactly once, or set `replace_all: true`. Multiple
-  matches return an error listing their line ids, no match the closest matches, for `batch_edit`.
+  matches return an error listing their line ids, no match the closest matches, for `batch`.
   Matching is progressive (fuzzy-anchored) and happens in LF space; the file's
   dominant line ending is recorded and CRLF is restored on write. Several
   replacements can be given as `edits` (`path?`, `old_text`, `new_text`,
@@ -183,11 +183,28 @@ the delta cache.
 
 ---
 
-## `batch_edit` — atomic multi-edit on one file
+## `batch` — several reads and an atomic multi-edit in one call
 
-**Modules:** `fs/core.rs`, `fs/text_editing.rs`
+**Modules:** `server.rs` (`BatchParams::plan`), `fs/core.rs`, `fs/text_editing.rs`
 
-Applies up to 50 `insert`/`replace` operations to one file atomically.
+Runs up to 50 operations in one call.
+
+- **`view` operations read.** Each takes its own `path` (default: the call's
+  `path`) and an optional `start`/`end`. It is served by the `view` tool's own
+  code and view cache, so the lines, the delta behavior and `.spill` files come
+  back as they do from `view`. Each read is a section headed by its path.
+  Search, listings, outlines and images stay with the `view` tool.
+- **`insert`/`replace` operations edit one file atomically.** They must all
+  name the same file: the call's `path`, or the same `path` on each operation.
+- **Reads run after the edits**, wherever they stand in the list, so a read of
+  the edited file shows its new lines. A rejected edit fails the call before
+  any read; a read that fails is reported in its own section.
+- **The reply stays within the result limit** (`MAX_RESULT_BYTES`, 8 MiB). Each
+  read is checked alone by `view`; a read that would take the combined reply
+  past the limit is named instead of returned and dropped from the view cache,
+  so its next view is the content and not an "unchanged" marker.
+
+The edit operations:
 
 - **Targets are line ids** (`"12:a3"`) from `view` or edit output. Each target
   is verified against the current file content (`verify_line_id`,

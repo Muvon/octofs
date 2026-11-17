@@ -447,7 +447,7 @@ fn adjust_indentation(new_text: &str, provided_old: &str, actual_old: &str) -> S
 /// chain follow-up edits without re-viewing; removed lines carry their old ids.
 // `start` is 0-indexed position of the first replaced line in `orig_lines`.
 // `as_sent`: the added lines are the caller's text verbatim, so a long block can
-// collapse its middle like batch_edit's; after whitespace-normalized matching the
+// collapse its middle like a batch edit's; after whitespace-normalized matching the
 // indentation changed, and the caller must see every line.
 fn build_str_replace_diff(
 	orig_lines: &[&str],
@@ -935,7 +935,7 @@ pub async fn str_replace_spec(
 
 	if occurrences > 1 {
 		// Multiple exact matches — show locations with line ids so the model can
-		// switch to `batch_edit` without another view.
+		// switch to `batch` without another view.
 		let positions = find_all_positions(&content, old_text);
 		let file_lines: Vec<&str> = content.lines().collect();
 		let locations: Vec<String> = positions
@@ -948,7 +948,7 @@ pub async fn str_replace_spec(
 			.collect();
 
 		bail!(
-			"Found {} matches at:\n{}\nAdd context to make old_text unique, pass replace_all: true, or use batch_edit with one of these ids.",
+			"Found {} matches at:\n{}\nAdd context to make old_text unique, pass replace_all: true, or use batch with one of these ids.",
 			occurrences,
 			locations.join("\n")
 		);
@@ -1065,7 +1065,7 @@ pub(crate) fn replacement_diagnostic(content: &str, old_text: &str) -> String {
 				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
 			}
 		}
-		msg.push_str("\nFix old_text, or use batch_edit with these ids.");
+		msg.push_str("\nFix old_text, or use batch with these ids.");
 	}
 
 	msg
@@ -1567,7 +1567,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let path_str = match call.parameters.get("path").and_then(|v| v.as_str()) {
 		Some(p) => p,
 		None => {
-			bail!("Missing required 'path' parameter for batch_edit");
+			bail!("Missing required 'path' parameter for batch");
 		}
 	};
 
@@ -1587,8 +1587,12 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 
 	let source = resolve_path_source(path_str, &call.workdir);
 	// Copied lines may start a missing file; any other edit of a missing path names a
-	// wrong path.
-	let starts_file = operations.iter().all(copies_to_file_edge);
+	// wrong path. A `view` operation of the batch is not an edit: the server reads it
+	// after the edits. It stays in the list so `op {index}` counts as the caller wrote it.
+	let starts_file = operations
+		.iter()
+		.filter(|operation| operation.get("operation").and_then(Value::as_str) != Some("view"))
+		.all(copies_to_file_edge);
 	// Acquire file lock to prevent concurrent writes
 	let file_lock = acquire_file_lock(&source).await?;
 	let _lock_guard = file_lock.lock().await;
@@ -1640,9 +1644,10 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		let operation_type = match op_type_str {
 			"insert" => OperationType::Insert,
 			"replace" => OperationType::Replace,
+			"view" => continue,
 			_ => {
 				parse_failures.push(format!(
-					"  op {index}: Unsupported operation type: '{op_type_str}'. Supported operations: insert, replace"
+					"  op {index}: Unsupported operation type: '{op_type_str}'. Supported operations: view, insert, replace"
 				));
 				continue;
 			}

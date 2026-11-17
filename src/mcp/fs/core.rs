@@ -147,7 +147,7 @@ pub(crate) fn file_snapshots(source: &PathSource) -> Vec<String> {
 // Undo the last edit to a file
 pub async fn undo_edit(source: &PathSource) -> Result<String> {
 	// Serialize with other writers on the same file — without this, an undo racing a
-	// concurrent str_replace/batch_edit could interleave the pop and write and lose data.
+	// concurrent str_replace/batch could interleave the pop and write and lose data.
 	let file_lock = text_editing::acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
 
@@ -689,13 +689,13 @@ async fn render_view(call: &McpToolCall) -> Result<String> {
 	bail!("Path not found: {} (resolved to {}){nearby}", path, source.display())
 }
 
-// Execute batch_edit operations on a single file.
-// `operations` is a typed `Vec<BatchEditOperation>` in the tool schema, so rmcp guarantees
+// Execute the edit operations of a batch on a single file.
+// `operations` is a typed `Vec<BatchOperation>` in the tool schema, so rmcp guarantees
 // it arrives as a JSON array here; the operation-count limit is enforced in batch_edit_spec.
 pub async fn execute_batch_edit(call: &McpToolCall) -> Result<String> {
 	let operations_vec = match call.parameters.get("operations") {
 		Some(Value::Array(ops)) => ops.clone(),
-		_ => bail!("Missing or invalid 'operations' parameter for batch_edit - must be an array"),
+		_ => bail!("Missing or invalid 'operations' parameter for batch - must be an array"),
 	};
 
 	text_editing::batch_edit_spec(call, &operations_vec).await

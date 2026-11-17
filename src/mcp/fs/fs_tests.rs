@@ -2296,8 +2296,8 @@ mod tests {
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
-		// Exact server path: BatchEditParams → serde_json::to_value → execute.
-		let params: crate::mcp::server::BatchEditParams = serde_json::from_value(json!({
+		// Exact server path: BatchParams → serde_json::to_value → execute.
+		let params: crate::mcp::server::BatchParams = serde_json::from_value(json!({
 			"path": path,
 			"operations": [{
 				"operation": "replace",

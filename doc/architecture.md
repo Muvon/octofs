@@ -17,7 +17,7 @@ src/
   http_auth.rs         — HTTP access control: bind policy, bearer-token layer, Host/Origin config
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit,
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch,
                           shell), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
@@ -122,7 +122,7 @@ errors can say where the content went. `view` renders `N:hh|content`; edit
 targets require ids, verified per-target via `verify_line_id`. Edit results
 are diffs with fresh ids plus a trailing `shift:` line, so edits chain without
 re-viewing. Plain integers remain where position alone is safe: `view` ranges
-(negatives count from EOF) and `batch_edit` insert anchors `0` / `-1`.
+(negatives count from EOF) and `batch` insert anchors `0` / `-1`.
 
 ## Shell lifecycle
 

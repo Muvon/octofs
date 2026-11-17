@@ -238,7 +238,7 @@ pub async fn create_file_spec(source: &PathSource, content: &str) -> Result<Stri
 	// Check if file already exists — guide the AI toward the right edit tool instead of retrying create
 	if io_exists(source).await? {
 		bail!(
-			"File already exists: {}. Edit it with str_replace or batch_edit instead of create.",
+			"File already exists: {}. Edit it with str_replace or batch instead of create.",
 			source.display()
 		);
 	}

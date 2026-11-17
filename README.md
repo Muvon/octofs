@@ -31,14 +31,14 @@ With these tools an assistant can work in a project without the user pasting fil
 
 - `view` reads a file (whole, a line range, or several ranges), lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
 - `text_editor` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
-- `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
+- `batch` runs up to 50 operations in one call: `view` operations read files (each its own file and line range), and insert and replace operations edit one file atomically. Edit targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
 - `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. By default, standalone `cat`, `grep`, `find`, `ls` and similar reads are rejected with a pointer to `view`.
 - Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
 - Remote files use SSH/SFTP with your OpenSSH config. `shell` always runs locally. RSA keys are not supported (see [Remote Filesystem](#remote-filesystem-sshsftp)).
 
 ## Code exploration
 
-With these tools an assistant can ask what a file declares, where a symbol is defined and used, who calls a function, what implements a type and which files import a file, and get line ids it can pass straight to `batch_edit`.
+With these tools an assistant can ask what a file declares, where a symbol is defined and used, who calls a function, what implements a type and which files import a file, and get line ids it can pass straight to `batch`.
 
 - **Outline.** `view` with `flags: "s"` lists the declarations of a file or a directory, bodies elided.
 - **Syntax-tree search.** `view` with `ast: true` matches an ast-grep pattern such as `$OBJ.unwrap()` against the syntax tree instead of the text.
@@ -151,7 +151,7 @@ cargo build --release
 
 The shared-ID workflow requires the next Octocode release or a build of the updated source. OctoFS’s existing line-ID format is unchanged.
 
-Use [Octocode](https://github.com/muvon/octocode) to find definitions, usages, and code relationships, then use OctoFS to read or edit the matching files. Octocode's MCP `structural_search` emits the same `N:hh|content` source line IDs that OctoFS accepts for `batch_edit`, using their shared Octolib utility. You do not need another `view` just to obtain IDs for lines already returned.
+Use [Octocode](https://github.com/muvon/octocode) to find definitions, usages, and code relationships, then use OctoFS to read or edit the matching files. Octocode's MCP `structural_search` emits the same `N:hh|content` source line IDs that OctoFS accepts for `batch`, using their shared Octolib utility. You do not need another `view` just to obtain IDs for lines already returned.
 
 Run both servers against the same checkout. IDs describe that source snapshot: changed targets are verified at edit time, and an error supplies current context rather than guessing where to write. Exact-name lookups return complete small definitions; previews of larger matches name the ranges you can read with OctoFS.
 
@@ -328,7 +328,7 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 - **RSA keys are not supported** — the Rust `rsa` crate has an unfixed timing side-channel (Marvin attack, [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071)), so octofs is built without RSA entirely. Use an ed25519 key instead (`ssh-keygen -t ed25519`); ecdsa also works. RSA-only setups fail with a clear error naming the key.
 - **Host keys** — verified against `~/.ssh/known_hosts` with the OpenSSH `accept-new` policy: unknown hosts are recorded on first use, a changed key fails closed.
 - **`--ssh-timeout SECS`** — connection timeout (default 30). Connections are pooled per host, kept alive with transport keepalives, and reconnected automatically if they drop.
-- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch_edit`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
+- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
 
 ---
 
@@ -353,7 +353,7 @@ are merged, and each gap shows as `[... N lines omitted]`. `ranges` cannot be co
 with `start`/`end` or `content`.
 
 Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
-that `batch_edit` takes as targets. Files with the extension `.spill`
+that `batch` takes as targets. Files with the extension `.spill`
 (saved tool output) are shown as stored, without added ids.
 
 To read several files, make multiple `view` calls — they run in parallel.
@@ -373,7 +373,7 @@ image itself as an MCP image block (up to 5 MB; the bytes must match the extensi
 only the hunks changed since — the same `...`/`-`/`+` style as edit results, with
 removed lines collapsed to their old id range — or
 `[unchanged since you last viewed or edited it (compared with the file on disk just now): N lines. Pass full: true to re-read, or view a line range.]`.
-Octofs' own edits keep the cache current, so a re-view after your own `batch_edit`
+Octofs' own edits keep the cache current, so a re-view after your own `batch`
 costs one line. Ranged views and content search always render exactly what was asked.
 `full` has no effect on ranges or searches; omit `start`/`end`/`ranges` and content search
 to force a complete file read. It does not change output limits.
@@ -439,7 +439,7 @@ render without them.
 ```
 Returns the declarations of a file — or of every supported file under a directory,
 locally or over `ssh://` — with their bodies elided. Each line keeps its `N:hh` id,
-so the outline feeds `batch_edit` like any other view. Markdown files yield their
+so the outline feeds `batch` like any other view. Markdown files yield their
 headings. A directory outline honours `pattern`, `max_depth` and `include_hidden`.
 Supported languages: Rust, Python, JavaScript, TypeScript, Go, Java,
 C/C++, PHP, Bash, Ruby, Lua, JSON, Swift, Svelte, CSS, Elixir, Markdown.
@@ -487,7 +487,7 @@ Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + est
 | `path` | How `name` reaches `to` through calls, extends and implements (imports are not followed) |
 
 `definition` and `references` work locally or over `ssh://`, render `N:hh|content` lines whose
-ids feed `batch_edit`, and honour `pattern`, `max_depth`, `include_hidden`, `context` (references)
+ids feed `batch`, and honour `pattern`, `max_depth`, `include_hidden`, `context` (references)
 and `flags` (`c` counts per file, `l` lists files). An exact name renders the whole definition
 when it is short enough; wildcard matches render a preview with the omitted range. The `s`, `o`,
 `v` and `r` flags are rejected.
@@ -555,15 +555,28 @@ line ids. CRLF files are matched in LF space and keep their line endings on writ
 {"command": "undo_edit", "path": "src/main.rs"}
 ```
 
-**Check after the edit:** `text_editor` and `batch_edit` accept an optional `check`, a shell command (for example the test that covers the change) that runs after the edit is written and whose output follows the edit result. It needs the `shell` tool: a client that filters `shell` out of a session's tools sets `experimental.session.shell` to `false` in its client capabilities, and octofs then hides `check` from the edit tools and rejects it before writing anything. A missing field or any other value keeps `check` available.
+**Check after the edit:** `text_editor` and `batch` accept an optional `check`, a shell command (for example the test that covers the change) that runs after the edit is written and whose output follows the edit result. It needs the `shell` tool: a client that filters `shell` out of a session's tools sets `experimental.session.shell` to `false` in its client capabilities, and octofs then hides `check` from the edit tools and rejects it before writing anything. A missing field or any other value keeps `check` available.
 
 ---
 
-### `batch_edit` — Atomic multi-operation edits
+### `batch` — Several reads and edits in one call
 
-Perform multiple insert/replace operations on a single file atomically.
+Run up to 50 operations in one call. `view` operations read files: each names its own
+`path` (default: the call's `path`) and an optional `start`/`end` line range, and returns
+the lines as the `view` tool does. `insert`/`replace` operations edit one file atomically.
+The reads run after the call's edits; a rejected edit stops the call before any read.
 
-Each operation has a `start`. For `replace` it's the first line of the range as a
+**Read several files at one time:**
+```json
+{
+  "operations": [
+    {"operation": "view", "path": "src/main.rs", "start": 1, "end": 60},
+    {"operation": "view", "path": "src/lib.rs"}
+  ]
+}
+```
+
+Each edit operation has a `start`. For `replace` it's the first line of the range as a
 line id copied from `view` output (add `end` for a range; omit it for a single
 line). For `insert` it's the anchor to insert after — a line id, or the integers
 `0` (file start) / `-1` (after last line). Every id is verified against the file
@@ -666,9 +679,9 @@ octofs/
 │   │   ├── request_ctx.rs       # Per-request hint queue + stale-file stamps
 │   │   └── fs/                  # Filesystem tool implementations
 │   │       ├── mod.rs           # Re-exports
-│   │       ├── core.rs          # view, text_editor, batch_edit
+│   │       ├── core.rs          # view, text_editor, batch
 │   │       ├── file_ops.rs      # view_file_spec, create_file_spec
-│   │       ├── text_editing.rs  # str_replace, batch_edit, undo, per-file locking
+│   │       ├── text_editing.rs  # str_replace, batch edits, undo, per-file locking
 │   │       ├── directory.rs     # Directory listing + content search
 │   │       ├── search.rs        # literal/regex matcher, symbol breadcrumbs
 │   │       ├── structure.rs     # Structural outline mode (flags: "s")
