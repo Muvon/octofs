@@ -30,7 +30,7 @@ Octofs is a single binary that gives an AI assistant two things over MCP: tools 
 With these tools an assistant can work in a project without the user pasting files: it reads and searches the tree, edits files in ways that fail loudly instead of landing on the wrong line, and runs commands. The same file tools work on a remote host when a path is an `ssh://` URL.
 
 - `view` reads a file (whole, a line range, or several ranges), lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
-- `text_editor` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
+- `edit` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
 - `batch` runs up to 50 operations in one call: `view` operations read files (each its own file and line range), and insert and replace operations edit one file atomically. Edit targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
 - `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. By default, standalone `cat`, `grep`, `find`, `ls` and similar reads are rejected with a pointer to `view`.
 - Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
@@ -328,7 +328,7 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 - **RSA keys are not supported** — the Rust `rsa` crate has an unfixed timing side-channel (Marvin attack, [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071)), so octofs is built without RSA entirely. Use an ed25519 key instead (`ssh-keygen -t ed25519`); ecdsa also works. RSA-only setups fail with a clear error naming the key.
 - **Host keys** — verified against `~/.ssh/known_hosts` with the OpenSSH `accept-new` policy: unknown hosts are recorded on first use, a changed key fails closed.
 - **`--ssh-timeout SECS`** — connection timeout (default 30). Connections are pooled per host, kept alive with transport keepalives, and reconnected automatically if they drop.
-- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `text_editor`, `batch`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
+- **`shell` stays local** — commands always run on the machine where Octofs runs; only file tools (`view`, `edit`, `batch`, and `symbol` with `definition`/`references`) reach remote hosts. The graph relations of `symbol` are local only.
 
 ---
 
@@ -500,7 +500,7 @@ by name and imports, not types. Limits, the in-memory index and one worked examp
 
 ---
 
-### `text_editor` — Create, edit, replace text
+### `edit` — Create, edit, replace text
 
 **Create file:**
 ```json
@@ -555,7 +555,7 @@ line ids. CRLF files are matched in LF space and keep their line endings on writ
 {"command": "undo_edit", "path": "src/main.rs"}
 ```
 
-**Check after the edit:** `text_editor` and `batch` accept an optional `check`, a shell command (for example the test that covers the change) that runs after the edit is written and whose output follows the edit result. It needs the `shell` tool: a client that filters `shell` out of a session's tools sets `experimental.session.shell` to `false` in its client capabilities, and octofs then hides `check` from the edit tools and rejects it before writing anything. A missing field or any other value keeps `check` available.
+**Check after the edit:** `edit` and `batch` accept an optional `check`, a shell command (for example the test that covers the change) that runs after the edit is written and whose output follows the edit result. It needs the `shell` tool: a client that filters `shell` out of a session's tools sets `experimental.session.shell` to `false` in its client capabilities, and octofs then hides `check` from the edit tools and rejects it before writing anything. A missing field or any other value keeps `check` available.
 
 ---
 
@@ -679,7 +679,7 @@ octofs/
 │   │   ├── request_ctx.rs       # Per-request hint queue + stale-file stamps
 │   │   └── fs/                  # Filesystem tool implementations
 │   │       ├── mod.rs           # Re-exports
-│   │       ├── core.rs          # view, text_editor, batch
+│   │       ├── core.rs          # view, edit, batch
 │   │       ├── file_ops.rs      # view_file_spec, create_file_spec
 │   │       ├── text_editing.rs  # str_replace, batch edits, undo, per-file locking
 │   │       ├── directory.rs     # Directory listing + content search

@@ -39,7 +39,7 @@ fn get_file_locks() -> &'static Mutex<HashMap<String, Arc<AsyncMutex<()>>>> {
 // (`x`, `./x`, `/abs/x`, symlinks) map to the same lock — otherwise two
 // requests targeting the same file would not serialize and could corrupt it.
 // Falls back to the raw path string if canonicalize fails (file may not exist
-// yet, e.g. for `text_editor create`).
+// yet, e.g. for `edit create`).
 pub fn lock_key_for(path: &Path) -> String {
 	if let Ok(canon) = path.canonicalize() {
 		return canon.to_string_lossy().to_string();

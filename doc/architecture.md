@@ -17,13 +17,13 @@ src/
   http_auth.rs         — HTTP access control: bind policy, bearer-token layer, Host/Origin config
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch,
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, edit, batch,
                           shell), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
     fs/
       mod.rs           — module list + re-exports (execute_*, parse_path_source, PathSource)
-      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_editor/batch_edit
+      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/edit/batch_edit
       file_ops.rs      — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs  — str_replace_spec (progressive matching), batch_edit_spec, per-file async locking
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks
@@ -33,7 +33,7 @@ src/
       graph.rs         — `symbol` graph relations: parameter handling, start nodes, traversal rendering under the response budget
       code_index.rs    — per-workdir code index: Bloom token filters, stamp refresh, parsed-file cache under one memory ceiling
       graph_scoped.rs  — query-scoped graphs on the code index for every graph relation, `path` included (at most 600 parsed files, 800 ms per query)
-      multi_edit.rs    — `text_editor` `edits`: ordered replacements applied atomically across files
+      multi_edit.rs    — `edit` `edits`: ordered replacements applied atomically across files
       ast.rs           — AST-pattern search mode (ast: true): ast-grep patterns over the grammars
       delta.rs         — ViewCache (note_write/note_create/render_whole_file), Myers line diff, hunk rendering
       remote.rs        — PathSource, ssh:// URL parsing, OpenSSH config resolution, SFTP pool, remote file ops

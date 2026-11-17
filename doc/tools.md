@@ -1,7 +1,7 @@
 # MCP Tools Reference
 
 Every tool Octofs exposes, what it does, and how it works internally. The tools
-fall into two groups: filesystem work (`view`, `text_editor`, `batch`,
+fall into two groups: filesystem work (`view`, `edit`, `batch`,
 `shell`) and code exploration (the outline and AST
 modes of `view`, and `symbol`), which is described in full in
 [code-exploration.md](code-exploration.md). The model-facing contract (schemas,
@@ -158,7 +158,7 @@ relation in [Symbol lookups](code-exploration.md#symbol-lookups).
 
 ---
 
-## `text_editor` — create, str_replace, delete, undo
+## `edit` — create, str_replace, delete, undo
 
 **Modules:** `fs/core.rs`, `fs/text_editing.rs`, `fs/file_ops.rs`
 

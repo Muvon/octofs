@@ -1875,7 +1875,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "edit".to_string(),
 			parameters: json!({
 				"command": "batch_edit",
 				"operations": operations
@@ -3302,7 +3302,7 @@ mod tests {
 	// ===== NEGATIVE LINE INDEXING TESTS =====
 
 	#[tokio::test]
-	async fn test_text_editor_view_negative_indexing() {
+	async fn test_edit_view_negative_indexing() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_path = temp_dir.path().join("test.txt");
 
@@ -3381,7 +3381,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_text_editor_view_negative_indexing_clamps_out_of_bounds() {
+	async fn test_edit_view_negative_indexing_clamps_out_of_bounds() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_path = temp_dir.path().join("test.txt");
 
@@ -5257,70 +5257,70 @@ mod tests {
 		assert_eq!(mode, 0o755, "atomic_write must preserve original mode (got {mode:o})");
 	}
 	#[tokio::test]
-	async fn test_text_editor_delete_removes_file_and_supports_undo() {
+	async fn test_edit_delete_removes_file_and_supports_undo() {
 		let temp_file = create_test_file("hello world\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "edit".to_string(),
 			parameters: json!({
 				"command": "delete",
 				"path": path,
 			}),
 		};
-		let result = crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
+		let result = crate::mcp::fs::core::execute_edit(&call).await.unwrap();
 		assert!(result.contains("Successfully deleted"), "got: {result}");
 		assert!(!temp_file.path().exists(), "file should be gone");
 
 		let undo_call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "edit".to_string(),
 			parameters: json!({
 				"command": "undo_edit",
 				"path": path,
 			}),
 		};
-		crate::mcp::fs::core::execute_text_editor(&undo_call).await.unwrap();
+		crate::mcp::fs::core::execute_edit(&undo_call).await.unwrap();
 		let restored = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(restored, "hello world\n");
 	}
 
 	#[tokio::test]
-	async fn test_text_editor_delete_missing_file_errors() {
+	async fn test_edit_delete_missing_file_errors() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let path = temp_dir.path().join("nope.txt").to_string_lossy().to_string();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "edit".to_string(),
 			parameters: json!({
 				"command": "delete",
 				"path": path,
 			}),
 		};
-		let err = crate::mcp::fs::core::execute_text_editor(&call).await.unwrap_err();
+		let err = crate::mcp::fs::core::execute_edit(&call).await.unwrap_err();
 		assert!(err.to_string().contains("does not exist"), "got: {err}");
 	}
 
 	#[tokio::test]
-	async fn test_text_editor_delete_directory_errors() {
+	async fn test_edit_delete_directory_errors() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let path = temp_dir.path().to_string_lossy().to_string();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "text_editor".to_string(),
+			tool_name: "edit".to_string(),
 			parameters: json!({
 				"command": "delete",
 				"path": path,
 			}),
 		};
-		let err = crate::mcp::fs::core::execute_text_editor(&call).await.unwrap_err();
+		let err = crate::mcp::fs::core::execute_edit(&call).await.unwrap_err();
 		assert!(err.to_string().contains("directory"), "got: {err}");
 	}
 
@@ -6021,16 +6021,16 @@ mod tests {
 			let dir = setup_remote_dir().await;
 			let file_path = format!("{dir}/hello.txt");
 
-			// Create a file via text_editor
+			// Create a file via edit
 			let call = McpToolCall::test_call(
-				"text_editor",
+				"edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": "line one\nline two\nline three\n"
 				}),
 			);
-			let result = crate::mcp::fs::core::execute_text_editor(&call).await;
+			let result = crate::mcp::fs::core::execute_edit(&call).await;
 			assert!(result.is_ok(), "create failed: {:?}", result.err());
 
 			// View it back
@@ -6059,14 +6059,14 @@ mod tests {
 
 			// Create initial content
 			let call = McpToolCall::test_call(
-				"text_editor",
+				"edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": "alpha\nbeta\ngamma\n"
 				}),
 			);
-			crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
+			crate::mcp::fs::core::execute_edit(&call).await.unwrap();
 
 			// Replace beta -> BETA
 			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
@@ -6096,14 +6096,14 @@ mod tests {
 			// Create initial content
 			let remote_content = "one\ntwo\nthree\nfour\nfive\n";
 			let call = McpToolCall::test_call(
-				"text_editor",
+				"edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": remote_content
 				}),
 			);
-			crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
+			crate::mcp::fs::core::execute_edit(&call).await.unwrap();
 
 			// Replace lines 2-3 (two -> TWO, three -> REPLACED) by line id
 			let batch_call = McpToolCall::test_call(
@@ -6147,14 +6147,14 @@ mod tests {
 			for name in ["a.txt", "b.txt"] {
 				let path = format!("{dir}/{name}");
 				let call = McpToolCall::test_call(
-					"text_editor",
+					"edit",
 					json!({
 						"command": "create",
 						"path": path,
 						"content": "test\n"
 					}),
 				);
-				crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
+				crate::mcp::fs::core::execute_edit(&call).await.unwrap();
 			}
 
 			// List the directory
@@ -6190,14 +6190,14 @@ mod tests {
 				(format!("{dir}/ignored_dir/skip.rs"), "skipped\n".to_string()),
 			] {
 				let call = McpToolCall::test_call(
-					"text_editor",
+					"edit",
 					json!({
 						"command": "create",
 						"path": path,
 						"content": content
 					}),
 				);
-				crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
+				crate::mcp::fs::core::execute_edit(&call).await.unwrap();
 			}
 
 			// Bare listing: root entries only (REMOTE_DEFAULT_MAX_DEPTH = 1), hidden
@@ -6256,14 +6256,14 @@ mod tests {
 
 			// Create initial content
 			let call = McpToolCall::test_call(
-				"text_editor",
+				"edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": "original\n"
 				}),
 			);
-			crate::mcp::fs::core::execute_text_editor(&call).await.unwrap();
+			crate::mcp::fs::core::execute_edit(&call).await.unwrap();
 
 			// Replace original -> modified
 			let source = crate::mcp::fs::remote::parse_path_source(&file_path);

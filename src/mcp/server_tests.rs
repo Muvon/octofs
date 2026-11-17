@@ -714,16 +714,16 @@ async fn view_reads_a_job_link_like_resources_read() {
 /// workdir, run the execute fn, append hints. Drive them end-to-end through
 /// the MCP connection so the wrapper lines count as covered.
 #[tokio::test(flavor = "multi_thread")]
-async fn tool_handlers_text_editor_batch_copy_from_round_trip() {
+async fn tool_handlers_edit_batch_copy_from_round_trip() {
 	let (client, _server_task, _unsolicited) = connect().await;
 
 	let call = |tool: &'static str, arguments: serde_json::Map<String, serde_json::Value>| {
 		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments))
 	};
 
-	// text_editor create
+	// edit create
 	let create = call(
-		"text_editor",
+		"edit",
 		json!({
 			"command": "create",
 			"path": "wrapper.txt",
@@ -734,7 +734,7 @@ async fn tool_handlers_text_editor_batch_copy_from_round_trip() {
 		.clone(),
 	)
 	.await
-	.expect("text_editor create");
+	.expect("edit create");
 	assert_ne!(create.is_error, Some(true), "{:?}", create.content);
 
 	// View the file to obtain line ids for batch.
@@ -845,13 +845,13 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	};
 
 	call(
-		"text_editor",
+		"edit",
 		json!({ "command": "create", "path": "checked.txt", "content": "one\n" }),
 	)
 	.await
 	.expect("create");
 	let edited = call(
-		"text_editor",
+		"edit",
 		json!({ "command": "str_replace", "path": "checked.txt", "old_text": "one", "new_text": "one\ntwo", "check": "wc -l checked.txt" }),
 	)
 	.await
@@ -864,7 +864,7 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	assert!(check_at > 0, "the edit result leads the check output: {output}");
 
 	let red = call(
-		"text_editor",
+		"edit",
 		json!({ "command": "str_replace", "path": "checked.txt", "old_text": "two", "new_text": "three", "check": "false" }),
 	)
 	.await
@@ -1272,7 +1272,7 @@ async fn executed_parameters_are_marked_as_shell_commands() {
 		}
 	}
 	marked.sort();
-	assert_eq!(marked, ["batch.check", "shell.command", "text_editor.check"]);
+	assert_eq!(marked, ["batch.check", "edit.check", "shell.command"]);
 }
 
 fn context_with_session(
@@ -1453,10 +1453,10 @@ fn batch_rejects_non_string_list_content_and_missing_path() {
 }
 
 #[tokio::test]
-async fn text_editor_lists_edits_first_and_has_no_apply_patch() {
+async fn edit_lists_edits_first_and_has_no_apply_patch() {
 	let (client, _server_task, _unsolicited) = connect().await;
 	let tools = client.list_tools(None).await.unwrap();
-	let tool = tools.tools.iter().find(|t| t.name == "text_editor").unwrap();
+	let tool = tools.tools.iter().find(|t| t.name == "edit").unwrap();
 	let schema = serde_json::to_string(&tool.input_schema).unwrap();
 	assert!(!schema.contains("apply_patch"));
 	assert!(tool.input_schema["properties"].get("patch").is_none());
@@ -1520,7 +1520,7 @@ async fn edit_tools_advertise_check_only_when_shell_is_granted() {
 			.list_tools(None, shell_context(peer, shell.clone()))
 			.await
 			.expect("list tools");
-		for name in ["text_editor", "batch"] {
+		for name in ["edit", "batch"] {
 			let tool = result.tools.iter().find(|tool| tool.name == name).expect("edit tool");
 			let has_property = tool.input_schema["properties"].get("check").is_some();
 			let has_sentence = tool.description.as_ref().expect("description").contains(sentence);
@@ -1550,12 +1550,12 @@ async fn edit_with_check_is_refused_when_shell_is_not_granted() {
 	let peer = service.peer();
 	let denied = || shell_context(peer, Some(json!(false)));
 
-	let text_editor: super::TextEditorParams = serde_json::from_value(
+	let edit: super::EditParams = serde_json::from_value(
 		json!({ "command": "str_replace", "path": "f.txt", "old_text": "one", "new_text": "two", "check": "true" }),
 	)
-	.expect("text_editor params");
+	.expect("edit params");
 	let error = server
-		.text_editor(denied(), Parameters(text_editor))
+		.edit(denied(), Parameters(edit))
 		.await
 		.expect_err("check refused");
 	assert!(error.contains("`check` needs the `shell` tool"), "{error}");

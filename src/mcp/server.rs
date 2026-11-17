@@ -692,7 +692,7 @@ impl OctofsServer {
 	}
 
 	#[tool(
-		title = "Text Editor",
+		title = "Edit",
 		annotations(
 			read_only_hint = false,
 			destructive_hint = true,
@@ -709,10 +709,10 @@ impl OctofsServer {
 			undo_edit: revert the last edit to path (10 levels, delete included). Use batch \
 			for replacements or insertions addressed by line ids."
 	)]
-	async fn text_editor(
+	async fn edit(
 		&self,
 		context: RequestContext<RoleServer>,
-		Parameters(mut params): Parameters<TextEditorParams>,
+		Parameters(mut params): Parameters<EditParams>,
 	) -> Result<CallToolResponse, String> {
 		let check = params.check.take();
 		if check.is_some() && !Self::shell_granted(&context) {
@@ -721,13 +721,13 @@ impl OctofsServer {
 		let session = self.session(&context);
 		let workdir = session.workdir.clone();
 		let call = McpToolCall {
-			tool_name: "text_editor".to_string(),
+			tool_name: "edit".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
 			tool_id: String::new(),
 			workdir,
 		};
 		let result = request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_text_editor(&call).await.map_err(|e| format!("{e:#}"))?;
+			let result = fs::execute_edit(&call).await.map_err(|e| format!("{e:#}"))?;
 			Ok::<String, String>(append_hints(result))
 		})
 		.await?;
@@ -814,7 +814,7 @@ impl OctofsServer {
 			is a later pipe stage. `view` takes local and ssh:// paths, and its `flags` give \
 			`grep -c/-l/-o/-v` and `ls -l` output. The same applies to bare `sleep` and to writing \
 			files: `sed -i`, standalone `tee` and echo/printf/cat redirects into the workdir \
-			belong to `text_editor` and `batch`. Local writes outside the workdir \
+			belong to `edit` and `batch`. Local writes outside the workdir \
 			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. \
 			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
 			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
@@ -993,7 +993,7 @@ impl ServerHandler for OctofsServer {
 					strip_null_variants(value);
 				}
 				strip_generator_noise(&mut schema);
-				if tool.name == "text_editor" || tool.name == "batch" {
+				if tool.name == "edit" || tool.name == "batch" {
 					if shell_granted {
 						if let Some(description) = tool.description.as_mut() {
 							*description = format!("{description} {EDIT_CHECK_DESCRIPTION}").into();
@@ -1430,7 +1430,7 @@ pub struct TextReplacement {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum TextEditorCommand {
+pub enum EditCommand {
 	Create,
 	StrReplace,
 	Delete,
@@ -1438,12 +1438,12 @@ pub enum TextEditorCommand {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct TextEditorParams {
+pub struct EditParams {
 	/// Ordered exact replacements; each old_text must match once unless replace_all.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub edits: Option<Vec<TextReplacement>>,
 	/// Operation to perform.
-	pub command: TextEditorCommand,
+	pub command: EditCommand,
 	/// File path (ssh://user@host:port/path for remote).
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub path: Option<String>,

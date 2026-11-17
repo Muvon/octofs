@@ -174,7 +174,7 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 // Main execution functions
 
 // Execute a text editor command following modern text editor specifications
-pub async fn execute_text_editor(call: &McpToolCall) -> Result<String> {
+pub async fn execute_edit(call: &McpToolCall) -> Result<String> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
