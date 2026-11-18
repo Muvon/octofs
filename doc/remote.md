@@ -56,8 +56,8 @@ duplicate connections and repeated agent prompts.
 ## Limits
 
 `shell` always runs locally and bails on a remote workdir — there is no
-remote command execution. Everything file-shaped (`view`, `edit`,
-`batch`, directory listings, content search) works
+remote command execution. Everything file-shaped (`view`, `text_edit`,
+`batch_edit`, directory listings, content search) works
 remotely, with remote listing quirks handled in `fs/directory.rs`. The
 structural read modes work remotely too — outline (`flags: "s"`), AST search
 (`ast: true`) and the `symbol` tool's `definition`/`references` each walk the remote tree

@@ -40,7 +40,7 @@ pub struct ImageView {
 /// The image formats `view` serves as an image block, chosen by extension so a
 /// text view never has to read the bytes first. Every major provider accepts
 /// these four.
-fn image_mime_by_extension(path: &str) -> Option<&'static str> {
+pub(crate) fn image_mime_by_extension(path: &str) -> Option<&'static str> {
 	let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
 	match extension.as_str() {
 		"png" => Some("image/png"),
@@ -238,7 +238,7 @@ pub async fn create_file_spec(source: &PathSource, content: &str) -> Result<Stri
 	// Check if file already exists — guide the AI toward the right edit tool instead of retrying create
 	if io_exists(source).await? {
 		bail!(
-			"File already exists: {}. Edit it with str_replace or batch instead of create.",
+			"File already exists: {}. Edit it with str_replace or batch_edit instead of create.",
 			source.display()
 		);
 	}

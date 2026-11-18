@@ -147,7 +147,7 @@ pub(crate) fn file_snapshots(source: &PathSource) -> Vec<String> {
 // Undo the last edit to a file
 pub async fn undo_edit(source: &PathSource) -> Result<String> {
 	// Serialize with other writers on the same file — without this, an undo racing a
-	// concurrent str_replace/batch could interleave the pop and write and lose data.
+	// concurrent str_replace/batch_edit could interleave the pop and write and lose data.
 	let file_lock = text_editing::acquire_file_lock(source).await?;
 	let _lock_guard = file_lock.lock().await;
 
@@ -174,7 +174,7 @@ pub async fn undo_edit(source: &PathSource) -> Result<String> {
 // Main execution functions
 
 // Execute a text editor command following modern text editor specifications
-pub async fn execute_edit(call: &McpToolCall) -> Result<String> {
+pub async fn execute_text_edit(call: &McpToolCall) -> Result<String> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
 		Some(Value::String(cmd)) => cmd.clone(),
@@ -341,7 +341,8 @@ fn resolve_line_span(start_ep: &Endpoint, end_ep: &Endpoint, total_lines: usize)
 }
 
 /// Parse `ranges` into endpoint pairs before the file is read, so a malformed span
-/// fails without I/O.
+/// fails without I/O. A span without `start` begins at line 1 and one without `end`
+/// runs to the last line, as the call's own `start`/`end` do.
 fn parse_view_ranges(value: &Value) -> Result<Vec<(Endpoint, Endpoint)>> {
 	let Some(items) = value.as_array() else {
 		bail!("`ranges` must be an array of {{\"start\", \"end\"}} objects, e.g. [{{\"start\": 10, \"end\": 20}}].");
@@ -353,12 +354,14 @@ fn parse_view_ranges(value: &Value) -> Result<Vec<(Endpoint, Endpoint)>> {
 		.iter()
 		.enumerate()
 		.map(|(index, item)| {
-			let endpoint = |key: &str| {
+			if !item.is_object() {
+				bail!("`ranges[{index}]` must be an object, e.g. {{\"start\": 10, \"end\": 20}}.");
+			}
+			let endpoint = |key: &str, default: i64| -> Result<Endpoint> {
 				let name = format!("ranges[{index}].{key}");
-				parse_optional_endpoint(item.get(key), &name)?
-					.ok_or_else(|| anyhow!("`{name}` is missing: every span needs both `start` and `end`."))
+				Ok(parse_optional_endpoint(item.get(key), &name)?.unwrap_or(Endpoint::Number(default)))
 			};
-			Ok((endpoint("start")?, endpoint("end")?))
+			Ok((endpoint("start", 1)?, endpoint("end", -1)?))
 		})
 		.collect()
 }
@@ -399,13 +402,32 @@ fn has_line_range(call: &McpToolCall) -> bool {
 		.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()))
 }
 
+/// Whether the call is a content search (`content` set and not blank).
+fn searches_content(call: &McpToolCall) -> bool {
+	call.parameters
+		.get("content")
+		.and_then(Value::as_str)
+		.is_some_and(|content| !content.trim().is_empty())
+}
+
+/// `ranges` names every span itself, so it excludes a content search and the call's
+/// own `start`/`end`.
+fn reject_ranges_conflicts(call: &McpToolCall) -> Result<()> {
+	if searches_content(call) {
+		bail!("`ranges` cannot be combined with `content`: a content search covers the whole file — drop `ranges`, or set `context` for lines around each match.");
+	}
+	if ["start", "end"]
+		.iter()
+		.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()))
+	{
+		bail!("`ranges` cannot be combined with `start`/`end`: put every span in `ranges`.");
+	}
+	Ok(())
+}
+
 async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource) -> Result<String> {
 	let flags_param = call.parameters.get("flags").and_then(|v| v.as_str());
-	let has_content = call
-		.parameters
-		.get("content")
-		.and_then(|v| v.as_str())
-		.is_some_and(|c| !c.trim().is_empty());
+	let has_content = searches_content(call);
 
 	// AST-pattern search (`ast` + `content`): exclusive of outlines, ranges
 	// and regex, so it is dispatched before every other mode.
@@ -456,15 +478,7 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	// File + `ranges`: several spans in one read. Dispatched before content search,
 	// which would otherwise drop the spans silently.
 	if let Some(ranges) = call.parameters.get("ranges").filter(|value| !value.is_null()) {
-		if has_content {
-			bail!("`ranges` cannot be combined with `content`: a content search covers the whole file — drop `ranges`, or set `context` for lines around each match.");
-		}
-		if ["start", "end"]
-			.iter()
-			.any(|key| call.parameters.get(*key).is_some_and(|value| !value.is_null()))
-		{
-			bail!("`ranges` cannot be combined with `start`/`end`: put every span in `ranges`.");
-		}
+		reject_ranges_conflicts(call)?;
 		return view_file_ranges(source, &parse_view_ranges(ranges)?).await;
 	}
 
@@ -500,8 +514,8 @@ async fn view_existing_path(call: &McpToolCall, path: &str, source: &PathSource)
 	file_ops::view_file_spec(source, range, full).await
 }
 
-const MAX_SEARCH_PATH_BYTES: usize = 8192;
-const MAX_SEARCH_ROOTS: usize = 32;
+const MAX_PATH_LIST_BYTES: usize = 8192;
+const MAX_PATH_LIST_ENTRIES: usize = 32;
 const MAX_ERROR_PATH_PREVIEW_CHARS: usize = 160;
 
 fn path_error_preview(path: &str) -> String {
@@ -514,39 +528,42 @@ fn path_error_preview(path: &str) -> String {
 	}
 }
 
-async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
-	// Checked before any root is searched, like the roots themselves.
-	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true)?;
-	if path.len() > MAX_SEARCH_PATH_BYTES {
+/// Split a `path` that lists several paths (`a|b`) into its entries. The list is
+/// checked before any entry is touched, so an unsafe or wasteful one costs no I/O.
+fn split_path_list(path: &str) -> Result<Vec<&str>> {
+	if path.len() > MAX_PATH_LIST_BYTES {
 		bail!(
-			"Invalid content-search path alternatives: {} bytes exceeds the {MAX_SEARCH_PATH_BYTES}-byte limit. Split the search into separate `view` calls.",
+			"Invalid `|`-separated path list: {} bytes exceeds the {MAX_PATH_LIST_BYTES}-byte limit. Split it into separate `view` calls.",
 			path.len()
 		);
 	}
 	if path.chars().any(char::is_control) {
-		bail!(
-			"Invalid content-search path alternatives: control characters are not allowed. Pass one single-line `|`-separated root list."
-		);
+		bail!("Invalid `|`-separated path list: control characters are not allowed. Pass the list on a single line.");
 	}
 
-	let roots: Vec<&str> = path.split('|').map(str::trim).collect();
-	if roots.iter().any(|root| root.is_empty()) {
-		bail!("Invalid content-search path alternatives {path:?}: every `|`-separated root must be non-empty.");
+	let entries: Vec<&str> = path.split('|').map(str::trim).collect();
+	if entries.iter().any(|entry| entry.is_empty()) {
+		bail!("Invalid `|`-separated path list {path:?}: every path must be non-empty.");
 	}
-	if roots.len() > MAX_SEARCH_ROOTS {
+	if entries.len() > MAX_PATH_LIST_ENTRIES {
 		bail!(
-			"Invalid content-search path alternatives: {} roots exceeds the {MAX_SEARCH_ROOTS}-root limit. Split the search into separate `view` calls.",
-			roots.len()
+			"Invalid `|`-separated path list: {} paths exceeds the {MAX_PATH_LIST_ENTRIES}-path limit. Split it into separate `view` calls.",
+			entries.len()
 		);
 	}
-	let mut seen = HashSet::with_capacity(roots.len());
-	for root in &roots {
-		if !seen.insert(*root) {
-			bail!(
-				"Invalid content-search path alternatives: duplicate root {root:?}. Remove duplicates before retrying."
-			);
+	let mut seen = HashSet::with_capacity(entries.len());
+	for entry in &entries {
+		if !seen.insert(*entry) {
+			bail!("Invalid `|`-separated path list: duplicate path {entry:?}. Remove duplicates before retrying.");
 		}
 	}
+	Ok(entries)
+}
+
+async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<String> {
+	// Checked before any root is searched, like the roots themselves.
+	let flags = ViewFlags::parse(call.parameters.get("flags").and_then(|v| v.as_str()), true)?;
+	let roots = split_path_list(path)?;
 
 	// Resolve every root before searching any of them, so a typo is reported without
 	// first traversing an earlier tree. Roots are alternatives, not a conjunction: a
@@ -597,8 +614,8 @@ async fn search_path_alternatives(call: &McpToolCall, path: &str) -> Result<Stri
 	Ok(results.join(flags.output.separator()))
 }
 
-// Execute view command - unified read-only tool for a single file, directory, or content search.
-// To view multiple files, the caller makes multiple `view` calls (they run in parallel).
+// Execute view command - unified read-only tool for files, directories and content search.
+// Several paths in one call come back as one section each (see `view_sections`).
 pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	let result = render_view(call).await?;
 	if result.len() > MAX_RESULT_BYTES {
@@ -611,15 +628,15 @@ pub async fn execute_view(call: &McpToolCall) -> Result<String> {
 	Ok(result)
 }
 
-/// The single `path` parameter of a view. An array is rejected with a pointer to
-/// parallel calls.
+/// The `path` parameter of a view: one path, or several joined with `|`. An array is
+/// rejected with a pointer to that form.
 fn view_path(call: &McpToolCall) -> Result<String> {
 	match call.parameters.get("path") {
 		Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.clone()),
 		Some(Value::Array(_)) => bail!(
-			"`path` must be a single path string. To view multiple files, make separate `view` calls — they run in parallel."
+			"`path` must be a string. To view several paths in one call, join them with `|`, e.g. \"src/a.rs|src/b.rs\"."
 		),
-		_ => bail!("Missing or invalid 'path' parameter. Pass a single path string, e.g. \"src/main.rs\"."),
+		_ => bail!("Missing or invalid 'path' parameter. Pass a path string, e.g. \"src/main.rs\"."),
 	}
 }
 
@@ -667,35 +684,188 @@ async fn render_view(call: &McpToolCall) -> Result<String> {
 	}
 
 	let source = resolve_path_source(&path, &call.workdir);
-	if io_exists(&source).await? {
+	let exists = io_exists(&source).await?;
+	// A path that does not exist as written and holds `|` lists several paths: the
+	// roots of one search with `content`, otherwise a view of each.
+	let listed = !exists && path.contains('|');
+	if listed && searches_content(call) {
+		return search_path_alternatives(call, &path).await;
+	}
+	let paths = if listed {
+		split_path_list(&path)?
+	} else {
+		vec![path.as_str()]
+	};
+
+	// `ranges` whose items name files of their own: one read per file.
+	if let Some(reads) = ranges_by_file(call, &paths)? {
+		return view_sections(call, reads).await;
+	}
+	if listed {
+		let reads = paths
+			.into_iter()
+			.map(|entry| (entry.to_string(), parameters_for_path(call, entry)))
+			.collect();
+		return view_sections(call, reads).await;
+	}
+	if exists {
 		return view_existing_path(call, &path, &source).await;
 	}
 
-	let has_content = call
-		.parameters
-		.get("content")
-		.and_then(|value| value.as_str())
-		.is_some_and(|content| !content.trim().is_empty());
-	if has_content && path.contains('|') {
-		return search_path_alternatives(call, &path).await;
-	}
+	Err(path_not_found(call, &path, &source).await)
+}
 
-	// Name the path and where it resolved to — a bare "File not found" hides
-	// workdir mismatches (relative path resolved against an unexpected root).
-	let nearby = match &source {
+/// The error for a path that does not exist. It names the path and where it resolved
+/// to — a bare "File not found" hides workdir mismatches (relative path resolved
+/// against an unexpected root).
+async fn path_not_found(call: &McpToolCall, path: &str, source: &PathSource) -> anyhow::Error {
+	let nearby = match source {
 		PathSource::Local(missing) => directory::missing_path_hint(missing.clone(), call.workdir.clone()).await,
 		PathSource::Remote { .. } => String::new(),
 	};
-	bail!("Path not found: {} (resolved to {}){nearby}", path, source.display())
+	anyhow!("Path not found: {} (resolved to {}){nearby}", path, source.display())
 }
 
-// Execute the edit operations of a batch on a single file.
-// `operations` is a typed `Vec<BatchOperation>` in the tool schema, so rmcp guarantees
+/// Blank line between the sections of a multi-path view.
+const VIEW_SECTION_GAP: &str = "\n\n";
+/// Stands in for a read that would take the result past `MAX_RESULT_BYTES`.
+const READ_NOT_RETURNED: &str = "[not returned: with it this result would pass the size limit of one tool result; view it in another call or in smaller `start`/`end` ranges]";
+/// An image comes back as an image block, which only a call for that one path returns.
+const IMAGE_IN_PATH_LIST: &str = "image file: view it in a call of its own";
+
+/// The call's parameters for one path of a multi-path view: `path` replaced, the rest kept.
+fn parameters_for_path(call: &McpToolCall, path: &str) -> Value {
+	let mut parameters = call.parameters.clone();
+	if let Some(fields) = parameters.as_object_mut() {
+		fields.insert("path".to_string(), Value::String(path.to_string()));
+	}
+	parameters
+}
+
+/// The reads of a `ranges` list whose items name files of their own: one per file, in
+/// the order the files first appear, each with the spans given for it. An item without
+/// `path` belongs to every path of the call (`call_paths`: its `path`, or the entries of
+/// its `|` list). `None` when no item names a file, which leaves the ordinary read.
+fn ranges_by_file(call: &McpToolCall, call_paths: &[&str]) -> Result<Option<Vec<(String, Value)>>> {
+	let Some(ranges) = call.parameters.get("ranges") else {
+		return Ok(None);
+	};
+	let Some(items) = ranges.as_array() else {
+		return Ok(None);
+	};
+	if !items
+		.iter()
+		.any(|item| item.get("path").is_some_and(|path| !path.is_null()))
+	{
+		return Ok(None);
+	}
+	// Checked on the whole list, so an error names an item by the index the caller gave it.
+	reject_ranges_conflicts(call)?;
+	parse_view_ranges(ranges)?;
+
+	let mut files: Vec<(String, Vec<Value>)> = Vec::new();
+	for (index, item) in items.iter().enumerate() {
+		let named;
+		let paths = match item.get("path") {
+			None | Some(Value::Null) => call_paths,
+			Some(Value::String(path)) if !path.trim().is_empty() => {
+				named = [path.trim()];
+				&named[..]
+			}
+			Some(_) => bail!("`ranges[{index}].path` must be a non-empty path string."),
+		};
+		for path in paths {
+			match files.iter_mut().find(|(file, _)| file.as_str() == *path) {
+				Some((_, spans)) => spans.push(item.clone()),
+				None => files.push((path.to_string(), vec![item.clone()])),
+			}
+		}
+	}
+	Ok(Some(
+		files
+			.into_iter()
+			.map(|(path, spans)| {
+				let mut parameters = parameters_for_path(call, &path);
+				if let Some(fields) = parameters.as_object_mut() {
+					fields.insert("ranges".to_string(), Value::Array(spans));
+				}
+				(path, parameters)
+			})
+			.collect(),
+	))
+}
+
+/// View one path of a multi-path call, as a call for that path alone would.
+async fn view_one_path(call: &McpToolCall, path: &str) -> Result<String> {
+	let source = resolve_path_source(path, &call.workdir);
+	if !io_exists(&source).await? {
+		return Err(path_not_found(call, path, &source).await);
+	}
+	if file_ops::image_mime_by_extension(path).is_some() && !io_is_dir(&source).await? {
+		bail!(IMAGE_IN_PATH_LIST);
+	}
+	view_existing_path(call, path, &source).await
+}
+
+/// Render several reads as one result: a `path:` section each, in the order given.
+/// A read that fails is reported in its section, so the others still come back; the
+/// call fails only when none of them could be read.
+///
+/// Each read is within `MAX_RESULT_BYTES` alone, but a reply past it closes the client's
+/// connection. A read that no longer fits is named instead of returned, and dropped from
+/// the view cache: the model has not seen it.
+async fn view_sections(call: &McpToolCall, reads: Vec<(String, Value)>) -> Result<String> {
+	let not_returned = |path: &str| format!("{path}:\n{READ_NOT_RETURNED}");
+	// Room kept for naming every read still to come, should none of them fit.
+	let mut pending: usize = reads
+		.iter()
+		.map(|(path, _)| VIEW_SECTION_GAP.len() + not_returned(path).len())
+		.sum();
+	let mut used = 0;
+	let mut sections = Vec::with_capacity(reads.len());
+	// A hint names no file of its own, so each is tied to the path whose read raised it.
+	let mut hints = Vec::new();
+	let mut any_read = false;
+	for (path, parameters) in reads {
+		pending -= VIEW_SECTION_GAP.len() + not_returned(&path).len();
+		let read = McpToolCall {
+			tool_name: call.tool_name.clone(),
+			parameters,
+			tool_id: call.tool_id.clone(),
+			workdir: call.workdir.clone(),
+		};
+		let rendered = view_one_path(&read, &path).await;
+		hints.extend(
+			crate::mcp::request_ctx::drain_hints()
+				.into_iter()
+				.map(|hint| format!("{path}: {hint}")),
+		);
+		any_read |= rendered.is_ok();
+		let mut section = format!("{path}:\n{}", rendered.unwrap_or_else(|error| error.to_string()));
+		if used + VIEW_SECTION_GAP.len() + section.len() + pending > MAX_RESULT_BYTES {
+			delta::forget(&resolve_path_source(&path, &call.workdir));
+			section = not_returned(&path);
+		}
+		used += VIEW_SECTION_GAP.len() + section.len();
+		sections.push(section);
+	}
+	for hint in &hints {
+		crate::mcp::request_ctx::push_hint(hint);
+	}
+	let result = sections.join(VIEW_SECTION_GAP);
+	if !any_read {
+		bail!("{result}");
+	}
+	Ok(result)
+}
+
+// Execute batch_edit operations on a single file.
+// `operations` is a typed `Vec<BatchEditOperation>` in the tool schema, so rmcp guarantees
 // it arrives as a JSON array here; the operation-count limit is enforced in batch_edit_spec.
 pub async fn execute_batch_edit(call: &McpToolCall) -> Result<String> {
 	let operations_vec = match call.parameters.get("operations") {
 		Some(Value::Array(ops)) => ops.clone(),
-		_ => bail!("Missing or invalid 'operations' parameter for batch - must be an array"),
+		_ => bail!("Missing or invalid 'operations' parameter for batch_edit - must be an array"),
 	};
 
 	text_editing::batch_edit_spec(call, &operations_vec).await

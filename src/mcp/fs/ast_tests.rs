@@ -37,7 +37,7 @@ fn render_ast_body_renders_line_ids_breadcrumbs_and_context() {
 		"context line missing: {body}"
 	);
 	assert!(body.contains("}"), "trailing context missing: {body}");
-	// Every rendered source line carries an N:hh id usable by batch.
+	// Every rendered source line carries an N:hh id usable by batch_edit.
 	for line in body.lines().filter(|l| !l.starts_with('[')) {
 		assert!(line.contains('|'), "no line id on {line:?} in:\n{body}");
 	}

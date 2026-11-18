@@ -19,7 +19,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::*;
-use crate::mcp::fs::{execute_edit, execute_view};
+use crate::mcp::fs::{execute_text_edit, execute_view};
 use crate::mcp::request_ctx::with_request_context;
 use crate::mcp::McpToolCall;
 use crate::utils::line_hash::line_id;
@@ -223,7 +223,7 @@ async fn own_edits_keep_the_cache_current_but_unseen_changes_invalidate_it() {
 	std::fs::write(&file, &body).unwrap();
 	let replace = |old: &str, new: &str| {
 		McpToolCall::test_call(
-			"edit",
+			"text_edit",
 			json!({
 				"command": "str_replace",
 				"path": file.to_string_lossy(),
@@ -235,7 +235,7 @@ async fn own_edits_keep_the_cache_current_but_unseen_changes_invalidate_it() {
 
 	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		execute_view(&view_call(&file, json!({}))).await.unwrap();
-		execute_edit(&replace("l3", "L3")).await.unwrap();
+		execute_text_edit(&replace("l3", "L3")).await.unwrap();
 		let after_edit = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert!(after_edit.starts_with("[unchanged since"), "{after_edit}");
 
@@ -243,7 +243,7 @@ async fn own_edits_keep_the_cache_current_but_unseen_changes_invalidate_it() {
 		// the cache must not claim the file is known.
 		let current = std::fs::read_to_string(&file).unwrap();
 		std::fs::write(&file, current.replace("l8\n", "L8\n")).unwrap();
-		execute_edit(&replace("l5", "L5")).await.unwrap();
+		execute_text_edit(&replace("l5", "L5")).await.unwrap();
 		let after = execute_view(&view_call(&file, json!({}))).await.unwrap();
 		assert!(after.starts_with(&format!("{}|l1\n", line_id(1, "l1"))), "{after}");
 		assert_eq!(after.lines().count(), 10);

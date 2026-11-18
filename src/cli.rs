@@ -26,7 +26,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-	/// Start MCP server exposing filesystem tools (view, edit, batch, shell, symbol)
+	/// Start MCP server exposing filesystem tools (view, text_edit, batch_edit, shell, symbol)
 	Mcp {
 		/// Working directory for filesystem operations (default: current directory).
 		/// Supports ssh:// or sftp:// paths for remote filesystem access.

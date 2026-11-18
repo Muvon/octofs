@@ -35,7 +35,7 @@ pub mod text_editing;
 mod fs_tests;
 
 // Re-export main functionality
-pub use core::{execute_batch_edit, execute_edit, execute_view, execute_view_image};
+pub use core::{execute_batch_edit, execute_text_edit, execute_view, execute_view_image};
 
 pub use remote::{parse_path_source, PathSource};
 pub use shell::execute_shell_command;

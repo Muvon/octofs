@@ -14,15 +14,15 @@
 
 //! Multi-file transaction contracts exercised through the public command executor.
 
-use super::super::core::{execute_edit, undo_edit};
+use super::super::core::{execute_text_edit, undo_edit};
 use super::*;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
 async fn run(root: &TempDir, parameters: Value) -> Result<String> {
-	let mut call = McpToolCall::test_call("edit", parameters);
+	let mut call = McpToolCall::test_call("text_edit", parameters);
 	call.workdir = root.path().to_path_buf();
-	execute_edit(&call).await
+	execute_text_edit(&call).await
 }
 
 async fn read(root: &TempDir, path: &str) -> String {
@@ -184,7 +184,7 @@ async fn missing_file_fails_before_any_write() {
 
 #[test]
 fn edits_use_remote_workdir_resolution() {
-	let mut call = McpToolCall::test_call("edit", json!({}));
+	let mut call = McpToolCall::test_call("text_edit", json!({}));
 	call.workdir = std::path::PathBuf::from("ssh://dev@example.test:2222/repo");
 	let source = resolve("src/a.rs", &call).unwrap();
 	assert!(matches!(source, PathSource::Remote { .. }));

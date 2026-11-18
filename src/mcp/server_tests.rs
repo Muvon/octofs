@@ -714,16 +714,16 @@ async fn view_reads_a_job_link_like_resources_read() {
 /// workdir, run the execute fn, append hints. Drive them end-to-end through
 /// the MCP connection so the wrapper lines count as covered.
 #[tokio::test(flavor = "multi_thread")]
-async fn tool_handlers_edit_batch_copy_from_round_trip() {
+async fn tool_handlers_text_edit_batch_edit_copy_from_round_trip() {
 	let (client, _server_task, _unsolicited) = connect().await;
 
 	let call = |tool: &'static str, arguments: serde_json::Map<String, serde_json::Value>| {
 		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments))
 	};
 
-	// edit create
+	// text_edit create
 	let create = call(
-		"edit",
+		"text_edit",
 		json!({
 			"command": "create",
 			"path": "wrapper.txt",
@@ -734,10 +734,10 @@ async fn tool_handlers_edit_batch_copy_from_round_trip() {
 		.clone(),
 	)
 	.await
-	.expect("edit create");
+	.expect("text_edit create");
 	assert_ne!(create.is_error, Some(true), "{:?}", create.content);
 
-	// View the file to obtain line ids for batch.
+	// View the file to obtain line ids for batch_edit.
 	let viewed = call(
 		"view",
 		json!({ "path": "wrapper.txt", "full": true })
@@ -761,7 +761,7 @@ async fn tool_handlers_edit_batch_copy_from_round_trip() {
 		.and_then(|l| l.split('|').next())
 		.unwrap_or_else(|| panic!("no alpha line id in view output: {text}"));
 	let edit = call(
-		"batch",
+		"batch_edit",
 		json!({
 			"path": "wrapper.txt",
 			"operations": [
@@ -773,12 +773,12 @@ async fn tool_handlers_edit_batch_copy_from_round_trip() {
 		.clone(),
 	)
 	.await
-	.expect("batch");
+	.expect("batch_edit");
 	assert_ne!(edit.is_error, Some(true), "{:?}", edit.content);
 
-	// batch copy_from: copy the edited line into a new file
+	// batch_edit copy_from: copy the edited line into a new file
 	let copy = call(
-		"batch",
+		"batch_edit",
 		json!({
 			"path": "copied.txt",
 			"operations": [
@@ -790,7 +790,7 @@ async fn tool_handlers_edit_batch_copy_from_round_trip() {
 		.clone(),
 	)
 	.await
-	.expect("batch copy_from");
+	.expect("batch_edit copy_from");
 	assert_ne!(copy.is_error, Some(true), "{:?}", copy.content);
 
 	// Verify the copy landed via view
@@ -807,9 +807,9 @@ async fn tool_handlers_edit_batch_copy_from_round_trip() {
 		.expect("view result text");
 	assert!(text.contains("ALPHA"), "copied content: {text}");
 
-	// Error path: batch with a stale line id must surface the error.
+	// Error path: batch_edit with a stale line id must surface the error.
 	let stale = call(
-		"batch",
+		"batch_edit",
 		json!({
 			"path": "wrapper.txt",
 			"operations": [
@@ -821,8 +821,79 @@ async fn tool_handlers_edit_batch_copy_from_round_trip() {
 		.clone(),
 	)
 	.await
-	.expect("batch stale returns a response");
+	.expect("batch_edit stale returns a response");
 	assert_eq!(stale.is_error, Some(true), "stale id must error");
+}
+
+/// `view` reads several files in one call: a `|` list in `path`, or `ranges` spans that
+/// name their own file. Driven through the MCP connection, so the served schema has to
+/// accept both forms.
+#[tokio::test(flavor = "multi_thread")]
+async fn view_reads_several_files_in_one_call() {
+	let (client, _server_task, _unsolicited) = connect().await;
+
+	let call = |tool: &'static str, arguments: serde_json::Value| {
+		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments.as_object().unwrap().clone()))
+	};
+	let text_of = |content: &[ContentBlock]| {
+		content
+			.iter()
+			.find_map(|block| match block {
+				ContentBlock::Text(text) => Some(text.text.clone()),
+				_ => None,
+			})
+			.expect("view result text")
+	};
+
+	for (path, content) in [("several_a.txt", "a1\na2\n"), ("several_b.txt", "b1\nb2\n")] {
+		let created = call(
+			"text_edit",
+			json!({ "command": "create", "path": path, "content": content }),
+		)
+		.await
+		.expect("text_edit create");
+		assert_ne!(created.is_error, Some(true), "{:?}", created.content);
+	}
+
+	let listed = call("view", json!({ "path": "several_a.txt|several_b.txt", "full": true }))
+		.await
+		.expect("view path list");
+	assert_ne!(listed.is_error, Some(true), "{:?}", listed.content);
+	let listed = text_of(&listed.content);
+	assert!(listed.starts_with("several_a.txt:\n1:"), "{listed}");
+	assert!(listed.contains("\n\nseveral_b.txt:\n1:"), "{listed}");
+
+	let ranged = call(
+		"view",
+		json!({ "path": "several_a.txt", "ranges": [{ "start": 2 }, { "path": "several_b.txt", "end": 1 }] }),
+	)
+	.await
+	.expect("view ranges of two files");
+	assert_ne!(ranged.is_error, Some(true), "{:?}", ranged.content);
+	let ranged = text_of(&ranged.content);
+	assert!(ranged.starts_with("several_a.txt:\n2:"), "{ranged}");
+	assert!(ranged.contains("\n\nseveral_b.txt:\n1:"), "{ranged}");
+}
+
+/// A span of `ranges` defaults every field, so a caller names only what differs: the
+/// file, the first line or the last.
+#[tokio::test(flavor = "multi_thread")]
+async fn view_range_items_take_an_optional_path_and_require_nothing() {
+	let (client, _server_task, _unsolicited) = connect_legacy().await;
+	let tools = client.list_tools(None).await.expect("list tools");
+	let view = tools.tools.iter().find(|tool| tool.name == "view").expect("view tool");
+	let range = &view.input_schema["$defs"]["ViewRange"];
+	let properties = range["properties"].as_object().expect("range properties");
+	for name in ["path", "start", "end"] {
+		assert!(properties.contains_key(name), "a span takes `{name}`: {range}");
+	}
+	assert!(
+		range
+			.get("required")
+			.and_then(|required| required.as_array())
+			.is_none_or(|required| required.is_empty()),
+		"every field of a span has a default: {range}"
+	);
 }
 
 /// `check` runs as `shell` after the edit lands and its output follows the edit result;
@@ -845,13 +916,13 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	};
 
 	call(
-		"edit",
+		"text_edit",
 		json!({ "command": "create", "path": "checked.txt", "content": "one\n" }),
 	)
 	.await
 	.expect("create");
 	let edited = call(
-		"edit",
+		"text_edit",
 		json!({ "command": "str_replace", "path": "checked.txt", "old_text": "one", "new_text": "one\ntwo", "check": "wc -l checked.txt" }),
 	)
 	.await
@@ -864,7 +935,7 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	assert!(check_at > 0, "the edit result leads the check output: {output}");
 
 	let red = call(
-		"edit",
+		"text_edit",
 		json!({ "command": "str_replace", "path": "checked.txt", "old_text": "two", "new_text": "three", "check": "false" }),
 	)
 	.await
@@ -879,7 +950,7 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	assert!(output.contains("Check: Command failed with exit code 1"), "{output}");
 
 	let failed = call(
-		"batch",
+		"batch_edit",
 		json!({
 			"path": "checked.txt",
 			"operations": [{ "operation": "replace", "start": "99:zz", "content": "x" }],
@@ -895,203 +966,11 @@ async fn edit_check_runs_after_a_written_edit_only() {
 	assert_eq!(probe.is_error, Some(true), "the check must not run after a failed edit");
 }
 
-/// One `batch` call reads several files, and every `view` operation returns what the view
-/// tool returns for the same lines: a `.spill` file (saved tool output) is shown as stored.
-#[tokio::test(flavor = "multi_thread")]
-async fn batch_view_operations_read_several_files_as_the_view_tool_does() {
-	let (client, _server_task, _unsolicited) = connect().await;
-	let call = |tool: &'static str, arguments: serde_json::Value| {
-		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments.as_object().unwrap().clone()))
-	};
-	let text = |result: &rmcp::model::CallToolResult| {
-		result
-			.content
-			.iter()
-			.filter_map(|block| match block {
-				ContentBlock::Text(text) => Some(text.text.clone()),
-				_ => None,
-			})
-			.collect::<String>()
-	};
-
-	let dir = tempfile::tempdir().expect("temp dir");
-	let file = |name: &str, content: &str| {
-		let path = dir.path().join(name);
-		std::fs::write(&path, content).expect("write file");
-		path.to_string_lossy().to_string()
-	};
-	let notes = file("notes.txt", "one\ntwo\nthree\nfour\n");
-	let spill = file(
-		"saved.spill",
-		"464:3c|alpha\n465:aa|beta\n466:bb|needle\n467:cc|delta\n",
-	);
-
-	let mut expected = Vec::new();
-	for path in [&notes, &spill] {
-		let viewed = call("view", json!({ "path": path, "start": 2, "end": 3 }))
-			.await
-			.expect("view");
-		assert_ne!(viewed.is_error, Some(true), "{:?}", viewed.content);
-		expected.push(format!("{path}:\n{}", text(&viewed)));
-	}
-	assert!(
-		expected[1].contains("465:aa|beta\n466:bb|needle"),
-		"spill lines are shown as stored: {}",
-		expected[1]
-	);
-
-	let read = call(
-		"batch",
-		json!({
-			"operations": [
-				{ "operation": "view", "path": notes, "start": 2, "end": 3 },
-				{ "operation": "view", "path": spill, "start": 2, "end": 3 }
-			]
-		}),
-	)
-	.await
-	.expect("batch");
-	assert_ne!(read.is_error, Some(true), "{:?}", read.content);
-	assert_eq!(text(&read), expected.join("\n\n"));
-}
-
-/// `view` operations run after the call's edits, wherever they stand in the list, so one
-/// call edits a file and reads the result; a rejected edit stops the call before any view.
-#[tokio::test(flavor = "multi_thread")]
-async fn batch_views_run_after_the_edits_of_the_same_call() {
-	let (client, _server_task, _unsolicited) = connect().await;
-	let call = |tool: &'static str, arguments: serde_json::Value| {
-		client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments.as_object().unwrap().clone()))
-	};
-	let text = |result: &rmcp::model::CallToolResult| {
-		result
-			.content
-			.iter()
-			.filter_map(|block| match block {
-				ContentBlock::Text(text) => Some(text.text.clone()),
-				_ => None,
-			})
-			.collect::<String>()
-	};
-
-	let dir = tempfile::tempdir().expect("temp dir");
-	let path = dir.path().join("notes.txt");
-	std::fs::write(&path, "one\ntwo\nthree\n").expect("write file");
-	let path = path.to_string_lossy().to_string();
-	let section = format!("{path}:\n");
-
-	let viewed = call("view", json!({ "path": path, "start": 2, "end": 2 }))
-		.await
-		.expect("view");
-	let viewed = text(&viewed);
-	let id = viewed
-		.lines()
-		.find(|line| line.contains("two"))
-		.and_then(|line| line.split('|').next())
-		.unwrap_or_else(|| panic!("no line id in view output: {viewed}"));
-
-	let edited = call(
-		"batch",
-		json!({
-			"path": path,
-			"operations": [
-				{ "operation": "view", "start": 1, "end": 3 },
-				{ "operation": "replace", "start": id, "content": "TWO" }
-			]
-		}),
-	)
-	.await
-	.expect("batch");
-	assert_ne!(edited.is_error, Some(true), "{:?}", edited.content);
-	let output = text(&edited);
-	let read_at = output
-		.rfind(&section)
-		.unwrap_or_else(|| panic!("view section missing: {output}"));
-	assert!(read_at > 0, "the edit result leads the view: {output}");
-	assert!(
-		output[read_at..].contains("|TWO\n"),
-		"the view shows the edited line: {output}"
-	);
-	assert!(
-		!output[read_at..].contains("|two\n"),
-		"the view runs after the edit: {output}"
-	);
-
-	let rejected = call(
-		"batch",
-		json!({
-			"path": path,
-			"operations": [
-				{ "operation": "replace", "start": "99:zz", "content": "x" },
-				{ "operation": "view" }
-			]
-		}),
-	)
-	.await
-	.expect("rejected edit returns a response");
-	assert_eq!(rejected.is_error, Some(true), "stale id must error");
-	assert!(!text(&rejected).contains(&section), "no view after a rejected edit");
-}
-
-/// Each read fits one tool result alone, but together they can pass the size a client's
-/// connection survives. A read that no longer fits is named instead of returned, and its
-/// next whole view is still the content, not "unchanged": the model never saw it.
-#[tokio::test]
-async fn batch_names_the_reads_that_pass_the_result_limit() {
-	const FILES: usize = 12;
-	let dir = tempfile::tempdir().expect("workdir");
-	// Each file stays under the view cache's size bound, so a returned whole view is
-	// remembered; together the twelve pass the result limit.
-	let content = format!("{}\n", "x".repeat(1023)).repeat(900);
-	let views: Vec<(String, serde_json::Value)> = (0..FILES)
-		.map(|index| {
-			let path = dir.path().join(format!("f{index}.txt"));
-			std::fs::write(&path, &content).expect("write file");
-			let path = path.to_string_lossy().to_string();
-			(path.clone(), json!({ "path": path }))
-		})
-		.collect();
-	let first = views[0].0.clone();
-	let last = views[FILES - 1].0.clone();
-	let server = OctofsServer::with_root(dir.path().to_path_buf());
-	let (transport, _client) = tokio::io::duplex(4096);
-	let service = rmcp::service::serve_directly(server.clone(), transport, None);
-	let state = server.session(&session_context(service.peer(), "s", dir.path(), Some(0)));
-
-	let (sections, again) = crate::mcp::request_ctx::with_request_context(state.view_cache.clone(), async {
-		let sections = super::batch_reads(views, dir.path(), 0).await;
-		let call = crate::mcp::McpToolCall::test_call("view", json!({ "path": last }));
-		(sections, crate::mcp::fs::execute_view(&call).await.expect("view"))
-	})
-	.await;
-
-	let reply = sections.join(super::BATCH_SECTION_GAP);
-	assert!(
-		reply.len() <= crate::utils::truncation::MAX_RESULT_BYTES,
-		"reply is {} bytes",
-		reply.len()
-	);
-	let returned = sections
-		.iter()
-		.filter(|section| !section.ends_with(super::BATCH_READ_DROPPED))
-		.count();
-	assert!((1..FILES).contains(&returned), "returned {returned} of {FILES} reads");
-	assert!(
-		sections[0].starts_with(&format!("{first}:\n1:")),
-		"the first read is returned"
-	);
-	assert_eq!(sections[FILES - 1], super::dropped_read(&last));
-	assert!(
-		again.starts_with("1:"),
-		"a read that was not returned is not remembered as seen"
-	);
-}
-
 // A model that names one edit in a shape the schema did not anticipate is still
 // naming one edit; these coercions keep that from costing a round-trip.
 #[test]
-fn batch_accepts_content_as_a_list_of_lines() {
-	let params: super::BatchParams = serde_json::from_value(serde_json::json!({
+fn batch_edit_accepts_content_as_a_list_of_lines() {
+	let params: super::BatchEditParams = serde_json::from_value(serde_json::json!({
 		"path": "src/lib.rs",
 		"operations": [{
 			"operation": "replace",
@@ -1104,91 +983,55 @@ fn batch_accepts_content_as_a_list_of_lines() {
 	assert_eq!(params.operations[0].content.as_deref(), Some("use a::B;\nuse c::D;"));
 }
 
-// A model sometimes carries `path` on each operation instead of on the call; when the
-// edits agree on one file, that is the file to edit.
 #[test]
-fn batch_edits_the_file_named_on_every_operation() {
-	let params: super::BatchParams = serde_json::from_value(serde_json::json!({
+fn batch_edit_hoists_a_path_carried_on_every_operation() {
+	let params: super::BatchEditParams = serde_json::from_value(serde_json::json!({
 		"operations": [
 			{"operation": "replace", "start": "7:56", "content": "a", "path": "src/lib.rs"},
 			{"operation": "insert", "start": 0, "content": "b", "path": "src/lib.rs"},
 		],
 	}))
-	.expect("operations carry the path");
-	let plan = params.plan().expect("a single agreed path is the target");
-	assert_eq!(plan.edit_path.as_deref(), Some("src/lib.rs"));
-	assert!(plan.views.is_empty());
+	.expect("a single agreed path is the target");
+	assert_eq!(params.path, "src/lib.rs");
+	assert_eq!(params.operations.len(), 2);
 }
 
 #[test]
-fn batch_rejects_edits_naming_different_files() {
-	let params: super::BatchParams = serde_json::from_value(serde_json::json!({
+fn batch_edit_rejects_operations_naming_different_files() {
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
 		"operations": [
 			{"operation": "replace", "start": "7:56", "content": "a", "path": "src/one.rs"},
 			{"operation": "replace", "start": "9:aa", "content": "b", "path": "src/two.rs"},
 		],
 	}))
-	.expect("batch params");
-	let err = params.plan().expect_err("no single target is named");
-	assert!(err.contains("one file per call"), "got: {err}");
+	.expect_err("no single target is named");
+	assert!(err.to_string().contains("single file"), "got: {err}");
 }
 
-/// Reads are not bound to the edited file: each `view` operation names its own file or
-/// takes the call's, and its `start`/`end` reach the view tool unchanged.
+/// Only reads take plain line numbers: a replace end is only ever a line id, and edit
+/// positions (op `start`) offer no integers but the anchors 0/-1.
 #[test]
-fn batch_plans_views_of_any_file_beside_the_edits_of_one() {
-	let params: super::BatchParams = serde_json::from_value(serde_json::json!({
-		"path": "src/lib.rs",
-		"operations": [
-			{"operation": "view", "path": "src/main.rs", "start": 10, "end": 20},
-			{"operation": "replace", "start": "7:56", "content": "a"},
-			{"operation": "view"},
-		],
-	}))
-	.expect("batch params");
-	let plan = params.plan().expect("plan");
-	assert_eq!(plan.edit_path.as_deref(), Some("src/lib.rs"));
-	assert_eq!(
-		plan.views,
-		[
-			(
-				"src/main.rs".to_string(),
-				serde_json::json!({"path": "src/main.rs", "start": 10, "end": 20})
-			),
-			("src/lib.rs".to_string(), serde_json::json!({"path": "src/lib.rs"})),
-		]
-	);
-}
-
-#[test]
-fn batch_rejects_a_view_that_carries_edit_content() {
-	let params: super::BatchParams = serde_json::from_value(serde_json::json!({
-		"path": "f",
-		"operations": [{"operation": "view", "content": "needle"}],
-	}))
-	.expect("batch params");
-	let err = params.plan().expect_err("a view takes no content");
-	assert!(err.contains("op 0") && err.contains("takes no `content`"), "got: {err}");
-}
-
-/// A batch operation's `start`/`end` serve `view` operations too, so their schema takes a
-/// line id or a line number, as `copy_from` does; an edit still rejects a plain number other
-/// than the insert anchors 0/-1 when it runs.
-#[test]
-fn batch_positions_take_line_ids_and_line_numbers() {
+fn edit_schemas_allow_integers_only_as_anchors() {
+	let anchors = serde_json::json!([0, -1]);
 	let copy = serde_json::to_value(rmcp::schemars::schema_for!(super::CopySource)).expect("schema json");
-	let operation = serde_json::to_value(rmcp::schemars::schema_for!(super::BatchOperation)).expect("schema json");
-	for (owner, schema) in [("copy_from", &copy), ("operation", &operation)] {
-		for field in ["start", "end"] {
-			let integer = schema["properties"][field]["anyOf"]
-				.as_array()
-				.unwrap_or_else(|| panic!("{owner} {field} anyOf"))
-				.iter()
-				.find(|variant| variant["type"] == "integer")
-				.unwrap_or_else(|| panic!("{owner} {field} takes line numbers"));
-			assert!(integer.get("enum").is_none(), "{owner} {field}: {integer}");
-		}
-	}
+	let copy_start = copy["properties"]["start"]["anyOf"]
+		.as_array()
+		.expect("copy_from start anyOf")
+		.iter()
+		.find(|variant| variant["type"] == "integer")
+		.expect("copy_from start takes line numbers");
+	assert!(copy_start.get("enum").is_none(), "copy_from start: {copy_start}");
+	let schema = serde_json::to_value(rmcp::schemars::schema_for!(super::BatchEditOperation)).expect("schema json");
+	let properties = &schema["properties"];
+	assert_eq!(properties["end"]["type"], "string", "end: {}", properties["end"]);
+	assert!(properties["end"].get("anyOf").is_none(), "end: {}", properties["end"]);
+	let integer_start = properties["start"]["anyOf"]
+		.as_array()
+		.expect("start anyOf")
+		.iter()
+		.find(|variant| variant["type"] == "integer")
+		.expect("start keeps an integer variant");
+	assert_eq!(integer_start["enum"], anchors, "start: {}", properties["start"]);
 }
 
 #[test]
@@ -1227,7 +1070,7 @@ fn generator_noise_is_stripped_but_parameters_named_like_it_survive() {
 async fn served_tool_schemas_carry_no_generator_noise() {
 	let (client, _server_task, _unsolicited) = connect_legacy().await;
 	let tools = client.list_tools(None).await.expect("list tools");
-	assert_eq!(tools.tools.len(), 7);
+	assert_eq!(tools.tools.len(), 5);
 	for tool in &tools.tools {
 		let schema = serde_json::to_string(tool.input_schema.as_ref()).expect("schema json");
 		assert!(
@@ -1272,7 +1115,7 @@ async fn executed_parameters_are_marked_as_shell_commands() {
 		}
 	}
 	marked.sort();
-	assert_eq!(marked, ["batch.check", "edit.check", "shell.command"]);
+	assert_eq!(marked, ["batch_edit.check", "shell.command", "text_edit.check"]);
 }
 
 fn context_with_session(
@@ -1415,9 +1258,9 @@ fn strip_null_variants_collapses_nullable_types_and_unions() {
 }
 
 #[test]
-fn batch_rejects_non_string_list_content_and_missing_path() {
+fn batch_edit_rejects_non_string_list_content_and_missing_path() {
 	// A list holding a non-string element is a clear error, not silent loss.
-	let err = serde_json::from_value::<super::BatchParams>(serde_json::json!({
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
 		"path": "f",
 		"operations": [{"operation": "insert", "start": 0, "content": ["a", 3]}],
 	}))
@@ -1425,7 +1268,7 @@ fn batch_rejects_non_string_list_content_and_missing_path() {
 	assert!(err.to_string().contains("content list must hold strings"), "got: {err}");
 
 	// Non-string, non-list content is rejected too.
-	let err = serde_json::from_value::<super::BatchParams>(serde_json::json!({
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
 		"path": "f",
 		"operations": [{"operation": "insert", "start": 0, "content": 42}],
 	}))
@@ -1435,16 +1278,15 @@ fn batch_rejects_non_string_list_content_and_missing_path() {
 		"got: {err}"
 	);
 
-	// No path anywhere leaves the operation without a file.
-	let params: super::BatchParams = serde_json::from_value(serde_json::json!({
+	// No path anywhere is a missing-field error.
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
 		"operations": [{"operation": "insert", "start": 0, "content": "a"}],
 	}))
-	.expect("path is optional on the call");
-	let err = params.plan().expect_err("no path named");
-	assert!(err.contains("no `path`"), "got: {err}");
+	.expect_err("no path named");
+	assert!(err.to_string().contains("path"), "got: {err}");
 
 	// A malformed operation body surfaces serde's error.
-	let err = serde_json::from_value::<super::BatchParams>(serde_json::json!({
+	let err = serde_json::from_value::<super::BatchEditParams>(serde_json::json!({
 		"path": "f",
 		"operations": [{"operation": "teleport", "start": 0, "content": "a"}],
 	}))
@@ -1453,10 +1295,10 @@ fn batch_rejects_non_string_list_content_and_missing_path() {
 }
 
 #[tokio::test]
-async fn edit_lists_edits_first_and_has_no_apply_patch() {
+async fn text_edit_lists_edits_first_and_has_no_apply_patch() {
 	let (client, _server_task, _unsolicited) = connect().await;
 	let tools = client.list_tools(None).await.unwrap();
-	let tool = tools.tools.iter().find(|t| t.name == "edit").unwrap();
+	let tool = tools.tools.iter().find(|t| t.name == "text_edit").unwrap();
 	let schema = serde_json::to_string(&tool.input_schema).unwrap();
 	assert!(!schema.contains("apply_patch"));
 	assert!(tool.input_schema["properties"].get("patch").is_none());
@@ -1520,7 +1362,7 @@ async fn edit_tools_advertise_check_only_when_shell_is_granted() {
 			.list_tools(None, shell_context(peer, shell.clone()))
 			.await
 			.expect("list tools");
-		for name in ["edit", "batch"] {
+		for name in ["text_edit", "batch_edit"] {
 			let tool = result.tools.iter().find(|tool| tool.name == name).expect("edit tool");
 			let has_property = tool.input_schema["properties"].get("check").is_some();
 			let has_sentence = tool.description.as_ref().expect("description").contains(sentence);
@@ -1550,23 +1392,23 @@ async fn edit_with_check_is_refused_when_shell_is_not_granted() {
 	let peer = service.peer();
 	let denied = || shell_context(peer, Some(json!(false)));
 
-	let edit: super::EditParams = serde_json::from_value(
+	let text_edit: super::TextEditParams = serde_json::from_value(
 		json!({ "command": "str_replace", "path": "f.txt", "old_text": "one", "new_text": "two", "check": "true" }),
 	)
-	.expect("edit params");
+	.expect("text_edit params");
 	let error = server
-		.edit(denied(), Parameters(edit))
+		.text_edit(denied(), Parameters(text_edit))
 		.await
 		.expect_err("check refused");
 	assert!(error.contains("`check` needs the `shell` tool"), "{error}");
 	assert_eq!(std::fs::read_to_string(&file).expect("read"), "one\n");
 
-	let batch: super::BatchParams = serde_json::from_value(
+	let batch_edit: super::BatchEditParams = serde_json::from_value(
 		json!({ "path": "f.txt", "operations": [{ "operation": "insert", "start": 0, "content": "x\n" }], "check": "true" }),
 	)
-	.expect("batch params");
+	.expect("batch_edit params");
 	let error = server
-		.batch(denied(), Parameters(batch))
+		.batch_edit(denied(), Parameters(batch_edit))
 		.await
 		.expect_err("check refused");
 	assert!(error.contains("`check` needs the `shell` tool"), "{error}");

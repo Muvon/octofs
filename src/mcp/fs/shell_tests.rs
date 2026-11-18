@@ -358,7 +358,7 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("echo hi >/tmp/a>src/b").is_some());
 	// cat with a redirect gets the write guidance, not the read guidance
 	let msg = rejection("cat > f.txt").unwrap();
-	assert!(msg.contains("edit"), "msg: {msg}");
+	assert!(msg.contains("text_edit"), "msg: {msg}");
 	// Redirecting other programs' output stays allowed
 	assert!(passes("cargo test > out.log 2>&1"));
 	assert!(passes("make 2>&1 | tee build.log"));
@@ -378,7 +378,7 @@ fn scratch_writes_outside_the_workdir_run_with_a_hint() {
 	// Scratch files outside the workdir are no tracked edit: they run with a hint
 	let scratch =
 		hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js").expect("a /tmp heredoc runs");
-	assert!(scratch.contains("edit"), "{scratch}");
+	assert!(scratch.contains("text_edit"), "{scratch}");
 	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
 	// A relative target after `cd` to a scratch dir lands outside the workdir too
 	assert!(hint("cd /tmp/schema-test && printf 'Build a profile' > prompt.txt").is_some());

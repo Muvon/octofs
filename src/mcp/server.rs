@@ -37,7 +37,6 @@ use tracing::{debug, warn};
 use super::fs;
 use super::request_ctx;
 use super::McpToolCall;
-use crate::utils::truncation::MAX_RESULT_BYTES;
 
 /// Most sessions one connection keeps state for. Octomind multiplexes every
 /// session of a long-lived daemon over one connection and MCP has no session-end
@@ -554,15 +553,6 @@ pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected and nothing in the call
 const EDIT_CHECK_DESCRIPTION: &str = "Optional `check` (most edits omit it; on a related set, only the last edit): a shell command (such as the test that covers the change) run after the edit is written, exactly as `shell` runs it; its output follows the edit result. It does not run when the edit fails; a failing or refused check leaves the edit in place, so fix the cause instead of redoing the edit.";
 const CHECK_NEEDS_SHELL: &str =
 	"`check` needs the `shell` tool, which this session does not grant; remove `check` and run the edit alone";
-/// Edits are applied atomically, which holds for one file only.
-const BATCH_EDITS_ONE_FILE: &str =
-	"batch edits one file per call, but the insert/replace operations name different paths; send one batch per file";
-/// A `view` operation returns text; an image comes back as image content from the `view` tool.
-const BATCH_VIEW_IMAGE: &str = "image file: read it with the `view` tool";
-/// Stands in for a read that would take the reply past `MAX_RESULT_BYTES`.
-const BATCH_READ_DROPPED: &str = "[not returned: with it this result would pass the size limit of one tool result; read it in another call or in smaller `start`/`end` ranges]";
-/// Blank line between the sections of a batch result.
-const BATCH_SECTION_GAP: &str = "\n\n";
 
 /// JSON Schema `contentMediaType` of every parameter octofs runs as a shell command
 /// (`shell`'s `command`, an edit tool's `check`). The schema is the only place a client
@@ -602,13 +592,14 @@ impl OctofsServer {
 			fewer tokens than full content. \
 			Content-search groups carry their enclosing symbol; to navigate by symbol name use the \
 			`symbol` tool. \
-			An image file (png, jpg, gif, webp by extension) comes back as the image itself; \
-			`start`/`end` and `content` do not apply to it. \
+			An image file (png, jpg, gif, webp by extension) comes back as the image itself \
+			when it is the only path of the call; `start`/`end` and `content` do not apply to it. \
 			Re-viewing a whole file may return only the hunks changed since your last view (or an \
 			unchanged marker); `full: true` requests complete content. Ranged reads return the \
-			requested lines; `ranges` reads several spans of one file in a single call. To read \
-			several files at one time, send one `batch` call with a `view` operation per file. \
-			Returned line ids go directly into `batch` calls."
+			requested lines; `ranges` reads several spans in a single call, and a span may name \
+			its own `path` to read from another file. `path: \"a.rs|b.rs\"` views several paths \
+			in one call, each with the call's other parameters. Several files come back as one \
+			`path:` section each. Returned line ids go directly into `batch_edit` calls."
 	)]
 	async fn view(
 		&self,
@@ -652,7 +643,7 @@ impl OctofsServer {
 			comes back. `definition` (default) returns the symbol's source and `references` every \
 			use of it, both by name in a file or under a directory (`path`, default the workdir; \
 			`*` wildcards allowed; ssh:// paths work) as `N:hh|content` lines whose ids feed \
-			`batch`; `flags` `c` counts per file, `l` lists files, `context` adds lines around \
+			`batch_edit`; `flags` `c` counts per file, `l` lists files, `context` adds lines around \
 			references. The graph relations list one hop per line as `path:line  kind  Owner::name`, \
 			grouped by `depth N:`: `callers` and `callees` follow calls, `supertypes` and `subtypes` \
 			follow extends/implements, `imports` and `imported_by` follow the imports of the file in \
@@ -692,7 +683,7 @@ impl OctofsServer {
 	}
 
 	#[tool(
-		title = "Edit",
+		title = "Text Edit",
 		annotations(
 			read_only_hint = false,
 			destructive_hint = true,
@@ -704,15 +695,15 @@ impl OctofsServer {
 			can instead use path, old_text, new_text, and optional replace_all at the call level. \
 			Text is raw file text (real newlines, no `N:hh|` prefixes); old_text must match exactly \
 			once, or set replace_all: true. On multiple matches the error lists their line ids; \
-			on none it lists the closest matches, for batch. create: new file only — fails \
+			on none it lists the closest matches, for batch_edit. create: new file only — fails \
 			if it exists; parent directories are made. delete: remove a file (not a directory). \
-			undo_edit: revert the last edit to path (10 levels, delete included). Use batch \
+			undo_edit: revert the last edit to path (10 levels, delete included). Use batch_edit \
 			for replacements or insertions addressed by line ids."
 	)]
-	async fn edit(
+	async fn text_edit(
 		&self,
 		context: RequestContext<RoleServer>,
-		Parameters(mut params): Parameters<EditParams>,
+		Parameters(mut params): Parameters<TextEditParams>,
 	) -> Result<CallToolResponse, String> {
 		let check = params.check.take();
 		if check.is_some() && !Self::shell_granted(&context) {
@@ -721,13 +712,13 @@ impl OctofsServer {
 		let session = self.session(&context);
 		let workdir = session.workdir.clone();
 		let call = McpToolCall {
-			tool_name: "edit".to_string(),
+			tool_name: "text_edit".to_string(),
 			parameters: serde_json::to_value(&params).unwrap_or_default(),
 			tool_id: String::new(),
 			workdir,
 		};
 		let result = request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let result = fs::execute_edit(&call).await.map_err(|e| format!("{e:#}"))?;
+			let result = fs::execute_text_edit(&call).await.map_err(|e| format!("{e:#}"))?;
 			Ok::<String, String>(append_hints(result))
 		})
 		.await?;
@@ -735,64 +726,49 @@ impl OctofsServer {
 	}
 
 	#[tool(
-		title = "Batch",
+		title = "Batch Edit",
 		annotations(
 			read_only_hint = false,
 			destructive_hint = true,
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Run several operations (max 50) in one call: `view` operations read files, \
-			`insert`/`replace` operations edit one file atomically. To read several files, or \
-			several places of a file, at one time, send one batch with a `view` operation for each \
-			instead of one view call each: a `view` operation takes its own `path` (default: the \
-			call's `path`) and optional `start`/`end`, and returns the lines as the view tool does. \
-			Edit targets are line ids (\"12:a3\") copied exactly from view or edit output. An id you \
-			copied earlier still works after your other edits to the file while its line is \
-			unchanged: do not change its number or view the file again. A rejected id returns the \
-			current content with fresh ids; use those. All edit targets refer to the file before \
-			this call and must not overlap; do not adjust ids for earlier operations in this call. \
-			Group edits to the same file in one call. `view` operations run after the call's edits, \
-			so viewing the edited file shows its new lines; a rejected edit stops the call before \
-			any view. The result diff carries fresh ids for the lines it shows; removed lines and \
-			the middle of a long added block show as an id range. A trailing `shift:` line says how \
-			far the lines after each edit moved. Insert anchors 0 (file start) and -1 (end) are \
-			plain integers. Content is raw text without `N:hh|` prefixes. To copy lines instead of \
-			retyping them, give an operation `copy_from` (a line range of any file, this one as it \
-			was before the call) in place of `content`; a move adds a replace of the old range with \
-			\"\" (a range of another file is removed by a separate call on that file). A file that \
-			does not exist yet takes only `copy_from` inserts at 0 or -1, which create it."
+		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
+			are line ids (\"12:a3\") copied exactly from view or edit output. An id you copied \
+			earlier still works after your other edits to the file while its line is unchanged: \
+			do not change its number or view the file again. A rejected id returns the current \
+			content with fresh ids; use those. All targets refer to the file before this call and \
+			must not overlap; do not adjust ids for earlier operations in this call. Group edits \
+			to the same file in one call. The result diff carries fresh ids for the lines it \
+			shows; removed lines and the middle of a long added block show as an id range. A \
+			trailing `shift:` line says how far the lines after each edit moved. Insert anchors \
+			0 (file start) and -1 (end) are plain integers. Content is raw text without `N:hh|` \
+			prefixes. To copy lines instead of retyping them, give an operation `copy_from` \
+			(a line range of any file, this one as it was before the call) in place of \
+			`content`; a move adds a replace of the old range with \"\" (a range of another file \
+			is removed by a separate call on that file). A file that does not \
+			exist yet takes only `copy_from` inserts at 0 or -1, which create it."
 	)]
-	async fn batch(
+	async fn batch_edit(
 		&self,
 		context: RequestContext<RoleServer>,
-		Parameters(mut params): Parameters<BatchParams>,
+		Parameters(mut params): Parameters<BatchEditParams>,
 	) -> Result<CallToolResponse, String> {
 		let check = params.check.take();
 		if check.is_some() && !Self::shell_granted(&context) {
 			return Err(CHECK_NEEDS_SHELL.to_string());
 		}
-		let plan = params.plan()?;
 		let session = self.session(&context);
 		let workdir = session.workdir.clone();
+		let call = McpToolCall {
+			tool_name: "batch_edit".to_string(),
+			parameters: serde_json::to_value(&params).unwrap_or_default(),
+			tool_id: String::new(),
+			workdir,
+		};
 		let result = request_ctx::with_request_context(session.view_cache.clone(), async move {
-			let mut sections = Vec::new();
-			let reads = !plan.views.is_empty();
-			if let Some(path) = plan.edit_path {
-				let call = McpToolCall {
-					tool_name: "batch".to_string(),
-					parameters: serde_json::json!({ "path": path, "operations": params.operations }),
-					tool_id: String::new(),
-					workdir: workdir.clone(),
-				};
-				let diff = fs::execute_batch_edit(&call).await.map_err(|e| e.to_string())?;
-				// Beside reads the edit result is one section among several, so it names its
-				// file as they do; alone it stays as it was.
-				sections.push(if reads { format!("{path}:\n{diff}") } else { diff });
-			}
-			let used = sections.iter().map(String::len).sum();
-			sections.extend(batch_reads(plan.views, &workdir, used).await);
-			Ok::<String, String>(append_hints(sections.join(BATCH_SECTION_GAP)))
+			let result = fs::execute_batch_edit(&call).await.map_err(|e| e.to_string())?;
+			Ok::<String, String>(append_hints(result))
 		})
 		.await?;
 		self.edit_response(context, result, check).await
@@ -814,7 +790,7 @@ impl OctofsServer {
 			is a later pipe stage. `view` takes local and ssh:// paths, and its `flags` give \
 			`grep -c/-l/-o/-v` and `ls -l` output. The same applies to bare `sleep` and to writing \
 			files: `sed -i`, standalone `tee` and echo/printf/cat redirects into the workdir \
-			belong to `edit` and `batch`. Local writes outside the workdir \
+			belong to `text_edit` and `batch_edit`. Local writes outside the workdir \
 			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. \
 			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
 			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
@@ -993,7 +969,7 @@ impl ServerHandler for OctofsServer {
 					strip_null_variants(value);
 				}
 				strip_generator_noise(&mut schema);
-				if tool.name == "edit" || tool.name == "batch" {
+				if tool.name == "text_edit" || tool.name == "batch_edit" {
 					if shell_granted {
 						if let Some(description) = tool.description.as_mut() {
 							*description = format!("{description} {EDIT_CHECK_DESCRIPTION}").into();
@@ -1205,61 +1181,14 @@ fn append_hints(mut result: String) -> String {
 	}
 	result
 }
-
-/// The section of a batch result that names a read without returning it.
-fn dropped_read(path: &str) -> String {
-	format!("{path}:\n{BATCH_READ_DROPPED}")
-}
-
-/// Run the `view` operations of a batch in order, each as a section headed by its path.
-/// Every read goes through the view tool's own code and view cache, so a file (a `.spill`
-/// file included) reads the same here as there. A read that fails is reported in its
-/// section: the edits of the call are already written, so the call must still answer.
-///
-/// Each read is within `MAX_RESULT_BYTES` alone, but a reply past it closes the client's
-/// connection. `used` is what the reply already holds. A read that no longer fits is named
-/// instead of returned, and dropped from the view cache: the model has not seen it.
-async fn batch_reads(
-	views: Vec<(String, serde_json::Value)>,
-	workdir: &std::path::Path,
-	mut used: usize,
-) -> Vec<String> {
-	// Room kept for naming every read still to come, should none of them fit.
-	let mut pending: usize = views
-		.iter()
-		.map(|(path, _)| BATCH_SECTION_GAP.len() + dropped_read(path).len())
-		.sum();
-	let mut sections = Vec::with_capacity(views.len());
-	for (path, parameters) in views {
-		pending -= BATCH_SECTION_GAP.len() + dropped_read(&path).len();
-		let call = McpToolCall {
-			tool_name: "view".to_string(),
-			parameters,
-			tool_id: String::new(),
-			workdir: workdir.to_path_buf(),
-		};
-		let lines = if matches!(fs::execute_view_image(&call).await, Ok(Some(_))) {
-			BATCH_VIEW_IMAGE.to_string()
-		} else {
-			fs::execute_view(&call).await.unwrap_or_else(|e| e.to_string())
-		};
-		let mut section = format!("{path}:\n{lines}");
-		if used + BATCH_SECTION_GAP.len() + section.len() + pending > MAX_RESULT_BYTES {
-			fs::delta::forget(&fs::remote::resolve_path_source(&path, workdir));
-			section = dropped_read(&path);
-		}
-		used += BATCH_SECTION_GAP.len() + section.len();
-		sections.push(section);
-	}
-	sections
-}
 // ── Tool parameter schemas ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ViewParams {
-	/// File or directory. `a|b` searches several roots with `content` (max 32); to read several
-	/// files at one time use `batch`. Remote: ssh://[user@]host[:port]/path (host may be an
-	/// ~/.ssh/config alias); `ssh://host` is the login home, `ssh://host/~/dir` is relative to it.
+	/// File or directory. `a|b` names several paths (max 32): each is viewed with the call's
+	/// other parameters, or all are searched with `content`. Remote:
+	/// ssh://[user@]host[:port]/path (host may be an ~/.ssh/config alias); `ssh://host` is the
+	/// login home, `ssh://host/~/dir` is relative to it.
 	pub path: String,
 	/// First line (inclusive): line id or integer (negative counts from the end, -1 = last).
 	/// Default: line 1.
@@ -1271,9 +1200,10 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Several line spans of one file in one read, e.g. `[{"start": 10, "end": 20},
-	/// {"start": "80:3f", "end": 95}]`. Each span takes `start`/`end` values as above, both
-	/// required. Spans are sorted and overlapping or adjacent ones merged; gaps show as
+	/// Several line spans in one read, e.g. `[{"start": 10, "end": 20}, {"path": "b.rs",
+	/// "start": "80:3f", "end": 95}]`. Each span takes `start`/`end` values as above (default:
+	/// first and last line) and may name its own `path` (default: the call's `path`). Spans of
+	/// one file are sorted and overlapping or adjacent ones merged; gaps show as
 	/// `[... N lines omitted]`. Not combined with `start`/`end` or `content`.
 	#[serde(default)]
 	pub ranges: Option<Vec<ViewRange>>,
@@ -1392,16 +1322,20 @@ pub struct SymbolParams {
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ViewRange {
-	/// First line (inclusive).
+	/// File of this span. Default: the call's `path` (every path of an `a|b` list).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub path: Option<String>,
+	/// First line (inclusive). Default: line 1.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	#[schemars(schema_with = "line_endpoint_schema")]
-	pub start: serde_json::Value,
-	/// Last line (inclusive).
+	pub start: Option<serde_json::Value>,
+	/// Last line (inclusive). Default: end of file.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
 	#[schemars(schema_with = "line_endpoint_schema")]
-	pub end: serde_json::Value,
+	pub end: Option<serde_json::Value>,
 }
 
-/// JSON schema for a line position: view `start`/`end`, batch operation `start`/`end` and
-/// `copy_from` `start`/`end`.
+/// JSON schema for a read position (view `start`/`end`, batch_edit `copy_from` `start`/`end`).
 ///
 /// A line id string "N:hh" copied from view output, or a plain integer line number:
 /// only reads take plain numbers. `anyOf` (not `oneOf`) is used because it has strictly
@@ -1412,6 +1346,29 @@ fn line_endpoint_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 		"anyOf": [
 			{ "type": "string" },
 			{ "type": "integer", "format": "int64" }
+		],
+		"examples": ["12:a3", -1]
+	})
+}
+
+/// JSON schema for an edit target only a line id can name: a replace range end.
+fn line_id_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	schemars::json_schema!({
+		"description": "Line id \"N:hh\" from view/edit output.",
+		"type": "string",
+		"examples": ["12:a3"]
+	})
+}
+
+/// JSON schema for an edit position (op `start`): a line id, or the
+/// anchors 0 (file start) / -1 (end). Edits reject every other plain number, so the
+/// schema does not offer them.
+fn edit_anchor_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+	schemars::json_schema!({
+		"description": "Line id \"N:hh\" from view/edit output, or 0 (file start) / -1 (end) where an insert position is allowed.",
+		"anyOf": [
+			{ "type": "string" },
+			{ "type": "integer", "enum": [0, -1] }
 		],
 		"examples": ["12:a3", -1]
 	})
@@ -1430,7 +1387,7 @@ pub struct TextReplacement {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum EditCommand {
+pub enum TextEditCommand {
 	Create,
 	StrReplace,
 	Delete,
@@ -1438,12 +1395,12 @@ pub enum EditCommand {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct EditParams {
+pub struct TextEditParams {
 	/// Ordered exact replacements; each old_text must match once unless replace_all.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub edits: Option<Vec<TextReplacement>>,
 	/// Operation to perform.
-	pub command: EditCommand,
+	pub command: TextEditCommand,
 	/// File path (ssh://user@host:port/path for remote).
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub path: Option<String>,
@@ -1468,43 +1425,34 @@ pub struct EditParams {
 	pub check: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum BatchOperationType {
-	View,
+pub enum BatchEditOperationType {
 	Insert,
 	Replace,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct BatchOperation {
-	/// `view` (read `start`..`end` of `path`), `insert` (after `start`) or `replace` (`start`..`end`).
-	pub operation: BatchOperationType,
-	/// File of this operation. Default: the call's `path`. A `view` may name any file; the
-	/// `insert`/`replace` operations of one call all edit the same file.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub path: Option<String>,
-	/// `insert`/`replace`: line id in the file before this call: first line to replace, or the
-	/// anchor to insert after (for `insert` also the integers 0 = file start, -1 = after the last
-	/// line). `view`: first line to read, line id or integer. Default: line 1.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	#[schemars(schema_with = "line_endpoint_schema")]
-	pub start: Option<serde_json::Value>,
-	/// `replace`: last line to replace (inclusive), as a line id. Default: `start`. `view`: last
-	/// line to read, line id or integer. Default: end of file.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	#[schemars(schema_with = "line_endpoint_schema")]
+pub struct BatchEditOperation {
+	/// `insert` (after `start`) or `replace` (`start`..`end`).
+	pub operation: BatchEditOperationType,
+	/// Line id in the file before this call: first line to replace, or the anchor to insert after
+	/// (for `insert` also the integers 0 = file start, -1 = after the last line).
+	#[schemars(schema_with = "edit_anchor_schema")]
+	pub start: serde_json::Value,
+	/// `replace` only: last line to replace (inclusive), as a line id. Default: `start`.
+	#[serde(default)]
+	#[schemars(schema_with = "line_id_schema")]
 	pub end: Option<serde_json::Value>,
-	/// `insert`/`replace`: raw text to insert or replace with, no `N:hh|` prefixes. Omit it when
-	/// `copy_from` is set.
+	/// Raw text to insert or replace with, no `N:hh|` prefixes. Omit it when `copy_from` is set.
 	#[serde(
 		default,
 		deserialize_with = "string_or_lines",
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub content: Option<String>,
-	/// `insert`/`replace`: lines to copy in place of typing `content`: a range of any file, this
-	/// one as it was before the call.
+	/// Lines to copy in place of typing `content`: a range of any file, this one as it was
+	/// before the call.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub copy_from: Option<CopySource>,
 }
@@ -1549,15 +1497,13 @@ where
 	}
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct BatchParams {
-	/// File the `insert`/`replace` operations edit and the default file of `view` operations
-	/// (ssh://user@host:port/path for remote).
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub path: Option<String>,
-	/// Operations of this call (max 50).
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct BatchEditParams {
+	/// File to edit (ssh://user@host:port/path for remote).
+	pub path: String,
+	/// Operations on this one file (max 50).
 	#[schemars(length(max = 50))]
-	pub operations: Vec<BatchOperation>,
+	pub operations: Vec<BatchEditOperation>,
 	/// Optional shell command, such as the test covering the change, run after a successful edit
 	/// exactly as `shell` runs it; its output follows the edit result. Most edits omit it; on a
 	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
@@ -1567,52 +1513,67 @@ pub struct BatchParams {
 	pub check: Option<String>,
 }
 
-/// What one `batch` call asks for, resolved before anything runs.
-#[derive(Debug)]
-struct BatchPlan {
-	/// The one file the `insert`/`replace` operations edit; `None` when the call only reads.
-	edit_path: Option<String>,
-	/// Path and view-tool parameters of each `view` operation, in call order.
-	views: Vec<(String, serde_json::Value)>,
-}
+/// The tool edits one file, so callers sometimes carry `path` on each operation
+/// instead of at the top level. When every operation names the same file that is
+/// the file to edit, so it is hoisted rather than refused; disagreeing paths stay
+/// an error because no single target is named.
+impl<'de> Deserialize<'de> for BatchEditParams {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: serde::Deserializer<'de>,
+	{
+		#[derive(Deserialize)]
+		struct Raw {
+			#[serde(default)]
+			path: Option<String>,
+			operations: Vec<serde_json::Value>,
+			#[serde(default)]
+			check: Option<String>,
+		}
 
-impl BatchParams {
-	/// Resolve the file of every operation: its own `path`, else the call's. Edits stay one
-	/// file per call because they are applied atomically; reads may name any file.
-	fn plan(&self) -> Result<BatchPlan, String> {
-		if self.operations.is_empty() {
-			return Err("Operations array is empty — nothing to do.".to_string());
-		}
-		let mut edit_path: Option<&str> = None;
-		let mut views = Vec::new();
-		for (index, op) in self.operations.iter().enumerate() {
-			let Some(path) = op.path.as_deref().or(self.path.as_deref()) else {
-				return Err(format!("op {index}: no `path`: set it on the operation or on the call"));
-			};
-			if op.operation != BatchOperationType::View {
-				if edit_path.is_some_and(|edited| edited != path) {
-					return Err(BATCH_EDITS_ONE_FILE.to_string());
+		let mut raw = Raw::deserialize(deserializer)?;
+		let mut per_op: Vec<String> = Vec::new();
+		for op in &mut raw.operations {
+			if let Some(obj) = op.as_object_mut() {
+				if let Some(serde_json::Value::String(p)) = obj.remove("path") {
+					per_op.push(p);
 				}
-				edit_path = Some(path);
-				continue;
 			}
-			if op.content.is_some() || op.copy_from.is_some() {
-				return Err(format!(
-					"op {index}: `view` reads lines and takes no `content` or `copy_from`; search with the view tool"
-				));
-			}
-			let mut parameters = serde_json::json!({ "path": path });
-			if let Some(start) = &op.start {
-				parameters["start"] = start.clone();
-			}
-			if let Some(end) = &op.end {
-				parameters["end"] = end.clone();
-			}
-			views.push((path.to_string(), parameters));
 		}
-		Ok(BatchPlan {
-			edit_path: edit_path.map(str::to_string),
-			views,
+
+		let path = match raw.path {
+			Some(p) => p,
+			None => {
+				let mut unique: Vec<&String> = Vec::new();
+				for p in &per_op {
+					if !unique.contains(&p) {
+						unique.push(p);
+					}
+				}
+				match unique.as_slice() {
+					[only] => (*only).clone(),
+					[] => return Err(serde::de::Error::missing_field("path")),
+					_ => {
+						return Err(serde::de::Error::custom(
+							"batch_edit edits a single file, but the operations name different paths; \
+							 issue one batch_edit per file",
+						))
+					}
+				}
+			}
+		};
+
+		let operations = raw
+			.operations
+			.into_iter()
+			.map(serde_json::from_value::<BatchEditOperation>)
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(serde::de::Error::custom)?;
+
+		Ok(BatchEditParams {
+			path,
+			operations,
+			check: raw.check,
 		})
 	}
 }

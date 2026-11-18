@@ -17,7 +17,7 @@
 //! file under a directory. Lookup is pure (`crate::structural::ast_search`);
 //! this module owns the I/O, the walk and the rendering, mirroring the
 //! symbol mode. Every source line renders as an ordinary `N:hh|content` line
-//! so the ids feed `batch` unchanged. AST reads never register in the
+//! so the ids feed `batch_edit` unchanged. AST reads never register in the
 //! delta/view cache.
 
 use super::directory::{

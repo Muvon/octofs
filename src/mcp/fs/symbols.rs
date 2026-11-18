@@ -17,7 +17,7 @@
 //! directory; lookup is pure (`crate::structural::symbols`) and this module
 //! owns the I/O, the walk (shared with the outline mode) and the rendering.
 //! Every source line renders as an ordinary `N:hh|content` line so the ids
-//! feed `batch` unchanged. Symbol reads never register in the delta/view
+//! feed `batch_edit` unchanged. Symbol reads never register in the delta/view
 //! cache. The graph relations (`callers`, `callees`, ...) are validated here
 //! and answered by `super::graph`.
 

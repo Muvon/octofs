@@ -1,6 +1,6 @@
 # Octofs — AGENTS.md
 
-Standalone Rust binary that serves filesystem tools (view, edit, batch, shell) and code exploration (view outline and AST modes, and the `symbol` tool: definitions, references, callers, callees, supertypes, subtypes, imports, imported_by, path) over MCP — stdio or streamable HTTP. Code answers are computed from the files on disk with an in-memory index, no database. Native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum. Reader-facing docs: `README.md`, `doc/`.
+Standalone Rust binary that serves filesystem tools (view, text_edit, batch_edit, shell) and code exploration (view outline and AST modes, and the `symbol` tool: definitions, references, callers, callees, supertypes, subtypes, imports, imported_by, path) over MCP — stdio or streamable HTTP. Code answers are computed from the files on disk with an in-memory index, no database. Native SSH/SFTP remote file support. Rust 1.95+ · rmcp 3.x · tokio · axum. Reader-facing docs: `README.md`, `doc/`.
 
 ## Commands
 - Build: `cargo build` · Release: `cargo build --release` · Dev run: `cargo run -- mcp` (stdio; add `--bind 127.0.0.1:12345` for HTTP; `RUST_LOG=debug` for logs)
@@ -14,7 +14,7 @@ Standalone Rust binary that serves filesystem tools (view, edit, batch, shell) a
 | Add / change an MCP tool | `.agents/tool-authoring.md`, then `src/mcp/server.rs` (Params + `#[tool]`) → `src/mcp/fs/*.rs` (execute fn) → `src/mcp/fs/mod.rs` (re-export) → tests |
 | Tool schemas & model-facing descriptions | `src/mcp/server.rs` — Params structs and `#[tool(...)]` blocks |
 | view / create / undo / path resolution | `src/mcp/fs/core.rs` + `src/mcp/fs/file_ops.rs` |
-| str_replace / batch edit internals / file locking | `src/mcp/fs/text_editing.rs` |
+| str_replace / batch_edit internals / file locking | `src/mcp/fs/text_editing.rs` |
 | Directory listing, glob + content filtering | `src/mcp/fs/directory.rs` + `src/mcp/fs/search.rs` |
 | Structural outline (`view` `flags: "s"`) | `src/mcp/fs/structure.rs` + `src/structural/` (grammars) |
 | Symbol navigation (`symbol` tool: definition, references) | `src/mcp/fs/symbols.rs` (validation + text lookup) + `src/structural/symbols.rs` |
@@ -50,6 +50,7 @@ Standalone Rust binary that serves filesystem tools (view, edit, batch, shell) a
 - Tree-sitter walks must be iterative cursor walks — no depth recursion, no per-child `child(i)` loops: deep nesting overflowed the stack and wide files went quadratic.
 - ast-grep metavariable expando chars are per language (`µ` for rust/python/go/ruby/swift/php/elixir, `𐀀` for C/C++, `$` elsewhere) — see `src/structural/ast_search.rs`.
 - `view` mode exclusivity is enforced in `src/mcp/fs/core.rs` (`ast` → outline → listing/search): each mode bails on the others' parameters before dispatch. Symbol navigation is the separate `symbol` tool, not a `view` mode. Its graph relations, `path` included, resolve names across the whole session workdir (`path` only picks start nodes), are local only, and run on the per-workdir in-memory code index (`src/mcp/fs/code_index.rs`, `graph_scoped.rs`), refreshed on every call from file stamps (size, mtime, ctime, inode); no whole-workdir graph is built or cached.
+- `view` reads several paths in one call when `path` is a `|` list or a `ranges` item names its own `path` (`view_sections` in `src/mcp/fs/core.rs`): one `path:` section each, a failed read reported in its section, a read past `MAX_RESULT_BYTES` named instead of returned and dropped from the view cache. A path that exists as written is never split, and with `content` a `|` list stays one search over several roots.
 - Register every spawned shell child via `register_child` so SIGTERM/EOF cleanup kills its process group; job output reads are tail-capped (`MAX_TAIL_BYTES`).
 - HTTP access control (`src/http_auth.rs`) is the only boundary in front of `shell` over `--bind`: a non-loopback bind without a token must stay refused, the token check must stay constant-time, and token-less servers keep rmcp's loopback Host allowlist plus enforced Origin validation. Don't weaken any of the three.
 

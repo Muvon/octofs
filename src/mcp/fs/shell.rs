@@ -128,7 +128,7 @@ pub fn kill_all_shell_children() {
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
-		"Reading files with the shell is blocked — use `view` for local or remote files: view path=\"src/main.rs\" start=10 end=50, view path=\"ssh://host/~/file\". Read programs are allowed as later pipeline stages (`cargo test 2>&1 | tail -20`), but not as command heads, including in chains and SSH command bodies. Program input redirects (`psql < dump.sql`) are supported. Captured output files can be read with `view`.",
+		"Reading files with the shell is blocked — use `view` for local or remote files: view path=\"src/main.rs\" start=10 end=50, view path=\"a.rs|b.rs\" for several files in one call, view path=\"ssh://host/~/file\". Read programs are allowed as later pipeline stages (`cargo test 2>&1 | tail -20`), but not as command heads, including in chains and SSH command bodies. Program input redirects (`psql < dump.sql`) are supported. Captured output files can be read with `view`.",
 	),
 	(
 		&["grep", "egrep", "fgrep", "rg"],
@@ -158,12 +158,12 @@ enum Misuse {
 
 // Only in-place `sed` edits a file; `sed`/`awk` streaming to stdout is text
 // processing (line-length checks, previews) that no dedicated tool covers.
-static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `edit` str_replace or `batch` for tracked local or remote edits. `sed` to stdout stays allowed.";
+static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_edit` str_replace or `batch_edit` for tracked local or remote edits. `sed` to stdout stays allowed.";
 
 // Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
 // breaks on quoting/escaping and bypasses tracked edits. Redirecting other
 // programs' OUTPUT to a file stays allowed — only content-authoring is blocked.
-static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat redirects or standalone `tee` in the shell is blocked — use `edit` create or str_replace, or `batch`, for writes tracked by undo history and view caching. `echo` without a redirect, `printf … | prog`, `| tee f` and redirecting a program's output (e.g. `cargo test > out.log`) stay allowed.";
+static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat redirects or standalone `tee` in the shell is blocked — use `text_edit` create or str_replace, or `batch_edit`, for writes tracked by undo history and view caching. `echo` without a redirect, `printf … | prog`, `| tee f` and redirecting a program's output (e.g. `cargo test > out.log`) stay allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + no controlling terminal already makes input physically impossible;
@@ -322,7 +322,7 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 		}
 
 		// A remote command obeys the same rules as a local one — `ssh host
-		// 'grep …'` must not dodge the gate that view/edit already
+		// 'grep …'` must not dodge the gate that view/text_edit already
 		// cover via ssh:// paths.
 		if prog == "ssh" {
 			if let Some(remote) = ssh_remote_command(segment) {
@@ -355,7 +355,7 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 				}
 				hint.get_or_insert_with(|| {
 					format!(
-						"`{prog}` wrote a file via redirect; the `edit` tool's create writes content without shell quoting."
+						"`{prog}` wrote a file via redirect; text_edit create writes content without shell quoting."
 					)
 				});
 				continue;
@@ -762,7 +762,7 @@ async fn execute_with_timeout(
 	// cryptic spawn failure on the URL-shaped cwd.
 	if crate::mcp::fs::parse_path_source(&working_dir.to_string_lossy()).is_remote() {
 		bail!(
-			"The shell runs on the local machine, but the working directory is remote ({}). Use view/edit/batch for remote files.",
+			"The shell runs on the local machine, but the working directory is remote ({}). Use view/text_edit/batch_edit for remote files.",
 			working_dir.display()
 		);
 	}

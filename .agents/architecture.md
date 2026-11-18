@@ -10,13 +10,13 @@ src/
   cli.rs               — clap CLI: `octofs mcp [--path PATH] [--bind HOST:PORT] [--ssh-key FILE] [--ssh-timeout SECS]`
   mcp/
     mod.rs             — McpToolCall { tool_name, parameters, tool_id, workdir }, SESSION_ROOT (startup default only)
-    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_editor, batch_edit,
+    server.rs          — OctofsServer: #[tool_router] methods (view, symbol, text_edit, batch_edit,
                           shell), all Params structs, append_hints, MCP resources (octofs://jobs/<id>),
                           subscribe/listen/unsubscribe, progress notifications
     request_ctx.rs     — per-request context: hint queue (push_hint → drained by append_hints on every response)
     fs/
       mod.rs           — module list + re-exports (execute_*, parse_path_source, PathSource)
-      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_editor/batch_edit
+      core.rs          — resolve_path, undo history (FILE_HISTORY), execute_view/text_edit/batch_edit
       file_ops.rs      — view_file_spec, view_file_with_content_search, create_file_spec
       text_editing.rs  — str_replace_spec (progressive matching), batch_edit_spec, per-file async locking
       directory.rs     — directory listing, gitignore-aware walking, glob filtering, remote listing quirks

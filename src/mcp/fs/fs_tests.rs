@@ -1875,7 +1875,7 @@ mod tests {
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "edit".to_string(),
+			tool_name: "text_edit".to_string(),
 			parameters: json!({
 				"command": "batch_edit",
 				"operations": operations
@@ -2296,8 +2296,8 @@ mod tests {
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
-		// Exact server path: BatchParams → serde_json::to_value → execute.
-		let params: crate::mcp::server::BatchParams = serde_json::from_value(json!({
+		// Exact server path: BatchEditParams → serde_json::to_value → execute.
+		let params: crate::mcp::server::BatchEditParams = serde_json::from_value(json!({
 			"path": path,
 			"operations": [{
 				"operation": "replace",
@@ -3302,7 +3302,7 @@ mod tests {
 	// ===== NEGATIVE LINE INDEXING TESTS =====
 
 	#[tokio::test]
-	async fn test_edit_view_negative_indexing() {
+	async fn test_text_edit_view_negative_indexing() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_path = temp_dir.path().join("test.txt");
 
@@ -3381,7 +3381,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_edit_view_negative_indexing_clamps_out_of_bounds() {
+	async fn test_text_edit_view_negative_indexing_clamps_out_of_bounds() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_path = temp_dir.path().join("test.txt");
 
@@ -5154,8 +5154,8 @@ mod tests {
 
 		let err = execute_view(&call).await.unwrap_err();
 		assert!(
-			err.to_string().contains("single path"),
-			"Should reject array path: {err}"
+			err.to_string().contains("join them with `|`"),
+			"an array path is rejected with the form that reads several paths: {err}"
 		);
 	}
 
@@ -5257,70 +5257,70 @@ mod tests {
 		assert_eq!(mode, 0o755, "atomic_write must preserve original mode (got {mode:o})");
 	}
 	#[tokio::test]
-	async fn test_edit_delete_removes_file_and_supports_undo() {
+	async fn test_text_edit_delete_removes_file_and_supports_undo() {
 		let temp_file = create_test_file("hello world\n").await;
 		let path = temp_file.path().to_string_lossy().to_string();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "edit".to_string(),
+			tool_name: "text_edit".to_string(),
 			parameters: json!({
 				"command": "delete",
 				"path": path,
 			}),
 		};
-		let result = crate::mcp::fs::core::execute_edit(&call).await.unwrap();
+		let result = crate::mcp::fs::core::execute_text_edit(&call).await.unwrap();
 		assert!(result.contains("Successfully deleted"), "got: {result}");
 		assert!(!temp_file.path().exists(), "file should be gone");
 
 		let undo_call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "edit".to_string(),
+			tool_name: "text_edit".to_string(),
 			parameters: json!({
 				"command": "undo_edit",
 				"path": path,
 			}),
 		};
-		crate::mcp::fs::core::execute_edit(&undo_call).await.unwrap();
+		crate::mcp::fs::core::execute_text_edit(&undo_call).await.unwrap();
 		let restored = fs::read_to_string(temp_file.path()).await.unwrap();
 		assert_eq!(restored, "hello world\n");
 	}
 
 	#[tokio::test]
-	async fn test_edit_delete_missing_file_errors() {
+	async fn test_text_edit_delete_missing_file_errors() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let path = temp_dir.path().join("nope.txt").to_string_lossy().to_string();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "edit".to_string(),
+			tool_name: "text_edit".to_string(),
 			parameters: json!({
 				"command": "delete",
 				"path": path,
 			}),
 		};
-		let err = crate::mcp::fs::core::execute_edit(&call).await.unwrap_err();
+		let err = crate::mcp::fs::core::execute_text_edit(&call).await.unwrap_err();
 		assert!(err.to_string().contains("does not exist"), "got: {err}");
 	}
 
 	#[tokio::test]
-	async fn test_edit_delete_directory_errors() {
+	async fn test_text_edit_delete_directory_errors() {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let path = temp_dir.path().to_string_lossy().to_string();
 
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: std::env::current_dir().unwrap_or_default(),
-			tool_name: "edit".to_string(),
+			tool_name: "text_edit".to_string(),
 			parameters: json!({
 				"command": "delete",
 				"path": path,
 			}),
 		};
-		let err = crate::mcp::fs::core::execute_edit(&call).await.unwrap_err();
+		let err = crate::mcp::fs::core::execute_text_edit(&call).await.unwrap_err();
 		assert!(err.to_string().contains("directory"), "got: {err}");
 	}
 
@@ -5588,18 +5588,113 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_view_pipe_path_without_content_remains_a_literal_path() {
+	async fn test_view_path_list_reads_each_path_in_its_own_section() {
 		use tempfile::TempDir;
 
 		let dir = TempDir::new().unwrap();
+		tokio::fs::write(dir.path().join("a.txt"), "a1\na2\na3\n")
+			.await
+			.unwrap();
+		tokio::fs::write(dir.path().join("b.txt"), "b1\nb2\n").await.unwrap();
+		let view = |parameters: serde_json::Value| McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters,
+		};
+
+		// Whole files, one section each, in the order named.
+		let out = execute_view(&view(json!({ "path": "a.txt | b.txt" }))).await.unwrap();
+		assert!(out.starts_with(&format!("a.txt:\n{}", idl(1, "a1"))), "{out}");
+		assert!(out.contains(&format!("\n\nb.txt:\n{}", idl(1, "b1"))), "{out}");
+		assert!(out.contains(&idl(3, "a3")) && out.contains(&idl(2, "b2")), "{out}");
+
+		// The call's other parameters apply to every path.
+		let out = execute_view(&view(json!({ "path": "a.txt|b.txt", "start": 2, "end": 2 })))
+			.await
+			.unwrap();
+		assert!(out.contains(&idl(2, "a2")) && out.contains(&idl(2, "b2")), "{out}");
+		assert!(!out.contains(&idl(1, "a1")) && !out.contains(&idl(3, "a3")), "{out}");
+
+		// A span without `path` reads every path of the list; one with `path` reads that file.
+		let spans = json!([{ "start": 2, "end": 2 }, { "path": "a.txt", "start": 3 }]);
+		let out = execute_view(&view(json!({ "path": "a.txt|b.txt", "ranges": spans })))
+			.await
+			.unwrap();
+		assert!(
+			out.starts_with(&format!("a.txt:\n{}\n{}", idl(2, "a2"), idl(3, "a3"))),
+			"{out}"
+		);
+		assert!(out.contains(&format!("\n\nb.txt:\n{}", idl(2, "b2"))), "{out}");
+
+		// A path that cannot be read is reported in its section; the others still come back.
+		let out = execute_view(&view(json!({ "path": "a.txt|gone.txt" }))).await.unwrap();
+		assert!(out.contains(&idl(1, "a1")), "{out}");
+		assert!(out.contains("gone.txt:\nPath not found: gone.txt"), "{out}");
+
+		// Nothing readable is an error that names every path.
+		let err = execute_view(&view(json!({ "path": "docs|scripts" })))
+			.await
+			.unwrap_err()
+			.to_string();
+		assert!(
+			err.contains("docs:\nPath not found") && err.contains("scripts:\nPath not found"),
+			"got: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_path_list_lists_directories_and_names_images() {
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		tokio::fs::create_dir(dir.path().join("sub")).await.unwrap();
+		tokio::fs::write(dir.path().join("sub/inner.txt"), "inner\n")
+			.await
+			.unwrap();
+		tokio::fs::write(dir.path().join("pic.png"), b"\x89PNG\r\n\x1a\n")
+			.await
+			.unwrap();
 		let call = McpToolCall {
 			tool_id: "test".to_string(),
 			workdir: dir.path().to_path_buf(),
 			tool_name: "view".to_string(),
-			parameters: json!({ "path": "docs|scripts" }),
+			parameters: json!({ "path": "sub|pic.png" }),
 		};
-		let err = execute_view(&call).await.unwrap_err().to_string();
-		assert!(err.contains("Path not found"), "got: {err}");
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.starts_with("sub:\n") && out.contains("inner.txt"), "{out}");
+		assert!(
+			out.contains("pic.png:\nimage file: view it in a call of its own"),
+			"{out}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_view_path_list_ties_each_hint_to_its_path() {
+		use tempfile::TempDir;
+
+		let dir = TempDir::new().unwrap();
+		tokio::fs::write(dir.path().join("a.txt"), "a1\na2\na3\n")
+			.await
+			.unwrap();
+		tokio::fs::write(dir.path().join("b.txt"), "b1\nb2\n").await.unwrap();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: dir.path().to_path_buf(),
+			tool_name: "view".to_string(),
+			parameters: json!({ "path": "a.txt|b.txt", "start": 1, "end": 50 }),
+		};
+		let hints = crate::mcp::request_ctx::with_request_context(None, async {
+			execute_view(&call).await.unwrap();
+			crate::mcp::request_ctx::drain_hints()
+		})
+		.await;
+		for expected in ["a.txt: Range clamped to [1, 3]", "b.txt: Range clamped to [1, 2]"] {
+			assert!(
+				hints.iter().any(|hint| hint.starts_with(expected)),
+				"expected {expected:?} in {hints:?}"
+			);
+		}
 	}
 
 	#[tokio::test]
@@ -5633,9 +5728,9 @@ mod tests {
 		let long_missing = format!("{}|other", "a".repeat(8000));
 		for (path, expected) in [
 			("docs||scripts".to_string(), "non-empty"),
-			("docs|docs".to_string(), "duplicate root"),
+			("docs|docs".to_string(), "duplicate path"),
 			("docs|\nsecret".to_string(), "control characters"),
-			(too_many, "32-root limit"),
+			(too_many, "32-path limit"),
 			(oversized, "8192-byte limit"),
 			(long_missing, "No search root found"),
 		] {
@@ -5829,7 +5924,7 @@ mod tests {
 
 		let cases = [
 			(json!({ "ranges": [] }), "at least one span"),
-			(json!({ "ranges": [{ "start": 1 }] }), "`ranges[0].end` is missing"),
+			(json!({ "ranges": [5] }), "`ranges[0]` must be an object"),
 			(
 				json!({ "ranges": [{ "start": 1, "end": "x:zz" }] }),
 				"Invalid 'ranges[0].end'",
@@ -5865,6 +5960,91 @@ mod tests {
 
 		let call = view_ranges_call(&file, json!({ "ranges": [{ "start": 2, "end": 5 }] }));
 		assert_eq!(execute_view(&call).await.unwrap(), "[empty file, 0 lines]");
+	}
+
+	#[tokio::test]
+	async fn test_view_ranges_default_to_the_first_and_last_line() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file = temp_dir.path().join("r.txt");
+		fs::write(&file, "a\nb\nc\nd\ne\nf\n").await.unwrap();
+
+		let call = view_ranges_call(&file, json!({ "ranges": [{ "end": 2 }, { "start": 5 }] }));
+		let out = execute_view(&call).await.unwrap();
+		let expected = format!(
+			"{}\n{}\n[... 2 lines omitted]\n{}\n{}",
+			idl(1, "a"),
+			idl(2, "b"),
+			idl(5, "e"),
+			idl(6, "f")
+		);
+		assert!(out.starts_with(&expected), "{out}");
+		assert!(out.ends_with("[end of file, 6 lines total]"), "{out}");
+	}
+
+	#[tokio::test]
+	async fn test_view_ranges_reads_spans_of_several_files() {
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let first = temp_dir.path().join("first.txt");
+		let second = temp_dir.path().join("second.txt");
+		let body = |tag: &str| (1..=9).map(|i| format!("{tag}{i}\n")).collect::<String>();
+		fs::write(&first, body("f")).await.unwrap();
+		fs::write(&second, body("s")).await.unwrap();
+		let first_path = first.to_string_lossy().to_string();
+		let second_path = second.to_string_lossy().to_string();
+
+		// A span names its file; one without `path` reads the call's `path`. Files come
+		// back in the order they first appear, each with its spans sorted and merged.
+		let call = view_ranges_call(
+			&first,
+			json!({ "ranges": [
+				{ "path": second_path, "start": 2, "end": 3 },
+				{ "start": 8 },
+				{ "path": second_path, "end": 1 },
+			] }),
+		);
+		let out = execute_view(&call).await.unwrap();
+		let second_section = format!(
+			"{second_path}:\n{}\n{}\n{}\n[... 6 more lines, 9 total]",
+			idl(1, "s1"),
+			idl(2, "s2"),
+			idl(3, "s3")
+		);
+		let first_section = format!("\n\n{first_path}:\n{}\n{}", idl(8, "f8"), idl(9, "f9"));
+		assert!(out.starts_with(&second_section), "{out}");
+		assert!(out.contains(&first_section), "{out}");
+		assert!(out.ends_with("[end of file, 9 lines total]"), "{out}");
+
+		// A file that cannot be read is reported in its section beside the others.
+		let call = view_ranges_call(
+			&first,
+			json!({ "ranges": [{ "start": 1, "end": 1 }, { "path": "/nonexistent/gone.txt" }] }),
+		);
+		let out = execute_view(&call).await.unwrap();
+		assert!(out.contains(&idl(1, "f1")), "{out}");
+		assert!(out.contains("/nonexistent/gone.txt:\nPath not found"), "{out}");
+
+		// The rules of `ranges` are checked once for the call, with the caller's indexes.
+		let cases = [
+			(
+				json!({ "ranges": [{ "path": second_path, "start": 1 }], "content": "s" }),
+				"cannot be combined with `content`",
+			),
+			(
+				json!({ "ranges": [{ "path": second_path }, { "start": "x:zz" }] }),
+				"Invalid 'ranges[1].start'",
+			),
+			(
+				json!({ "ranges": [{ "path": "" }] }),
+				"`ranges[0].path` must be a non-empty path string",
+			),
+		];
+		for (extra, expected) in cases {
+			let err = execute_view(&view_ranges_call(&first, extra.clone()))
+				.await
+				.unwrap_err()
+				.to_string();
+			assert!(err.contains(expected), "{extra}: expected {expected:?} in {err}");
+		}
 	}
 
 	#[tokio::test]
@@ -6021,16 +6201,16 @@ mod tests {
 			let dir = setup_remote_dir().await;
 			let file_path = format!("{dir}/hello.txt");
 
-			// Create a file via edit
+			// Create a file via text_edit
 			let call = McpToolCall::test_call(
-				"edit",
+				"text_edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": "line one\nline two\nline three\n"
 				}),
 			);
-			let result = crate::mcp::fs::core::execute_edit(&call).await;
+			let result = crate::mcp::fs::core::execute_text_edit(&call).await;
 			assert!(result.is_ok(), "create failed: {:?}", result.err());
 
 			// View it back
@@ -6059,14 +6239,14 @@ mod tests {
 
 			// Create initial content
 			let call = McpToolCall::test_call(
-				"edit",
+				"text_edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": "alpha\nbeta\ngamma\n"
 				}),
 			);
-			crate::mcp::fs::core::execute_edit(&call).await.unwrap();
+			crate::mcp::fs::core::execute_text_edit(&call).await.unwrap();
 
 			// Replace beta -> BETA
 			let source = crate::mcp::fs::remote::parse_path_source(&file_path);
@@ -6096,14 +6276,14 @@ mod tests {
 			// Create initial content
 			let remote_content = "one\ntwo\nthree\nfour\nfive\n";
 			let call = McpToolCall::test_call(
-				"edit",
+				"text_edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": remote_content
 				}),
 			);
-			crate::mcp::fs::core::execute_edit(&call).await.unwrap();
+			crate::mcp::fs::core::execute_text_edit(&call).await.unwrap();
 
 			// Replace lines 2-3 (two -> TWO, three -> REPLACED) by line id
 			let batch_call = McpToolCall::test_call(
@@ -6147,14 +6327,14 @@ mod tests {
 			for name in ["a.txt", "b.txt"] {
 				let path = format!("{dir}/{name}");
 				let call = McpToolCall::test_call(
-					"edit",
+					"text_edit",
 					json!({
 						"command": "create",
 						"path": path,
 						"content": "test\n"
 					}),
 				);
-				crate::mcp::fs::core::execute_edit(&call).await.unwrap();
+				crate::mcp::fs::core::execute_text_edit(&call).await.unwrap();
 			}
 
 			// List the directory
@@ -6190,14 +6370,14 @@ mod tests {
 				(format!("{dir}/ignored_dir/skip.rs"), "skipped\n".to_string()),
 			] {
 				let call = McpToolCall::test_call(
-					"edit",
+					"text_edit",
 					json!({
 						"command": "create",
 						"path": path,
 						"content": content
 					}),
 				);
-				crate::mcp::fs::core::execute_edit(&call).await.unwrap();
+				crate::mcp::fs::core::execute_text_edit(&call).await.unwrap();
 			}
 
 			// Bare listing: root entries only (REMOTE_DEFAULT_MAX_DEPTH = 1), hidden
@@ -6256,14 +6436,14 @@ mod tests {
 
 			// Create initial content
 			let call = McpToolCall::test_call(
-				"edit",
+				"text_edit",
 				json!({
 					"command": "create",
 					"path": file_path,
 					"content": "original\n"
 				}),
 			);
-			crate::mcp::fs::core::execute_edit(&call).await.unwrap();
+			crate::mcp::fs::core::execute_text_edit(&call).await.unwrap();
 
 			// Replace original -> modified
 			let source = crate::mcp::fs::remote::parse_path_source(&file_path);

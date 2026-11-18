@@ -44,7 +44,7 @@ every call forever). `--ssh-timeout` (default 30 s) bounds connects; `init_sftp_
 
 ## Tool surface
 
-File tools (view, text_editor, batch_edit, and `symbol` with `definition`/`references`) reach remote hosts; the `symbol` graph relations and **`shell` never do** —
+File tools (view, text_edit, batch_edit, and `symbol` with `definition`/`references`) reach remote hosts; the `symbol` graph relations and **`shell` never do** —
 it runs on the local machine and bails with guidance under a remote workdir. `ssh host 'cmd'` inside the shell
 tool is checked by the same misuse rules as local commands (recursive gate in `detect_shell_misuse`).
 A bare remote directory listing defaults to `max_depth: 1` (each subdirectory costs an SFTP round trip);
