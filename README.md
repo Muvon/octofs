@@ -267,12 +267,6 @@ gitignore-awareness, and remote-host support that raw shell output cannot.
 Pipelines (`cargo build 2>&1 | grep error`) remain allowed — only standalone
 invocations of those programs are blocked.
 
-One exception: a call a client makes for a script the model wrote. The client
-marks it with `experimental.session.script: true` in its capabilities (octomind
-does this for the calls of its `code` tool). Such a call may read, search and
-list with the shell, because its output goes to the script and the model sees
-only what the script prints. Writes that bypass the edit tools stay rejected.
-
 Other guidance (out-of-bounds ranges, fuzzy-match notices) is appended to
 successful responses as ⚠️ hints without failing the call.
 

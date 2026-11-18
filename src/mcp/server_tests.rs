@@ -1256,10 +1256,11 @@ async fn a_script_view_is_not_recorded_as_seen_by_the_model() {
 	)));
 
 	let view_call = || crate::mcp::McpToolCall::test_call("view", json!({"path": file.to_string_lossy()}));
+	// What `OctofsServer::view` does for a call `for_script` is true for.
 	let script_view = || {
 		let call = view_call();
 		async move {
-			crate::mcp::request_ctx::with_script_request_context(async {
+			crate::mcp::request_ctx::with_request_context(None, async {
 				crate::mcp::fs::execute_view(&call).await.expect("view")
 			})
 			.await

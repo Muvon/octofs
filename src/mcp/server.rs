@@ -396,9 +396,9 @@ impl OctofsServer {
 
 	/// Whether a script the model wrote makes this call: `experimental.session.script`
 	/// is `true` for the calls a client makes on a script's behalf. The result goes to
-	/// the script, and the model sees only what the script prints. So `shell` lets such
-	/// a call read, search and list (the output cannot crowd the model's context), and
-	/// `view` neither records the file as seen by the model nor answers with a delta.
+	/// the script, and the model sees only what the script prints. So `view` neither
+	/// records the file as seen by the model nor answers with a delta. Nothing else
+	/// differs: `shell` checks a script's command like any other.
 	fn for_script(context: &RequestContext<RoleServer>) -> bool {
 		client_session(context).and_then(|session| session.get("script").and_then(|v| v.as_bool())) == Some(true)
 	}
@@ -413,7 +413,6 @@ impl OctofsServer {
 		preface: String,
 	) -> Result<CallToolResponse, String> {
 		let session = self.session(&context);
-		let for_script = Self::for_script(&context);
 		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "shell".to_string(),
@@ -466,8 +465,7 @@ impl OctofsServer {
 		});
 		let name = job_label(&params.command);
 		let task_hints = self.task_hints.clone();
-		let view_cache = session.view_cache.clone();
-		let work = async move {
+		let exec = request_ctx::with_request_context(session.view_cache.clone(), async move {
 			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
 				.map_err(|e| e.to_string())?;
@@ -496,14 +494,7 @@ impl OctofsServer {
 				ContentBlock::resource_link(Resource::new(uri, name)),
 			];
 			Ok::<CallToolResponse, String>(CallToolResult::success(content).into())
-		};
-		let exec = async move {
-			if for_script {
-				request_ctx::with_script_request_context(work).await
-			} else {
-				request_ctx::with_request_context(view_cache, work).await
-			}
-		};
+		});
 		tokio::pin!(exec);
 		let mut beats = 0.0_f64;
 		loop {
@@ -633,7 +624,12 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		let work = async move {
+		let view_cache = if Self::for_script(&context) {
+			None
+		} else {
+			session.view_cache.clone()
+		};
+		request_ctx::with_request_context(view_cache, async move {
 			if let Some(image) = fs::execute_view_image(&call).await.map_err(|e| e.to_string())? {
 				let mut content = vec![ContentBlock::image(image.base64, image.mime)];
 				let hints = append_hints(String::new());
@@ -646,12 +642,8 @@ impl OctofsServer {
 			Ok::<CallToolResponse, String>(
 				CallToolResult::success(vec![ContentBlock::text(append_hints(result))]).into(),
 			)
-		};
-		if Self::for_script(&context) {
-			request_ctx::with_script_request_context(work).await
-		} else {
-			request_ctx::with_request_context(session.view_cache.clone(), work).await
-		}
+		})
+		.await
 	}
 
 	#[tool(

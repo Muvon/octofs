@@ -242,7 +242,7 @@ const WORKDIR: &str = "/work";
 
 /// The rejection message, when the gate refuses the command run from `WORKDIR`.
 fn rejection(command: &str) -> Option<String> {
-	match detect_shell_misuse(command, Some(Path::new(WORKDIR)), false) {
+	match detect_shell_misuse(command, Some(Path::new(WORKDIR))) {
 		Some(Misuse::Reject(msg)) => Some(msg),
 		_ => None,
 	}
@@ -250,51 +250,14 @@ fn rejection(command: &str) -> Option<String> {
 
 /// The hint, when the gate lets the command run but points at a dedicated tool.
 fn hint(command: &str) -> Option<String> {
-	match detect_shell_misuse(command, Some(Path::new(WORKDIR)), false) {
+	match detect_shell_misuse(command, Some(Path::new(WORKDIR))) {
 		Some(Misuse::Hint(hint)) => Some(hint),
 		_ => None,
 	}
 }
 
 fn passes(command: &str) -> bool {
-	detect_shell_misuse(command, Some(Path::new(WORKDIR)), false).is_none()
-}
-
-/// The rejection message for a command a script runs from `WORKDIR`.
-fn script_rejection(command: &str) -> Option<String> {
-	match detect_shell_misuse(command, Some(Path::new(WORKDIR)), true) {
-		Some(Misuse::Reject(msg)) => Some(msg),
-		_ => None,
-	}
-}
-
-/// A script's output goes to the script, so it may read, search and list with
-/// the shell. What cannot work in this tool, and writes that bypass the edit
-/// tools, stay rejected for it.
-#[test]
-fn a_script_may_read_search_and_list_with_the_shell() {
-	for cmd in [
-		"ls -la src/mcp/code/ && wc -l src/mcp/code/*.rs",
-		"cat src/main.rs",
-		"grep -rn foo src/ | head -30",
-		"find . -name '*.rs'",
-		"cd /path && rg TODO",
-		"ssh host 'ls -la /var/log'",
-		"echo $(cat VERSION)",
-	] {
-		assert!(rejection(cmd).is_some(), "{cmd} is rejected for the model");
-		assert_eq!(script_rejection(cmd), None, "{cmd} runs for a script");
-	}
-	for cmd in [
-		"sleep 5",
-		"top -b",
-		"ls src && sed -i 's/a/b/' src/main.rs",
-		"cat src/a.rs > src/b.rs",
-		"echo hi > notes.txt",
-		"ssh host 'echo hi > /tmp/x'",
-	] {
-		assert!(script_rejection(cmd).is_some(), "{cmd} stays rejected for a script");
-	}
+	detect_shell_misuse(command, Some(Path::new(WORKDIR))).is_none()
 }
 
 #[test]
@@ -430,7 +393,7 @@ fn remote_writes_count_as_tracked() {
 	// Without a local workdir (an ssh remote command) no write target is known to be
 	// scratch, so content writes stay rejected wherever they point.
 	assert!(matches!(
-		detect_shell_misuse("echo hi > /tmp/x", None, false),
+		detect_shell_misuse("echo hi > /tmp/x", None),
 		Some(Misuse::Reject(_))
 	));
 	assert!(rejection("ssh host 'echo hi > /tmp/x'").is_some());

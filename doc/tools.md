@@ -108,9 +108,10 @@ request — the 2026-07-28 per-request capabilities in `_meta`. The client bumps
 epoch whenever it compacts or rewrites content the model already received; a
 changed epoch clears the session's cache, so the next whole-file view is served in
 full. Clients that send no epoch (no way to know what the model still holds) are
-always served whole files. A view made by a script (`experimental.session.script:
-true`) is served whole too and leaves the cache alone, because the model does not
-see what a script reads.
+always served whole files. A view made by a script (the client sends
+`experimental.session.script: true` with the call, as octomind does for the calls
+of its `code` tool) is served whole too and leaves the cache alone, because the
+model does not see what a script reads.
 
 **Context-economy contract** (encoded in the tool description): reuse returned
 content, read a complete block in one call, never re-read overlapping ranges;
@@ -271,12 +272,7 @@ contract when touching it:
 - run with a hint: a write to a scratch path outside the workdir;
 - pipelines are not split, so a read as a later pipe stage passes; read-only
   `sed`/`awk` pass;
-- `ssh host 'cmd'` bodies are checked recursively;
-- a call made by a script (the client sends `experimental.session.script: true`
-  with it, as octomind does for the calls of its `code` tool) may start a
-  command with a read program: the output goes to the script, and the model sees
-  only what the script prints. Writes, `sed -i`, `sleep` and the monitoring
-  programs stay rejected for it.
+- `ssh host 'cmd'` bodies are checked recursively.
 
 **Output hygiene.** Output is terminal-clean — ANSI escapes and progress
 redraws stripped, repeated lines collapsed with a count; pipe through

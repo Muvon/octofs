@@ -125,12 +125,7 @@ pub fn kill_all_shell_children() {
 // substitution or as a pipeline head — because a hint only arrives after the shell
 // read already ran. Pipelines are not split, so a later pipe stage
 // (`cargo test 2>&1 | tail -20`) is never checked and stays allowed.
-//
-// These programs put file content, matches or listings into the model's context
-// in a form the edit tools cannot use (no line ids, no gitignore filter), which is
-// what `view` exists for. A call made by a script is exempt: its output goes to
-// the script, and the model sees only what the script prints.
-static SHELL_READ_HINTS: &[(&[&str], &str)] = &[
+static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["cat", "head", "tail", "less", "more"],
 		"Reading files with the shell is blocked — use `view` for local or remote files: view path=\"src/main.rs\" start=10 end=50, view path=\"a.rs|b.rs\" for several files in one call, view path=\"ssh://host/~/file\". Read programs are allowed as later pipeline stages (`cargo test 2>&1 | tail -20`), but not as command heads, including in chains and SSH command bodies. Program input redirects (`psql < dump.sql`) are supported. Captured output files can be read with `view`.",
@@ -143,11 +138,6 @@ static SHELL_READ_HINTS: &[(&[&str], &str)] = &[
 		&["find", "ls"],
 		"Listing with the shell is blocked — use `view` for local or remote directories: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". flags=\"l\" adds size and modification time, also for a single file. Listing programs are allowed as later pipeline stages, but not as command heads, including in chains and SSH command bodies.",
 	),
-];
-
-// Programs that cannot work in this tool, whoever calls it. Same shape and same
-// matching as `SHELL_READ_HINTS`.
-static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["sleep"],
 		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and its result is delivered when it exits where the client integration supports that, so there is nothing to wait for. When the call that started it returned a job link, `view` on that link is a single look at its status and output so far; it returns at once and is not a way to wait. A sleep inside a shell loop body is supported.",
@@ -273,10 +263,7 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 // redirects resolving outside it (scratch files under /tmp, also relative ones
 // after `cd /tmp/x &&`) runs with a hint. `None` (remote commands) treats every
 // write target as tracked.
-//
-// `for_script` is a call made by a script: the read programs pass (see
-// `SHELL_READ_HINTS`), everything else is checked as usual.
-fn detect_shell_misuse(command: &str, workdir: Option<&Path>, for_script: bool) -> Option<Misuse> {
+fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> {
 	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
 	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
 	let mut loop_depth = 0usize;
@@ -339,7 +326,7 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>, for_script: bool) 
 		// cover via ssh:// paths.
 		if prog == "ssh" {
 			if let Some(remote) = ssh_remote_command(segment) {
-				match detect_shell_misuse(remote, None, for_script) {
+				match detect_shell_misuse(remote, None) {
 					Some(Misuse::Reject(msg)) => return Some(Misuse::Reject(msg)),
 					Some(Misuse::Hint(h)) => {
 						hint.get_or_insert(h);
@@ -379,8 +366,7 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>, for_script: bool) 
 			return Some(Misuse::Reject(blocked_message(prog, IN_PLACE_EDIT_HINT)));
 		}
 
-		let read_hints = if for_script { &[][..] } else { SHELL_READ_HINTS };
-		for (progs, message) in read_hints.iter().chain(SHELL_MISUSE_HINTS) {
+		for (progs, message) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
 				return Some(Misuse::Reject(blocked_message(prog, message)));
 			}
@@ -761,7 +747,7 @@ async fn execute_with_timeout(
 
 	// Commands a dedicated MCP tool covers: rejected in hard mode, run with a
 	// warning in soft mode (--hint-mode).
-	match detect_shell_misuse(&command, Some(&call.workdir), crate::mcp::request_ctx::for_script()) {
+	match detect_shell_misuse(&command, Some(&call.workdir)) {
 		Some(Misuse::Reject(msg)) if crate::mcp::get_hint_mode() == crate::mcp::HintMode::Hard => bail!("{msg}"),
 		Some(Misuse::Reject(msg)) => crate::mcp::request_ctx::push_hint(&msg),
 		Some(Misuse::Hint(hint)) => crate::mcp::request_ctx::push_hint(&hint),
