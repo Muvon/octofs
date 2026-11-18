@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use tokio::sync::oneshot;
 
-use super::{drain_hints, push_hint, with_request_context, with_view_cache};
+use super::{drain_hints, for_script, push_hint, with_request_context, with_script_request_context, with_view_cache};
 use crate::mcp::fs::delta::ViewCache;
 
 #[tokio::test]
@@ -73,6 +73,22 @@ async fn with_view_cache_returns_none_outside_and_without_cache_some_with_cache(
 	.await;
 	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		assert!(with_view_cache(|_| ()).is_some());
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn a_script_call_is_marked_and_has_no_view_cache() {
+	assert!(!for_script());
+	with_request_context(Some(Arc::new(ViewCache::default())), async {
+		assert!(!for_script());
+	})
+	.await;
+	with_script_request_context(async {
+		assert!(for_script());
+		assert!(with_view_cache(|_| ()).is_none());
+		push_hint("a");
+		assert_eq!(drain_hints(), vec!["a"]);
 	})
 	.await;
 }

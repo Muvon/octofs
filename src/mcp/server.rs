@@ -367,11 +367,7 @@ impl OctofsServer {
 	/// legacy clients set them once in the `initialize` handshake —
 	/// `RequestContext::client_capabilities()` resolves both.
 	fn session(&self, context: &RequestContext<RoleServer>) -> Arc<SessionState> {
-		let session = context
-			.client_capabilities()
-			.and_then(|capabilities| capabilities.experimental)
-			.and_then(|mut experimental| experimental.remove("session"));
-		let Some(session) = session else {
+		let Some(session) = client_session(context) else {
 			return self.sessions.get(None, self.root.clone(), None);
 		};
 		let id = session.get("session_id").and_then(|v| v.as_str()).map(str::to_string);
@@ -395,11 +391,16 @@ impl OctofsServer {
 	/// Resolved on every request, never cached in the session state: the client's
 	/// grant can change between requests.
 	fn shell_granted(context: &RequestContext<RoleServer>) -> bool {
-		let session = context
-			.client_capabilities()
-			.and_then(|capabilities| capabilities.experimental)
-			.and_then(|mut experimental| experimental.remove("session"));
-		session.and_then(|session| session.get("shell").and_then(|v| v.as_bool())) != Some(false)
+		client_session(context).and_then(|session| session.get("shell").and_then(|v| v.as_bool())) != Some(false)
+	}
+
+	/// Whether a script the model wrote makes this call: `experimental.session.script`
+	/// is `true` for the calls a client makes on a script's behalf. The result goes to
+	/// the script, and the model sees only what the script prints. So `shell` lets such
+	/// a call read, search and list (the output cannot crowd the model's context), and
+	/// `view` neither records the file as seen by the model nor answers with a delta.
+	fn for_script(context: &RequestContext<RoleServer>) -> bool {
+		client_session(context).and_then(|session| session.get("script").and_then(|v| v.as_bool())) == Some(true)
 	}
 
 	/// Run `params.command` exactly as the `shell` tool runs it. `preface` (the result of
@@ -412,6 +413,7 @@ impl OctofsServer {
 		preface: String,
 	) -> Result<CallToolResponse, String> {
 		let session = self.session(&context);
+		let for_script = Self::for_script(&context);
 		let workdir = session.workdir.clone();
 		let call = McpToolCall {
 			tool_name: "shell".to_string(),
@@ -464,7 +466,8 @@ impl OctofsServer {
 		});
 		let name = job_label(&params.command);
 		let task_hints = self.task_hints.clone();
-		let exec = request_ctx::with_request_context(session.view_cache.clone(), async move {
+		let view_cache = session.view_cache.clone();
+		let work = async move {
 			let outcome = fs::execute_shell_command(&call, Some(notifier))
 				.await
 				.map_err(|e| e.to_string())?;
@@ -493,7 +496,14 @@ impl OctofsServer {
 				ContentBlock::resource_link(Resource::new(uri, name)),
 			];
 			Ok::<CallToolResponse, String>(CallToolResult::success(content).into())
-		});
+		};
+		let exec = async move {
+			if for_script {
+				request_ctx::with_script_request_context(work).await
+			} else {
+				request_ctx::with_request_context(view_cache, work).await
+			}
+		};
 		tokio::pin!(exec);
 		let mut beats = 0.0_f64;
 		loop {
@@ -539,6 +549,15 @@ impl Default for OctofsServer {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+/// The octomind session context a client sends in its capabilities
+/// (`experimental.session`), per request or once in a legacy handshake.
+fn client_session(context: &RequestContext<RoleServer>) -> Option<JsonObject> {
+	context
+		.client_capabilities()
+		.and_then(|capabilities| capabilities.experimental)
+		.and_then(|mut experimental| experimental.remove("session"))
 }
 
 use std::path::{Path, PathBuf};
@@ -614,7 +633,7 @@ impl OctofsServer {
 			tool_id: String::new(),
 			workdir,
 		};
-		request_ctx::with_request_context(session.view_cache.clone(), async move {
+		let work = async move {
 			if let Some(image) = fs::execute_view_image(&call).await.map_err(|e| e.to_string())? {
 				let mut content = vec![ContentBlock::image(image.base64, image.mime)];
 				let hints = append_hints(String::new());
@@ -627,8 +646,12 @@ impl OctofsServer {
 			Ok::<CallToolResponse, String>(
 				CallToolResult::success(vec![ContentBlock::text(append_hints(result))]).into(),
 			)
-		})
-		.await
+		};
+		if Self::for_script(&context) {
+			request_ctx::with_script_request_context(work).await
+		} else {
+			request_ctx::with_request_context(session.view_cache.clone(), work).await
+		}
 	}
 
 	#[tool(

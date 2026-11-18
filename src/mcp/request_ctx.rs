@@ -39,6 +39,9 @@ use super::fs::delta::ViewCache;
 struct RequestContext {
 	hints: RefCell<Vec<String>>,
 	view_cache: Option<Arc<ViewCache>>,
+	/// The call is made by a script the model wrote: its result goes to the
+	/// script, and the model sees only what the script prints.
+	for_script: bool,
 }
 
 tokio::task_local! {
@@ -54,10 +57,34 @@ where
 		RequestContext {
 			hints: RefCell::new(Vec::new()),
 			view_cache,
+			for_script: false,
 		},
 		fut,
 	)
 	.await
+}
+
+/// Run `fut` with a fresh request context for a call made by a script. It gets
+/// no view cache: the cache records what the model saw in full, and the model
+/// does not see what a script reads.
+pub async fn with_script_request_context<F>(fut: F) -> F::Output
+where
+	F: std::future::Future,
+{
+	CTX.scope(
+		RequestContext {
+			hints: RefCell::new(Vec::new()),
+			view_cache: None,
+			for_script: true,
+		},
+		fut,
+	)
+	.await
+}
+
+/// Whether the current call is made by a script. `false` outside a request scope.
+pub fn for_script() -> bool {
+	CTX.try_with(|ctx| ctx.for_script).unwrap_or(false)
 }
 
 /// Carry the cache into a commit task that must finish even if its caller cancels.

@@ -1231,6 +1231,64 @@ async fn view_deltas_follow_the_client_context_epoch() {
 	assert!(Arc::ptr_eq(&before, &after), "a new epoch keeps the session");
 }
 
+/// A client marks the calls a script makes (`experimental.session.script`). What
+/// a script views goes to the script, so it is served whole every time and is
+/// not counted as seen by the model: the model's own first view is whole too.
+#[tokio::test]
+async fn a_script_view_is_not_recorded_as_seen_by_the_model() {
+	let dir = tempfile::tempdir().expect("workdir");
+	let file = dir.path().join("f.txt");
+	std::fs::write(&file, "one\n").expect("write file");
+	let server = OctofsServer::with_root(dir.path().to_path_buf());
+	let (transport, _client) = tokio::io::duplex(4096);
+	let service = rmcp::service::serve_directly(server.clone(), transport, None);
+	let peer = service.peer();
+	let model = session_context(peer, "s", dir.path(), Some(0));
+	let script = context_with_session(
+		peer,
+		json!({"session_id": "s", "workdir": dir.path(), "context_epoch": 0, "script": true}),
+	);
+	assert!(OctofsServer::for_script(&script));
+	assert!(!OctofsServer::for_script(&model));
+	assert!(!OctofsServer::for_script(&rmcp::service::RequestContext::new(
+		rmcp::model::RequestId::Number(1),
+		peer.clone()
+	)));
+
+	let view_call = || crate::mcp::McpToolCall::test_call("view", json!({"path": file.to_string_lossy()}));
+	let script_view = || {
+		let call = view_call();
+		async move {
+			crate::mcp::request_ctx::with_script_request_context(async {
+				crate::mcp::fs::execute_view(&call).await.expect("view")
+			})
+			.await
+		}
+	};
+	let model_view = || {
+		let call = view_call();
+		let cache = server.session(&model).view_cache.clone();
+		async move {
+			crate::mcp::request_ctx::with_request_context(cache, async {
+				crate::mcp::fs::execute_view(&call).await.expect("view")
+			})
+			.await
+		}
+	};
+
+	assert!(script_view().await.ends_with("|one"));
+	assert!(
+		script_view().await.ends_with("|one"),
+		"a script is never answered with a delta"
+	);
+	assert!(
+		model_view().await.ends_with("|one"),
+		"the model has not seen the file yet"
+	);
+	assert!(model_view().await.starts_with("[unchanged since you last viewed"));
+	assert!(script_view().await.ends_with("|one"));
+}
+
 #[test]
 fn strip_null_variants_collapses_nullable_types_and_unions() {
 	let mut schema = serde_json::json!({
