@@ -743,8 +743,8 @@ impl OctofsServer {
 			shows; removed lines and the middle of a long added block show as an id range. A \
 			trailing `shift:` line says how far the lines after each edit moved. Insert anchors \
 			0 (file start) and -1 (end) are plain integers. Content is raw text without `N:hh|` \
-			prefixes, the new lines only: a first or last line that repeats the line next to the \
-			range is dropped. To copy lines instead of retyping them, give an operation `copy_from` \
+			prefixes: the new lines only, without the unchanged lines around the range. To copy lines \
+			instead of retyping them, give an operation `copy_from` \
 			(a line range of any file, this one as it was before the call) in place of \
 			`content`; a move adds a replace of the old range with \"\" (a range of another file \
 			is removed by a separate call on that file). A file that does not \

@@ -576,7 +576,8 @@ Perform multiple insert/replace operations on a single file atomically.
 
 Give only the new lines. If the first or last line of a replacement repeats the line just
 before or after its range, that line is dropped, the edit is applied and a note in the result
-says so. Content that is nothing but the repeat fails the call.
+says so. A lone closing bracket (`}`, `]`, `)`) or a blank line is kept, since those repeat
+legitimately. Content that is nothing but the repeat fails the call.
 
 Each operation has a `start`. For `replace` it's the first line of the range as a
 line id copied from `view` output (add `end` for a range; omit it for a single
