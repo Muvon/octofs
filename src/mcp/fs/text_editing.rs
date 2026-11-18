@@ -1090,57 +1090,28 @@ fn is_structural_noise(line: &str) -> bool {
 	matches!(core, "}" | "]" | ")")
 }
 
-// Check whether `content` (the replacement) duplicates the line immediately
-// before or after the range [start_line, end_line] (1-indexed) in `file_lines`.
+// Which ends of a replacement repeat the line immediately before or after the range
+// [start_line, end_line] (1-indexed) in `file_lines`: (the first content line repeats
+// the line before, the last content line repeats the line after).
 //
-// Returns an error string if duplication is detected, Ok(()) otherwise.
+// A repeated neighbour is surrounding context the caller included with the replacement.
 // Structural noise lines are exempt — they legitimately appear at boundaries.
-fn check_replace_duplicates(
+fn repeated_neighbour_lines(
 	content_lines: &[&str],
 	file_lines: &[&str],
 	start_line: usize,
 	end_line: usize,
-	operation_index: usize,
-) -> Result<(), String> {
-	if content_lines.is_empty() {
-		return Ok(());
-	}
-
-	let id = |line_1idx: usize| -> String { line_id_at(file_lines, line_1idx) };
-	let range_id = |s: usize, e: usize| -> String { format!("\"{}\"-\"{}\"", id(s), id(e)) };
-
-	// First content line matches the line immediately before the range
-	if start_line > 1 {
-		let line_before = file_lines[start_line - 2];
-		if content_lines[0] == line_before && !is_structural_noise(line_before) {
-			return Err(format!(
-				"Duplicate line detected in operation {}: content's first line repeats {} ({:?}), \
-				the line just before the range {}. Give only the replacement lines, not \
-				surrounding context; use str_replace if the repeat is intended.",
-				operation_index,
-				id(start_line - 1),
-				line_before,
-				range_id(start_line, end_line)
-			));
-		}
-	}
-	// Last content line matches the line immediately after the range
-	if end_line < file_lines.len() {
-		let line_after = file_lines[end_line];
-		let last = content_lines[content_lines.len() - 1];
-		if last == line_after && !is_structural_noise(line_after) {
-			return Err(format!(
-				"Duplicate line detected in operation {}: content's last line repeats {} ({:?}), \
-				the line just after the range {}. Give only the replacement lines, not \
-				surrounding context; use str_replace if the repeat is intended.",
-				operation_index,
-				id(end_line + 1),
-				line_after,
-				range_id(start_line, end_line)
-			));
-		}
-	}
-	Ok(())
+) -> (bool, bool) {
+	let Some((first, last)) = content_lines.first().zip(content_lines.last()) else {
+		return (false, false);
+	};
+	let repeats = |content_line: &str, neighbour: Option<&&str>| {
+		neighbour.is_some_and(|line| *line == content_line && !is_structural_noise(line))
+	};
+	// `start_line` is 1-indexed, so the line before the range sits at index `start_line - 2`.
+	let before = start_line.checked_sub(2).and_then(|index| file_lines.get(index));
+	let after = file_lines.get(end_line);
+	(repeats(first, before), repeats(last, after))
 }
 
 // Check for conflicting operations that would corrupt the file.
@@ -1763,8 +1734,8 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 		bail!("{}", conflict_error);
 	}
 
-	// Duplicate-line detection: validate operations against original content before applying.
-	// Catches the #1 AI mistake of including surrounding/already-existing lines.
+	// Repeated-line handling against the original content, before applying: the #1 AI
+	// mistake is to send surrounding, already-existing lines with the new ones.
 	let orig_line_id = |line_1idx: usize| -> String {
 		// Anchor 0 means "file start" — no line to identify, and `0 - 1` underflows.
 		if line_1idx == 0 {
@@ -1773,7 +1744,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 			line_id_at(&original_lines, line_1idx)
 		}
 	};
-	for op in &batch_operations {
+	for op in &mut batch_operations {
 		let content_lines = incoming_content_lines(&op.content);
 		if content_lines.is_empty() || op.copied {
 			continue;
@@ -1784,11 +1755,38 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 					LineRange::Range(s, e) => (s, e),
 					LineRange::Single(line) => (line, line),
 				};
-				if let Err(e) =
-					check_replace_duplicates(&content_lines, &original_lines, start, end, op.operation_index)
-				{
-					bail!("{}", e);
+				let (first, last) = repeated_neighbour_lines(&content_lines, &original_lines, start, end);
+				if !first && !last {
+					continue;
 				}
+				// A retry after a rejection sends the same range without the repeated line, so
+				// the line is dropped here and the edit applied. Content that is nothing but
+				// the repeat is different: deleting the range or keeping it is a guess.
+				let dropped = usize::from(first) + usize::from(last);
+				if dropped >= content_lines.len() {
+					bail!(
+						"Duplicate line detected in operation {}: content only repeats the line next to the range \"{}\"-\"{}\". Give the replacement lines, or an empty content to delete the range; use text_edit if the repeat is intended.",
+						op.operation_index,
+						orig_line_id(start),
+						orig_line_id(end)
+					);
+				}
+				let note = |end_name: &str, side: &str, neighbour: usize| {
+					crate::mcp::request_ctx::push_hint(&format!(
+						"op {}: dropped the {end_name} line of its content: it repeats {} ({:?}), the line just {side} the range. Give only the replacement lines; use text_edit if the repeat is intended.",
+						op.operation_index,
+						orig_line_id(neighbour),
+						original_lines[neighbour - 1]
+					));
+				};
+				if first {
+					note("first", "before", start - 1);
+				}
+				if last {
+					note("last", "after", end + 1);
+				}
+				let kept = &content_lines[usize::from(first)..content_lines.len() - usize::from(last)];
+				op.content = kept.join("\n");
 			}
 			OperationType::Insert => {
 				// insert_after=N means content goes between line N and line N+1.

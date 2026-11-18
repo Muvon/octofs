@@ -211,6 +211,12 @@ Applies up to 50 `insert`/`replace` operations to one file atomically.
   needed. Removed lines, and the middle of a long added block, render as an id
   range; a trailing `shift:` line reports how original line numbers below each
   edit moved.
+- **A repeated neighbour line is dropped.** When the first or last line of a
+  replacement repeats the line just before or after its range, it is context
+  sent along with the new lines: the line is dropped, the edit is applied and
+  a note in the result says so (`repeated_neighbour_lines`,
+  `fs/text_editing.rs`). Single closing tokens such as `}` are exempt. Content
+  that is nothing but the repeat fails the call.
 
 Because verification precedes the write, a failed batch leaves the file
 untouched.

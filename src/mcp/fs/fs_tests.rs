@@ -621,8 +621,8 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_replace_compound_closer_is_not_noise() {
-		// `});` is a compound closer — NOT structural noise.
-		// Duplicate detection must fire when it appears at a range boundary.
+		// `});` is a compound closer — NOT structural noise. At a range boundary it is a
+		// repeated neighbour line, so it is dropped from the content, not written twice.
 		let content = "foo(\n\tbar(),\n});\nbaz();\n";
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
@@ -635,25 +635,20 @@ mod tests {
 				"operations": [{
 					"operation": "replace",
 					"start": lid(content, 4), "end": lid(content, 4),
-					// Last content line is `});` — same as line 3 (just before range end+1).
-					// Must be BLOCKED because `});` is NOT structural noise.
+					// First content line is `});` — same as line 3 (just before the range).
 					"content": "});\nnew_baz();"
 				}]
 			}),
 		};
-		let err = execute_batch_edit(&call).await.unwrap_err();
-		assert!(
-			err.to_string().contains("Duplicate line detected"),
-			"compound closer at boundary must trigger duplicate detection: {}",
-			err
-		);
-		// File must be unchanged
+		execute_batch_edit(&call).await.unwrap();
 		let actual = tokio::fs::read_to_string(temp_file.path()).await.unwrap();
-		assert_eq!(actual, content);
+		assert_eq!(actual, "foo(\n\tbar(),\n});\nnew_baz();\n");
 	}
+
 	#[tokio::test]
-	async fn test_replace_duplicate_detection_before() {
-		// Blocks write when first content line duplicates the line just before the range
+	async fn test_replace_drops_a_line_repeating_the_one_before_the_range() {
+		// The first content line repeats the line just before the range: it is context the
+		// caller sent along, so it is dropped and the edit applied, with a note saying so.
 		let content = "line 1\nline 2\nline 3\nline 4\n";
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
@@ -670,16 +665,24 @@ mod tests {
 				}]
 			}),
 		};
-		let err = execute_batch_edit(&call).await.unwrap_err();
-		assert!(err.to_string().contains("Duplicate line detected"));
-		// File must be unchanged
+		let hints = crate::mcp::request_ctx::with_request_context(None, async {
+			execute_batch_edit(&call).await.unwrap();
+			crate::mcp::request_ctx::drain_hints()
+		})
+		.await;
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
-		assert_eq!(actual, "line 1\nline 2\nline 3\nline 4\n");
+		assert_eq!(actual, "line 1\nline 2\nnew line 3\nnew line 4\n");
+		assert!(
+			hints
+				.iter()
+				.any(|hint| hint.starts_with("op 0: dropped the first line") && hint.contains("line 2")),
+			"{hints:?}"
+		);
 	}
 
 	#[tokio::test]
-	async fn test_replace_duplicate_detection_after() {
-		// Blocks write when last content line duplicates the line just after the range
+	async fn test_replace_drops_a_line_repeating_the_one_after_the_range() {
+		// The last content line repeats the line just after the range.
 		let content = "line 1\nline 2\nline 3\nline 4\n";
 		let temp_file = create_test_file(content).await;
 		let path = temp_file.path().to_string_lossy().to_string();
@@ -696,10 +699,45 @@ mod tests {
 				}]
 			}),
 		};
-		let err = execute_batch_edit(&call).await.unwrap_err();
-		assert!(err.to_string().contains("Duplicate line detected"));
+		let hints = crate::mcp::request_ctx::with_request_context(None, async {
+			execute_batch_edit(&call).await.unwrap();
+			crate::mcp::request_ctx::drain_hints()
+		})
+		.await;
 		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
-		assert_eq!(actual, "line 1\nline 2\nline 3\nline 4\n");
+		assert_eq!(actual, "new line 1\nnew line 2\nline 3\nline 4\n");
+		assert!(
+			hints
+				.iter()
+				.any(|hint| hint.starts_with("op 0: dropped the last line") && hint.contains("line 3")),
+			"{hints:?}"
+		);
+	}
+
+	#[tokio::test]
+	async fn test_replace_rejects_content_that_only_repeats_a_neighbour() {
+		// Nothing would be left after dropping the repeat: deleting the range or keeping it
+		// is a guess, so the call fails and the file stays as it was.
+		let content = "line 1\nline 2\nline 3\nline 4\n";
+		let temp_file = create_test_file(content).await;
+		let path = temp_file.path().to_string_lossy().to_string();
+		let call = McpToolCall {
+			tool_id: "test".to_string(),
+			workdir: std::env::current_dir().unwrap_or_default(),
+			tool_name: "batch_edit".to_string(),
+			parameters: json!({
+				"path": path,
+				"operations": [{
+					"operation": "replace",
+					"start": lid(content, 3), "end": lid(content, 3),
+					"content": "line 2"
+				}]
+			}),
+		};
+		let err = execute_batch_edit(&call).await.unwrap_err().to_string();
+		assert!(err.contains("content only repeats the line next to the range"), "{err}");
+		let actual = fs::read_to_string(temp_file.path()).await.unwrap();
+		assert_eq!(actual, content);
 	}
 
 	#[tokio::test]
