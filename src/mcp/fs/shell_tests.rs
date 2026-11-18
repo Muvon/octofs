@@ -19,22 +19,22 @@ use super::*;
 #[tokio::test]
 async fn test_shell_misuse_is_rejected_by_default() {
 	// Hard mode (the default): misuse is an error and nothing executes.
-	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat src/main.rs" }));
+	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "sleep 5" }));
 	let err = execute_shell_command(&call, None)
 		.await
 		.expect_err("hard mode rejects misuse");
-	assert!(err.to_string().contains("view"), "err: {err}");
+	assert!(err.to_string().contains("`sleep` is blocked"), "err: {err}");
 }
 
 #[test]
 fn hard_and_soft_misuse_messages_say_what_happened() {
-	let hint = "Reading files with the shell is blocked — use `view`.";
-	let hard = misuse_message("cat", hint, crate::mcp::HintMode::Hard);
+	let hint = "Bare `sleep` in the shell is blocked — use a background job.";
+	let hard = misuse_message("sleep", hint, crate::mcp::HintMode::Hard);
 	assert!(hard.contains("no part of it ran"), "{hard}");
-	assert!(hard.contains("is blocked — use `view`"), "{hard}");
-	let soft = misuse_message("cat", hint, crate::mcp::HintMode::Soft);
+	assert!(hard.contains("is blocked — use a background job"), "{hard}");
+	let soft = misuse_message("sleep", hint, crate::mcp::HintMode::Soft);
 	assert!(soft.contains("the command ran anyway"), "{soft}");
-	assert!(soft.contains("is discouraged — use `view`"), "{soft}");
+	assert!(soft.contains("is discouraged — use a background job"), "{soft}");
 }
 
 #[test]
@@ -262,40 +262,22 @@ fn passes(command: &str) -> bool {
 
 #[test]
 fn test_detect_shell_misuse() {
-	// A lone read is exactly one `view` call, so it is rejected
-	assert!(rejection("grep -rn foo src/").is_some());
-	assert!(rejection("cat src/main.rs").is_some());
-	assert!(rejection("ls -la").is_some());
-	assert!(rejection("find . -name '*.rs'").is_some());
-
-	// Path-qualified and env-prefixed invocations are caught
-	assert!(rejection("/bin/grep foo bar").is_some());
-	assert!(rejection("FOO=bar grep x y").is_some());
-
-	// Subshell/group openers don't hide a read
-	assert!(rejection("(cat file)").is_some());
-	assert!(rejection("{ grep foo bar; }").is_some());
-
-	// A read in a chain, a substitution or a pipeline head is rejected too: a hint
-	// arrives only after the shell read already ran
+	// Bare sleep is rejected wherever it sits: chain, substitution or newline
 	for cmd in [
-		"cd /path && grep -rn foo",
-		"cd /path; cat file.rs",
-		"true || ls -la",
-		"echo $(grep foo bar)",
-		"echo `cat file`",
-		"cd /path\ngrep -rn foo",
-		"grep -rn foo src | head -30",
-		"ls test | grep route",
-		"npm test > /tmp/unit.log 2>&1; grep -E '^not ok' /tmp/unit.log",
+		"cd /path && sleep 5",
+		"cd /path; sleep 5",
+		"true || sleep 5",
+		"echo $(sleep 5)",
+		"echo `sleep 5`",
+		"cd /path\nsleep 5",
+		"(sleep 5)",
 	] {
 		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be rejected"));
-		assert!(msg.contains("`view`"), "{msg}");
+		assert!(msg.contains("`sleep` is blocked"), "{msg}");
 	}
-	// Piping a file or heredoc into a program is told to redirect stdin instead
-	let msg = rejection("cat dump.sql | psql").expect("cat as a pipeline head is blocked");
-	assert!(msg.contains("psql < dump.sql"), "{msg}");
-	assert!(rejection("cat <<'EOF' | kubectl apply -f -\nkind: Pod\nEOF").is_some());
+	// A path-qualified or env-prefixed invocation is still caught
+	assert!(rejection("/bin/sleep 5").is_some());
+	assert!(rejection("FOO=bar sleep 5").is_some());
 
 	// Pipelines stay allowed (stream transforms)
 	assert!(passes("cargo build 2>&1 | grep error"));
@@ -309,14 +291,14 @@ fn test_detect_shell_misuse() {
 	assert!(passes("bash -lc 'cd /x && git log && ls'"));
 
 	// ssh remote commands obey the same rules, checked as their own command
-	assert!(rejection("ssh host 'cat file'").is_some());
-	assert!(rejection("ssh dev grep -rn foo /path").is_some());
-	assert!(rejection("ssh -p 2222 user@host 'grep foo /x'").is_some());
-	assert!(rejection("ssh -o StrictHostKeyChecking=no host 'ls /x'").is_some());
-	assert!(rejection("ssh a 'ssh b \"grep x /y\"'").is_some());
-	assert!(rejection("ssh host 'ls' && cat file").is_some());
-	assert!(rejection("ssh host 'cd /path && ls'").is_some());
-	assert!(rejection("ssh host \"cd /path && grep foo\"").is_some());
+	assert!(rejection("ssh host 'sleep 5'").is_some());
+	assert!(rejection("ssh dev sleep 5").is_some());
+	assert!(rejection("ssh -p 2222 user@host 'sleep 5'").is_some());
+	assert!(rejection("ssh -o StrictHostKeyChecking=no host 'top'").is_some());
+	assert!(rejection("ssh a 'ssh b \"sleep 5\"'").is_some());
+	assert!(rejection("ssh host 'ls' && sleep 5").is_some());
+	assert!(rejection("ssh host 'cd /path && sleep 5'").is_some());
+	assert!(rejection("ssh host \"cd /path && sleep 5\"").is_some());
 	// Legitimate remote commands stay allowed
 	assert!(passes("ssh host uptime"));
 	assert!(passes("ssh host 'systemctl status nginx'"));
@@ -356,7 +338,7 @@ fn test_detect_shell_misuse() {
 	// A redirect that also writes into the workdir is still a tracked-file write
 	assert!(rejection("echo hi > /tmp/a > src/b").is_some());
 	assert!(rejection("echo hi >/tmp/a>src/b").is_some());
-	// cat with a redirect gets the write guidance, not the read guidance
+	// cat with a redirect gets the write guidance
 	let msg = rejection("cat > f.txt").unwrap();
 	assert!(msg.contains("text_edit"), "msg: {msg}");
 	// Redirecting other programs' output stays allowed
@@ -418,9 +400,36 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 }
 
 #[test]
-fn a_read_in_a_compound_is_rejected_by_name() {
-	let msg = rejection("php -v && git log --oneline -3 && find . -name x").expect("find is blocked");
-	assert!(msg.contains("`find` is blocked"), "{msg}");
+fn reading_searching_and_listing_with_the_shell_is_not_rejected() {
+	for cmd in [
+		"cat src/main.rs",
+		"head -20 src/main.rs",
+		"tail -n 5 log.txt",
+		"grep -rn foo src/ | head -30",
+		"rg -n TODO",
+		"find . -name '*.rs'",
+		"ls -la src",
+		"cd /path && rg TODO",
+		"git status; grep -rn TODO .",
+		"echo $(cat VERSION)",
+		"(cat file)",
+		"/bin/grep -n foo a.rs",
+		"FOO=bar grep -n foo a.rs",
+		"ssh host 'ls -la /var/log'",
+		"ssh host 'grep -rn foo /etc'",
+	] {
+		assert!(rejection(cmd).is_none(), "{cmd} must not be rejected");
+	}
+}
+
+#[test]
+fn a_rejected_program_after_a_read_is_still_rejected_by_name() {
+	let msg = rejection("ls src && sed -i 's/a/b/' src/main.rs").expect("sed -i is blocked");
+	assert!(msg.contains("`sed` is blocked"), "{msg}");
+	let msg = rejection("cat src/a.rs > src/b.rs").expect("a redirect write is blocked");
+	assert!(msg.contains("text_edit"), "{msg}");
+	let msg = rejection("grep foo a.rs; sleep 5").expect("sleep is blocked");
+	assert!(msg.contains("`sleep` is blocked"), "{msg}");
 }
 
 #[test]
@@ -533,4 +542,33 @@ fn clean_terminal_noise_keeps_tabs_and_collapses_blank_runs() {
 	assert_eq!(clean_terminal_noise("x\n\nx\nx"), "x\n\nx\nx");
 	// Empty input stays empty.
 	assert_eq!(clean_terminal_noise(""), "");
+}
+
+// `grep`, `nl` and `cat -n` are Unix programs; `line_ids_tests.rs` covers the stamping itself on every OS.
+#[cfg(unix)]
+#[tokio::test]
+async fn numbered_file_lines_come_back_with_line_ids() {
+	let temp = tempfile::tempdir().expect("temp workdir");
+	std::fs::write(temp.path().join("notes.txt"), "alpha\n\n  beta\n").expect("write notes");
+	let expected = format!("{}|  beta", crate::utils::line_hash::line_id(3, "  beta"));
+	for command in [
+		"grep -n beta notes.txt",
+		"nl -ba notes.txt | sed -n '3p'",
+		"cat -n notes.txt | grep beta",
+		"awk '{print NR\": \"$0}' notes.txt | tail -1",
+	] {
+		let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+		call.workdir = temp.path().to_path_buf();
+		let outcome = execute_with_timeout(&call, Duration::from_secs(5), None)
+			.await
+			.expect("the command runs");
+		assert_eq!(outcome.text, expected, "{command}");
+	}
+	// A line printed without its number has no id.
+	let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "cat notes.txt" }));
+	call.workdir = temp.path().to_path_buf();
+	let outcome = execute_with_timeout(&call, Duration::from_secs(5), None)
+		.await
+		.expect("cat runs");
+	assert_eq!(outcome.text, "alpha\n\n  beta");
 }

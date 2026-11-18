@@ -261,17 +261,22 @@ re-run or `ps` — start the next independent step or end the turn.
 **Misuse gate** (`detect_shell_misuse`). The gate is nuanced; preserve this
 contract when touching it:
 
-- misuse: `sed -i`, content writes into the workdir (`cat >`, `echo >`,
-  `tee`), a read program (cat/head/tail/less/more/grep/egrep/fgrep/rg/find/ls) starting any command — alone, in a
-  chain or as a pipeline head — file reads belong to `view`. `--hint-mode hard`
-  (default) rejects the whole command unexecuted; `--hint-mode soft` runs it and
-  appends the guidance as a warning. Hard suits models that follow tool steering:
-  a measured win on GLM-5.3, and gpt-6.1-sol rarely hits it (1 of 150 shell
-  calls over six tasks). Try soft for a model that keeps re-sending blocked
+- misuse: bare `sleep`, `watch`/`top`/`htop`, `sed -i`, and content writes into
+  the workdir (`cat >`, `echo >`, `tee`). `--hint-mode hard` (default) rejects
+  the whole command unexecuted; `--hint-mode soft` runs it and appends the
+  guidance as a warning. Try soft for a model that keeps re-sending blocked
   commands — watch the rejection count;
+- reading, searching and listing programs (cat/head/tail/grep/rg/find/ls and the
+  like) run normally. A numbered file line in the output (`grep -n`, `rg -n`,
+  `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view` gives,
+  when a file named by the command or by the output (`path:N:text`, or a path
+  heading line above the numbered lines) holds exactly that text on that line, so
+  it can go straight into `batch_edit`. Lines without a number, and numbered text
+  that is not a file line (clock times, counts, compiler positions), stay as
+  printed. Files are read on this machine, so the output of `ssh host '…'` gets
+  no ids, and neither does a file over 5 MB or one that is not UTF-8 text;
 - run with a hint: a write to a scratch path outside the workdir;
-- pipelines are not split, so a read as a later pipe stage passes; read-only
-  `sed`/`awk` pass;
+- read-only `sed`/`awk` pass;
 - `ssh host 'cmd'` bodies are checked recursively.
 
 **Output hygiene.** Output is terminal-clean — ANSI escapes and progress

@@ -798,15 +798,16 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs. Reading, searching \
-			and listing files belongs to `view`: cat, head, tail, grep, rg, find and ls at the start \
-			of a command — alone, after `cd dir &&` or `;`, as a pipeline head, or inside \
-			`ssh host '…'` — are rejected and nothing in the call runs. That covers `cd src && ls` \
-			and `git status; grep -rn TODO .`, not `cargo test 2>&1 | tail -20`, where the reader \
-			is a later pipe stage. `view` takes local and ssh:// paths, and its `flags` give \
-			`grep -c/-l/-o/-v` and `ls -l` output. The same applies to bare `sleep` and to writing \
-			files: `sed -i`, standalone `tee` and echo/printf/cat redirects into the workdir \
-			belong to `text_edit` and `batch_edit`. Local writes outside the workdir \
+		description = "Run a shell command: builds, tests, git, project CLIs, and the usual \
+			programs for reading, searching and listing files. An output line that is a numbered \
+			line of a file (`grep -n`, `rg -n`, `nl -ba`, `cat -n`, `awk '{print NR\": \"$0}'`) \
+			comes back as `N:hh|content`, the line id `view` gives, ready for `batch_edit`; a line \
+			printed without its number has no id. Bare `sleep`, the monitoring programs \
+			`watch`/`top`/`htop` and writing files — `sed -i`, standalone `tee` and \
+			echo/printf/cat redirects into the workdir, which belong to `text_edit` and \
+			`batch_edit` — at the start of a command, alone, after `cd dir &&` or `;`, as a \
+			pipeline head, or inside `ssh host '…'` — are rejected and nothing in the call runs. \
+			Local writes outside the workdir \
 			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. \
 			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
 			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \

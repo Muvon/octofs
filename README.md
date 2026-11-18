@@ -32,7 +32,7 @@ With these tools an assistant can work in a project without the user pasting fil
 - `view` reads a file (whole, a line range, or several ranges) or several files in one call, lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
 - `text_edit` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
 - `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
-- `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. By default, standalone `cat`, `grep`, `find`, `ls` and similar reads are rejected with a pointer to `view`.
+- `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. Reading, searching and listing with `cat`, `grep`, `find`, `ls` and similar programs run normally, and a numbered file line in the output (`grep -n`, `rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view` gives.
 - Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
 - Remote files use SSH/SFTP with your OpenSSH config. `shell` always runs locally. RSA keys are not supported (see [Remote Filesystem](#remote-filesystem-sshsftp)).
 
@@ -259,13 +259,19 @@ from the end) and the insert anchors `0` (file start) / `-1` (append).
 
 ### Shell Misuse Enforcement
 
-Octofs detects shell misuse — commands like `cat`, `grep`, `find`, or `sed` that
-should use the dedicated MCP tools instead — and rejects them with an error
-explaining which tool to use. The call fails; nothing executes. This is
-intentional and not configurable: the dedicated tools give the model line ids,
-gitignore-awareness, and remote-host support that raw shell output cannot.
-Pipelines (`cargo build 2>&1 | grep error`) remain allowed — only standalone
-invocations of those programs are blocked.
+Reading, searching and listing with the shell (`cat`, `grep`, `rg`, `find`, `ls`
+and similar) run normally. A numbered line of a file in the output (`grep -n`,
+`rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view`
+gives, when a file named by the command or by the output (`path:N:text`, or a path
+heading line above the numbered lines) holds exactly that text on that line, so it
+can go straight into `batch_edit`. Lines without a number, and numbered text that
+is not a file line (clock times, counts, compiler positions), stay as printed.
+
+Octofs still rejects commands that belong to a dedicated tool or cannot work in
+the shell: bare `sleep`, `watch`/`top`/`htop`, `sed -i`, standalone `tee`, and
+`echo`/`printf`/`cat` redirects into the workdir. The call fails with an error
+explaining what to use instead; nothing executes. The dedicated tools give the
+model tracked edits and remote-host support that raw shell output cannot.
 
 Other guidance (out-of-bounds ranges, fuzzy-match notices) is appended to
 successful responses as ⚠️ hints without failing the call.

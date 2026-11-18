@@ -24,6 +24,7 @@ pub mod directory;
 pub mod file_ops;
 pub mod graph;
 mod graph_scoped;
+mod line_ids;
 pub mod remote;
 pub mod search;
 pub mod shell;

@@ -191,8 +191,23 @@ pub(super) async fn spill(job: &Job, output: &str) -> Result<()> {
 	Ok(())
 }
 
+/// Numbered file lines in a command's output get the ids `view` gives them (see
+/// `line_ids`). An output too large to return is refused whole, so it is left as is.
+async fn with_line_ids(stdout: String, job: &Job) -> String {
+	if stdout.len() > MAX_RESULT_BYTES {
+		return stdout;
+	}
+	let command = job.command.clone();
+	let working_dir = job.working_dir.clone();
+	// The files the output names are read from disk.
+	tokio::task::spawn_blocking(move || super::line_ids::stamp(&stdout, &command, &working_dir))
+		.await
+		.expect("adding line ids to shell output panicked")
+}
+
 pub(super) async fn process_output(stdout: &[u8], stderr: &[u8], job: &Job) -> (String, Option<PathBuf>) {
 	let stdout = super::shell::clean_terminal_noise(&String::from_utf8_lossy(stdout));
+	let stdout = with_line_ids(stdout, job).await;
 	let stderr = super::shell::clean_terminal_noise(&String::from_utf8_lossy(stderr));
 	let full_output = super::digest::join_streams(&stdout, &stderr);
 	let path = output_path(job);

@@ -120,24 +120,15 @@ pub fn kill_all_shell_children() {
 	}
 }
 
-// Each entry: (triggering programs, error message with usage example). A match is
-// rejected wherever it starts a command — alone, as a chain segment, in a `$(…)`
-// substitution or as a pipeline head — because a hint only arrives after the shell
-// read already ran. Pipelines are not split, so a later pipe stage
-// (`cargo test 2>&1 | tail -20`) is never checked and stays allowed.
+// Each entry: (triggering programs, error message). A match is rejected wherever
+// it starts a command — alone, as a chain segment, in a `$(…)` substitution or as
+// a pipeline head — because a hint only arrives after the command already ran.
+//
+// Only programs that cannot work in this tool are listed. Reading, searching and
+// listing with `cat`, `grep`, `rg`, `ls` run like any command: a numbered file
+// line in their output gets its line id (see `line_ids`), so nothing about them
+// needs a second read with `view`.
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
-	(
-		&["cat", "head", "tail", "less", "more"],
-		"Reading files with the shell is blocked — use `view` for local or remote files: view path=\"src/main.rs\" start=10 end=50, view path=\"a.rs|b.rs\" for several files in one call, view path=\"ssh://host/~/file\". Read programs are allowed as later pipeline stages (`cargo test 2>&1 | tail -20`), but not as command heads, including in chains and SSH command bodies. Program input redirects (`psql < dump.sql`) are supported. Captured output files can be read with `view`.",
-	),
-	(
-		&["grep", "egrep", "fgrep", "rg"],
-		"Searching with the shell is blocked — use `view` with content= for local or remote paths: view path=\"src/\" content=\"TODO\" regex=true. `flags` gives the grep output modes: \"c\" counts, \"l\" file paths, \"o\" matched text, \"v\" non-matching lines. Search programs are allowed as later pipeline stages (`cargo build 2>&1 | grep error`), but not as command heads, including in chains and SSH command bodies. Captured output files can be searched with `view`.",
-	),
-	(
-		&["find", "ls"],
-		"Listing with the shell is blocked — use `view` for local or remote directories: view path=\"src/\" pattern=\"*.rs\" (ripgrep glob), view path=\"ssh://host/~/dir\". flags=\"l\" adds size and modification time, also for a single file. Listing programs are allowed as later pipeline stages, but not as command heads, including in chains and SSH command bodies.",
-	),
 	(
 		&["sleep"],
 		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and its result is delivered when it exits where the client integration supports that, so there is nothing to wait for. When the call that started it returned a job link, `view` on that link is a single look at its status and output so far; it returns at once and is not a way to wait. A sleep inside a shell loop body is supported.",
