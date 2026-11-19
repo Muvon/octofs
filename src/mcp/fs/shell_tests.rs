@@ -238,11 +238,9 @@ fn test_clean_terminal_noise() {
 	assert_eq!(clean_terminal_noise("hello\nworld"), "hello\nworld");
 }
 
-const WORKDIR: &str = "/work";
-
-/// The rejection message, when the gate refuses the command run from `WORKDIR`.
+/// The rejection message, when the gate refuses the command.
 fn rejection(command: &str) -> Option<String> {
-	match detect_shell_misuse(command, Some(Path::new(WORKDIR))) {
+	match detect_shell_misuse(command) {
 		Some(Misuse::Reject(msg)) => Some(msg),
 		_ => None,
 	}
@@ -250,14 +248,14 @@ fn rejection(command: &str) -> Option<String> {
 
 /// The hint, when the gate lets the command run but points at a dedicated tool.
 fn hint(command: &str) -> Option<String> {
-	match detect_shell_misuse(command, Some(Path::new(WORKDIR))) {
+	match detect_shell_misuse(command) {
 		Some(Misuse::Hint(hint)) => Some(hint),
 		_ => None,
 	}
 }
 
 fn passes(command: &str) -> bool {
-	detect_shell_misuse(command, Some(Path::new(WORKDIR))).is_none()
+	detect_shell_misuse(command).is_none()
 }
 
 #[test]
@@ -327,20 +325,6 @@ fn test_detect_shell_misuse() {
 	// Loop depth resets after `done` — a trailing sleep is still caught
 	assert!(rejection("until ok; do sleep 1; done; sleep 40").is_some());
 
-	// Writing file content into the workdir via shell redirects is blocked
-	assert!(rejection("echo 'fn main() {}' > src/main.rs").is_some());
-	assert!(rejection("printf '%s\\n' hi >> notes.txt").is_some());
-	assert!(rejection("echo hi > /work/notes.txt").is_some());
-	assert!(rejection("tee out.txt").is_some());
-	// A `cd` inside the workdir, or one we can't resolve, keeps the target tracked
-	assert!(rejection("cd src && echo data > f").is_some());
-	assert!(rejection("cd ~ && echo data > f").is_some());
-	// A redirect that also writes into the workdir is still a tracked-file write
-	assert!(rejection("echo hi > /tmp/a > src/b").is_some());
-	assert!(rejection("echo hi >/tmp/a>src/b").is_some());
-	// cat with a redirect gets the write guidance
-	let msg = rejection("cat > f.txt").unwrap();
-	assert!(msg.contains("text_edit"), "msg: {msg}");
 	// Redirecting other programs' output stays allowed
 	assert!(passes("cargo test > out.log 2>&1"));
 	assert!(passes("make 2>&1 | tee build.log"));
@@ -353,32 +337,31 @@ fn test_detect_shell_misuse() {
 	assert!(rejection("top").is_some());
 }
 
-// `/tmp/...` is an absolute path only on Unix.
-#[cfg(unix)]
 #[test]
-fn scratch_writes_outside_the_workdir_run_with_a_hint() {
-	// Scratch files outside the workdir are no tracked edit: they run with a hint
-	let scratch =
-		hint("cat > /tmp/repro.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/repro.js").expect("a /tmp heredoc runs");
-	assert!(scratch.contains("text_edit"), "{scratch}");
-	assert!(hint("echo '{}' > \"/tmp/x.json\"").is_some());
-	// A relative target after `cd` to a scratch dir lands outside the workdir too
-	assert!(hint("cd /tmp/schema-test && printf 'Build a profile' > prompt.txt").is_some());
-	assert!(rejection("cd /tmp/x && cd /work && echo data > f").is_some());
-	// A subshell's `cd` doesn't move the commands after it; `..` resolves back into the workdir
-	assert!(rejection("(cd /tmp/x && make); echo hi > f").is_some());
-	assert!(rejection("cd /tmp && cd ../work && echo hi > f").is_some());
-}
-
-#[test]
-fn remote_writes_count_as_tracked() {
-	// Without a local workdir (an ssh remote command) no write target is known to be
-	// scratch, so content writes stay rejected wherever they point.
-	assert!(matches!(
-		detect_shell_misuse("echo hi > /tmp/x", None),
-		Some(Misuse::Reject(_))
-	));
-	assert!(rejection("ssh host 'echo hi > /tmp/x'").is_some());
+fn a_redirect_that_writes_content_runs_with_a_hint() {
+	for (cmd, prog) in [
+		("echo hi > notes.txt", "`echo`"),
+		("printf 'a' >> /tmp/x", "`printf`"),
+		("cat a.rs > b.rs", "`cat`"),
+		("ssh host 'echo hi > /tmp/x'", "`echo`"),
+	] {
+		let text = hint(cmd).unwrap_or_else(|| panic!("{cmd} must run with a hint"));
+		assert!(text.contains("text_edit create"), "{text}");
+		assert!(text.contains(prog), "{text}");
+		assert!(rejection(cmd).is_none(), "{cmd} must not be rejected");
+	}
+	for cmd in [
+		"echo hi",
+		"echo hi >&2",
+		"echo hi 2>/dev/null",
+		"cat file.txt",
+		"printf 'x' | wc -c",
+		"sed -i 's/a/b/' f",
+		"tee out.txt",
+		"cargo test > out.log",
+	] {
+		assert!(passes(cmd), "{cmd} must give no hint and no rejection");
+	}
 }
 
 #[test]
@@ -424,10 +407,6 @@ fn reading_searching_and_listing_with_the_shell_is_not_rejected() {
 
 #[test]
 fn a_rejected_program_after_a_read_is_still_rejected_by_name() {
-	let msg = rejection("ls src && sed -i 's/a/b/' src/main.rs").expect("sed -i is blocked");
-	assert!(msg.contains("`sed` is blocked"), "{msg}");
-	let msg = rejection("cat src/a.rs > src/b.rs").expect("a redirect write is blocked");
-	assert!(msg.contains("text_edit"), "{msg}");
 	let msg = rejection("grep foo a.rs; sleep 5").expect("sleep is blocked");
 	assert!(msg.contains("`sleep` is blocked"), "{msg}");
 }
@@ -442,16 +421,25 @@ fn a_read_only_awk_check_is_not_an_edit() {
 }
 
 #[test]
-fn an_in_place_sed_is_blocked_as_an_edit() {
+fn writing_files_with_the_shell_is_not_rejected() {
 	for cmd in [
-		"cd /workspace && sed -i 's/a/b/' src/x.c",
-		"sed -i.bak -e 's/a/b/' src/x.c",
-		"sed --in-place 's/a/b/' src/x.c",
-		"sed -ni 's/a/b/p' src/x.c",
+		"sed -i 's/a/b/' src/main.rs",
+		"sed -i.bak -e 's/a/b/' f",
+		"sed --in-place 's/a/b/' f",
+		"sed -ni '1,3p' f",
+		"ls src && sed -i 's/a/b/' src/main.rs",
+		"grep -rl foo . | xargs sed -i 's/foo/bar/g'",
+		"tee out.txt",
+		"make 2>&1 | tee build.log",
+		"echo hi > notes.txt",
+		"printf 'a\n' >> notes.txt",
+		"cat src/a.rs > src/b.rs",
+		"cat <<'EOF' > notes.txt\nhello\nEOF",
+		"cd /tmp/x && printf 'x' > f",
+		"ssh host 'echo hi > /tmp/x'",
+		"ssh host \"sed -i 's/a/b/' /etc/x\"",
 	] {
-		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be blocked"));
-		assert!(msg.contains("`sed` is blocked"), "{msg}");
-		assert!(msg.contains("in place"), "{msg}");
+		assert!(rejection(cmd).is_none(), "{cmd} must not be rejected");
 	}
 }
 
@@ -507,12 +495,13 @@ fn ssh_remote_command_extracts_and_unquotes_the_body() {
 }
 
 #[test]
-fn sed_in_place_detection_covers_bundled_and_long_flags() {
-	assert!(sed_edits_in_place("sed -ni 's/a/b/p' f"));
-	assert!(sed_edits_in_place("sed --in-place=.bak 's/a/b/' f"));
-	assert!(!sed_edits_in_place("sed -n '1p' f"));
-	// -e contains no 'i' as a short flag cluster.
-	assert!(!sed_edits_in_place("sed -e 's/a/b/' f"));
+fn a_rejected_program_after_a_write_is_still_rejected_by_name() {
+	let msg = rejection("echo hi > f && sleep 5").expect("sleep is blocked");
+	assert!(msg.contains("`sleep` is blocked"), "{msg}");
+	let msg = rejection("sed -i 's/a/b/' f; top").expect("top is blocked");
+	assert!(msg.contains("`top` is blocked"), "{msg}");
+	assert!(rejection("htop").is_some());
+	assert!(rejection("top -b -n1").is_some());
 }
 
 #[test]
@@ -571,4 +560,44 @@ async fn numbered_file_lines_come_back_with_line_ids() {
 		.await
 		.expect("cat runs");
 	assert_eq!(outcome.text, "alpha\n\n  beta");
+}
+
+// `sed`, `tee` and `grep` are Unix programs; the gate itself is covered above on every OS.
+#[cfg(unix)]
+#[tokio::test]
+async fn files_written_with_the_shell_are_written_and_read_back_with_ids() {
+	let temp = tempfile::tempdir().expect("temp workdir");
+	std::fs::write(temp.path().join("notes.txt"), "alpha\nbeta\n").expect("write notes");
+	let run = |command: &'static str| {
+		let mut call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
+		call.workdir = temp.path().to_path_buf();
+		async move {
+			execute_with_timeout(&call, Duration::from_secs(5), None)
+				.await
+				.expect("the command runs")
+				.text
+		}
+	};
+	// An in-place edit and the search that shows the result, in one command.
+	// `-i.bak` is the one spelling both GNU and BSD `sed` take.
+	let edited = format!("{}|gamma", crate::utils::line_hash::line_id(2, "gamma"));
+	assert_eq!(
+		run("sed -i.bak 's/beta/gamma/' notes.txt && grep -n gamma notes.txt").await,
+		edited
+	);
+	assert_eq!(
+		std::fs::read_to_string(temp.path().join("notes.txt")).expect("read notes"),
+		"alpha\ngamma\n"
+	);
+	// `tee` and a redirect write too.
+	run("echo delta | tee -a notes.txt > /dev/null; echo epsilon >> notes.txt").await;
+	assert_eq!(
+		std::fs::read_to_string(temp.path().join("notes.txt")).expect("read notes"),
+		"alpha\ngamma\ndelta\nepsilon\n"
+	);
+	let listed = run("grep -n epsilon notes.txt").await;
+	assert_eq!(
+		listed,
+		format!("{}|epsilon", crate::utils::line_hash::line_id(4, "epsilon"))
+	);
 }

@@ -267,11 +267,14 @@ heading line above the numbered lines) holds exactly that text on that line, so 
 can go straight into `batch_edit`. Lines without a number, and numbered text that
 is not a file line (clock times, counts, compiler positions), stay as printed.
 
-Octofs still rejects commands that belong to a dedicated tool or cannot work in
-the shell: bare `sleep`, `watch`/`top`/`htop`, `sed -i`, standalone `tee`, and
-`echo`/`printf`/`cat` redirects into the workdir. The call fails with an error
-explaining what to use instead; nothing executes. The dedicated tools give the
-model tracked edits and remote-host support that raw shell output cannot.
+Octofs rejects only programs that cannot work in the shell: bare `sleep` (a
+`sleep` inside a loop body is fine) and `watch`/`top`/`htop`. The call fails with
+an error explaining what to use instead; nothing executes. Writing files with the
+usual programs (`sed -i`, `tee`, redirects) runs normally. A redirect that writes
+content with `echo`/`printf`/`cat` runs with a hint that `text_edit` `create`
+writes the same content without shell quoting. Edits made with the shell are not
+in the undo history of `text_edit`: `undo_edit` covers only edits made with the
+edit tools.
 
 Other guidance (out-of-bounds ranges, fuzzy-match notices) is appended to
 successful responses as ⚠️ hints without failing the call.

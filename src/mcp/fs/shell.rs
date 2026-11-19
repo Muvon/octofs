@@ -19,7 +19,7 @@ use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -124,10 +124,11 @@ pub fn kill_all_shell_children() {
 // it starts a command — alone, as a chain segment, in a `$(…)` substitution or as
 // a pipeline head — because a hint only arrives after the command already ran.
 //
-// Only programs that cannot work in this tool are listed. Reading, searching and
-// listing with `cat`, `grep`, `rg`, `ls` run like any command: a numbered file
-// line in their output gets its line id (see `line_ids`), so nothing about them
-// needs a second read with `view`.
+// Only programs that cannot work in this tool are listed. Reading, searching,
+// listing and writing files with the usual programs (`cat`, `grep`, `ls`,
+// `sed -i`, `tee`, redirects) run like any command: a numbered file line in the
+// output gets its line id (see `line_ids`), so what the shell shows can be
+// edited by id without a second read.
 static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	(
 		&["sleep"],
@@ -139,22 +140,13 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 ];
 
-/// What the gate decides for a command using a program a dedicated tool covers.
+/// What the gate decides for a command.
 enum Misuse {
-	/// Refuse to run; the message names the tool to use instead.
+	/// Refuse to run; the message says why the program cannot work here.
 	Reject(String),
 	/// Run, and append this hint to the result.
 	Hint(String),
 }
-
-// Only in-place `sed` edits a file; `sed`/`awk` streaming to stdout is text
-// processing (line-length checks, previews) that no dedicated tool covers.
-static IN_PLACE_EDIT_HINT: &str = "Editing files in place with the shell is blocked — use `text_edit` str_replace or `batch_edit` for tracked local or remote edits. `sed` to stdout stays allowed.";
-
-// Writing file content from the shell (`echo ... > file`, heredocs into cat/tee)
-// breaks on quoting/escaping and bypasses tracked edits. Redirecting other
-// programs' OUTPUT to a file stays allowed — only content-authoring is blocked.
-static REDIRECT_WRITE_HINT: &str = "Writing file content with echo/printf/cat redirects or standalone `tee` in the shell is blocked — use `text_edit` create or str_replace, or `batch_edit`, for writes tracked by undo history and view caching. `echo` without a redirect, `printf … | prog`, `| tee f` and redirecting a program's output (e.g. `cargo test > out.log`) stay allowed.";
 
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + no controlling terminal already makes input physically impossible;
@@ -242,19 +234,14 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 	*repeats = 0;
 }
 
-// Detect shell commands that should use a dedicated MCP tool instead.
+// Detect shell commands that cannot work in this tool.
 // Returns whether to reject the command or run it with a hint.
 //
 // A rejection names the offending program and says the whole command was
 // rejected: one blocked verb inside a compound (`php -v && sleep 5 && …`)
 // takes the legitimate parts down with it, and a hint that names neither leaves
 // the caller permuting joiners and re-sending the same command.
-//
-// `workdir` is where tracked edits live: content written by echo/printf/cat
-// redirects resolving outside it (scratch files under /tmp, also relative ones
-// after `cd /tmp/x &&`) runs with a hint. `None` (remote commands) treats every
-// write target as tracked.
-fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> {
+fn detect_shell_misuse(command: &str) -> Option<Misuse> {
 	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
 	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
 	let mut loop_depth = 0usize;
@@ -265,9 +252,6 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
 	let segments = split_shell_segments(command);
 	let mut hint = None;
-	// The shell's directory as `cd` segments move it; a `cd` we can't resolve
-	// (`cd`, `cd -`, `cd ~`, `cd $X`) falls back to the workdir, i.e. tracked.
-	let mut cwd: Option<PathBuf> = workdir.map(Path::to_path_buf);
 	for segment in segments {
 		let segment = segment.trim();
 		// Skip leading env assignments (FOO=bar cmd ...) and group openers
@@ -296,28 +280,10 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 			_ => {}
 		}
 
-		if prog == "cd" {
-			let dir = segment
-				.split_whitespace()
-				.nth(1)
-				.map(|tok| tok.trim_matches(|c| c == '"' || c == '\''));
-			// A `cd` inside `( … )` moves only the subshell, not the commands after it.
-			if segment.starts_with('(') || dir.is_some_and(|dir| dir.ends_with(')')) {
-				continue;
-			}
-			cwd = match (cwd, dir) {
-				(Some(cur), Some(dir)) if dir != "-" && !dir.contains(['~', '$']) => Some(cur.join(dir)),
-				_ => workdir.map(Path::to_path_buf),
-			};
-			continue;
-		}
-
-		// A remote command obeys the same rules as a local one — `ssh host
-		// 'grep …'` must not dodge the gate that view/text_edit already
-		// cover via ssh:// paths.
+		// A remote command obeys the same rules as a local one.
 		if prog == "ssh" {
 			if let Some(remote) = ssh_remote_command(segment) {
-				match detect_shell_misuse(remote, None) {
+				match detect_shell_misuse(remote) {
 					Some(Misuse::Reject(msg)) => return Some(Misuse::Reject(msg)),
 					Some(Misuse::Hint(h)) => {
 						hint.get_or_insert(h);
@@ -328,33 +294,13 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 			continue;
 		}
 
-		// Content-authoring programs writing a file via redirect, or standalone
-		// tee (writes stdin to a file). Checked before the hint table so
-		// `cat > file` gets the write guidance, not the read guidance.
-		if prog == "tee" {
-			return Some(Misuse::Reject(blocked_message(prog, REDIRECT_WRITE_HINT)));
-		}
-		if matches!(prog, "echo" | "printf" | "cat") {
-			let targets = redirect_targets(segment);
-			if !targets.is_empty() {
-				let untracked = cwd
-					.as_deref()
-					.zip(workdir)
-					.is_some_and(|(cur, root)| targets.iter().all(|t| outside_workdir(t, cur, root)));
-				if !untracked {
-					return Some(Misuse::Reject(blocked_message(prog, REDIRECT_WRITE_HINT)));
-				}
-				hint.get_or_insert_with(|| {
-					format!(
-						"`{prog}` wrote a file via redirect; text_edit create writes content without shell quoting."
-					)
-				});
-				continue;
-			}
-		}
-
-		if prog == "sed" && sed_edits_in_place(segment) {
-			return Some(Misuse::Reject(blocked_message(prog, IN_PLACE_EDIT_HINT)));
+		// Content written with a redirect runs like any command. The hint names
+		// the tool that writes the same content without shell quoting.
+		if matches!(prog, "echo" | "printf" | "cat") && !redirect_targets(segment).is_empty() {
+			hint.get_or_insert_with(|| {
+				format!("`{prog}` wrote a file via redirect; text_edit create writes content without shell quoting.")
+			});
+			continue;
 		}
 
 		for (progs, message) in SHELL_MISUSE_HINTS {
@@ -365,23 +311,6 @@ fn detect_shell_misuse(command: &str, workdir: Option<&Path>) -> Option<Misuse> 
 	}
 
 	hint.map(Misuse::Hint)
-}
-
-/// True for a redirect target resolving outside the workdir from the shell's
-/// current directory `cwd`, e.g. /tmp/x, or `x` after `cd /tmp`. `..` is resolved
-/// lexically so `cd /tmp && cd ../work` still lands in /work.
-fn outside_workdir(target: &str, cwd: &Path, workdir: &Path) -> bool {
-	let mut resolved = PathBuf::new();
-	for part in cwd.join(target.trim_matches(|c| c == '"' || c == '\'')).components() {
-		match part {
-			Component::CurDir => {}
-			Component::ParentDir => {
-				resolved.pop();
-			}
-			other => resolved.push(other),
-		}
-	}
-	!resolved.starts_with(workdir)
 }
 
 /// True if `command` runs a `git stash` that stashes changes (bare, `push`, `save`,
@@ -415,16 +344,6 @@ fn stashes_changes(command: &str) -> bool {
 			}
 		}
 		false
-	})
-}
-
-/// True if a `sed` segment carries `-i`/`--in-place` (also as a bundled short
-/// flag like `-ni` or with a backup suffix like `-i.bak`).
-fn sed_edits_in_place(segment: &str) -> bool {
-	segment.split_whitespace().skip(1).any(|tok| {
-		tok == "--in-place"
-			|| tok.starts_with("--in-place=")
-			|| (tok.starts_with('-') && !tok.starts_with("--") && tok[1..].contains('i'))
 	})
 }
 
@@ -736,9 +655,9 @@ async fn execute_with_timeout(
 		}
 	};
 
-	// Commands a dedicated MCP tool covers: rejected in hard mode, run with a
+	// Programs that cannot work in this tool: rejected in hard mode, run with a
 	// warning in soft mode (--hint-mode).
-	match detect_shell_misuse(&command, Some(&call.workdir)) {
+	match detect_shell_misuse(&command) {
 		Some(Misuse::Reject(msg)) if crate::mcp::get_hint_mode() == crate::mcp::HintMode::Hard => bail!("{msg}"),
 		Some(Misuse::Reject(msg)) => crate::mcp::request_ctx::push_hint(&msg),
 		Some(Misuse::Hint(hint)) => crate::mcp::request_ctx::push_hint(&hint),

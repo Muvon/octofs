@@ -798,17 +798,15 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs, and the usual \
-			programs for reading, searching and listing files. An output line that is a numbered \
-			line of a file (`grep -n`, `rg -n`, `nl -ba`, `cat -n`, `awk '{print NR\": \"$0}'`) \
-			comes back as `N:hh|content`, the line id `view` gives, ready for `batch_edit`; a line \
-			printed without its number has no id. Bare `sleep`, the monitoring programs \
-			`watch`/`top`/`htop` and writing files — `sed -i`, standalone `tee` and \
-			echo/printf/cat redirects into the workdir, which belong to `text_edit` and \
-			`batch_edit` — at the start of a command, alone, after `cd dir &&` or `;`, as a \
-			pipeline head, or inside `ssh host '…'` — are rejected and nothing in the call runs. \
-			Local writes outside the workdir \
-			(`cd /tmp/x && printf … > f`) run with a hint; `printf … | prog` is no write. \
+		description = "Run a shell command: builds, tests, git, project CLIs, reading, searching \
+			and editing files. A numbered file line in the output (`grep -n`, `nl -ba`) comes back \
+			as `N:hh|content`, the line id `batch_edit` takes. `rg -n`, `cat -n` and \
+			`awk '{print NR\": \"$0}'` output gets ids the same way; a line printed without its \
+			number has none. Bare `sleep` and the monitoring programs `watch`/`top`/`htop` at the \
+			start of a command, alone, after `cd dir &&` or `;`, as a pipeline head, or inside \
+			`ssh host '…'` — are rejected and nothing in the call runs. A redirect that writes \
+			content (`echo … > f`) runs with a hint: `text_edit` create writes it without shell \
+			quoting. \
 			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
 			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
 			changes directory for that call only. A remote (ssh://) workdir disables shell. \
