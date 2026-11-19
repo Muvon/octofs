@@ -304,22 +304,6 @@ fn test_detect_shell_misuse() {
 }
 
 #[test]
-fn writing_files_with_the_shell_is_not_rejected() {
-	for cmd in [
-		"echo hi > notes.txt",
-		"printf 'a' >> /tmp/x",
-		"cat a.rs > b.rs",
-		"ssh host 'echo hi > /tmp/x'",
-		"echo hi >&2",
-		"sed -i 's/a/b/' f",
-		"tee out.txt",
-		"cargo test > out.log",
-	] {
-		assert!(passes(cmd), "{cmd} must not be rejected");
-	}
-}
-
-#[test]
 fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 	// Observed: an agent sent `php -v && git status && git log && find …` three
 	// times, permuting joiners, because the rejection named neither the offending
@@ -392,6 +376,8 @@ fn writing_files_with_the_shell_is_not_rejected() {
 		"cd /tmp/x && printf 'x' > f",
 		"ssh host 'echo hi > /tmp/x'",
 		"ssh host \"sed -i 's/a/b/' /etc/x\"",
+		"echo hi >&2",
+		"cargo test > out.log",
 	] {
 		assert!(detect_shell_misuse(cmd).is_none(), "{cmd} must not be rejected");
 	}
