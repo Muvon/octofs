@@ -16,7 +16,7 @@
 //
 // Every fs tool call runs inside `with_request_context` (see server.rs), which scopes
 // a RequestContext to that call's task via tokio::task_local. It carries the call's
-// hints — tool-misuse guidance collected during THIS call and appended to its result —
+// hints — guidance collected during THIS call and appended to its result —
 // and a handle to the session's delta-view cache so any fs function can reach it
 // without threading a parameter through every executor.
 // Request-scoped by construction: a hint can never leak into a concurrent HTTP

@@ -21,7 +21,7 @@ async fn test_shell_misuse_is_rejected() {
 	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "sleep 5" }));
 	let err = execute_shell_command(&call, None)
 		.await
-		.expect_err("hard mode rejects misuse");
+		.expect_err("misuse is rejected");
 	assert!(err.to_string().contains("`sleep` is blocked"), "err: {err}");
 }
 

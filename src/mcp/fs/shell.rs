@@ -129,7 +129,7 @@ pub fn kill_all_shell_children() {
 // `sed -i`, `tee`, redirects) run like any command: a numbered file line in the
 // output gets its line id (see `line_ids`), so what the shell shows can be
 // edited by id without a second read.
-static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
+static BLOCKED_PROGRAMS: &[(&[&str], &str)] = &[
 	(
 		&["sleep"],
 		"Bare `sleep` in the shell is blocked — a background job keeps running while other calls are made, and its result is delivered when it exits where the client integration supports that, so there is nothing to wait for. When the call that started it returned a job link, `view` on that link is a single look at its status and output so far; it returns at once and is not a way to wait. A sleep inside a shell loop body is supported.",
@@ -279,7 +279,7 @@ fn detect_shell_misuse(command: &str) -> Option<String> {
 			continue;
 		}
 
-		for (progs, message) in SHELL_MISUSE_HINTS {
+		for (progs, message) in BLOCKED_PROGRAMS {
 			if progs.contains(&prog) {
 				return Some(blocked_message(prog, message));
 			}
