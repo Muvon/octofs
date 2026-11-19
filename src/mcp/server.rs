@@ -553,11 +553,6 @@ fn client_session(context: &RequestContext<RoleServer>) -> Option<JsonObject> {
 
 use std::path::{Path, PathBuf};
 
-// The shell description states the hard (default) misuse policy; list_tools
-// swaps it for the soft one under --hint-mode soft.
-pub(crate) const SHELL_MISUSE_SOFT: &str = "are discouraged and come back with a warning";
-pub(crate) const SHELL_MISUSE_HARD: &str = "are rejected and nothing in the call runs";
-
 /// The `check` sentence of the edit tools lives here, not in their `#[tool]`
 /// descriptions: list_tools appends it only for sessions that may use `shell`.
 const EDIT_CHECK_DESCRIPTION: &str = "Optional `check` (most edits omit it; on a related set, only the last edit): a shell command (such as the test that covers the change) run after the edit is written, exactly as `shell` runs it; its output follows the edit result. It does not run when the edit fails; a failing or refused check leaves the edit in place, so fix the cause instead of redoing the edit.";
@@ -805,9 +800,7 @@ impl OctofsServer {
 			`awk '{print NR\": \"$0}'` output gets ids the same way; a line printed without its \
 			number has none. Bare `sleep` and the monitoring programs `watch`/`top`/`htop` at the \
 			start of a command, alone, after `cd dir &&` or `;`, as a pipeline head, or inside \
-			`ssh host '…'` — are rejected and nothing in the call runs. A redirect that writes \
-			content (`echo … > f`) runs with a hint: `text_edit` create writes it without shell \
-			quoting. \
+			`ssh host '…'` — are rejected and nothing in the call runs. \
 			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
 			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
 			changes directory for that call only. A remote (ssh://) workdir disables shell. \
@@ -996,12 +989,6 @@ impl ServerHandler for OctofsServer {
 					}
 				}
 				tool.input_schema = Arc::new(schema);
-				// The shell description is written for the default hard mode.
-				if tool.name == "shell" && crate::mcp::get_hint_mode() == crate::mcp::HintMode::Soft {
-					if let Some(description) = tool.description.as_mut() {
-						*description = description.replace(SHELL_MISUSE_HARD, SHELL_MISUSE_SOFT).into();
-					}
-				}
 				tool
 			})
 			.collect();

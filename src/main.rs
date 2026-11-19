@@ -39,7 +39,6 @@ async fn main() -> Result<()> {
 			auth_token,
 			ssh_key,
 			ssh_timeout,
-			hint_mode,
 		} => {
 			// Resolve working directory
 			let working_directory = if let Some(p) = path {
@@ -60,12 +59,6 @@ async fn main() -> Result<()> {
 
 			// Set the session root directory for all tool calls
 			mcp::set_session_root_directory(working_directory.clone());
-
-			mcp::set_hint_mode(if hint_mode == "hard" {
-				mcp::HintMode::Hard
-			} else {
-				mcp::HintMode::Soft
-			});
 
 			match bind {
 				Some(addr) => {

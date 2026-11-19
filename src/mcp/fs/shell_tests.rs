@@ -17,30 +17,12 @@
 use super::*;
 
 #[tokio::test]
-async fn test_shell_misuse_is_rejected_by_default() {
-	// Hard mode (the default): misuse is an error and nothing executes.
+async fn test_shell_misuse_is_rejected() {
 	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": "sleep 5" }));
 	let err = execute_shell_command(&call, None)
 		.await
 		.expect_err("hard mode rejects misuse");
 	assert!(err.to_string().contains("`sleep` is blocked"), "err: {err}");
-}
-
-#[test]
-fn hard_and_soft_misuse_messages_say_what_happened() {
-	let hint = "Bare `sleep` in the shell is blocked — use a background job.";
-	let hard = misuse_message("sleep", hint, crate::mcp::HintMode::Hard);
-	assert!(hard.contains("no part of it ran"), "{hard}");
-	assert!(hard.contains("is blocked — use a background job"), "{hard}");
-	let soft = misuse_message("sleep", hint, crate::mcp::HintMode::Soft);
-	assert!(soft.contains("the command ran anyway"), "{soft}");
-	assert!(soft.contains("is discouraged — use a background job"), "{soft}");
-}
-
-#[test]
-fn shell_description_carries_the_phrase_hard_mode_replaces() {
-	let server = include_str!("../server.rs");
-	assert!(server.contains(&format!("`ssh host '…'` — {}.", crate::mcp::server::SHELL_MISUSE_HARD)));
 }
 
 #[tokio::test]
@@ -238,22 +220,6 @@ fn test_clean_terminal_noise() {
 	assert_eq!(clean_terminal_noise("hello\nworld"), "hello\nworld");
 }
 
-/// The rejection message, when the gate refuses the command.
-fn rejection(command: &str) -> Option<String> {
-	match detect_shell_misuse(command) {
-		Some(Misuse::Reject(msg)) => Some(msg),
-		_ => None,
-	}
-}
-
-/// The hint, when the gate lets the command run but points at a dedicated tool.
-fn hint(command: &str) -> Option<String> {
-	match detect_shell_misuse(command) {
-		Some(Misuse::Hint(hint)) => Some(hint),
-		_ => None,
-	}
-}
-
 fn passes(command: &str) -> bool {
 	detect_shell_misuse(command).is_none()
 }
@@ -270,12 +236,12 @@ fn test_detect_shell_misuse() {
 		"cd /path\nsleep 5",
 		"(sleep 5)",
 	] {
-		let msg = rejection(cmd).unwrap_or_else(|| panic!("{cmd} must be rejected"));
+		let msg = detect_shell_misuse(cmd).unwrap_or_else(|| panic!("{cmd} must be rejected"));
 		assert!(msg.contains("`sleep` is blocked"), "{msg}");
 	}
 	// A path-qualified or env-prefixed invocation is still caught
-	assert!(rejection("/bin/sleep 5").is_some());
-	assert!(rejection("FOO=bar sleep 5").is_some());
+	assert!(detect_shell_misuse("/bin/sleep 5").is_some());
+	assert!(detect_shell_misuse("FOO=bar sleep 5").is_some());
 
 	// Pipelines stay allowed (stream transforms)
 	assert!(passes("cargo build 2>&1 | grep error"));
@@ -289,14 +255,14 @@ fn test_detect_shell_misuse() {
 	assert!(passes("bash -lc 'cd /x && git log && ls'"));
 
 	// ssh remote commands obey the same rules, checked as their own command
-	assert!(rejection("ssh host 'sleep 5'").is_some());
-	assert!(rejection("ssh dev sleep 5").is_some());
-	assert!(rejection("ssh -p 2222 user@host 'sleep 5'").is_some());
-	assert!(rejection("ssh -o StrictHostKeyChecking=no host 'top'").is_some());
-	assert!(rejection("ssh a 'ssh b \"sleep 5\"'").is_some());
-	assert!(rejection("ssh host 'ls' && sleep 5").is_some());
-	assert!(rejection("ssh host 'cd /path && sleep 5'").is_some());
-	assert!(rejection("ssh host \"cd /path && sleep 5\"").is_some());
+	assert!(detect_shell_misuse("ssh host 'sleep 5'").is_some());
+	assert!(detect_shell_misuse("ssh dev sleep 5").is_some());
+	assert!(detect_shell_misuse("ssh -p 2222 user@host 'sleep 5'").is_some());
+	assert!(detect_shell_misuse("ssh -o StrictHostKeyChecking=no host 'top'").is_some());
+	assert!(detect_shell_misuse("ssh a 'ssh b \"sleep 5\"'").is_some());
+	assert!(detect_shell_misuse("ssh host 'ls' && sleep 5").is_some());
+	assert!(detect_shell_misuse("ssh host 'cd /path && sleep 5'").is_some());
+	assert!(detect_shell_misuse("ssh host \"cd /path && sleep 5\"").is_some());
 	// Legitimate remote commands stay allowed
 	assert!(passes("ssh host uptime"));
 	assert!(passes("ssh host 'systemctl status nginx'"));
@@ -311,19 +277,19 @@ fn test_detect_shell_misuse() {
 	assert!(passes("ssh box@host 'bash -lc \"cd ~/work && git log && ls\"'"));
 
 	// Bare / chained sleep is blocked in every common shape
-	assert!(rejection("sleep 40").is_some());
-	assert!(rejection("sleep 40; echo done").is_some());
-	assert!(rejection("sleep 5 && cargo test").is_some());
-	assert!(rejection("cargo build && sleep 5").is_some());
-	assert!(rejection("sleep 30 || true").is_some());
-	assert!(rejection("sleep $((5*60))").is_some());
-	assert!(rejection("(sleep 5 && echo hi) &").is_some());
+	assert!(detect_shell_misuse("sleep 40").is_some());
+	assert!(detect_shell_misuse("sleep 40; echo done").is_some());
+	assert!(detect_shell_misuse("sleep 5 && cargo test").is_some());
+	assert!(detect_shell_misuse("cargo build && sleep 5").is_some());
+	assert!(detect_shell_misuse("sleep 30 || true").is_some());
+	assert!(detect_shell_misuse("sleep $((5*60))").is_some());
+	assert!(detect_shell_misuse("(sleep 5 && echo hi) &").is_some());
 	// Sleep inside a do...done loop body is legitimate polling
 	assert!(passes("until test -f /tmp/x; do sleep 2; done"));
 	assert!(passes("while ! nc -z localhost 8080; do sleep 1; done"));
 	assert!(passes("while true; do echo waiting; sleep 5; done"));
 	// Loop depth resets after `done` — a trailing sleep is still caught
-	assert!(rejection("until ok; do sleep 1; done; sleep 40").is_some());
+	assert!(detect_shell_misuse("until ok; do sleep 1; done; sleep 40").is_some());
 
 	// Redirecting other programs' output stays allowed
 	assert!(passes("cargo test > out.log 2>&1"));
@@ -333,34 +299,23 @@ fn test_detect_shell_misuse() {
 	assert!(passes("echo \"a > b\""));
 
 	// Never-terminating programs are blocked
-	assert!(rejection("watch -n1 date").is_some());
-	assert!(rejection("top").is_some());
+	assert!(detect_shell_misuse("watch -n1 date").is_some());
+	assert!(detect_shell_misuse("top").is_some());
 }
 
 #[test]
-fn a_redirect_that_writes_content_runs_with_a_hint() {
-	for (cmd, prog) in [
-		("echo hi > notes.txt", "`echo`"),
-		("printf 'a' >> /tmp/x", "`printf`"),
-		("cat a.rs > b.rs", "`cat`"),
-		("ssh host 'echo hi > /tmp/x'", "`echo`"),
-	] {
-		let text = hint(cmd).unwrap_or_else(|| panic!("{cmd} must run with a hint"));
-		assert!(text.contains("text_edit create"), "{text}");
-		assert!(text.contains(prog), "{text}");
-		assert!(rejection(cmd).is_none(), "{cmd} must not be rejected");
-	}
+fn writing_files_with_the_shell_is_not_rejected() {
 	for cmd in [
-		"echo hi",
+		"echo hi > notes.txt",
+		"printf 'a' >> /tmp/x",
+		"cat a.rs > b.rs",
+		"ssh host 'echo hi > /tmp/x'",
 		"echo hi >&2",
-		"echo hi 2>/dev/null",
-		"cat file.txt",
-		"printf 'x' | wc -c",
 		"sed -i 's/a/b/' f",
 		"tee out.txt",
 		"cargo test > out.log",
 	] {
-		assert!(passes(cmd), "{cmd} must give no hint and no rejection");
+		assert!(passes(cmd), "{cmd} must not be rejected");
 	}
 }
 
@@ -369,11 +324,10 @@ fn a_blocked_compound_names_the_program_and_says_nothing_ran() {
 	// Observed: an agent sent `php -v && git status && git log && find …` three
 	// times, permuting joiners, because the rejection named neither the offending
 	// program nor the fact that the legitimate parts never ran.
-	assert!(rejection("php -v && git log --oneline -3 && sleep 5").is_some());
-	let msg = misuse_message(
+	assert!(detect_shell_misuse("php -v && git log --oneline -3 && sleep 5").is_some());
+	let msg = blocked_message(
 		"sleep",
 		"Bare `sleep` in the shell is blocked — job status is available through its resource.",
-		crate::mcp::HintMode::Hard,
 	);
 	assert!(msg.contains("`sleep`"), "names the program: {msg}");
 	assert!(
@@ -401,13 +355,13 @@ fn reading_searching_and_listing_with_the_shell_is_not_rejected() {
 		"ssh host 'ls -la /var/log'",
 		"ssh host 'grep -rn foo /etc'",
 	] {
-		assert!(rejection(cmd).is_none(), "{cmd} must not be rejected");
+		assert!(detect_shell_misuse(cmd).is_none(), "{cmd} must not be rejected");
 	}
 }
 
 #[test]
 fn a_rejected_program_after_a_read_is_still_rejected_by_name() {
-	let msg = rejection("grep foo a.rs; sleep 5").expect("sleep is blocked");
+	let msg = detect_shell_misuse("grep foo a.rs; sleep 5").expect("sleep is blocked");
 	assert!(msg.contains("`sleep` is blocked"), "{msg}");
 }
 
@@ -439,7 +393,7 @@ fn writing_files_with_the_shell_is_not_rejected() {
 		"ssh host 'echo hi > /tmp/x'",
 		"ssh host \"sed -i 's/a/b/' /etc/x\"",
 	] {
-		assert!(rejection(cmd).is_none(), "{cmd} must not be rejected");
+		assert!(detect_shell_misuse(cmd).is_none(), "{cmd} must not be rejected");
 	}
 }
 
@@ -456,22 +410,6 @@ async fn a_scratch_heredoc_and_a_piped_read_run() {
 	let call = crate::mcp::McpToolCall::test_call("shell", serde_json::json!({ "command": command }));
 	let out = execute_shell_command(&call, None).await.expect("runs");
 	assert!(out.text.contains("hello"), "{}", out.text);
-}
-
-#[test]
-fn redirect_targets_respect_quotes_and_skip_fd_dups() {
-	// Quoted targets are found (quotes kept, like the shell tokenizes);
-	// fd duplications are not file writes.
-	assert_eq!(redirect_targets("echo x > 'out file.txt'"), vec!["'out"]);
-	assert_eq!(redirect_targets("cmd 2>&1 > \"a b\""), vec!["\"a"]);
-	assert!(redirect_targets("cmd >&2").is_empty());
-	assert!(redirect_targets("printf '%s\\n' a/* 2>/dev/null | head").is_empty());
-	assert_eq!(redirect_targets("echo x > out.txt 2>/dev/null"), vec!["out.txt"]);
-	// >> appends to the same target; escaped > is literal text.
-	assert_eq!(redirect_targets("cmd >> log.txt"), vec!["log.txt"]);
-	assert!(redirect_targets("echo a\\>b").is_empty());
-	// A target ends at the next shell metacharacter.
-	assert_eq!(redirect_targets("cmd > out.txt | next"), vec!["out.txt"]);
 }
 
 #[test]
@@ -496,12 +434,12 @@ fn ssh_remote_command_extracts_and_unquotes_the_body() {
 
 #[test]
 fn a_rejected_program_after_a_write_is_still_rejected_by_name() {
-	let msg = rejection("echo hi > f && sleep 5").expect("sleep is blocked");
+	let msg = detect_shell_misuse("echo hi > f && sleep 5").expect("sleep is blocked");
 	assert!(msg.contains("`sleep` is blocked"), "{msg}");
-	let msg = rejection("sed -i 's/a/b/' f; top").expect("top is blocked");
+	let msg = detect_shell_misuse("sed -i 's/a/b/' f; top").expect("top is blocked");
 	assert!(msg.contains("`top` is blocked"), "{msg}");
-	assert!(rejection("htop").is_some());
-	assert!(rejection("top -b -n1").is_some());
+	assert!(detect_shell_misuse("htop").is_some());
+	assert!(detect_shell_misuse("top -b -n1").is_some());
 }
 
 #[test]

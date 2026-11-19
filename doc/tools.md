@@ -262,10 +262,8 @@ re-run or `ps` — start the next independent step or end the turn.
 contract when touching it:
 
 - misuse: only programs that cannot work in the shell — bare `sleep` (a `sleep`
-  inside a loop body is fine) and `watch`/`top`/`htop`. `--hint-mode hard`
-  (default) rejects the whole command unexecuted; `--hint-mode soft` runs it and
-  appends the guidance as a warning. Try soft for a model that keeps re-sending
-  blocked commands — watch the rejection count;
+  inside a loop body is fine) and `watch`/`top`/`htop`. The whole command is
+  rejected unexecuted;
 - reading, searching and listing programs (cat/head/tail/grep/rg/find/ls and the
   like) run normally. A numbered file line in the output (`grep -n`, `rg -n`,
   `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view` gives,
@@ -276,9 +274,7 @@ contract when touching it:
   printed. Files are read on this machine, so the output of `ssh host '…'` gets
   no ids, and neither does a file over 5 MB or one that is not UTF-8 text;
 - writing files with the usual programs (`sed -i`, `tee`, redirects) runs
-  normally. A redirect that writes content with `echo`/`printf`/`cat` runs with
-  a hint that `text_edit` `create` writes the same content without shell
-  quoting. Edits made with the shell are not in the undo history of `text_edit`
+  normally. Edits made with the shell are not in the undo history of `text_edit`
   (`undo_edit` covers only edits made with the edit tools);
 - `ssh host 'cmd'` bodies are checked recursively.
 

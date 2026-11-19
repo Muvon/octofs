@@ -140,14 +140,6 @@ static SHELL_MISUSE_HINTS: &[(&[&str], &str)] = &[
 	),
 ];
 
-/// What the gate decides for a command.
-enum Misuse {
-	/// Refuse to run; the message says why the program cannot work here.
-	Reject(String),
-	/// Run, and append this hint to the result.
-	Hint(String),
-}
-
 // Force well-behaved interactive tools to fail fast instead of prompting.
 // stdin=null + no controlling terminal already makes input physically impossible;
 // these env vars make cooperative tools surface a clean error instead of
@@ -235,13 +227,13 @@ fn flush_repeats(lines: &mut Vec<String>, repeats: &mut usize) {
 }
 
 // Detect shell commands that cannot work in this tool.
-// Returns whether to reject the command or run it with a hint.
+// Returns the rejection message, or None when the command may run.
 //
 // A rejection names the offending program and says the whole command was
 // rejected: one blocked verb inside a compound (`php -v && sleep 5 && …`)
 // takes the legitimate parts down with it, and a hint that names neither leaves
 // the caller permuting joiners and re-sending the same command.
-fn detect_shell_misuse(command: &str) -> Option<Misuse> {
+fn detect_shell_misuse(command: &str) -> Option<String> {
 	// Depth of `do ... done` loop bodies: `sleep` there is legitimate polling
 	// (`until <check>; do sleep 2; done`); everywhere else it's dead waiting.
 	let mut loop_depth = 0usize;
@@ -251,7 +243,6 @@ fn detect_shell_misuse(command: &str) -> Option<Misuse> {
 	// separators. Pipelines (`|`) are intentionally NOT split: stream
 	// transforms such as `cargo build 2>&1 | grep error` remain allowed.
 	let segments = split_shell_segments(command);
-	let mut hint = None;
 	for segment in segments {
 		let segment = segment.trim();
 		// Skip leading env assignments (FOO=bar cmd ...) and group openers
@@ -282,35 +273,20 @@ fn detect_shell_misuse(command: &str) -> Option<Misuse> {
 
 		// A remote command obeys the same rules as a local one.
 		if prog == "ssh" {
-			if let Some(remote) = ssh_remote_command(segment) {
-				match detect_shell_misuse(remote) {
-					Some(Misuse::Reject(msg)) => return Some(Misuse::Reject(msg)),
-					Some(Misuse::Hint(h)) => {
-						hint.get_or_insert(h);
-					}
-					None => {}
-				}
+			if let Some(msg) = ssh_remote_command(segment).and_then(detect_shell_misuse) {
+				return Some(msg);
 			}
-			continue;
-		}
-
-		// Content written with a redirect runs like any command. The hint names
-		// the tool that writes the same content without shell quoting.
-		if matches!(prog, "echo" | "printf" | "cat") && !redirect_targets(segment).is_empty() {
-			hint.get_or_insert_with(|| {
-				format!("`{prog}` wrote a file via redirect; text_edit create writes content without shell quoting.")
-			});
 			continue;
 		}
 
 		for (progs, message) in SHELL_MISUSE_HINTS {
 			if progs.contains(&prog) {
-				return Some(Misuse::Reject(blocked_message(prog, message)));
+				return Some(blocked_message(prog, message));
 			}
 		}
 	}
 
-	hint.map(Misuse::Hint)
+	None
 }
 
 /// True if `command` runs a `git stash` that stashes changes (bare, `push`, `save`,
@@ -347,64 +323,10 @@ fn stashes_changes(command: &str) -> bool {
 	})
 }
 
-/// Name the misused program. Hard mode states that nothing ran, so a compound
-/// command can be split instead of retried; soft mode says it ran anyway.
+/// Name the blocked program and state that nothing ran, so a compound command
+/// can be split instead of retried.
 fn blocked_message(prog: &str, hint: &str) -> String {
-	misuse_message(prog, hint, crate::mcp::get_hint_mode())
-}
-
-fn misuse_message(prog: &str, hint: &str, mode: crate::mcp::HintMode) -> String {
-	match mode {
-		crate::mcp::HintMode::Hard => {
-			format!("`{prog}` is blocked in the shell, so the whole command was rejected and no part of it ran. {hint}")
-		}
-		crate::mcp::HintMode::Soft => format!(
-			"`{prog}` in the shell is discouraged; the command ran anyway. {}",
-			hint.replace(" is blocked — ", " is discouraged — ")
-		),
-	}
-}
-
-/// Targets of the segment's unquoted `>` / `>>` file redirects.
-/// Fd duplications (`>&2`, `2>&1`) are not file writes and don't count, and neither
-/// do device sinks (`2>/dev/null`): discarding output authors no file content.
-fn redirect_targets(segment: &str) -> Vec<&str> {
-	let bytes = segment.as_bytes();
-	let mut in_single = false;
-	let mut in_double = false;
-	let mut targets = Vec::new();
-	let mut i = 0;
-	while i < bytes.len() {
-		match bytes[i] {
-			b'\'' if !in_double => in_single = !in_single,
-			b'"' if !in_single => in_double = !in_double,
-			b'\\' if !in_single => i += 1, // skip escaped char
-			b'>' if !in_single && !in_double => {
-				let mut j = i + 1;
-				if j < bytes.len() && bytes[j] == b'>' {
-					j += 1;
-				}
-				while j < bytes.len() && bytes[j] == b' ' {
-					j += 1;
-				}
-				if j < bytes.len() && bytes[j] != b'&' {
-					let end = segment[j..]
-						.find(|c: char| c.is_whitespace() || matches!(c, '|' | '<' | '>' | '&' | ';'))
-						.map_or(bytes.len(), |k| j + k);
-					if !segment[j..end].starts_with("/dev/") {
-						targets.push(&segment[j..end]);
-					}
-					i = end;
-					continue;
-				}
-				i = j;
-				continue;
-			}
-			_ => {}
-		}
-		i += 1;
-	}
-	targets
+	format!("`{prog}` is blocked in the shell, so the whole command was rejected and no part of it ran. {hint}")
 }
 
 /// Split a shell command string into segments on `;`, `&&`, `||`, `\n`,
@@ -655,13 +577,9 @@ async fn execute_with_timeout(
 		}
 	};
 
-	// Programs that cannot work in this tool: rejected in hard mode, run with a
-	// warning in soft mode (--hint-mode).
-	match detect_shell_misuse(&command) {
-		Some(Misuse::Reject(msg)) if crate::mcp::get_hint_mode() == crate::mcp::HintMode::Hard => bail!("{msg}"),
-		Some(Misuse::Reject(msg)) => crate::mcp::request_ctx::push_hint(&msg),
-		Some(Misuse::Hint(hint)) => crate::mcp::request_ctx::push_hint(&hint),
-		None => {}
+	// Programs that cannot work in this tool are rejected before anything runs.
+	if let Some(msg) = detect_shell_misuse(&command) {
+		bail!("{msg}");
 	}
 
 	// Get the working directory from the call context
