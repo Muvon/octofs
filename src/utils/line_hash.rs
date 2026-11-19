@@ -206,7 +206,7 @@ pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 				return Ok(Endpoint::Id { line, hash });
 			}
 			Err(format!(
-				"invalid line value '{s}': pass a line id like \"12:a3\" (from view output) or an integer line number"
+				"invalid line value '{s}': pass a whole line id, the line number and its hash, like \"12:a3\" (from view output), or an integer line number"
 			))
 		}
 		_ => Err(format!(

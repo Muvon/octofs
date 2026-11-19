@@ -749,7 +749,8 @@ impl OctofsServer {
 			open_world_hint = false
 		),
 		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
-			are line ids (\"12:a3\") copied exactly from view or edit output. An id you copied \
+			are line ids (\"12:a3\": the line number and its hash together; a hash alone is \
+			rejected) copied exactly from view or edit output. An id you copied \
 			earlier still works after your other edits to the file while its line is unchanged: \
 			do not change its number or view the file again. A rejected id returns the current \
 			content with fresh ids; use those. All targets refer to the file before this call and \
@@ -960,7 +961,8 @@ impl ServerHandler for OctofsServer {
 			"Tools for file reading, search, editing, copying, shell execution, and code exploration \
 				 (outlines, syntax-tree search, and the `symbol` tool for \
 				 definitions, references, callers, callees, imports and type hierarchies, computed from \
-				 the files on disk). File lines render as `N:hh|content`; copy `N:hh` verbatim \
+				 the files on disk). File lines render as `N:hh|content`; the line id is `N:hh`, the line \
+				 number and its hash together (a hash alone names no line): copy it verbatim \
 				 for line-addressed edits; content sent to edit tools is raw text without `N:hh|` \
 				 prefixes. Edit results include fresh ids and line shifts for \
 				 follow-up edits; an earlier id still works while its line is unchanged: do not \
