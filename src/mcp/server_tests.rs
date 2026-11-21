@@ -543,21 +543,44 @@ async fn legacy_client_declaring_tasks_still_gets_a_resource_link() {
 }
 
 /// Hints raised when the command started would be lost with the request that
-/// raised them; the task's result carries them instead.
+/// raised them; the task's result carries them instead. The live path is an
+/// edit's `check`: the edit result, hint included, follows the command's output.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn launch_hints_reach_the_task_result() {
 	let (client, _server_task, _unsolicited) = connect_with_tasks().await;
-	let scratch = tempfile::tempdir().expect("scratch dir");
-	let command = format!(
-		"for i in 1 2; do sleep 1; done; echo '{{}}' > {}",
-		scratch.path().join("task.json").display()
-	);
-	let id = start_task(&client, &command).await;
+	let create = client
+		.call_tool(
+			CallToolRequestParams::new("text_edit").with_arguments(
+				json!({ "command": "create", "path": "hinted.txt", "content": "alpha   beta\n" })
+					.as_object()
+					.unwrap()
+					.clone(),
+			),
+		)
+		.await
+		.expect("create");
+	assert_ne!(create.is_error, Some(true), "{:?}", create.content);
+	// The single-space old_text misses the file's run of spaces exactly, so the
+	// edit lands through the whitespace-normalized match and raises a hint; the
+	// check outlives the foreground window, so the call is handed over as a task.
+	let edit = json!({
+		"command": "str_replace",
+		"path": "hinted.txt",
+		"old_text": "alpha beta",
+		"new_text": "alpha gamma",
+		"check": two_second_command(),
+	});
+	let params = CallToolRequestParams::new("text_edit").with_arguments(edit.as_object().unwrap().clone());
+	let id = match client.call_tool_once(params).await.expect("edit with check") {
+		CallToolResponse::Task(created) => created.task.task_id,
+		other => panic!("a promoted check is handed over as a task; got {other:?}"),
+	};
 
 	let result = completed_result(wait_for_terminal_task(&client, &id).await);
 	let text = result_text(&result);
 	assert!(text.contains("⚠️ "), "{text}");
+	assert!(text.contains("whitespace normalized"), "{text}");
 }
 
 #[test]
