@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.26.0] - 2026-11-21
+
+### 📋 Release Summary
+
+Filesystem views now support multiple paths, and batch edits support file views and line copying; the filesystem tool is renamed to edit. Shell commands can write files, eligible shell output is annotated with line IDs, and edits drop repeated boundary lines. Prohibited commands are rejected before execution, script calls enforce shell restrictions while preserving script-specific behavior, whole-line ID requirements are clarified, and .spill formatting is preserved.
+
+### 🚨 Breaking Changes
+
+- **mcp**: reject prohibited commands before execution `0bbbac98`
+- **fs**: support multi-path filesystem views `4fc9b7d0`
+- **mcp**: rename filesystem tool to edit `710a57a2`
+- **mcp**: support file views in the batch tool `72bb53c2`
+- **fs**: support line copying in batch edits `ff3747cb`
+
+### ✨ New Features & Enhancements
+
+- **fs**: allow shell commands to write files `db86fa0d`
+- **fs**: annotate eligible shell output with line IDs `5eb5c66a`
+- **fs**: drop repeated boundary lines in edits `6554d6b3`
+
+### 🔧 Improvements & Optimizations
+
+- **shell**: consolidate shell-writing misuse assertions `5dfe90d0`
+- **mcp**: clarify shell blocking terminology `cec29748`
+- **mcp**: check optional joined edit content `b549285c`
+
+### 🐛 Bug Fixes & Stability
+
+- **line-ids**: clarify whole-line-id requirements `528874f5`
+- **mcp**: enforce shell restrictions for script calls `d8134db7`
+- **mcp**: preserve script-specific shell and view behavior `4b719558`
+- **fs**: preserve stored formatting for .spill files `7ec82ab2`
+
+### 📚 Documentation & Examples
+
+- **edit**: clarify unchanged-line handling for edits `3cd0fd02`
+
+### 🔄 Other Changes
+
+4 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.25.2] - 2026-11-15
 
 ### 📋 Release Summary
