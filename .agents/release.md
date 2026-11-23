@@ -13,7 +13,7 @@
 
 Pushing a semver tag (`[0-9]+.[0-9]+.[0-9]+*`) or `workflow_dispatch` triggers `.github/workflows/release.yml`:
 
-1. **Build matrix** — 6 targets: musl x86_64/aarch64 (Alpine docker), Windows MSVC x2, macOS x2; protoc
+1. **Build matrix** — 5 targets: musl x86_64/aarch64 (Alpine docker), Windows MSVC x2, macOS aarch64; protoc
    installed on macOS/Windows; release profile is size-optimized (`lto`, `strip`, `opt-level = "s"`,
    `panic = "abort"`).
 2. **`.mcpb` bundles** per target (`muvon/ci-workflow/actions/mcpb`) for one-click MCP installs.

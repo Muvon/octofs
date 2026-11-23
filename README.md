@@ -123,7 +123,6 @@ Download from [GitHub Releases](https://github.com/muvon/octofs/releases) for yo
 | Linux (ARM64) | `aarch64-unknown-linux-musl` |
 | Windows (x86_64) | `x86_64-pc-windows-msvc` |
 | Windows (ARM64) | `aarch64-pc-windows-msvc` |
-| macOS (Intel) | `x86_64-apple-darwin` |
 | macOS (Apple Silicon) | `aarch64-apple-darwin` |
 
 Each release also ships `.mcpb` bundles for one-click install in clients that support MCP bundles (e.g. Claude Desktop).

@@ -35,9 +35,6 @@ jobs:
         - target: aarch64-pc-windows-msvc
           os: windows-11-arm
           archive: zip
-        - target: x86_64-apple-darwin
-          os: macos-15-intel
-          archive: tar.gz
         - target: aarch64-apple-darwin
           os: macos-15
           archive: tar.gz
