@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.27.0] - 2026-11-23
+
+### 📋 Release Summary
+
+Line IDs are now rendered with a space separator, changing their previous format.
+
+### 🚨 Breaking Changes
+
+- **line-ids**: render line IDs with a space separator `eb949222`
+
+### 🔧 Improvements & Optimizations
+
+- **release**: remove Intel macOS from build matrix `0be27b47`
+
 ## [0.26.0] - 2026-11-21
 
 ### 📋 Release Summary
