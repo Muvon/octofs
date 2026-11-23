@@ -75,9 +75,9 @@ async fn view_ranged_read_renders_only_the_requested_lines() {
 	let file = tempfile::NamedTempFile::new().unwrap();
 	fs::write(file.path(), "one\ntwo\nthree\n").await.unwrap();
 	let out = view_file_spec(&source(file.path()), Some((2, 2)), false).await.unwrap();
-	assert!(out.contains("|two"));
-	assert!(!out.contains("|one"));
-	assert!(!out.contains("|three"));
+	assert!(out.contains(" two"));
+	assert!(!out.contains(" one"));
+	assert!(!out.contains(" three"));
 }
 
 #[tokio::test]
@@ -151,9 +151,9 @@ async fn content_search_renders_matches_with_context_and_line_ids() {
 	let lines: Vec<&str> = out.split('\n').collect();
 	assert_eq!(lines.len(), 3, "out was: {out}");
 	// ids carry the line number: line 2 for "b", 3 for the match, 4 for "c"
-	assert!(lines[0].ends_with("|b") && lines[0].starts_with("2:"));
-	assert!(lines[1].ends_with("|needle") && lines[1].starts_with("3:"));
-	assert!(lines[2].ends_with("|c") && lines[2].starts_with("4:"));
+	assert!(lines[0].ends_with(" b") && lines[0].starts_with("2:"));
+	assert!(lines[1].ends_with(" needle") && lines[1].starts_with("3:"));
+	assert!(lines[2].ends_with(" c") && lines[2].starts_with("4:"));
 }
 
 #[tokio::test]
@@ -249,7 +249,7 @@ fn sniff_image_recognises_the_four_served_formats() {
 
 // A saved tool result already carries the ids its tool printed; only the extension
 // decides whether octofs adds its own.
-const ALREADY_NUMBERED: &str = "464:3c|alpha\n465:aa|beta\n466:bb|needle\n467:cc|delta\n";
+const ALREADY_NUMBERED: &str = "464:3c alpha\n465:aa beta\n466:bb needle\n467:cc delta\n";
 
 async fn numbered_file(dir: &std::path::Path, name: &str) -> (PathSource, String) {
 	let path = dir.join(name);
@@ -270,7 +270,7 @@ async fn spill_file_range_is_shown_as_stored_with_the_range_marker() {
 	let dir = tempfile::tempdir().unwrap();
 	let (spill, _) = numbered_file(dir.path(), "out.spill").await;
 	let out = view_file_spec(&spill, Some((2, 3)), false).await.unwrap();
-	assert_eq!(out, "465:aa|beta\n466:bb|needle\n[... 1 more lines, 4 total]");
+	assert_eq!(out, "465:aa beta\n466:bb needle\n[... 1 more lines, 4 total]");
 }
 
 #[tokio::test]
@@ -280,7 +280,7 @@ async fn spill_file_content_search_is_shown_as_stored() {
 	let out = view_file_with_content_search(&spill, &label, "needle", 1, false, ViewFlags::default())
 		.await
 		.unwrap();
-	assert_eq!(out, "465:aa|beta\n466:bb|needle\n467:cc|delta");
+	assert_eq!(out, "465:aa beta\n466:bb needle\n467:cc delta");
 }
 
 #[tokio::test]
@@ -289,19 +289,19 @@ async fn same_content_in_a_txt_file_still_gets_ids() {
 	let (text, label) = numbered_file(dir.path(), "out.txt").await;
 	let whole = view_file_spec(&text, None, false).await.unwrap();
 	assert!(
-		whole.starts_with("1:") && whole.contains("|464:3c|alpha"),
+		whole.starts_with("1:") && whole.contains(" 464:3c alpha"),
 		"whole was: {whole}"
 	);
 	let range = view_file_spec(&text, Some((2, 3)), false).await.unwrap();
 	assert!(
-		range.starts_with("2:") && range.contains("|465:aa|beta"),
+		range.starts_with("2:") && range.contains(" 465:aa beta"),
 		"range was: {range}"
 	);
 	let found = view_file_with_content_search(&text, &label, "needle", 0, false, ViewFlags::default())
 		.await
 		.unwrap();
 	assert!(
-		found.starts_with("3:") && found.ends_with("|466:bb|needle"),
+		found.starts_with("3:") && found.ends_with(" 466:bb needle"),
 		"search was: {found}"
 	);
 }

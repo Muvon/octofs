@@ -16,6 +16,7 @@
 //! reference grouping, compact modes, truncation.
 
 use super::*;
+use crate::utils::line_hash::line_id;
 
 fn hit(line: usize, line_count: usize, is_definition: bool, breadcrumb: Option<&str>) -> SymbolHit {
 	SymbolHit {
@@ -36,8 +37,8 @@ fn small_exact_definitions_render_in_full_with_real_ids() {
 	let lines: Vec<&str> = body.split('\n').collect();
 	assert_eq!(lines.len(), 3);
 	// The ids are exactly those of a normal view of the same lines.
-	assert_eq!(lines[0], format!("{}|fn small() {{", line_id(1, "fn small() {")));
-	assert_eq!(lines[2], format!("{}|}}", line_id(3, "}")));
+	assert_eq!(lines[0], format!("{} fn small() {{", line_id(1, "fn small() {")));
+	assert_eq!(lines[2], format!("{} }}", line_id(3, "}")));
 }
 
 #[test]
@@ -54,7 +55,7 @@ fn long_definitions_render_a_bounded_preview() {
 	let lines: Vec<&str> = body.split('\n').collect();
 	assert_eq!(lines.len(), 6);
 	assert_eq!(lines[4], "… 35 lines omitted …");
-	assert_eq!(lines[5], format!("{}|}}", line_id(40, "}")));
+	assert_eq!(lines[5], format!("{} }}", line_id(40, "}")));
 }
 
 #[test]
@@ -67,7 +68,7 @@ fn wildcard_definitions_always_render_a_preview() {
 	let lines: Vec<&str> = body.split('\n').collect();
 	assert_eq!(lines.len(), 6);
 	assert_eq!(lines[4], "… 1 lines omitted …");
-	assert_eq!(lines[5], format!("{}|}}", line_id(6, "}")));
+	assert_eq!(lines[5], format!("{} }}", line_id(6, "}")));
 }
 
 #[test]
@@ -80,7 +81,7 @@ fn nested_definitions_carry_their_breadcrumb_header() {
 	assert_eq!(
 		lines[1],
 		format!(
-			"{}|\tpub fn flush(&mut self) {{",
+			"{} \tpub fn flush(&mut self) {{",
 			line_id(2, "\tpub fn flush(&mut self) {")
 		)
 	);
@@ -94,9 +95,9 @@ fn references_group_by_breadcrumb_and_tag_definition_sites() {
 	assert_eq!(omitted, 0);
 	let lines: Vec<&str> = body.split('\n').collect();
 	assert_eq!(lines[0], "[fn flush] [def]");
-	assert_eq!(lines[1], format!("{}|fn flush() {{", line_id(1, "fn flush() {")));
+	assert_eq!(lines[1], format!("{} fn flush() {{", line_id(1, "fn flush() {")));
 	assert_eq!(lines[2], "[fn drain]");
-	assert_eq!(lines[3], format!("{}|\tflush();", line_id(5, "\tflush();")));
+	assert_eq!(lines[3], format!("{} \tflush();", line_id(5, "\tflush();")));
 }
 
 #[test]
@@ -108,7 +109,7 @@ fn top_level_definition_sites_get_a_bare_def_header() {
 	assert_eq!(lines[0], "[def]");
 	assert_eq!(
 		lines[1],
-		format!("{}|const MAX: usize = 1;", line_id(1, "const MAX: usize = 1;"))
+		format!("{} const MAX: usize = 1;", line_id(1, "const MAX: usize = 1;"))
 	);
 	assert_eq!(lines[2], "[fn main]");
 }
@@ -125,7 +126,7 @@ fn reference_context_expands_and_never_repeats_a_line() {
 	for (i, line) in lines.iter().enumerate() {
 		assert_eq!(
 			*line,
-			format!("{}|{}", line_id(i + 1, contents.lines().nth(i).unwrap()), i + 1)
+			format!("{} {}", line_id(i + 1, contents.lines().nth(i).unwrap()), i + 1)
 		);
 	}
 }

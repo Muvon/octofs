@@ -119,8 +119,8 @@ fn test_parse_endpoint_takes_the_id_of_a_pasted_view_line() {
 		line: 51,
 		hash: "b4".to_string(),
 	};
-	assert_eq!(parse_endpoint(&json!("51:b4|")).unwrap(), id);
-	assert_eq!(parse_endpoint(&json!("51:b4|\tlet x = a | b;")).unwrap(), id);
+	assert_eq!(parse_endpoint(&json!("51:b4 ")).unwrap(), id);
+	assert_eq!(parse_endpoint(&json!("51:b4 \tlet x = a | b;")).unwrap(), id);
 	// A hash without its line number names no line.
 	assert!(parse_endpoint(&json!("5d|")).is_err());
 	assert!(parse_endpoint(&json!("|51:b4")).is_err());

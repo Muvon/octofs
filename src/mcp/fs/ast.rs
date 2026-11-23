@@ -16,7 +16,7 @@
 //! ast-grep pattern against the syntax tree of a file, or of every supported
 //! file under a directory. Lookup is pure (`crate::structural::ast_search`);
 //! this module owns the I/O, the walk and the rendering, mirroring the
-//! symbol mode. Every source line renders as an ordinary `N:hh|content` line
+//! symbol mode. Every source line renders as an ordinary `N:hh content` line
 //! so the ids feed `batch_edit` unchanged. AST reads never register in the
 //! delta/view cache.
 
@@ -31,7 +31,7 @@ use super::structure::{join_blocks_budgeted, TRUNCATION_NOTICE_RESERVE};
 use crate::mcp::McpToolCall;
 use crate::structural::ast_search::{ast_language, miss_diagnostic, search_source, unsupported_message, AstMatch};
 use crate::structural::{language_for_extension, path_extension};
-use crate::utils::line_hash::line_id_at;
+use crate::utils::line_hash::format_line;
 use crate::utils::truncation::MAX_RESULT_BYTES;
 use anyhow::{anyhow, bail, Result};
 use rayon::prelude::*;
@@ -387,7 +387,7 @@ fn render_ast_body(
 	}
 }
 
-/// Render matches as `N:hh|content` lines: each match its line span (spans
+/// Render matches as `N:hh content` lines: each match its line span (spans
 /// longer than [`MAX_MATCH_LINES`] cut with an elision marker plus their last
 /// line), expanded by `context`, headed by the enclosing-symbol breadcrumb
 /// when it changes. A line is never rendered twice: a previous match's span
@@ -427,7 +427,7 @@ fn render_match_lines(
 		for n in m.line.saturating_sub(context).max(1)..=capped_end {
 			if shown.insert(n) {
 				if let Some(line) = lines.get(n - 1) {
-					block.push(format!("{}|{}", line_id_at(&lines, n), line));
+					block.push(format_line(n, line));
 				}
 			}
 		}
@@ -436,7 +436,7 @@ fn render_match_lines(
 			let n = span_end.min(lines.len());
 			if shown.insert(n) {
 				if let Some(line) = lines.get(n - 1) {
-					block.push(format!("{}|{}", line_id_at(&lines, n), line));
+					block.push(format_line(n, line));
 				}
 			}
 		}
@@ -446,7 +446,7 @@ fn render_match_lines(
 			}
 			if shown.insert(n) {
 				if let Some(line) = lines.get(n - 1) {
-					block.push(format!("{}|{}", line_id_at(&lines, n), line));
+					block.push(format_line(n, line));
 				}
 			}
 		}

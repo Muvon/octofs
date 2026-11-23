@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::utils::line_hash::line_id_at;
 
 fn search_content(content: &str, pattern: &str, context_lines: usize) -> Vec<MatchBlock> {
 	let matcher = Matcher::new(pattern, false).expect("literal matcher cannot fail");
@@ -196,7 +197,7 @@ fn test_render_count_and_files_only() {
 fn test_render_inverted_lines_and_count() {
 	let content = "keep\ndrop me\nkeep too\n";
 	let lines = render(content, "drop", false, "v").unwrap();
-	assert!(lines.contains("|keep") && lines.contains("|keep too"), "got: {lines}");
+	assert!(lines.contains(" keep") && lines.contains(" keep too"), "got: {lines}");
 	assert!(!lines.contains("drop me"), "got: {lines}");
 	assert_eq!(render(content, "drop", false, "vc").as_deref(), Some("2"));
 	// A pattern found nowhere leaves every line selected.
@@ -208,11 +209,11 @@ fn test_render_only_matching_text() {
 	let content = "id=12 id=7\nnone\nid=400\n";
 	assert_eq!(
 		render(content, r"id=\d+", true, "o").as_deref(),
-		Some("1|id=12\n1|id=7\n3|id=400")
+		Some("1 id=12\n1 id=7\n3 id=400")
 	);
 	assert_eq!(
 		render(content, "id=", false, "o").as_deref(),
-		Some("1|id=\n1|id=\n3|id=")
+		Some("1 id=\n1 id=\n3 id=")
 	);
 	assert_eq!(render(content, r"zz\d", true, "o"), None);
 }
@@ -221,7 +222,7 @@ fn test_render_only_matching_text() {
 fn test_output_label_and_separator() {
 	assert_eq!(SearchOutput::Count.label("a.rs", "3"), "a.rs\t3");
 	assert_eq!(SearchOutput::FilesOnly.label("a.rs", ""), "a.rs");
-	assert_eq!(SearchOutput::Lines.label("a.rs", "1:aa|x"), "a.rs:\n1:aa|x");
+	assert_eq!(SearchOutput::Lines.label("a.rs", "1:aa x"), "a.rs:\n1:aa x");
 	assert_eq!(SearchOutput::Count.separator(), "\n");
 	assert_eq!(SearchOutput::OnlyMatching.separator(), "\n\n");
 }
@@ -236,12 +237,12 @@ fn test_breadcrumbs_precede_match_groups_in_lines_mode() {
 	assert_eq!(lines[0], "[fn flush]");
 	assert_eq!(
 		lines[1],
-		format!("{}|fn flush() {{", line_id_at(&content.lines().collect::<Vec<_>>(), 3))
+		format!("{} fn flush() {{", line_id_at(&content.lines().collect::<Vec<_>>(), 3))
 	);
 	assert_eq!(lines[2], "[fn main]");
 	assert_eq!(
 		lines[3],
-		format!("{}|\tflush();", line_id_at(&content.lines().collect::<Vec<_>>(), 8))
+		format!("{} \tflush();", line_id_at(&content.lines().collect::<Vec<_>>(), 8))
 	);
 	assert_eq!(lines.len(), 4);
 }

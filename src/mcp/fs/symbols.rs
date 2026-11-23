@@ -16,7 +16,7 @@
 //! `definition` and `references` are text-level lookups in a file or under a
 //! directory; lookup is pure (`crate::structural::symbols`) and this module
 //! owns the I/O, the walk (shared with the outline mode) and the rendering.
-//! Every source line renders as an ordinary `N:hh|content` line so the ids
+//! Every source line renders as an ordinary `N:hh content` line so the ids
 //! feed `batch_edit` unchanged. Symbol reads never register in the delta/view
 //! cache. The graph relations (`callers`, `callees`, ...) are validated here
 //! and answered by `super::graph`.
@@ -30,7 +30,7 @@ use super::search::{SearchOutput, ViewFlags};
 use super::structure::{join_blocks_budgeted, supported_files_under, supported_remote_files};
 use crate::mcp::McpToolCall;
 use crate::structural::symbols::{find_definitions, find_references, NameMatcher, SymbolHit};
-use crate::utils::line_hash::line_id;
+use crate::utils::line_hash::format_line;
 use crate::utils::truncation::{format_megabytes, MAX_RESULT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use rayon::prelude::*;
@@ -546,7 +546,7 @@ fn render_hits_body(
 	}
 }
 
-/// Render definition hits as `N:hh|content` lines, each definition headed by
+/// Render definition hits as `N:hh content` lines, each definition headed by
 /// its breadcrumb when nested. `complete` (exact name) definitions of at most
 /// [`SMALL_DEFINITION_LINES`] lines render in full; longer ones and wildcard
 /// matches render a preview plus the last line. Returns the body and how many
@@ -573,7 +573,7 @@ fn render_definition_hits(contents: &str, hits: &[SymbolHit], complete: bool, bu
 			// A broken parse can name a line past the file's end; render what
 			// exists rather than failing.
 			if let Some(line) = lines.get(n - 1) {
-				block.push(format!("{}|{}", line_id(n, line), line));
+				block.push(format_line(n, line));
 			}
 		}
 		if preview_end < end {
@@ -581,7 +581,7 @@ fn render_definition_hits(contents: &str, hits: &[SymbolHit], complete: bool, bu
 				block.push(format!("… {} lines omitted …", end - preview_end - 1));
 			}
 			if let Some(line) = lines.get(end - 1) {
-				block.push(format!("{}|{}", line_id(end, line), line));
+				block.push(format_line(end, line));
 			}
 		}
 		let block = block.join("\n");
@@ -642,7 +642,7 @@ fn render_reference_hits(contents: &str, hits: &[SymbolHit], context: usize, bud
 					continue;
 				}
 				if let Some(line) = lines.get(n - 1) {
-					block.push(format!("{}|{}", line_id(n, line), line));
+					block.push(format_line(n, line));
 				}
 			}
 		}

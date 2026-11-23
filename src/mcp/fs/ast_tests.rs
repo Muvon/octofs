@@ -39,7 +39,10 @@ fn render_ast_body_renders_line_ids_breadcrumbs_and_context() {
 	assert!(body.contains("}"), "trailing context missing: {body}");
 	// Every rendered source line carries an N:hh id usable by batch_edit.
 	for line in body.lines().filter(|l| !l.starts_with('[')) {
-		assert!(line.contains('|'), "no line id on {line:?} in:\n{body}");
+		assert!(
+			line.split_once(' ').is_some_and(|(id, _)| id.contains(':')),
+			"no line id on {line:?} in:\n{body}"
+		);
 	}
 }
 
@@ -49,7 +52,9 @@ fn render_ast_body_dedupes_identical_spans() {
 	// Nested nodes can match with the same span; it renders once.
 	let body = render_ast_body("t.rs", src, &matches(&[(1, 1), (1, 1)]), 0, ViewFlags::default()).expect("body");
 	assert_eq!(
-		body.lines().filter(|l| l.contains('|') && l.contains("fn a")).count(),
+		body.lines()
+			.filter(|l| l.split_once(' ').is_some_and(|(id, _)| id.contains(':')) && l.contains("fn a"))
+			.count(),
 		1,
 		"got: {body}"
 	);
@@ -118,7 +123,7 @@ fn join_ast_blocks_reports_parse_errors_once_per_language() {
 	errors.insert("python".to_string(), "Multiple AST nodes".to_string());
 	let out = join_ast_blocks(
 		"src",
-		vec!["a.rs:\n1:ab|fn a() {}".to_string()],
+		vec!["a.rs:\n1:ab fn a() {}".to_string()],
 		"fn $F($$$A) {}",
 		&BTreeSet::from(["rust".to_string()]),
 		Some(&errors),

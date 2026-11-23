@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::utils::line_hash::verify_line_id;
+use crate::utils::line_hash::{line_id, verify_line_id};
 
 const NOTES: &str = "alpha\n\n  beta\ngamma: 1\n- delta\n";
 const NOTES_LINES: [&str; 5] = ["alpha", "", "  beta", "gamma: 1", "- delta"];
@@ -30,7 +30,7 @@ fn workdir() -> tempfile::TempDir {
 /// Line `number` of `notes.txt` the way `view` prints it.
 fn note(number: usize) -> String {
 	let line = NOTES_LINES[number - 1];
-	format!("{}|{line}", line_id(number, line))
+	format!("{} {line}", line_id(number, line))
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn a_search_of_several_files_keeps_the_path_and_gets_ids() {
 	let dir = workdir();
 	let output = "notes.txt:1:alpha\nnotes.txt-2-\nsub/other.txt:2:two\n--";
 	let expected = format!(
-		"notes.txt:{}\nnotes.txt-{}\nsub/other.txt:{}|two\n--",
+		"notes.txt:{}\nnotes.txt-{}\nsub/other.txt:{} two\n--",
 		note(1),
 		note(2),
 		line_id(2, "two")
@@ -89,14 +89,14 @@ fn a_search_of_several_files_keeps_the_path_and_gets_ids() {
 fn lines_under_a_path_heading_get_ids() {
 	let dir = workdir();
 	let output = "notes.txt\n1:alpha\n\nsub/other.txt\n1:one";
-	let expected = format!("notes.txt\n{}\n\nsub/other.txt\n{}|one", note(1), line_id(1, "one"));
+	let expected = format!("notes.txt\n{}\n\nsub/other.txt\n{} one", note(1), line_id(1, "one"));
 	assert_eq!(stamp(output, "rg -n --heading 'alpha|one'", dir.path()), expected);
 }
 
 #[test]
 fn a_file_is_found_from_the_directory_the_command_moved_to() {
 	let dir = workdir();
-	let expected = format!("{}|two", line_id(2, "two"));
+	let expected = format!("{} two", line_id(2, "two"));
 	assert_eq!(stamp("2:two", "cd sub && grep -n two other.txt", dir.path()), expected);
 }
 
@@ -114,7 +114,7 @@ fn output_that_is_no_file_line_stays_as_printed() {
 		("3:  BETA", "grep -n beta notes.txt | tr a-z A-Z"),
 		("9:alpha", "grep -n alpha notes.txt"),
 		// Already carries ids.
-		("1:86|alpha", "grep -n alpha notes.txt"),
+		("1:86 alpha", "grep -n alpha notes.txt"),
 	] {
 		assert_eq!(stamp(output, command, dir.path()), output, "{command}");
 	}
@@ -133,7 +133,7 @@ fn a_file_the_command_does_not_name_gives_no_ids() {
 fn the_ids_are_the_ones_the_edit_tools_verify() {
 	let dir = workdir();
 	let stamped = stamp("3:  beta", "grep -n beta notes.txt", dir.path());
-	let (id, text) = stamped.split_once('|').expect("id and text");
+	let (id, text) = stamped.split_once(' ').expect("id and text");
 	let (number, hash) = id.split_once(':').expect("number and hash");
 	assert_eq!(text, "  beta");
 	assert_eq!(
@@ -165,7 +165,7 @@ fn every_way_a_command_names_a_file_is_followed() {
 fn each_file_of_a_chain_gives_its_own_lines() {
 	let dir = workdir();
 	let output = "     1\talpha\n     1\tone\n     2\ttwo";
-	let expected = format!("{}\n{}|one\n{}|two", note(1), line_id(1, "one"), line_id(2, "two"));
+	let expected = format!("{}\n{} one\n{} two", note(1), line_id(1, "one"), line_id(2, "two"));
 	assert_eq!(
 		stamp(output, "nl -ba notes.txt | sed -n 1p; nl -ba sub/other.txt", dir.path()),
 		expected
@@ -178,7 +178,7 @@ fn a_context_line_of_a_file_with_dashes_and_digits_in_its_name_is_read() {
 	std::fs::write(dir.path().join("my-notes-2.txt"), "one\ntwo\n").expect("write file");
 	let output = "my-notes-2.txt-1-one\nmy-notes-2.txt:2:two";
 	let expected = format!(
-		"my-notes-2.txt-{}|one\nmy-notes-2.txt:{}|two",
+		"my-notes-2.txt-{} one\nmy-notes-2.txt:{} two",
 		line_id(1, "one"),
 		line_id(2, "two")
 	);
@@ -192,7 +192,7 @@ fn the_shortest_separator_decides_between_two_files() {
 	std::fs::write(dir.path().join("indented.txt"), " x\n").expect("write indented");
 	// `1: x` is ` x` after `:` and `x` after `: `. Reading the space as file text
 	// keeps the line as the program printed it.
-	let expected = format!("{}| x", line_id(1, " x"));
+	let expected = format!("{}  x", line_id(1, " x"));
 	assert_eq!(stamp("1: x", "grep -n x flat.txt indented.txt", dir.path()), expected);
 	assert_eq!(stamp("1: x", "grep -n x indented.txt flat.txt", dir.path()), expected);
 }
@@ -201,11 +201,11 @@ fn the_shortest_separator_decides_between_two_files() {
 fn blank_lines_of_a_listing_get_ids_and_a_lone_number_does_not() {
 	let dir = workdir();
 	std::fs::write(dir.path().join("gaps.txt"), "\n\nz\n\n").expect("write gaps");
-	let blank = |number| format!("{}|", line_id(number, ""));
+	let blank = |number| format!("{} ", line_id(number, ""));
 	// A listing that starts with blank lines: each is numbered around its neighbour.
 	assert_eq!(
 		stamp("     1\n     2\n     3\tz\n     4", "nl -ba gaps.txt", dir.path()),
-		format!("{}\n{}\n{}|z\n{}", blank(1), blank(2), line_id(3, "z"), blank(4))
+		format!("{}\n{}\n{} z\n{}", blank(1), blank(2), line_id(3, "z"), blank(4))
 	);
 	// `grep -n` prints the separator of a blank match, which is enough on its own.
 	assert_eq!(stamp("4:", "grep -n '^$' gaps.txt | tail -1", dir.path()), blank(4));
@@ -227,11 +227,11 @@ fn trailing_whitespace_and_line_endings_of_the_file_are_kept_in_the_id() {
 	// Terminal cleaning drops the trailing spaces from the output; the id is of the file's line.
 	assert_eq!(
 		stamp("1:first\n2:second", "grep -n . crlf.txt", dir.path()),
-		format!("{}|first  \n{}|second", line_id(1, "first  "), line_id(2, "second"))
+		format!("{} first  \n{} second", line_id(1, "first  "), line_id(2, "second"))
 	);
 	assert_eq!(
 		stamp("crlf.txt:1:first", "grep -rn first .", dir.path()),
-		format!("crlf.txt:{}|first  ", line_id(1, "first  "))
+		format!("crlf.txt:{} first  ", line_id(1, "first  "))
 	);
 }
 

@@ -30,7 +30,7 @@ use std::sync::Mutex;
 use super::text_editing::lock_key_for_source;
 use super::PathSource;
 use crate::mcp::request_ctx::with_view_cache;
-use crate::utils::line_hash::line_id_at;
+use crate::utils::line_hash::{format_line, line_id_at};
 use crate::utils::truncation::format_content_with_line_numbers;
 
 /// Files above this size are served in full every time: holding multi-MB
@@ -195,7 +195,7 @@ fn render_diff(old: &[&str], new: &[&str], edit: bool) -> Option<String> {
 		let mut i = start;
 		while i <= end {
 			match ops[i] {
-				DiffOp::Equal(_, j) => out.push(format!("{}|{}", line_id_at(new, j + 1), new[j])),
+				DiffOp::Equal(_, j) => out.push(format_line(j + 1, new[j])),
 				DiffOp::Insert(first) if edit => {
 					let mut last = first;
 					while i < end {
@@ -205,7 +205,7 @@ fn render_diff(old: &[&str], new: &[&str], edit: bool) -> Option<String> {
 					}
 					super::text_editing::push_added_lines(&mut out, first + 1, &new[first..=last]);
 				}
-				DiffOp::Insert(j) => out.push(format!("+{}|{}", line_id_at(new, j + 1), new[j])),
+				DiffOp::Insert(j) => out.push(format!("+{}", format_line(j + 1, new[j]))),
 				DiffOp::Delete(first) => {
 					let mut last = first;
 					while i < end {

@@ -51,7 +51,7 @@ async fn ordered_edits_share_defaults_and_one_undo_per_file() {
 	assert_eq!(read(&root, "a").await, "last\r\nextra\r\nbeta\r\n");
 	assert_eq!(read(&root, "b").await, "delta\n");
 	assert_eq!(result.matches(&root.path().join("a").display().to_string()).count(), 1);
-	assert!(result.contains(&format!("+{}|extra", line_id_at(&["last", "extra", "beta"], 2))));
+	assert!(result.contains(&format!("+{} extra", line_id_at(&["last", "extra", "beta"], 2))));
 	for path in ["a", "b"] {
 		undo_edit(&PathSource::Local(root.path().join(path))).await.unwrap();
 	}

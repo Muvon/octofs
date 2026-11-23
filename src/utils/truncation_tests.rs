@@ -38,18 +38,18 @@ fn whole_file_render_numbers_every_line_without_a_range() {
 	let out = format_content_with_line_numbers(&lines, 1, None);
 	let rendered: Vec<&str> = out.split('\n').collect();
 	assert_eq!(rendered.len(), 2);
-	assert!(rendered[0].ends_with("|alpha"));
+	assert!(rendered[0].ends_with(" alpha"));
 	assert!(rendered[0].starts_with("1:"));
-	assert!(rendered[1].ends_with("|beta"));
+	assert!(rendered[1].ends_with(" beta"));
 }
 
 #[test]
 fn ranged_view_start_zero_reads_from_the_beginning() {
 	let lines = vec!["a", "b", "c"];
 	let out = format_content_with_line_numbers(&lines, 1, Some((0, 2)));
-	assert!(out.contains("|a"));
-	assert!(out.contains("|b"));
-	assert!(!out.contains("|c"));
+	assert!(out.contains(" a"));
+	assert!(out.contains(" b"));
+	assert!(!out.contains(" c"));
 	assert!(out.contains("1 more line"));
 }
 
@@ -57,9 +57,9 @@ fn ranged_view_start_zero_reads_from_the_beginning() {
 fn ranged_view_negative_end_reads_to_the_end_of_file() {
 	let lines = vec!["a", "b", "c"];
 	let out = format_content_with_line_numbers(&lines, 1, Some((2, -1)));
-	assert!(!out.contains("|a"));
-	assert!(out.contains("|b"));
-	assert!(out.contains("|c"));
+	assert!(!out.contains(" a"));
+	assert!(out.contains(" b"));
+	assert!(out.contains(" c"));
 	assert!(out.contains("[end of file, 3 lines total]"));
 }
 
@@ -90,10 +90,10 @@ fn line_spans_mark_each_gap_and_the_lines_after_the_last_span() {
 	let out = format_line_spans(&lines, &[(2, 3), (6, 6)]);
 	let rendered: Vec<&str> = out.split('\n').collect();
 	assert_eq!(rendered.len(), 5, "out was: {out}");
-	assert!(rendered[0].starts_with("2:") && rendered[0].ends_with("|b"));
-	assert!(rendered[1].ends_with("|c"));
+	assert!(rendered[0].starts_with("2:") && rendered[0].ends_with(" b"));
+	assert!(rendered[1].ends_with(" c"));
 	assert_eq!(rendered[2], "[... 2 lines omitted]");
-	assert!(rendered[3].starts_with("6:") && rendered[3].ends_with("|f"));
+	assert!(rendered[3].starts_with("6:") && rendered[3].ends_with(" f"));
 	assert_eq!(rendered[4], "[... 1 more lines, 7 total]");
 }
 
@@ -101,7 +101,7 @@ fn line_spans_mark_each_gap_and_the_lines_after_the_last_span() {
 fn line_spans_ending_at_eof_close_with_the_total_marker() {
 	let lines = vec!["a", "b", "c", "d"];
 	let out = format_line_spans(&lines, &[(1, 1), (3, 4)]);
-	assert!(out.ends_with("|d\n[end of file, 4 lines total]"), "out was: {out}");
+	assert!(out.ends_with(" d\n[end of file, 4 lines total]"), "out was: {out}");
 }
 
 #[test]

@@ -32,7 +32,7 @@ With these tools an assistant can work in a project without the user pasting fil
 - `view` reads a file (whole, a line range, or several ranges) or several files in one call, lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
 - `text_edit` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
 - `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
-- `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. Reading, searching and listing with `cat`, `grep`, `find`, `ls` and similar programs run normally, and a numbered file line in the output (`grep -n`, `rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view` gives.
+- `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. Reading, searching and listing with `cat`, `grep`, `find`, `ls` and similar programs run normally, and a numbered file line in the output (`grep -n`, `rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh content`, the line id `view` gives.
 - Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
 - Remote files use SSH/SFTP with your OpenSSH config. `shell` always runs locally. RSA keys are not supported (see [Remote Filesystem](#remote-filesystem-sshsftp)).
 
@@ -150,7 +150,7 @@ cargo build --release
 
 The shared-ID workflow requires the next Octocode release or a build of the updated source. OctoFS’s existing line-ID format is unchanged.
 
-Use [Octocode](https://github.com/muvon/octocode) to find definitions, usages, and code relationships, then use OctoFS to read or edit the matching files. Octocode's MCP `structural_search` emits the same `N:hh|content` source line IDs that OctoFS accepts for `batch_edit`, using their shared Octolib utility. You do not need another `view` just to obtain IDs for lines already returned.
+Use [Octocode](https://github.com/muvon/octocode) to find definitions, usages, and code relationships, then use OctoFS to read or edit the matching files. Octocode's MCP `structural_search` emits the same `N:hh content` source line IDs that OctoFS accepts for `batch_edit`, using their shared Octolib utility. You do not need another `view` just to obtain IDs for lines already returned.
 
 Run both servers against the same checkout. IDs describe that source snapshot: changed targets are verified at edit time, and an error supplies current context rather than guessing where to write. Exact-name lookups return complete small definitions; previews of larger matches name the ranges you can read with OctoFS.
 
@@ -235,12 +235,12 @@ Ask your AI assistant to:
 ### Line Identifiers
 
 Every line is addressed by a composite id `N:hh` — its 1-indexed position plus a
-2-character hex hash (FNV-1a) of its content. Octocode structural-search source output uses the same shared utility and IDs. `view` renders lines as `N:hh|content`:
+2-character hex hash (FNV-1a) of its content. Octocode structural-search source output uses the same shared utility and IDs. `view` renders lines as `N:hh content`:
 
 ```
-1:a3|fn main() {
-2:f1|    println!("Hello");
-3:0e|}
+1:a3 fn main() {
+2:f1     println!("Hello");
+3:0e }
 ```
 
 Edit tools take these ids back as targets and verify the hash against the file
@@ -260,7 +260,7 @@ from the end) and the insert anchors `0` (file start) / `-1` (append).
 
 Reading, searching and listing with the shell (`cat`, `grep`, `rg`, `find`, `ls`
 and similar) run normally. A numbered line of a file in the output (`grep -n`,
-`rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view`
+`rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh content`, the line id `view`
 gives, when a file named by the command or by the output (`path:N:text`, or a path
 heading line above the numbered lines) holds exactly that text on that line, so it
 can go straight into `batch_edit`. Lines without a number, and numbered text that
@@ -362,7 +362,7 @@ it reads the call's `path`. Spans of one file are sorted, overlapping or adjacen
 are merged, and each gap shows as `[... N lines omitted]`. `ranges` cannot be combined
 with `start`/`end` or `content`.
 
-Output renders every line as `N:hh|content` — the `N:hh` prefix is the line id
+Output renders every line as `N:hh content` — the `N:hh` prefix is the line id
 that `batch_edit` takes as targets. Files with the extension `.spill`
 (saved tool output) are shown as stored, without added ids.
 
@@ -503,7 +503,7 @@ Directory listings annotate each file as `path<TAB>NL<TAB>~Nt` (line count + est
 | `imports` / `imported_by` | What the file in `path` imports / the files that import it (no `name`) |
 | `path` | How `name` reaches `to` through calls, extends and implements (imports are not followed) |
 
-`definition` and `references` work locally or over `ssh://`, render `N:hh|content` lines whose
+`definition` and `references` work locally or over `ssh://`, render `N:hh content` lines whose
 ids feed `batch_edit`, and honour `pattern`, `max_depth`, `include_hidden`, `context` (references)
 and `flags` (`c` counts per file, `l` lists files). An exact name renders the whole definition
 when it is short enough; wildcard matches render a preview with the omitted range. The `s`, `o`,

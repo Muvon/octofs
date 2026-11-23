@@ -20,7 +20,10 @@ use super::text_editing::{
 	EditableContent,
 };
 use crate::mcp::McpToolCall;
-use crate::utils::{line_hash::line_id_at, truncation::MAX_RESULT_BYTES};
+use crate::utils::{
+	line_hash::{format_line, line_id_at},
+	truncation::MAX_RESULT_BYTES,
+};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -238,7 +241,7 @@ fn render(files: &BTreeMap<String, File>) -> Result<String> {
 			lines.extend(
 				new.iter()
 					.enumerate()
-					.map(|(i, line)| format!("+{}|{line}", line_id_at(&new, i + 1))),
+					.map(|(i, line)| format!("+{}", format_line(i + 1, line))),
 			);
 			lines.join("\n")
 		});

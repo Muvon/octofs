@@ -14,7 +14,7 @@
 
 // Pure-Rust line-based content search with optional regex and context support.
 
-use crate::utils::line_hash::{is_saved_tool_output, line_id_at};
+use crate::utils::line_hash::{format_line, is_saved_tool_output, LINE_ID_SEPARATOR};
 use anyhow::{anyhow, bail, Result};
 use regex::Regex;
 
@@ -241,7 +241,7 @@ pub fn search_lines(content: &str, matcher: &Matcher, context_lines: usize, inve
 fn matched_line(lines: &[&str], line_1idx: usize, with_ids: bool) -> String {
 	let line = lines[line_1idx - 1];
 	if with_ids {
-		format!("{}|{}", line_id_at(lines, line_1idx), line)
+		format_line(line_1idx, line)
 	} else {
 		line.to_string()
 	}
@@ -303,7 +303,7 @@ pub fn render_file_matches(
 					matcher
 						.matches_in(line)
 						.into_iter()
-						.map(move |text| format!("{}|{}", i + 1, text))
+						.map(move |text| format!("{}{LINE_ID_SEPARATOR}{}", i + 1, text))
 				})
 				.collect();
 			(!rendered.is_empty()).then(|| rendered.join("\n"))

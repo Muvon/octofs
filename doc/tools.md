@@ -32,7 +32,7 @@ Relative paths resolve against the session root, called `workdir` in code (see
 
 One tool, several read modes, selected by the parameters:
 
-- **File read** (`path`) — lines render as `N:hh|content`, where `N:hh` is the
+- **File read** (`path`) — lines render as `N:hh content`, where `N:hh` is the
   line id edit tools target (see [Line ids](architecture.md#line-ids)). Ranged
   reads (`start`/`end`, negative counts from EOF) always return the requested
   lines. `.spill` files (saved tool output) are shown as stored, without added ids.
@@ -145,7 +145,7 @@ wrong relation, `*` in a graph relation, `name` for `imports`) fail with a guide
 `definition` and `references` are the text-level lookup: definitions or uses of a name in a file or
 under a directory (default the workdir), locally or over `ssh://`. `flags: "c"`/`"l"` give per-file
 counts and matching paths; `o`, `v`, `s` and `r` are rejected. Every source line renders as
-`N:hh|content`, so the ids feed `batch_edit`. Symbol reads never register in the delta/view cache.
+`N:hh content`, so the ids feed `batch_edit`. Symbol reads never register in the delta/view cache.
 
 The graph relations are answered from a code graph in `src/structural/graph/`: nodes are files,
 symbols and external imports; edges are `Contains`, `Imports`, `Calls`, `Extends` and `Implements`,
@@ -177,7 +177,7 @@ relation in [Symbol lookups](code-exploration.md#symbol-lookups).
 A multi-command tool (`command` + operands):
 
 - **create** — new file only; fails if it exists, parent directories are made.
-- **str_replace** — raw file text (real newlines, no `N:hh|` prefixes);
+- **str_replace** — raw file text (real newlines, no `N:hh` prefixes);
   `old_text` must match exactly once, or set `replace_all: true`. Multiple
   matches return an error listing their line ids, no match the closest matches, for `batch_edit`.
   Matching is progressive (fuzzy-anchored) and happens in LF space; the file's
@@ -266,7 +266,7 @@ contract when touching it:
   rejected unexecuted;
 - reading, searching and listing programs (cat/head/tail/grep/rg/find/ls and the
   like) run normally. A numbered file line in the output (`grep -n`, `rg -n`,
-  `nl -ba`, `cat -n`) comes back as `N:hh|content`, the line id `view` gives,
+  `nl -ba`, `cat -n`) comes back as `N:hh content`, the line id `view` gives,
   when a file named by the command or by the output (`path:N:text`, or a path
   heading line above the numbered lines) holds exactly that text on that line, so
   it can go straight into `batch_edit`. Lines without a number, and numbered text

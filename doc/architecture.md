@@ -118,7 +118,7 @@ response budget; it is local only.
 One format, no mode switch: `N:hh` — 1-indexed position plus a 2-char
 lowercase hex FNV1a-8 hash of the line's content (`utils/line_hash.rs`).
 Hashing content (not position) means a moved line keeps its hash and stale-id
-errors can say where the content went. `view` renders `N:hh|content`; edit
+errors can say where the content went. `view` renders `N:hh content`; edit
 targets require ids, verified per-target via `verify_line_id`. Edit results
 are diffs with fresh ids plus a trailing `shift:` line, so edits chain without
 re-viewing. Plain integers remain where position alone is safe: `view` ranges

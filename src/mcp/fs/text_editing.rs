@@ -125,7 +125,7 @@ pub async fn delete_file_spec(source: &PathSource) -> Result<String> {
 }
 
 // Line-id helpers are shared from utils::line_hash.
-use crate::utils::line_hash::{line_id_at, parse_endpoint, resolve_line_index, verify_line_id, Endpoint};
+use crate::utils::line_hash::{format_line, line_id_at, parse_endpoint, resolve_line_index, verify_line_id, Endpoint};
 
 // Batch operation structures for the new single-file, multi-operation approach
 #[derive(Debug, Clone)]
@@ -465,8 +465,8 @@ fn build_str_replace_diff(
 	if ctx_before_start > 0 {
 		diff.push("...".to_string());
 	}
-	for i in ctx_before_start..start {
-		diff.push(format!("{}|{}", line_id_at(new_lines, i + 1), new_lines[i]));
+	for (i, line) in new_lines.iter().enumerate().take(start).skip(ctx_before_start) {
+		diff.push(format_line(i + 1, line));
 	}
 
 	// Removed lines collapse to their old id range — the model supplied them.
@@ -486,15 +486,15 @@ fn build_str_replace_diff(
 		push_added_lines(&mut diff, start + 1, added);
 	} else {
 		for (i, line) in added.iter().enumerate() {
-			diff.push(format!("+{}|{}", line_id_at(new_lines, start + 1 + i), line));
+			diff.push(format!("+{}", format_line(start + 1 + i, line)));
 		}
 	}
 
 	// Context after: read from new_lines (already has the replacement applied)
 	let new_after_start = start + new_line_count; // 0-indexed in new_lines
 	let ctx_after_end = (new_after_start + CONTEXT).min(new_lines.len());
-	for i in new_after_start..ctx_after_end {
-		diff.push(format!("{}|{}", line_id_at(new_lines, i + 1), new_lines[i]));
+	for (i, line) in new_lines.iter().enumerate().take(ctx_after_end).skip(new_after_start) {
+		diff.push(format_line(i + 1, line));
 	}
 	if ctx_after_end < new_lines.len() {
 		diff.push("...".to_string());
@@ -1059,7 +1059,7 @@ pub(crate) fn replacement_diagnostic(content: &str, old_text: &str) -> String {
 			));
 			// Show first 3 lines of the candidate as preview
 			for (j, line) in window.lines().take(3).enumerate() {
-				msg.push_str(&format!("     {}|{}\n", line_id_at(&diag_lines, line_num + j), line));
+				msg.push_str(&format!("     {}\n", format_line(line_num + j, line)));
 			}
 			if old_line_count > 3 {
 				msg.push_str(&format!("     ... ({} more lines)\n", old_line_count - 3));
@@ -1437,13 +1437,13 @@ pub(crate) fn push_added_lines(diff: &mut Vec<String>, first_1idx: usize, conten
 	let n = content_lines.len();
 	if n <= ECHO_WHOLE_MAX {
 		for (i, line) in content_lines.iter().enumerate() {
-			diff.push(format!("+{}|{}", id(i), line));
+			diff.push(format!("+{}", format_line(first_1idx + i, line)));
 		}
 		return;
 	}
-	diff.push(format!("+{}|{}", id(0), content_lines[0]));
+	diff.push(format!("+{}", format_line(first_1idx, content_lines[0])));
 	diff.push(format!("+{}..{} ({} lines as sent)", id(1), id(n - 2), n - 2));
-	diff.push(format!("+{}|{}", id(n - 1), content_lines[n - 1]));
+	diff.push(format!("+{}", format_line(first_1idx + n - 1, content_lines[n - 1])));
 }
 
 // Lines of a `copy_from` range, ending in a newline so a copied blank line stays one
@@ -1851,8 +1851,6 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	const CONTEXT: usize = 2;
 	let new_lines: Vec<&str> = final_content.lines().collect();
 
-	let new_prefix = |line_1idx: usize| -> String { line_id_at(&new_lines, line_1idx) };
-
 	let mut diffs: Vec<String> = Vec::new();
 
 	// Sort ops by original start line (ascending) for readable diff output
@@ -1863,7 +1861,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	});
 
 	// Each op references ORIGINAL line numbers, but the diff is rendered against the FINAL
-	// file (`new_lines`/`new_prefix`). Walking ops ascending and accumulating each op's
+	// file (`new_lines`). Walking ops ascending and accumulating each op's
 	// line-count delta keeps every later op's rendered positions (and hash prefixes) aligned
 	// with where its content actually landed — without this, every op after the first
 	// length-changing one shows wrong line numbers/hashes.
@@ -1875,7 +1873,7 @@ pub async fn batch_edit_spec(call: &McpToolCall, operations: &[Value]) -> Result
 	let shift = |orig_1idx: usize, offset: i64| -> usize { (orig_1idx as i64 + offset).max(1) as usize };
 	// Render context line `new_i` from the final file, if in range.
 	let ctx_line = |new_i: usize| -> Option<String> {
-		(new_i >= 1 && new_i <= new_lines.len()).then(|| format!("{}|{}", new_prefix(new_i), new_lines[new_i - 1]))
+		(new_i >= 1 && new_i <= new_lines.len()).then(|| format_line(new_i, new_lines[new_i - 1]))
 	};
 
 	for op in &display_ops {

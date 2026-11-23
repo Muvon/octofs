@@ -96,22 +96,22 @@ fn delta_renders_hunks_with_fresh_ids_and_collapsed_removals() {
 	let lines: Vec<&str> = out.lines().collect();
 	assert_eq!(lines[0], "[changed since your last view: 2 hunk(s), 17 lines now]");
 	assert_eq!(lines[1], "...");
-	assert_eq!(lines[2], format!("{}|l3", line_id(3, "l3")));
-	assert_eq!(lines[3], format!("{}|l4", line_id(4, "l4")));
+	assert_eq!(lines[2], format!("{} l3", line_id(3, "l3")));
+	assert_eq!(lines[3], format!("{} l4", line_id(4, "l4")));
 	assert_eq!(lines[4], format!("-{} (1 line)", line_id(5, "l5")));
-	assert_eq!(lines[5], format!("+{}|L5", line_id(5, "L5")));
-	assert_eq!(lines[6], format!("{}|l6", line_id(6, "l6")));
-	assert_eq!(lines[7], format!("{}|l7", line_id(7, "l7")));
+	assert_eq!(lines[5], format!("+{} L5", line_id(5, "L5")));
+	assert_eq!(lines[6], format!("{} l6", line_id(6, "l6")));
+	assert_eq!(lines[7], format!("{} l7", line_id(7, "l7")));
 	assert_eq!(lines[8], "...");
-	assert_eq!(lines[9], format!("{}|l10", line_id(10, "l10")));
-	assert_eq!(lines[10], format!("{}|l11", line_id(11, "l11")));
+	assert_eq!(lines[9], format!("{} l10", line_id(10, "l10")));
+	assert_eq!(lines[10], format!("{} l11", line_id(11, "l11")));
 	assert_eq!(
 		lines[11],
 		format!("-{}..{} (3 lines)", line_id(12, "l12"), line_id(14, "l14"))
 	);
 	// Kept lines after the removal carry their NEW positions.
-	assert_eq!(lines[12], format!("{}|l15", line_id(12, "l15")));
-	assert_eq!(lines[13], format!("{}|l16", line_id(13, "l16")));
+	assert_eq!(lines[12], format!("{} l15", line_id(12, "l15")));
+	assert_eq!(lines[13], format!("{} l16", line_id(13, "l16")));
 	assert_eq!(lines[14], "...");
 	assert_eq!(lines.len(), 15);
 }
@@ -124,7 +124,7 @@ fn delta_without_trailing_context_has_no_closing_marker() {
 	assert_eq!(
 		out,
 		format!(
-			"[changed since your last view: 1 hunk(s), 4 lines now]\n...\n{}|b\n{}|c\n+{}|d",
+			"[changed since your last view: 1 hunk(s), 4 lines now]\n...\n{} b\n{} c\n+{} d",
 			line_id(2, "b"),
 			line_id(3, "c"),
 			line_id(4, "d")
@@ -181,7 +181,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 
 	with_request_context(Some(Arc::new(ViewCache::default())), async {
 		let first = execute_view(&view_call(&file, json!({}))).await.unwrap();
-		assert!(first.starts_with(&format!("{}|l1\n", line_id(1, "l1"))), "{first}");
+		assert!(first.starts_with(&format!("{} l1\n", line_id(1, "l1"))), "{first}");
 		assert_eq!(first.lines().count(), 20);
 
 		let second = execute_view(&view_call(&file, json!({}))).await.unwrap();
@@ -194,7 +194,7 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 		let ranged = execute_view(&view_call(&file, json!({ "start": 3, "end": 4 })))
 			.await
 			.unwrap();
-		assert!(ranged.starts_with(&format!("{}|l3\n", line_id(3, "l3"))), "{ranged}");
+		assert!(ranged.starts_with(&format!("{} l3\n", line_id(3, "l3"))), "{ranged}");
 
 		// External change: the next whole view is a delta.
 		std::fs::write(&file, body.replace("l10\n", "L10\n")).unwrap();
@@ -204,13 +204,13 @@ async fn whole_file_reviews_return_unchanged_then_delta() {
 			"{third}"
 		);
 		assert!(third.contains(&format!("-{} (1 line)", line_id(10, "l10"))), "{third}");
-		assert!(third.contains(&format!("+{}|L10", line_id(10, "L10"))), "{third}");
+		assert!(third.contains(&format!("+{} L10", line_id(10, "L10"))), "{third}");
 		assert_eq!(third.lines().count(), 9);
 
 		// full: true forces the complete file and refreshes the cache.
 		let full = execute_view(&view_call(&file, json!({ "full": true }))).await.unwrap();
 		assert_eq!(full.lines().count(), 20);
-		assert!(full.contains(&format!("{}|L10", line_id(10, "L10"))), "{full}");
+		assert!(full.contains(&format!("{} L10", line_id(10, "L10"))), "{full}");
 	})
 	.await;
 }
@@ -245,7 +245,7 @@ async fn own_edits_keep_the_cache_current_but_unseen_changes_invalidate_it() {
 		std::fs::write(&file, current.replace("l8\n", "L8\n")).unwrap();
 		execute_text_edit(&replace("l5", "L5")).await.unwrap();
 		let after = execute_view(&view_call(&file, json!({}))).await.unwrap();
-		assert!(after.starts_with(&format!("{}|l1\n", line_id(1, "l1"))), "{after}");
+		assert!(after.starts_with(&format!("{} l1\n", line_id(1, "l1"))), "{after}");
 		assert_eq!(after.lines().count(), 10);
 	})
 	.await;
@@ -258,6 +258,6 @@ async fn outside_a_request_scope_views_are_always_full() {
 	std::fs::write(&file, "a\nb\n").unwrap();
 	for _ in 0..2 {
 		let out = execute_view(&view_call(&file, json!({}))).await.unwrap();
-		assert_eq!(out, format!("{}|a\n{}|b", line_id(1, "a"), line_id(2, "b")));
+		assert_eq!(out, format!("{} a\n{} b", line_id(1, "a"), line_id(2, "b")));
 	}
 }

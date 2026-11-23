@@ -128,9 +128,9 @@ mod tests {
 		crate::utils::line_hash::line_id(n, lines[n - 1])
 	}
 
-	// Full rendered view line "N:hh|text" for line text `s` at position `n`.
+	// Full rendered view line "N:hh text" for line text `s` at position `n`.
 	fn idl(n: usize, s: &str) -> String {
-		format!("{}|{}", crate::utils::line_hash::line_id(n, s), s)
+		format!("{} {}", crate::utils::line_hash::line_id(n, s), s)
 	}
 
 	#[tokio::test]
@@ -550,8 +550,8 @@ mod tests {
 			"line 1\nline 2\nline 3\n",
 			2,
 			2,
-			"!@#$%^&*()[]{}|;':\",./<>?",
-			"line 1\n!@#$%^&*()[]{}|;':\",./<>?\nline 3\n",
+			"!@#$%^&*()[]{} ;':\",./<>?",
+			"line 1\n!@#$%^&*()[]{} ;':\",./<>?\nline 3\n",
 		)
 		.await;
 	}
@@ -937,7 +937,7 @@ mod tests {
 		let removed = format!("-{} (1 line)", lid(content, 2));
 		assert!(diff.contains(&removed), "diff must show removed line: {diff}");
 		let new_content = "line 1\nREPLACED\nline 3\n";
-		let added = format!("+{}|REPLACED", lid(new_content, 2));
+		let added = format!("+{} REPLACED", lid(new_content, 2));
 		assert!(diff.contains(&added), "diff must show added line with fresh id: {diff}");
 	}
 
@@ -962,7 +962,7 @@ mod tests {
 		let diff = execute_batch_edit(&call).await.unwrap();
 		let removed = format!("-{}..{} (2 lines)", lid(content, 2), lid(content, 3));
 		assert!(diff.contains(&removed), "collapsed removal: {diff}");
-		assert!(!diff.contains("|l2"), "removed content is not echoed: {diff}");
+		assert!(!diff.contains(" l2"), "removed content is not echoed: {diff}");
 		let note = format!(
 			"shift: lines after {} +2, after {} +3",
 			lid(content, 3),
@@ -1057,8 +1057,8 @@ mod tests {
 		.unwrap();
 		let after = "let a = 10;\nlet bb = 2;\nlet c = 3;\n";
 		assert_eq!(fs::read_to_string(temp_file.path()).await.unwrap(), after);
-		assert!(diff.contains(&format!("+{}|let a = 10;\n", lid(after, 1))), "{diff}");
-		assert!(diff.contains(&format!("+{}|let bb = 2;\n", lid(after, 2))), "{diff}");
+		assert!(diff.contains(&format!("+{} let a = 10;\n", lid(after, 1))), "{diff}");
+		assert!(diff.contains(&format!("+{} let bb = 2;\n", lid(after, 2))), "{diff}");
 	}
 
 	#[tokio::test]
@@ -1077,7 +1077,7 @@ mod tests {
 			"{diff}"
 		);
 		assert!(diff.contains(&format!("+{}\n", idl(6, "B5"))), "{diff}");
-		assert!(!diff.contains("|B3"), "middle lines are not echoed: {diff}");
+		assert!(!diff.contains(" B3"), "middle lines are not echoed: {diff}");
 
 		// A short replacement is echoed whole.
 		let diff = crate::mcp::fs::text_editing::str_replace_spec(&source, "c", "C1\nC2", false)
@@ -1638,10 +1638,10 @@ mod tests {
 		// File listing should just be filenames
 		assert!(file_list_str.contains("test_1.rs"));
 		// Check that file listing doesn't contain line-id prefixes
-		let line_id_pattern = regex::Regex::new(r"(?m)^\d+:[0-9a-f]{2}\|").unwrap();
+		let line_id_pattern = regex::Regex::new(r"(?m)^\d+:[0-9a-f]{2} ").unwrap();
 		assert!(!line_id_pattern.is_match(&file_list_str)); // No line ids
 
-		// Content search should render matches with `N:hh|content` line ids
+		// Content search should render matches with `N:hh content` line ids
 		assert!(line_id_pattern.is_match(&content_search_str)); // Line ids
 		assert!(content_search_str.contains("println!")); // Actual content
 	}
@@ -2482,7 +2482,7 @@ mod tests {
 		assert!(diff.contains("-2:"), "diff must show removed line: {}", diff);
 		assert!(diff.contains("+2:"), "diff must show added line: {}", diff);
 		assert!(
-			diff.contains("(1 line)") && !diff.contains("|beta"),
+			diff.contains("(1 line)") && !diff.contains(" beta"),
 			"removed line collapses to its id, content not echoed: {}",
 			diff
 		);
@@ -2515,7 +2515,7 @@ mod tests {
 			"{diff}"
 		);
 		assert!(diff.contains(&format!("+{}\n", idl(7, "n6"))), "{diff}");
-		assert!(!diff.contains("|n3"), "middle lines are not echoed: {diff}");
+		assert!(!diff.contains(" n3"), "middle lines are not echoed: {diff}");
 		for (n, s) in [(9, "t1"), (10, "t2"), (11, "t3")] {
 			assert!(diff.contains(&format!("+{}", idl(n, s))), "{diff}");
 		}
@@ -5002,7 +5002,7 @@ mod tests {
 		))
 		.await
 		.unwrap();
-		assert_eq!(only, "1|TODO one\n3|TODO two");
+		assert_eq!(only, "1 TODO one\n3 TODO two");
 
 		let inverted = execute_view(&view_call(
 			dir.path(),
@@ -5891,10 +5891,10 @@ mod tests {
 		// than costing a round-trip to be told to swap two numbers.
 		let out = execute_view(&call).await.unwrap();
 		assert!(
-			out.contains("|b") && out.contains("|c") && out.contains("|d"),
+			out.contains(" b") && out.contains(" c") && out.contains(" d"),
 			"expected lines 2..4: {out}"
 		);
-		assert!(!out.contains("|a") && !out.contains("|e"), "range not honoured: {out}");
+		assert!(!out.contains(" a") && !out.contains(" e"), "range not honoured: {out}");
 	}
 
 	fn view_ranges_call(file: &std::path::Path, extra: serde_json::Value) -> McpToolCall {
@@ -5946,7 +5946,7 @@ mod tests {
 			json!({ "ranges": [{ "start": 1, "end": 2 }, { "start": 3, "end": 3 }, { "start": 2, "end": 4 }, { "start": -1, "end": -1 }] }),
 		);
 		let out = execute_view(&call).await.unwrap();
-		assert_eq!(out.matches("|b").count(), 1, "overlap must render once: {out}");
+		assert_eq!(out.matches(" b").count(), 1, "overlap must render once: {out}");
 		assert!(
 			out.contains(&format!("{}\n[... 1 lines omitted]\n{}", idl(4, "d"), idl(6, "f"))),
 			"{out}"
@@ -6628,11 +6628,11 @@ mod tests {
 		let result = execute_view(&call).await.unwrap();
 		let lines: Vec<&str> = result.lines().collect();
 		assert_eq!(lines[0], format!("{path}\t4"));
-		assert_eq!(lines[1], format!("{}|mod foo {{", lid(src, 1)));
-		assert_eq!(lines[2], format!("{}|\tfn bar() {{}}", lid(src, 2)));
+		assert_eq!(lines[1], format!("{} mod foo {{", lid(src, 1)));
+		assert_eq!(lines[2], format!("{} \tfn bar() {{}}", lid(src, 2)));
 		// The mod's body opens on its own line, so its signature is one line;
 		// line 3 (the closing brace) is body and never appears.
-		assert_eq!(lines[3], format!("{}|struct Baz;", lid(src, 4)));
+		assert_eq!(lines[3], format!("{} struct Baz;", lid(src, 4)));
 		assert_eq!(lines.len(), 4);
 	}
 
@@ -6784,7 +6784,7 @@ mod tests {
 		// Exact name, definition ≤ 32 lines: the full body with the same ids a
 		// plain view renders, headed by the enclosing-symbol breadcrumb.
 		let expected = format!(
-			"[impl Store]\n{}|\tpub fn flush(&mut self) {{\n{}|\t\tself.data.clear();\n{}|\t}}",
+			"[impl Store]\n{} \tpub fn flush(&mut self) {{\n{} \t\tself.data.clear();\n{} \t}}",
 			lid(src, 6),
 			lid(src, 7),
 			lid(src, 8)
@@ -6810,9 +6810,9 @@ mod tests {
 		);
 		let result = execute_symbol(&call).await.unwrap();
 		let expected = format!(
-			"[impl Store › fn flush] [def]\n{}|\tpub fn flush(&mut self) {{\n\
-[impl Store › fn drain]\n{}|\t\tself.flush();\n\
-[fn main]\n{}|\tstore.flush();",
+			"[impl Store › fn flush] [def]\n{} \tpub fn flush(&mut self) {{\n\
+[impl Store › fn drain]\n{} \t\tself.flush();\n\
+[fn main]\n{} \tstore.flush();",
 			lid(src, 2),
 			lid(src, 6),
 			lid(src, 11)
@@ -6829,7 +6829,7 @@ mod tests {
 		let result = execute_symbol(&call).await.unwrap();
 		// Wildcards always preview: first 4 lines, the omitted marker, last line.
 		let expected = format!(
-			"{}|fn handle_request() {{\n{}|\t1\n{}|\t2\n{}|\t3\n… 3 lines omitted …\n{}|}}",
+			"{} fn handle_request() {{\n{} \t1\n{} \t2\n{} \t3\n… 3 lines omitted …\n{} }}",
 			lid(src, 1),
 			lid(src, 2),
 			lid(src, 3),
@@ -7566,7 +7566,7 @@ mod tests {
 		let call = McpToolCall::test_call("view", json!({ "path": path, "content": "let" }));
 		let result = execute_view(&call).await.unwrap();
 		let expected = format!(
-			"[fn outer]\n{}|\tlet x = 1;\n[fn other]\n{}|\tlet y = 2;",
+			"[fn outer]\n{} \tlet x = 1;\n[fn other]\n{} \tlet y = 2;",
 			lid(src, 2),
 			lid(src, 6)
 		);
@@ -7585,7 +7585,7 @@ mod tests {
 		let result = execute_view(&call).await.unwrap();
 		assert_eq!(
 			result,
-			format!("{}|\tlet x = 1;", lid("fn outer() {\n\tlet x = 1;\n}\n", 2))
+			format!("{} \tlet x = 1;", lid("fn outer() {\n\tlet x = 1;\n}\n", 2))
 		);
 	}
 
@@ -7687,7 +7687,10 @@ mod tests {
 		// Every rendered source line carries an N:hh id usable by batch_edit
 		// (breadcrumb headers are the exception).
 		assert!(
-			result.lines().filter(|l| !l.starts_with('[')).all(|l| l.contains('|')),
+			result
+				.lines()
+				.filter(|l| !l.starts_with('['))
+				.all(|l| l.split_once(' ').is_some_and(|(id, _)| id.contains(':'))),
 			"got: {result}"
 		);
 

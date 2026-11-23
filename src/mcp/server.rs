@@ -584,27 +584,20 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Read files, list directories, search content. Lines render as \
-			`N:hh|content`; copy `N:hh` verbatim — it is the line id edit tools target; content sent \
-			to edit tools is raw text without `N:hh|` prefixes; `.spill` files (saved tool output) \
-			are shown as stored. Listings are gitignore-aware, \
-			one `path\tNL\t~Nt` (lines, ~tokens) per file; `max_depth` \
-			controls recursion, with bare remote listings limited to root entries by default. \
-			`flags` gives what `grep -c/-l/-o/-v` and `ls -l` give: match counts, matching \
-			file paths, matched text, non-matching lines, file size and modification time. \
-			`flags: \"s\"` returns a structural outline instead: the signature/declaration lines \
-			of a file, or of every supported file under a directory, with bodies elided — far \
-			fewer tokens than full content. \
-			Content-search groups carry their enclosing symbol; to navigate by symbol name use the \
-			`symbol` tool. \
-			An image file (png, jpg, gif, webp by extension) comes back as the image itself \
-			when it is the only path of the call; `start`/`end` and `content` do not apply to it. \
-			Re-viewing a whole file may return only the hunks changed since your last view (or an \
-			unchanged marker); `full: true` requests complete content. Ranged reads return the \
-			requested lines; `ranges` reads several spans in a single call, and a span may name \
-			its own `path` to read from another file. `path: \"a.rs|b.rs\"` views several paths \
-			in one call, each with the call's other parameters. Several files come back as one \
-			`path:` section each. Returned line ids go directly into `batch_edit` calls."
+		description = "Read files, list directories, search content. Lines render as `N:hh content`: the line id \
+			`N:hh`, one space, then the line as stored, indentation included. Copy `N:hh` verbatim — it \
+			is the line id `batch_edit` takes; content sent to edit tools is raw text without `N:hh` \
+			prefixes; `.spill` files (saved tool output) are shown as stored. Listings are \
+			gitignore-aware, one `path\tNL\t~Nt` (lines, ~tokens) per file. `flags` selects \
+			grep/ls-style output (counts, paths only, matched text, sizes) or, with `s`, a structural \
+			outline: the signature/declaration lines of a file, or of every supported file under a \
+			directory, with bodies elided — far fewer tokens than full content. Content-search groups \
+			carry their enclosing symbol; to navigate by symbol name use the `symbol` tool. An image \
+			file (png, jpg, gif, webp by extension) comes back as the image itself when it is the only \
+			path of the call; `start`/`end` and `content` do not apply to it. Re-viewing a whole file \
+			may return only the hunks changed since your last view (or an unchanged marker); `full: \
+			true` requests complete content. One call reads several spans (`ranges`) or several paths \
+			(`path: \"a.rs|b.rs\"`); several files come back as one `path:` section each."
 	)]
 	async fn view(
 		&self,
@@ -649,28 +642,26 @@ impl OctofsServer {
 			idempotent_hint = true,
 			open_world_hint = false
 		),
-		description = "Code navigation that starts from a symbol name. `relation` picks what \
-			comes back. `definition` (default) returns the symbol's source and `references` every \
-			use of it, both by name in a file or under a directory (`path`, default the workdir; \
-			`*` wildcards allowed; ssh:// paths work) as `N:hh|content` lines whose ids feed \
-			`batch_edit`; `flags` `c` counts per file, `l` lists files, `context` adds lines around \
-			references. The graph relations list one hop per line as `path:line  kind  Owner::name`, \
-			grouped by `depth N:`: `callers` and `callees` follow calls, `supertypes` and `subtypes` \
-			follow extends/implements, `imports` and `imported_by` follow the imports of the file in \
-			`path` (no `name`), the relation `path` finds the shortest chain from `name` to `to` over calls, extends and implements (not imports). \
-			`depth` sets how far to follow (default 1, relation `path` 5, max 5). Graph relations are resolved by name \
-			and imports, not types, so same-name symbols can be confused and dynamic calls missed; `(guess)` marks a \
-			hop matched by name alone (repository-wide, ambiguous or unknown receiver). A name imported through a file \
-			that re-exports it (`index.ts`, `__init__.py`; also under another name) is followed up to three files \
-			deep. They are local only and search the whole session workdir; the `path` parameter only narrows which \
-			definitions of `name` start the query. Every relation parses only the files that mention the names it \
-			follows, at most 600 per query and for at most 800 ms, and files over 1 MB are left out and named in a \
-			closing line. For a very common name, or a chain that needs more files, the result is partial and a \
-			closing line says so; repeat the same query to examine the rest (parsed files are kept), or narrow it with \
-			`path` or `Owner::name` (a name spelled in over 3000 files is not traced without one). The relation `path` \
-			searches from both ends, one level at a time, and says \"No path\" only when the search finished. A list \
-			shows at most 100 results, most certain first, and a closing line counts the rest. For plain text use \
-			`view` with `content`."
+		description = "Code navigation that starts from a symbol name. `relation` picks what comes back. \
+			`definition` (default) returns the symbol's source and `references` every use of it, by name \
+			in a file or under a directory, as `N:hh content` lines whose ids feed `batch_edit`. The \
+			graph relations list one hop per line as `path:line  kind  Owner::name`, grouped by `depth \
+			N:`: `callers` and `callees` follow calls, `supertypes` and `subtypes` follow \
+			extends/implements, `imports` and `imported_by` follow the imports of the file in `path` (no \
+			`name`), the relation `path` finds the shortest chain from `name` to `to` over calls, \
+			extends and implements (not imports): it searches from both ends, one level at a time, and \
+			says \"No path\" only when the search finished. Graph relations are local only, cover the \
+			whole session workdir, and are resolved by name and imports, not types, so same-name symbols \
+			can be confused and dynamic calls missed; `(guess)` marks a hop matched by name alone \
+			(repository-wide, ambiguous or unknown receiver). A name imported through a file that \
+			re-exports it (`index.ts`, `__init__.py`; also under another name) is followed up to three \
+			files deep. Every relation parses only the files that mention the names it follows, at most \
+			600 per query and for at most 800 ms, and files over 1 MB are left out and named in a \
+			closing line. For a very common name, or a chain that needs more files, the result is \
+			partial and a closing line says so; repeat the same query to examine the rest (parsed files \
+			are kept), or narrow it with `path` or `Owner::name` (a name spelled in over 3000 files is \
+			not traced without one). A list shows at most 100 results, most certain first, and a closing \
+			line counts the rest. For plain text use `view` with `content`."
 	)]
 	async fn symbol(
 		&self,
@@ -700,15 +691,15 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "str_replace: edits [{path?, old_text, new_text, replace_all?}] apply in order, \
-			atomically across files; each path defaults to the call's path. A single replacement \
-			can instead use path, old_text, new_text, and optional replace_all at the call level. \
-			Text is raw file text (real newlines, no `N:hh|` prefixes); old_text must match exactly \
-			once, or set replace_all: true. On multiple matches the error lists their line ids; \
-			on none it lists the closest matches, for batch_edit. create: new file only — fails \
-			if it exists; parent directories are made. delete: remove a file (not a directory). \
-			undo_edit: revert the last edit to path (10 levels, delete included). Use batch_edit \
-			for replacements or insertions addressed by line ids."
+		description = "str_replace: edits [{path?, old_text, new_text, replace_all?}] apply in order, atomically \
+			across files; each path defaults to the call's path. A single replacement can instead use \
+			path, old_text, new_text, and optional replace_all at the call level. Text is raw file text \
+			(real newlines, no `N:hh` prefixes); old_text must match exactly once, or set replace_all: \
+			true. On multiple matches the error lists their line ids; on none it lists the closest \
+			matches, for batch_edit. create: new file only — fails if it exists; parent directories are \
+			made. delete: remove a file (not a directory). undo_edit: revert the last edit to path (10 \
+			levels, delete included). Use batch_edit for replacements or insertions addressed by line \
+			ids."
 	)]
 	async fn text_edit(
 		&self,
@@ -743,23 +734,19 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Apply insert/replace operations (max 50) to one file atomically. Targets \
-			are line ids (\"12:a3\": the line number and its hash together; a hash alone is \
-			rejected) copied exactly from view or edit output. An id you copied \
-			earlier still works after your other edits to the file while its line is unchanged: \
-			do not change its number or view the file again. A rejected id returns the current \
-			content with fresh ids; use those. All targets refer to the file before this call and \
-			must not overlap; do not adjust ids for earlier operations in this call. Group edits \
-			to the same file in one call. The result diff carries fresh ids for the lines it \
-			shows; removed lines and the middle of a long added block show as an id range. A \
-			trailing `shift:` line says how far the lines after each edit moved. Insert anchors \
-			0 (file start) and -1 (end) are plain integers. Content is raw text without `N:hh|` \
-			prefixes: the new lines only, without the unchanged lines around the range. To copy lines \
-			instead of retyping them, give an operation `copy_from` \
-			(a line range of any file, this one as it was before the call) in place of \
-			`content`; a move adds a replace of the old range with \"\" (a range of another file \
-			is removed by a separate call on that file). A file that does not \
-			exist yet takes only `copy_from` inserts at 0 or -1, which create it."
+		description = "Apply insert/replace operations to one file atomically. Targets are line ids (\"12:a3\": the \
+			line number and its hash together; a hash alone is rejected) copied exactly from view or \
+			edit output. An id you copied earlier still works after your other edits to the file while \
+			its line is unchanged: do not change its number or view the file again. A rejected id \
+			returns the current content with fresh ids; use those. All targets refer to the file before \
+			this call and must not overlap; do not adjust ids for earlier operations in this call. Group \
+			edits to the same file in one call. The result diff carries fresh ids for the lines it \
+			shows; removed lines and the middle of a long added block show as an id range. A trailing \
+			`shift:` line says how far the lines after each edit moved. Content is the new lines only, \
+			without the unchanged lines around the range. To copy lines instead of retyping them, give \
+			an operation `copy_from` in place of `content`; a move adds a replace of the old range with \
+			\"\" (a range of another file is removed by a separate call on that file). A file that does \
+			not exist yet takes only `copy_from` inserts at 0 or -1, which create it."
 	)]
 	async fn batch_edit(
 		&self,
@@ -794,28 +781,23 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = true
 		),
-		description = "Run a shell command: builds, tests, git, project CLIs, reading, searching \
-			and editing files. A numbered file line in the output (`grep -n`, `nl -ba`) comes back \
-			as `N:hh|content`, the line id `batch_edit` takes. `rg -n`, `cat -n` and \
-			`awk '{print NR\": \"$0}'` output gets ids the same way; a line printed without its \
-			number has none. Bare `sleep` and the monitoring programs `watch`/`top`/`htop` at the \
-			start of a command, alone, after `cd dir &&` or `;`, as a pipeline head, or inside \
-			`ssh host '…'` — are rejected and nothing in the call runs. \
-			`sh -c` (`cmd /C` on Windows) on the local machine in the session's workdir, with no \
-			stdin or TTY. Commands must support non-interactive execution. `cd <other> && …` \
-			changes directory for that call only. A remote (ssh://) workdir disables shell. \
-			Output is terminal-clean \
-			(ANSI and progress redraws stripped, repeated lines collapsed with a count; pipe \
-			through `od -c` or `xxd` for exact bytes); a non-zero exit returns as an error with \
-			the output. Large recognized test/build output is digested with its full output path appended. \
-			A command still running after ~10s continues as a background job: carry on with other \
-			work, its exit code and foreground-style output are delivered when it finishes where \
-			the client's task or notification integration supports that. Depending on client \
-			capabilities, the call returns a task or a linked job resource. \
-			When the call returns a job link, `view` on that link is a single look at status and \
-			output so far (a server's startup log, a long build's progress); it returns at once \
-			and is not a way to wait, so calling it in a loop only costs requests. \
-			Unrelated commands run concurrently; an identical command in the same directory is \
+		description = "Run a shell command: builds, tests, git, project CLIs, reading, searching and editing files. \
+			A numbered file line in the output (`grep -n`, `rg -n`, `nl -ba`, `cat -n`, `awk '{print \
+			NR\": \"$0}'`) comes back as `N:hh content`, the line id `batch_edit` takes; a line printed \
+			without its number has none. Bare `sleep` and the monitoring programs `watch`/`top`/`htop` \
+			at the start of a command, alone, after `cd dir &&` or `;`, as a pipeline head, or inside \
+			`ssh host '…'` — are rejected and nothing in the call runs. Runs on the local machine in the \
+			session's workdir; `cd <other> && …` changes directory for that call only. A remote (ssh://) \
+			workdir disables shell. Output is terminal-clean (ANSI and progress redraws stripped, \
+			repeated lines collapsed with a count; pipe through `od -c` or `xxd` for exact bytes); a \
+			non-zero exit returns as an error with the output. Large recognized test/build output is \
+			digested with its full output path appended. A command still running after ~10s continues as \
+			a background job: carry on with other work, its exit code and foreground-style output are \
+			delivered when it finishes where the client's task or notification integration supports \
+			that. The call then returns a task or a job link, depending on the client; `view` on a job \
+			link is a single look at status and output so far (a server's startup log, a long build's \
+			progress): it returns at once and is not a way to wait, so calling it in a loop only costs \
+			requests. Unrelated commands run concurrently; an identical command in the same directory is \
 			rejected while it runs."
 	)]
 	async fn shell(
@@ -952,14 +934,16 @@ impl ServerHandler for OctofsServer {
 		.with_protocol_version(ProtocolVersion::V_2026_07_28)
 		.with_instructions(
 			"Tools for file reading, search, editing, copying, shell execution, and code exploration \
-				 (outlines, syntax-tree search, and the `symbol` tool for \
-				 definitions, references, callers, callees, imports and type hierarchies, computed from \
-				 the files on disk). File lines render as `N:hh|content`; the line id is `N:hh`, the line \
-				 number and its hash together (a hash alone names no line): copy it verbatim \
-				 for line-addressed edits; content sent to edit tools is raw text without `N:hh|` \
-				 prefixes. Edit results include fresh ids and line shifts for \
-				 follow-up edits; an earlier id still works while its line is unchanged: do not \
-				 change its number. Relative paths resolve against the session's workdir."
+				 (outlines, syntax-tree search, and the `symbol` tool for definitions, references, callers, \
+				 callees, imports and type hierarchies, computed from the files on disk). File lines render \
+				 as `N:hh content`: the line id `N:hh` (the line number and its hash together; a hash alone \
+				 names no line), one space, then the line as stored, indentation included. Copy the id \
+				 verbatim for line-addressed edits; content sent to edit tools is raw text without `N:hh` \
+				 prefixes. Edit results include fresh ids and line shifts for follow-up edits; an earlier id \
+				 still works while its line is unchanged: do not change its number. Relative paths resolve \
+				 against the session's workdir. Request every independent call in one response instead of one \
+				 per turn, and put replacements that do not depend on each other's result into one \
+				 `text_edit` call."
 				.to_string(),
 		)
 	}
@@ -1199,16 +1183,15 @@ pub struct ViewParams {
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub start: Option<serde_json::Value>,
-	/// Last line (inclusive): line id or integer (negative counts from the end). Default: end
-	/// of file; omit both `start` and `end` for the whole file.
+	/// Last line (inclusive), same forms as `start`. Default: end of file; omit both `start` and
+	/// `end` for the whole file.
 	#[serde(default)]
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
 	/// Several line spans in one read, e.g. `[{"start": 10, "end": 20}, {"path": "b.rs",
-	/// "start": "80:3f", "end": 95}]`. Each span takes `start`/`end` values as above (default:
-	/// first and last line) and may name its own `path` (default: the call's `path`). Spans of
-	/// one file are sorted and overlapping or adjacent ones merged; gaps show as
-	/// `[... N lines omitted]`. Not combined with `start`/`end` or `content`.
+	/// "start": "80:3f", "end": 95}]`. Spans of one file are sorted and overlapping or adjacent
+	/// ones merged; gaps show as `[... N lines omitted]`. Not combined with `start`/`end` or
+	/// `content`.
 	#[serde(default)]
 	pub ranges: Option<Vec<ViewRange>>,
 	/// Ripgrep -g globs bounding listings and searches: without `/` a name at any depth,
@@ -1240,11 +1223,10 @@ pub struct ViewParams {
 	#[serde(default)]
 	pub context: Option<usize>,
 	/// Letters as in grep and ls. With `content`: `c` count of matching lines per file, `l`
-	/// paths of matching files only, `o` matched text only (as `N|text`), `v` non-matching
+	/// paths of matching files only, `o` matched text only (as `N text`), `v` non-matching
 	/// lines (also `vc`, `vl`). Without `content`: `l` adds size in bytes and modification
 	/// time (UTC) to each listed file, or returns them for `path` itself when it is a file.
-	/// `s` (alone, no `content`/`start`/`end`/`ranges`): a structural outline — the signature
-	/// lines of the file, or of every supported file under a directory, with bodies elided.
+	/// `s` (alone, no `content`/`start`/`end`/`ranges`): the structural outline.
 	#[serde(default)]
 	pub flags: Option<String>,
 	/// Not a parameter of `view`: kept only so a call that still passes `symbol` reaches
@@ -1253,9 +1235,8 @@ pub struct ViewParams {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	#[schemars(skip)]
 	pub symbol: Option<serde_json::Value>,
-	/// Force the complete file when re-viewing a whole file (which may return only changed hunks),
-	/// e.g. after losing earlier context. No effect on ranges or searches; output limits
-	/// unchanged.
+	/// Return the complete file when re-viewing a whole file, e.g. after losing earlier context.
+	/// No effect on ranges or searches; output limits unchanged.
 	#[serde(default)]
 	pub full: Option<bool>,
 }
@@ -1264,23 +1245,14 @@ pub struct ViewParams {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolRelation {
-	/// The symbol's source (default).
 	Definition,
-	/// Every use of the name.
 	References,
-	/// Functions that call the symbol.
 	Callers,
-	/// Functions the symbol calls.
 	Callees,
-	/// What the file in `path` imports.
 	Imports,
-	/// Files that import the file in `path`.
 	ImportedBy,
-	/// Types the symbol extends or implements.
 	Supertypes,
-	/// Types that extend or implement the symbol.
 	Subtypes,
-	/// How `name` reaches `to`.
 	Path,
 }
 
@@ -1420,10 +1392,8 @@ pub struct TextEditParams {
 	/// `str_replace`: replace every occurrence (rename-style). Default: false.
 	#[serde(default)]
 	pub replace_all: Option<bool>,
-	/// Optional shell command, such as the test covering the change, run after a successful edit
-	/// exactly as `shell` runs it; its output follows the edit result. Most edits omit it; on a
-	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
-	/// the cause instead of redoing the edit.
+	/// Shell command run after a successful edit, exactly as `shell` runs it (see the tool
+	/// description).
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	#[schemars(extend("contentMediaType" = SHELL_COMMAND_MEDIA_TYPE))]
 	pub check: Option<String>,
@@ -1448,7 +1418,7 @@ pub struct BatchEditOperation {
 	#[serde(default)]
 	#[schemars(schema_with = "line_id_schema")]
 	pub end: Option<serde_json::Value>,
-	/// Raw text to insert or replace with, no `N:hh|` prefixes. Omit it when `copy_from` is set.
+	/// Raw text to insert or replace with, no `N:hh` prefixes. Omit it when `copy_from` is set.
 	#[serde(
 		default,
 		deserialize_with = "string_or_lines",
@@ -1508,10 +1478,8 @@ pub struct BatchEditParams {
 	/// Operations on this one file (max 50).
 	#[schemars(length(max = 50))]
 	pub operations: Vec<BatchEditOperation>,
-	/// Optional shell command, such as the test covering the change, run after a successful edit
-	/// exactly as `shell` runs it; its output follows the edit result. Most edits omit it; on a
-	/// related set, only the last edit. A failing or refused check leaves the edit in place: fix
-	/// the cause instead of redoing the edit.
+	/// Shell command run after a successful edit, exactly as `shell` runs it (see the tool
+	/// description).
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	#[schemars(extend("contentMediaType" = SHELL_COMMAND_MEDIA_TYPE))]
 	pub check: Option<String>,

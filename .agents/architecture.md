@@ -80,7 +80,7 @@ files is unchanged.
 
 One format, no mode switch: `N:hh` — 1-indexed position plus a 2-char lowercase hex FNV1a-8 hash of the line's
 content (content-only, so a moved line keeps its hash and stale errors can say where content went). `view`
-renders `N:hh|content`. Edit targets require ids, verified per-target via `verify_line_id`; a stale id fails
+renders `N:hh content`. Edit targets require ids, verified per-target via `verify_line_id`; a stale id fails
 with current content around the target, relocation candidates, and a ranged-view suggestion. Edit results are
 diffs with fresh ids plus a trailing `shift:` line, so edits chain without re-viewing. Plain integers remain
 where position alone is safe: `view` ranges (negatives count from EOF) and batch_edit insert anchors `0` (file

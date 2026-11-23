@@ -14,12 +14,12 @@
 
 // Composite line identifiers: every line is addressed as "N:hh" — its 1-indexed
 // position plus a 2-char hex hash of its content. View output renders lines as
-// "N:hh|content"; edit tools take the same ids back and verify the hash against
+// "N:hh content"; edit tools take the same ids back and verify the hash against
 // the file before touching anything, so a stale id fails loudly (with the fresh
 // content in the error) instead of silently editing the wrong line. This is the
 // single line-id format — there is no mode switch.
 
-pub use octolib::utils::line_hash::{line_hash, line_id};
+pub use octolib::utils::line_hash::{format_line, line_hash, line_id, LINE_ID_SEPARATOR};
 
 /// Extension of the files besydr and octomind save a shortened tool result to.
 pub const SAVED_TOOL_OUTPUT_EXTENSION: &str = "spill";
@@ -66,7 +66,8 @@ pub fn verify_line_id(line: usize, expected_hash: &str, lines: &[&str]) -> Resul
 		line_id_at(lines, line)
 	);
 	for i in win_start..=win_end {
-		msg.push_str(&format!("{}|{}\n", line_id_at(lines, i), lines[i - 1]));
+		msg.push_str(&format_line(i, lines[i - 1]));
+		msg.push('\n');
 	}
 	push_relocation(&mut msg, expected_hash, line, lines);
 	msg.push_str(&format!(
@@ -174,7 +175,7 @@ pub enum Endpoint {
 /// - JSON integer → [`Endpoint::Number`].
 /// - String "N:hh" (line + 2 hex chars, as rendered in view output) → [`Endpoint::Id`].
 /// - Numeric string → [`Endpoint::Number`] (tolerates clients that stringify integers).
-/// - A line copied whole from view output ("N:hh|content") → its id.
+/// - A line copied whole from view output ("N:hh content") → its id.
 pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 	match value {
 		serde_json::Value::Number(n) => n
@@ -182,8 +183,9 @@ pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 			.map(Endpoint::Number)
 			.ok_or_else(|| "line number must be an integer".to_string()),
 		serde_json::Value::String(s) => {
-			// The id ends at the `|` that view output puts before the line's content.
-			let s = s.split_once('|').map_or(s.as_str(), |(id, _)| id).trim();
+			// The id ends at the separator that view output puts before the line's content.
+			let s = s.trim_start();
+			let s = s.split_once(LINE_ID_SEPARATOR).map_or(s, |(id, _)| id).trim();
 			if s.is_empty() {
 				return Err("line value is empty".to_string());
 			}

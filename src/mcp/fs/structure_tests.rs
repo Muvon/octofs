@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests for outline rendering: `N:hh|content` lines identical to a normal
+//! Tests for outline rendering: `N:hh content` lines identical to a normal
 //! view, headers, empty results and truncation notices.
 
 use super::{join_file_blocks, render_file_block, render_file_outline, TRUNCATION_NOTICE_RESERVE};
@@ -34,9 +34,9 @@ fn single_file_outline_renders_view_line_ids_verbatim() {
 	// line: same number, same hash, same original indentation. The mod's body
 	// opens on its own line, so its signature is one line; the closing brace
 	// (line 3) is body and never appears.
-	assert_eq!(lines[1], format!("{}|mod foo {{", line_id(1, "mod foo {")));
-	assert_eq!(lines[2], format!("{}|\tfn bar() {{}}", line_id(2, "\tfn bar() {}")));
-	assert_eq!(lines[3], format!("{}|struct Baz;", line_id(4, "struct Baz;")));
+	assert_eq!(lines[1], format!("{} mod foo {{", line_id(1, "mod foo {")));
+	assert_eq!(lines[2], format!("{} \tfn bar() {{}}", line_id(2, "\tfn bar() {}")));
+	assert_eq!(lines[3], format!("{} struct Baz;", line_id(4, "struct Baz;")));
 	assert_eq!(lines.len(), 4);
 }
 
@@ -46,7 +46,7 @@ fn multi_line_signatures_render_their_capped_lines() {
 	let out = render(src, "a.rs", usize::MAX);
 	let lines: Vec<&str> = out.lines().collect();
 	assert_eq!(lines.len(), 5); // header + 4 capped signature lines
-	assert!(lines[4].starts_with(&format!("{}|", line_id(4, "\tT: Clone,"))));
+	assert!(lines[4].starts_with(&format!("{} ", line_id(4, "\tT: Clone,"))));
 }
 
 #[test]
@@ -67,11 +67,11 @@ fn truncated_outline_counts_omitted_items() {
 
 #[test]
 fn directory_outline_joins_file_blocks_and_reports_omissions() {
-	let blocks = vec!["f1.rs:\n1:aa|x".to_string(), "f2.rs:\n1:bb|y".to_string()];
+	let blocks = vec!["f1.rs:\n1:aa x".to_string(), "f2.rs:\n1:bb y".to_string()];
 	let joined = join_file_blocks("src", blocks.clone(), usize::MAX);
-	assert_eq!(joined, "f1.rs:\n1:aa|x\n\nf2.rs:\n1:bb|y");
+	assert_eq!(joined, "f1.rs:\n1:aa x\n\nf2.rs:\n1:bb y");
 
-	let tight = join_file_blocks("src", blocks, 2 + "f1.rs:\n1:aa|x".len() + TRUNCATION_NOTICE_RESERVE);
+	let tight = join_file_blocks("src", blocks, 2 + "f1.rs:\n1:aa x".len() + TRUNCATION_NOTICE_RESERVE);
 	assert!(tight.contains("1 file"), "got: {tight}");
 	assert!(
 		tight.contains("narrow `path`, `pattern` or `max_depth`"),
@@ -92,7 +92,7 @@ fn directory_block_uses_the_content_search_header_style() {
 	let src = "fn a() {}\n";
 	let items = outline("a.rs", src).unwrap();
 	let block = render_file_block("a.rs", src, &items, usize::MAX);
-	assert_eq!(block, format!("a.rs:\n{}|fn a() {{}}", line_id(1, "fn a() {}")));
+	assert_eq!(block, format!("a.rs:\n{} fn a() {{}}", line_id(1, "fn a() {}")));
 }
 #[test]
 fn items_past_the_files_end_render_what_exists() {

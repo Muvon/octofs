@@ -781,7 +781,7 @@ async fn tool_handlers_text_edit_batch_edit_copy_from_round_trip() {
 	let id = text
 		.lines()
 		.find(|l| l.contains("alpha"))
-		.and_then(|l| l.split('|').next())
+		.and_then(|l| l.split(' ').next())
 		.unwrap_or_else(|| panic!("no alpha line id in view output: {text}"));
 	let edit = call(
 		"batch_edit",
@@ -1241,14 +1241,14 @@ async fn view_deltas_follow_the_client_context_epoch() {
 	};
 	let unchanged = "[unchanged since you last viewed";
 
-	assert!(view("plain", None).await.ends_with("|one"));
-	assert!(view("plain", None).await.ends_with("|one"), "no epoch, no delta");
+	assert!(view("plain", None).await.ends_with(" one"));
+	assert!(view("plain", None).await.ends_with(" one"), "no epoch, no delta");
 
-	assert!(view("s", Some(0)).await.ends_with("|one"));
+	assert!(view("s", Some(0)).await.ends_with(" one"));
 	assert!(view("s", Some(0)).await.starts_with(unchanged));
 	let before = server.session(&session_context(peer, "s", dir.path(), Some(0)));
 
-	assert!(view("s", Some(1)).await.ends_with("|one"), "new epoch serves in full");
+	assert!(view("s", Some(1)).await.ends_with(" one"), "new epoch serves in full");
 	assert!(view("s", Some(1)).await.starts_with(unchanged));
 	let after = server.session(&session_context(peer, "s", dir.path(), Some(1)));
 	assert!(Arc::ptr_eq(&before, &after), "a new epoch keeps the session");
@@ -1300,17 +1300,17 @@ async fn a_script_view_is_not_recorded_as_seen_by_the_model() {
 		}
 	};
 
-	assert!(script_view().await.ends_with("|one"));
+	assert!(script_view().await.ends_with(" one"));
 	assert!(
-		script_view().await.ends_with("|one"),
+		script_view().await.ends_with(" one"),
 		"a script is never answered with a delta"
 	);
 	assert!(
-		model_view().await.ends_with("|one"),
+		model_view().await.ends_with(" one"),
 		"the model has not seen the file yet"
 	);
 	assert!(model_view().await.starts_with("[unchanged since you last viewed"));
-	assert!(script_view().await.ends_with("|one"));
+	assert!(script_view().await.ends_with(" one"));
 }
 
 #[test]

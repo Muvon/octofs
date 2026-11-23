@@ -14,7 +14,7 @@
 
 //! Structural outline mode of `view` (`flags: "s"`): reads files through the
 //! same I/O path and caps as a whole-file view, extracts declarations with
-//! `crate::structural`, and renders them as ordinary `N:hh|content` lines so
+//! `crate::structural`, and renders them as ordinary `N:hh content` lines so
 //! the ids feed `batch_edit` unchanged. Bodies are elided; nesting is conveyed
 //! by the original indentation only. Outline reads never register in the
 //! delta/view cache.
@@ -27,7 +27,7 @@ use super::file_ops::MAX_VIEW_FILE_BYTES;
 use super::remote::{io_is_dir, io_metadata, io_read, io_read_capped, IoMetadata, PathSource};
 use crate::mcp::McpToolCall;
 use crate::structural::{self, OutlineItem};
-use crate::utils::line_hash::line_id;
+use crate::utils::line_hash::format_line;
 use crate::utils::truncation::MAX_RESULT_BYTES;
 use anyhow::{anyhow, bail, Result};
 use rayon::prelude::*;
@@ -301,7 +301,7 @@ fn render_item_lines(contents: &str, items: &[OutlineItem], budget: usize) -> (S
 			// A broken parse can name a line past the file's end; render what
 			// exists rather than failing.
 			if let Some(line) = lines.get(n - 1) {
-				block.push(format!("{}|{}", line_id(n, line), line));
+				block.push(format_line(n, line));
 			}
 		}
 		let block = block.join("\n");
@@ -335,7 +335,7 @@ fn files_truncation_notice(omitted: usize) -> String {
 }
 
 /// Render one file's outline: a `path\tNL` header (the total line count bounds
-/// the last item's body), then each item's signature lines as `N:hh|content`.
+/// the last item's body), then each item's signature lines as `N:hh content`.
 /// When the budget cuts the result, the dropped items are counted in a final
 /// notice.
 pub(super) fn render_file_outline(path: &str, contents: &str, items: &[OutlineItem], budget: usize) -> String {

@@ -463,7 +463,7 @@ fn clean_terminal_noise_keeps_tabs_and_collapses_blank_runs() {
 async fn numbered_file_lines_come_back_with_line_ids() {
 	let temp = tempfile::tempdir().expect("temp workdir");
 	std::fs::write(temp.path().join("notes.txt"), "alpha\n\n  beta\n").expect("write notes");
-	let expected = format!("{}|  beta", crate::utils::line_hash::line_id(3, "  beta"));
+	let expected = format!("{}   beta", crate::utils::line_hash::line_id(3, "  beta"));
 	for command in [
 		"grep -n beta notes.txt",
 		"nl -ba notes.txt | sed -n '3p'",
@@ -504,7 +504,7 @@ async fn files_written_with_the_shell_are_written_and_read_back_with_ids() {
 	};
 	// An in-place edit and the search that shows the result, in one command.
 	// `-i.bak` is the one spelling both GNU and BSD `sed` take.
-	let edited = format!("{}|gamma", crate::utils::line_hash::line_id(2, "gamma"));
+	let edited = format!("{} gamma", crate::utils::line_hash::line_id(2, "gamma"));
 	assert_eq!(
 		run("sed -i.bak 's/beta/gamma/' notes.txt && grep -n gamma notes.txt").await,
 		edited
@@ -522,6 +522,6 @@ async fn files_written_with_the_shell_are_written_and_read_back_with_ids() {
 	let listed = run("grep -n epsilon notes.txt").await;
 	assert_eq!(
 		listed,
-		format!("{}|epsilon", crate::utils::line_hash::line_id(4, "epsilon"))
+		format!("{} epsilon", crate::utils::line_hash::line_id(4, "epsilon"))
 	);
 }

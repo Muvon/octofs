@@ -146,9 +146,9 @@ digits depend on the line text and are written `hh` here.
 
 ```
 src/lib.rs	4
-1:hh|mod foo {
-2:hh|	fn bar() {}
-4:hh|struct Baz;
+1:hh mod foo {
+2:hh 	fn bar() {}
+4:hh struct Baz;
 ```
 
 ## AST search
@@ -174,8 +174,8 @@ Example, over a file holding `fn a() {}` and `fn b(x: u8, y: u8) {}`:
 Both functions come back, each source line prefixed with its `N:hh` id:
 
 ```
-1:hh|fn a() {}
-2:hh|fn b(x: u8, y: u8) {}
+1:hh fn a() {}
+2:hh fn b(x: u8, y: u8) {}
 ```
 
 A match spans the whole node, so a multi-line function renders all its lines;
@@ -251,9 +251,9 @@ For a file where `flush` is a method of `impl Store`:
 
 ```
 [impl Store]
-6:hh|	pub fn flush(&mut self) {
-7:hh|		self.data.clear();
-8:hh|	}
+6:hh 	pub fn flush(&mut self) {
+7:hh 		self.data.clear();
+8:hh 	}
 ```
 
 ### References
@@ -268,11 +268,11 @@ each use.
 
 ```
 [impl Store › fn flush] [def]
-2:hh|	pub fn flush(&mut self) {
+2:hh 	pub fn flush(&mut self) {
 [impl Store › fn drain]
-6:hh|		self.flush();
+6:hh 		self.flush();
 [fn main]
-11:hh|	store.flush();
+11:hh 	store.flush();
 ```
 
 ### Callers and callees

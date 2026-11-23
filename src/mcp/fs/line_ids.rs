@@ -17,7 +17,7 @@
 //! A program that prints a file's lines with their numbers (`grep -n`, `rg -n`,
 //! `nl -ba`, `cat -n`, `awk '{print NR": "$0}'`) gives the model everything an
 //! edit needs except the hash half of the line id. This module adds it: such a
-//! line comes back as `N:hh|content`, the form `view` prints, so the edit tools
+//! line comes back as `N:hh content`, the form `view` prints, so the edit tools
 //! take it without a second read.
 //!
 //! A number at the start of a line is not proof of a file line (`12:30:01 up`,
@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::utils::line_hash::line_id;
+use crate::utils::line_hash::format_line;
 
 use super::file_ops::MAX_VIEW_FILE_BYTES;
 
@@ -188,7 +188,7 @@ impl Files {
 			// The shortest separator reads the most of the output as file text:
 			// `12: x` is line ` x` after `:` before it is line `x` after `: `.
 			.min_by_key(|(separator, _)| *separator)
-			.map(|(_, line)| format!("{}|{line}", line_id(number, line)))
+			.map(|(_, line)| format_line(number, line))
 	}
 
 	/// `path:12:text` (a match) or `path-12-text` (a context line) of a search
@@ -214,7 +214,7 @@ impl Files {
 				continue;
 			};
 			if text.trim_end() == line[end + 1..].trim_end() {
-				return Some(format!("{}{}|{text}", &line[..=start], line_id(number, text)));
+				return Some(format!("{}{}", &line[..=start], format_line(number, text)));
 			}
 		}
 		None
