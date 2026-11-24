@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.27.1] - 2026-11-24
+
+### 📋 Release Summary
+
+Git show file paths can now be resolved for line IDs.
+
+### ✨ New Features & Enhancements
+
+- **line-ids**: resolve git show file paths for line ids `f3b41df9`
+
 ## [0.27.0] - 2026-11-23
 
 ### 📋 Release Summary
