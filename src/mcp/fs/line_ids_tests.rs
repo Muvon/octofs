@@ -121,8 +121,24 @@ fn output_that_is_no_file_line_stays_as_printed() {
 }
 
 #[test]
+fn git_show_lines_get_ids_when_the_worktree_lines_match() {
+	let dir = workdir();
+	std::fs::create_dir(dir.path().join(".git")).expect("create repository marker");
+	let output = "1:alpha\n3:  beta\n4:older content";
+	let expected = [note(1), note(3), "4:older content".to_string()].join("\n");
+	for (command, workdir) in [
+		("git show HEAD:notes.txt | grep -n .", dir.path().to_path_buf()),
+		("git show 'main~1:notes.txt' | grep -n .", dir.path().join("sub")),
+		("git show HEAD:../notes.txt | grep -n .", dir.path().join("sub")),
+	] {
+		assert_eq!(stamp(output, command, &workdir), expected, "{command}");
+	}
+}
+
+#[test]
 fn a_file_the_command_does_not_name_gives_no_ids() {
 	let dir = workdir();
+	std::fs::create_dir(dir.path().join(".git")).expect("create repository marker");
 	assert_eq!(
 		stamp("1:alpha", "git show HEAD:notes | grep -n alpha", dir.path()),
 		"1:alpha"

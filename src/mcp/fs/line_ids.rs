@@ -135,8 +135,15 @@ impl Files {
 			loaded: HashMap::new(),
 			named: Vec::new(),
 		};
-		for word in words {
-			if let Some(path) = files.find(word) {
+		for (index, &word) in words.iter().enumerate() {
+			let path = files.find(word).or_else(|| {
+				if index < 2 || words[index - 2..index] != ["git", "show"] {
+					return None;
+				}
+				let (_, path) = word.split_once(':')?;
+				files.find_git_path(path)
+			});
+			if let Some(path) = path {
 				if !files.named.contains(&path) {
 					files.named.push(path);
 				}
@@ -145,10 +152,25 @@ impl Files {
 		files
 	}
 
+	fn find_git_path(&mut self, name: &str) -> Option<PathBuf> {
+		// Git paths are repository-relative unless explicitly prefixed with ./ or ../.
+		if name.starts_with("./") || name.starts_with("../") {
+			return self.find(name);
+		}
+		let root = self
+			.bases
+			.iter()
+			.rev()
+			.flat_map(|base| base.ancestors())
+			.find(|dir| dir.join(".git").exists())?;
+		let path = root.join(name);
+		self.find(path)
+	}
+
 	/// The text file `name` is from where the command ran, latest `cd` first.
-	fn find(&mut self, name: &str) -> Option<PathBuf> {
+	fn find(&mut self, name: impl AsRef<Path>) -> Option<PathBuf> {
 		for base in self.bases.iter().rev() {
-			let path = base.join(name);
+			let path = base.join(name.as_ref());
 			let lines = self.loaded.entry(path.clone()).or_insert_with(|| read_lines(&path));
 			if lines.is_some() {
 				return Some(path);
