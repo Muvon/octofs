@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.28.0] - 2026-11-28
+
+Line-ID hashes now accept two-letter values.
+
+### 🚨 Breaking Changes
+
+- **line-hash**: accept two-letter line-id hashes `9a110804`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.27.1] - 2026-11-24
 
 ### 📋 Release Summary
