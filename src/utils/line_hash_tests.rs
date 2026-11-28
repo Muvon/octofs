@@ -29,7 +29,7 @@ fn test_line_hash_deterministic_and_content_only() {
 fn test_line_hash_format() {
 	let h = line_hash("test");
 	assert_eq!(h.len(), 2);
-	assert!(h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+	assert!(h.chars().all(|c| c.is_ascii_alphabetic()));
 }
 
 #[test]
@@ -96,18 +96,18 @@ fn test_parse_endpoint_numbers() {
 fn test_parse_endpoint_ids() {
 	use serde_json::json;
 	assert_eq!(
-		parse_endpoint(&json!("12:a3")).unwrap(),
+		parse_endpoint(&json!("12:aK")).unwrap(),
 		Endpoint::Id {
 			line: 12,
-			hash: "a3".to_string()
+			hash: "aK".to_string()
 		}
 	);
-	// Uppercase hex is normalized.
+	// Case is part of the hash: it is kept, never normalized.
 	assert_eq!(
 		parse_endpoint(&json!("7:FF")).unwrap(),
 		Endpoint::Id {
 			line: 7,
-			hash: "ff".to_string()
+			hash: "FF".to_string()
 		}
 	);
 }
@@ -117,13 +117,13 @@ fn test_parse_endpoint_takes_the_id_of_a_pasted_view_line() {
 	use serde_json::json;
 	let id = Endpoint::Id {
 		line: 51,
-		hash: "b4".to_string(),
+		hash: "bD".to_string(),
 	};
-	assert_eq!(parse_endpoint(&json!("51:b4 ")).unwrap(), id);
-	assert_eq!(parse_endpoint(&json!("51:b4 \tlet x = a | b;")).unwrap(), id);
+	assert_eq!(parse_endpoint(&json!("51:bD ")).unwrap(), id);
+	assert_eq!(parse_endpoint(&json!("51:bD \tlet x = a | b;")).unwrap(), id);
 	// A hash without its line number names no line.
-	assert!(parse_endpoint(&json!("5d|")).is_err());
-	assert!(parse_endpoint(&json!("|51:b4")).is_err());
+	assert!(parse_endpoint(&json!("bD|")).is_err());
+	assert!(parse_endpoint(&json!("|51:bD")).is_err());
 }
 
 #[test]
@@ -131,9 +131,11 @@ fn test_parse_endpoint_rejects_garbage() {
 	use serde_json::json;
 	assert!(parse_endpoint(&json!("")).is_err());
 	assert!(parse_endpoint(&json!("abc")).is_err());
-	assert!(parse_endpoint(&json!("0:a3")).is_err());
+	assert!(parse_endpoint(&json!("0:aK")).is_err());
 	assert!(parse_endpoint(&json!("12:xyz")).is_err());
 	assert!(parse_endpoint(&json!("12:a")).is_err());
+	// Digits are not hash characters, so the old hex form is rejected.
+	assert!(parse_endpoint(&json!("12:a3")).is_err());
 	let arr_err = parse_endpoint(&json!([1, 2])).unwrap_err();
 	assert!(arr_err.contains("got [1,2]"), "got: {arr_err}");
 	let null_err = parse_endpoint(&json!(null)).unwrap_err();

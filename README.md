@@ -31,7 +31,7 @@ With these tools an assistant can work in a project without the user pasting fil
 
 - `view` reads a file (whole, a line range, or several ranges) or several files in one call, lists a directory (gitignore-aware, with glob patterns), searches content (literal or regex, with context lines) and returns images up to 5 MB. For clients that report a context epoch, re-viewing a whole file returns only the hunks changed since.
 - `text_edit` creates files, replaces exact text, deletes a file and undoes the last edits (up to 10 levels per file, kept in memory).
-- `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-character content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
+- `batch_edit` applies up to 50 insert and replace operations to one file atomically. Targets are line ids of the form `N:hh` (position plus a two-letter content hash); a stale id fails with the current content and where it moved. An operation can copy lines from another file, or from the same file, instead of taking new text.
 - `shell` runs a command on the local machine. A command still running after about 10 seconds continues in the background and a completion notification arrives when it exits. Reading, searching and listing with `cat`, `grep`, `find`, `ls` and similar programs run normally, and a numbered file line in the output (`grep -n`, `rg -n`, `nl -ba`, `cat -n`) comes back as `N:hh content`, the line id `view` gives.
 - Transport is STDIO or Streamable HTTP. A non-loopback HTTP bind requires a bearer token.
 - Remote files use SSH/SFTP with your OpenSSH config. `shell` always runs locally. RSA keys are not supported (see [Remote Filesystem](#remote-filesystem-sshsftp)).
@@ -235,12 +235,12 @@ Ask your AI assistant to:
 ### Line Identifiers
 
 Every line is addressed by a composite id `N:hh` — its 1-indexed position plus a
-2-character hex hash (FNV-1a) of its content. Octocode structural-search source output uses the same shared utility and IDs. `view` renders lines as `N:hh content`:
+2-letter hash (FNV-1a) of its content. Octocode structural-search source output uses the same shared utility and IDs. `view` renders lines as `N:hh content`:
 
 ```
-1:a3 fn main() {
-2:f1     println!("Hello");
-3:0e }
+1:xx fn main() {
+2:yy     println!("Hello");
+3:zz }
 ```
 
 Edit tools take these ids back as targets and verify the hash against the file
@@ -248,8 +248,8 @@ before applying anything. A stale id (the file changed since it was viewed) fail
 with the current content around the target and where the expected content moved —
 so the model retargets from the error instead of re-reading the file. Edit results
 are diffs with fresh ids, so edits chain without re-viewing. Removed lines collapse
-to their old id range (`-12:a3..15:f1 (4 lines)`), and a trailing
-`shift: lines after 40:b2 +3` line says how original line numbers below each edit
+to their old id range (`-12:xx..15:yy (4 lines)`), and a trailing
+`shift: lines after 40:xx +3` line says how original line numbers below each edit
 moved, so ids the model still holds can be adjusted without a failed call.
 
 This is the single line-id format — there is no mode switch. Plain line numbers
@@ -349,7 +349,7 @@ view path="ssh://deploy@example.com/etc/nginx/nginx.conf"
 {"path": "src/main.rs", "start": 42, "end": 42}  // single line
 {"path": "src/main.rs", "start": 80}             // line 80 → end of file
 {"path": "src/main.rs", "start": -20}            // last 20 lines
-{"path": "src/main.rs", "start": "12:a3", "end": "20:f1"}  // line ids from prior output
+{"path": "src/main.rs", "start": "12:xx", "end": "20:yy"}  // line ids from prior output
 {"path": "src/main.rs", "ranges": [{"start": 10, "end": 20}, {"start": 80, "end": 95}]}  // several spans in one read
 {"path": "src/a.rs|src/b.rs"}                    // several files in one call
 {"path": "src/a.rs", "ranges": [{"start": 10, "end": 20}, {"path": "src/b.rs", "start": 80}]}  // spans of several files
@@ -607,7 +607,7 @@ can retarget without a re-view. The result is a diff with fresh ids.
 {
   "path": "src/main.rs",
   "operations": [
-    {"operation": "replace", "start": "10:4b", "end": "15:c2", "content": "new code here"}
+    {"operation": "replace", "start": "10:xx", "end": "15:yy", "content": "new code here"}
   ]
 }
 ```
@@ -624,7 +624,7 @@ can retarget without a re-view. The result is a diff with fresh ids.
 }
 ```
 
-`copy_from` replaces `content` in an `insert` or `replace` operation; give exactly one of the two. `start` and `end` are line ids (`"12:a3"`, verified against the source) or integers (negative counts from the end); `end` defaults to `start`. The source can be another file or the edited file. A same-file source is read as it was before the call, so moving lines inside a file is one call: insert the copy and replace the old range with `""`. If the target file does not exist, it is created (with its folders) only when every operation is a `copy_from` insert at `0` or `-1`; any other edit of a missing file fails with "File not found". Copied lines are not checked for duplicates.
+`copy_from` replaces `content` in an `insert` or `replace` operation; give exactly one of the two. `start` and `end` are line ids (`"12:xx"`, verified against the source) or integers (negative counts from the end); `end` defaults to `start`. The source can be another file or the edited file. A same-file source is read as it was before the call, so moving lines inside a file is one call: insert the copy and replace the old range with `""`. If the target file does not exist, it is created (with its folders) only when every operation is a `copy_from` insert at `0` or `-1`; any other edit of a missing file fails with "File not found". Copied lines are not checked for duplicates.
 
 ---
 

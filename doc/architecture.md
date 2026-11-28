@@ -50,7 +50,7 @@ src/
     languages/         — one tree-sitter grammar + outline/symbol rules per language
     *_tests.rs         — sibling unit tests (mod, signature_extractor, symbols, ast_search, per language)
   utils/
-    line_hash.rs       — N:hh line ids (FNV1a-8 of content), parse_endpoint, verify_line_id
+    line_hash.rs       — N:hh line ids (FNV-1a of content), parse_endpoint, verify_line_id
     truncation.rs      — estimate_tokens, format_content_with_line_numbers, format_extracted_content_smart
 ```
 
@@ -115,8 +115,8 @@ response budget; it is local only.
 
 ## Line ids
 
-One format, no mode switch: `N:hh` — 1-indexed position plus a 2-char
-lowercase hex FNV1a-8 hash of the line's content (`utils/line_hash.rs`).
+One format, no mode switch: `N:hh` — 1-indexed position plus a 2-letter
+(a-z, A-Z) FNV-1a hash of the line's content (octolib `utils/line_hash.rs`).
 Hashing content (not position) means a moved line keeps its hash and stale-id
 errors can say where the content went. `view` renders `N:hh content`; edit
 targets require ids, verified per-target via `verify_line_id`. Edit results

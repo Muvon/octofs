@@ -13,12 +13,13 @@
 // limitations under the License.
 
 // Composite line identifiers: every line is addressed as "N:hh" — its 1-indexed
-// position plus a 2-char hex hash of its content. View output renders lines as
+// position plus a 2-letter hash of its content. View output renders lines as
 // "N:hh content"; edit tools take the same ids back and verify the hash against
 // the file before touching anything, so a stale id fails loudly (with the fresh
 // content in the error) instead of silently editing the wrong line. This is the
 // single line-id format — there is no mode switch.
 
+use octolib::utils::line_hash::parse_line_id;
 pub use octolib::utils::line_hash::{format_line, line_hash, line_id, LINE_ID_SEPARATOR};
 
 /// Extension of the files besydr and octomind save a shortened tool result to.
@@ -173,7 +174,7 @@ pub enum Endpoint {
 /// Parse a JSON value into a line [`Endpoint`].
 ///
 /// - JSON integer → [`Endpoint::Number`].
-/// - String "N:hh" (line + 2 hex chars, as rendered in view output) → [`Endpoint::Id`].
+/// - String "N:hh" (line + 2 letters, as rendered in view output) → [`Endpoint::Id`].
 /// - Numeric string → [`Endpoint::Number`] (tolerates clients that stringify integers).
 /// - A line copied whole from view output ("N:hh content") → its id.
 pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
@@ -192,27 +193,23 @@ pub fn parse_endpoint(value: &serde_json::Value) -> Result<Endpoint, String> {
 			if let Ok(n) = s.parse::<i64>() {
 				return Ok(Endpoint::Number(n));
 			}
-			if let Some((num, hash)) = s.split_once(':') {
-				let line: usize = num.parse().map_err(|_| {
-					format!("invalid line id '{s}': expected \"N:hh\" as shown in view output (e.g. \"12:a3\")")
-				})?;
-				if line == 0 {
-					return Err(format!("invalid line id '{s}': lines are 1-indexed"));
-				}
-				let hash = hash.to_ascii_lowercase();
-				if hash.len() != 2 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-					return Err(format!(
-						"invalid line id '{s}': the hash part must be 2 hex chars (e.g. \"12:a3\")"
-					));
-				}
-				return Ok(Endpoint::Id { line, hash });
+			if let Some((line, hash)) = parse_line_id(s) {
+				return Ok(Endpoint::Id {
+					line,
+					hash: hash.to_string(),
+				});
+			}
+			if s.contains(':') {
+				return Err(format!(
+					"invalid line id '{s}': expected \"N:hh\" as shown in view output, a line number from 1 and 2 letters (e.g. \"12:xx\")"
+				));
 			}
 			Err(format!(
-				"invalid line value '{s}': pass a whole line id, the line number and its hash, like \"12:a3\" (from view output), or an integer line number"
+				"invalid line value '{s}': pass a whole line id, the line number and its hash, like \"12:xx\" (from view output), or an integer line number"
 			))
 		}
 		_ => Err(format!(
-			"line value must be a line id like \"12:a3\" or an integer line number, got {value}",
+			"line value must be a line id like \"12:xx\" or an integer line number, got {value}",
 		)),
 	}
 }

@@ -1638,7 +1638,7 @@ mod tests {
 		// File listing should just be filenames
 		assert!(file_list_str.contains("test_1.rs"));
 		// Check that file listing doesn't contain line-id prefixes
-		let line_id_pattern = regex::Regex::new(r"(?m)^\d+:[0-9a-f]{2} ").unwrap();
+		let line_id_pattern = regex::Regex::new(r"(?m)^\d+:[A-Za-z]{2} ").unwrap();
 		assert!(!line_id_pattern.is_match(&file_list_str)); // No line ids
 
 		// Content search should render matches with `N:hh content` line ids

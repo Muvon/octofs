@@ -201,7 +201,7 @@ the delta cache.
 
 Applies up to 50 `insert`/`replace` operations to one file atomically.
 
-- **Targets are line ids** (`"12:a3"`) from `view` or edit output. Each target
+- **Targets are line ids** (`"12:xx"`) from `view` or edit output. Each target
   is verified against the current file content (`verify_line_id`,
   `utils/line_hash.rs`) *before anything is written* — a stale id fails the
   whole call with the current content around the target, relocation

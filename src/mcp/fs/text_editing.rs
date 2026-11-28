@@ -185,7 +185,7 @@ fn resolve_unresolved_line_range(
 		UnresolvedLineRange::Anchor(0) => Ok(LineRange::Single(0)),
 		UnresolvedLineRange::Anchor(-1) => Ok(LineRange::Single(total_lines)),
 		UnresolvedLineRange::Anchor(n) => Err(format!(
-			"Invalid insert anchor {n}: use 0 (file start), -1 (end), or a line id like \"12:a3\""
+			"Invalid insert anchor {n}: use 0 (file start), -1 (end), or a line id like \"12:xx\""
 		)),
 		UnresolvedLineRange::IdAnchor { line, hash } => {
 			let resolved = verify_line_id(*line, hash, lines)?;
@@ -1392,7 +1392,7 @@ fn parse_line_range(
 		OperationType::Insert => match start {
 			Endpoint::Number(n @ (0 | -1)) => Ok(UnresolvedLineRange::Anchor(n)),
 			Endpoint::Number(n) => Err(format!(
-				"insert anchor {n} is not verifiable: use a line id like \"12:a3\", or 0 (file start) / -1 (end){}",
+				"insert anchor {n} is not verifiable: use a line id like \"12:xx\", or 0 (file start) / -1 (end){}",
 				id_hint(n)
 			)),
 			Endpoint::Id { line, hash } => Ok(UnresolvedLineRange::IdAnchor { line, hash }),
@@ -1418,7 +1418,7 @@ fn parse_line_range(
 						hint.push_str(&id_hint(n));
 					}
 					Err(format!(
-						"replace targets must be line ids like \"12:a3\" from view output, not plain numbers{hint}"
+						"replace targets must be line ids like \"12:xx\" from view output, not plain numbers{hint}"
 					))
 				}
 			}

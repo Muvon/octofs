@@ -734,7 +734,7 @@ impl OctofsServer {
 			idempotent_hint = false,
 			open_world_hint = false
 		),
-		description = "Apply insert/replace operations to one file atomically. Targets are line ids (\"12:a3\": the \
+		description = "Apply insert/replace operations to one file atomically. Targets are line ids (\"12:xx\": the \
 			line number and its hash together; a hash alone is rejected) copied exactly from view or \
 			edit output. An id you copied earlier still works after your other edits to the file while \
 			its line is unchanged: do not change its number or view the file again. A rejected id \
@@ -1189,7 +1189,7 @@ pub struct ViewParams {
 	#[schemars(schema_with = "line_endpoint_schema")]
 	pub end: Option<serde_json::Value>,
 	/// Several line spans in one read, e.g. `[{"start": 10, "end": 20}, {"path": "b.rs",
-	/// "start": "80:3f", "end": 95}]`. Spans of one file are sorted and overlapping or adjacent
+	/// "start": "80:xx", "end": 95}]`. Spans of one file are sorted and overlapping or adjacent
 	/// ones merged; gaps show as `[... N lines omitted]`. Not combined with `start`/`end` or
 	/// `content`.
 	#[serde(default)]
@@ -1323,7 +1323,7 @@ fn line_endpoint_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 			{ "type": "string" },
 			{ "type": "integer", "format": "int64" }
 		],
-		"examples": ["12:a3", -1]
+		"examples": ["12:xx", -1]
 	})
 }
 
@@ -1332,7 +1332,7 @@ fn line_id_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 	schemars::json_schema!({
 		"description": "Line id \"N:hh\" from view/edit output.",
 		"type": "string",
-		"examples": ["12:a3"]
+		"examples": ["12:xx"]
 	})
 }
 
@@ -1346,7 +1346,7 @@ fn edit_anchor_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 			{ "type": "string" },
 			{ "type": "integer", "enum": [0, -1] }
 		],
-		"examples": ["12:a3", -1]
+		"examples": ["12:xx", -1]
 	})
 }
 

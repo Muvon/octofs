@@ -127,7 +127,7 @@ Three resolution rules are worth knowing:
 ## Outline
 
 `view` with `flags: "s"` on a file or a directory returns the declarations with
-their bodies elided. Each line keeps its `N:hh` id (position plus a two-character
+their bodies elided. Each line keeps its `N:hh` id (position plus a two-letter
 hash, see [architecture.md](architecture.md#line-ids)), so an outline line can be
 passed to `batch_edit` as an edit target. A directory outline honours `pattern`,
 `max_depth` and `include_hidden` and works over `ssh://`. It cannot be combined
